@@ -50,34 +50,6 @@ jobs:
           VITE_ICM_AGENT_UI: enabled
       - run: pnpm --filter @icm/mcp-server... build
       - run: pnpm exec playwright install --with-deps chromium
-      - name: Reconcile managed simulation resources
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          wrangler="pnpm dlx wrangler@4.120.1"
-          ensure_queue() {
-            name="$1"
-            retention="$2"
-            # Update is the steady-state operation. If the Queue is absent,
-            # create it; if another deploy created it between those calls,
-            # the final update proves that the requested resource now exists.
-            $wrangler queues update "$name" --message-retention-period-secs "$retention" && return
-            $wrangler queues create "$name" --message-retention-period-secs "$retention" && return
-            $wrangler queues update "$name" --message-retention-period-secs "$retention"
-          }
-          ensure_queue analog-canvas-simulation-preview 900
-          ensure_queue analog-canvas-simulation-preview-dlq 604800
-          bucket=analog-canvas-simulation-artifacts-preview
-          if ! $wrangler r2 bucket info "$bucket" >/dev/null 2>&1; then
-            # A concurrent reconcile can win after the info request. In that
-            # case a second info request is the successful idempotent result.
-            $wrangler r2 bucket create "$bucket" || $wrangler r2 bucket info "$bucket" >/dev/null
-          fi
-          if ! $wrangler r2 bucket lifecycle list "$bucket" | grep -Fq simulation-artifact-retention; then
-            $wrangler r2 bucket lifecycle add "$bucket" simulation-artifact-retention --expire-days 1 --force
-          fi
       - name: Deploy to preview
         run: pnpm dlx wrangler@4.120.1 deploy --config wrangler.preview.jsonc
         env:
