@@ -27,7 +27,7 @@ describe("bug report link", () => {
     const body = url.searchParams.get("body") ?? "";
 
     expect(url.origin).toBe("https://github.com");
-    expect(url.pathname).toBe("/cascode-ai/analog-canvas/issues/new");
+    expect(url.pathname).toBe("/dude1wudv/analog-canvas/issues/new");
     expect(url.searchParams.get("labels")).toBe("bug");
     expect(url.searchParams.get("title")).toBe("[Bug] ");
     expect(body).toContain("## What happened?");
@@ -83,7 +83,7 @@ describe("bug report link", () => {
     expect(markup).toContain('data-testid="report-bug"');
     expect(markup).toContain('target="_blank"');
     expect(markup).toContain('rel="noopener noreferrer"');
-    expect(markup).toContain("Report bug");
-    expect(markup).toContain("publicly on GitHub");
+    expect(markup).toContain("报告问题");
+    expect(markup).toContain("在 GitHub 上公开报告问题");
   });
 });

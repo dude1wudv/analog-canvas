@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
-import { COMMON_COLOR_PRESETS } from "./color-presets";
+export const COLOR_PRESETS = [
+  { label: "黑色", value: "#000000" },
+  { label: "红色", value: "#dc2626" },
+  { label: "橙色", value: "#d97706" },
+  { label: "黄色", value: "#facc15" },
+  { label: "绿色", value: "#059669" },
+  { label: "蓝色", value: "#2563eb" },
+  { label: "灰色", value: "#6b7280" },
+  { label: "白色", value: "#ffffff" },
+] as const;
 
 /** Collapse a continuous RGB interaction into one undoable edit. */
 const COLOR_SETTLE_MS = 250;
@@ -119,34 +128,41 @@ export function ColorOverrideControl({
     if (!Number.isFinite(parsed)) return;
     setPending(rgbToHex({ ...rgb, [channel]: clampChannel(parsed) }));
   };
-  const colorLabel = /color$/iu.test(label) ? label : `${label} color`;
+  const colorLabel = /(?:color|颜色|色)$/iu.test(label)
+    ? label
+    : `${label}颜色`;
 
   return (
     <fieldset className="component-color-control" disabled={disabled}>
       <legend>{label}</legend>
       <div className="component-color-primary-row">
-        <output aria-label={`${colorLabel} hex value`}>
-          {draft ?? value ?? (transparentDefault ? "Transparent" : "Automatic")}
+        <input
+          aria-label={`${colorLabel}选择器`}
+          type="color"
+          value={shown}
+          onChange={(event) => setPending(event.currentTarget.value)}
+          onBlur={(event) => commitOnBlur(event.relatedTarget)}
+        />
+        <output aria-label={`${colorLabel}十六进制值`}>
+          {draft ?? value ?? (transparentDefault ? "透明" : "自动")}
         </output>
         <button
           type="button"
           disabled={disabled || (!value && draft === null)}
           data-color-action="immediate"
-          aria-label={`Reset ${label.toLowerCase()}`}
+          aria-label={`重置${label}`}
           title={
             autoTitle ??
-            (transparentDefault
-              ? "Remove the component background"
-              : "Use the document ink color")
+            (transparentDefault ? "移除元件背景" : "使用文档前景色")
           }
           onPointerDown={(event) => event.preventDefault()}
           onClick={() => commitNow(undefined)}
         >
-          Auto
+          自动
         </button>
       </div>
-      <div className="component-color-presets" aria-label={`${label} presets`}>
-        {COMMON_COLOR_PRESETS.map((preset) => (
+      <div className="component-color-presets" aria-label={`${label}预设`}>
+        {COLOR_PRESETS.map((preset) => (
           <button
             key={preset.value}
             type="button"
@@ -156,7 +172,7 @@ export function ColorOverrideControl({
                 "--component-swatch-color": preset.value,
               } as CSSProperties
             }
-            aria-label={`Use ${preset.label} for ${label.toLowerCase()}`}
+            aria-label={`${label}使用${preset.label}`}
             aria-pressed={shown.toLowerCase() === preset.value}
             data-color-action="immediate"
             title={`${preset.label} · ${preset.value}`}
@@ -169,17 +185,14 @@ export function ColorOverrideControl({
       </div>
       <details className="component-rgb-details">
         <summary>RGB</summary>
-        <div
-          className="component-rgb-inputs"
-          aria-label={`${label} custom RGB`}
-        >
+        <div className="component-rgb-inputs" aria-label={`${label}自定义 RGB`}>
           {(["r", "g", "b"] as const).map((channel) => (
             <label key={channel}>
               {channel.toUpperCase()}
               <input
-                aria-label={`${label} ${
-                  channel === "r" ? "red" : channel === "g" ? "green" : "blue"
-                }`}
+                aria-label={`${label}${
+                  channel === "r" ? "红色" : channel === "g" ? "绿色" : "蓝色"
+                }通道`}
                 type="number"
                 min="0"
                 max="255"

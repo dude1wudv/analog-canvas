@@ -42,16 +42,16 @@ export function WaveformTools({
   return (
     <div
       className={`ac-plot-toolbar waveform-tools${editing ? " expanded" : ""}`}
-      aria-label="Plot tools"
+      aria-label="绘图工具"
       tabIndex={0}
     >
       <span className="waveform-tools-hint" aria-hidden="true">
-        Tools
+        工具
       </span>
       <div className="waveform-tool-actions">
         <button
           type="button"
-          aria-label="Previous view"
+          aria-label="上一视图"
           disabled={c.state.index === 0}
           onClick={() => c.travel(-1)}
         >
@@ -59,18 +59,18 @@ export function WaveformTools({
         </button>
         <button
           type="button"
-          aria-label="Next view"
+          aria-label="下一视图"
           disabled={c.state.index === c.state.history.length - 1}
           onClick={() => c.travel(1)}
         >
           ↷
         </button>
-        <div role="group" aria-label="Controlled axes">
+        <div role="group" aria-label="受控坐标轴">
           {(["xy", "x", "y"] as const).map((axis) => (
             <button
               type="button"
               key={axis}
-              aria-label={`Control ${axis.toUpperCase()} axes`}
+              aria-label={`控制 ${axis.toUpperCase()} 轴`}
               aria-pressed={c.state.axes === axis}
               onClick={() => c.set("axes", axis)}
             >
@@ -78,31 +78,35 @@ export function WaveformTools({
             </button>
           ))}
         </div>
-        <div role="group" aria-label="Zoom and fit">
-          <button type="button" aria-label="Zoom out" onClick={() => zoom(1.7)}>
+        <div role="group" aria-label="缩放与适应">
+          <button type="button" aria-label="缩小" onClick={() => zoom(1.7)}>
             −
           </button>
-          <button type="button" aria-label="Zoom in" onClick={() => zoom(0.6)}>
+          <button type="button" aria-label="放大" onClick={() => zoom(0.6)}>
             +
           </button>
-          <button type="button" aria-label="Fit plot" onClick={() => fit("xy")}>
-            Fit
+          <button
+            type="button"
+            aria-label="适合绘图区"
+            onClick={() => fit("xy")}
+          >
+            适合
           </button>
-          <button type="button" aria-label="Fit X" onClick={() => fit("x")}>
-            Fit X
+          <button type="button" aria-label="适合 X 轴" onClick={() => fit("x")}>
+            适合 X 轴
           </button>
-          <button type="button" aria-label="Fit Y" onClick={() => fit("y")}>
-            Fit Y
+          <button type="button" aria-label="适合 Y 轴" onClick={() => fit("y")}>
+            适合 Y 轴
           </button>
           <button
             type="button"
             aria-expanded={editing}
             onClick={() => setEditing(!editing)}
           >
-            Ranges
+            范围
           </button>
         </div>
-        <div role="group" aria-label="Active marker">
+        <div role="group" aria-label="当前标记">
           {(["A", "B"] as const).map((marker) => (
             <button
               key={marker}
@@ -116,7 +120,7 @@ export function WaveformTools({
           ))}
           <button
             type="button"
-            aria-label="Clear markers"
+            aria-label="清除标记"
             disabled={
               c.state.markers.A === undefined && c.state.markers.B === undefined
             }
@@ -126,7 +130,7 @@ export function WaveformTools({
           </button>
         </div>
         {onOpen && (
-          <button type="button" aria-label="Open plot" onClick={onOpen}>
+          <button type="button" aria-label="打开绘图" onClick={onOpen}>
             ⛶
           </button>
         )}
@@ -184,7 +188,7 @@ function WaveformRangeEditor({
   return (
     <form
       className="waveform-range-editor"
-      aria-label="Axis ranges"
+      aria-label="坐标轴范围"
       onSubmit={(event) => {
         event.preventDefault();
         const nextX = autoX
@@ -215,7 +219,7 @@ function WaveformRangeEditor({
                   (axis === "x" ? setAutoX : setAutoY)(event.target.checked)
                 }
               />
-              Auto
+              自动
             </label>
             {([0, 1] as const).map((index) => (
               <label key={index}>
@@ -239,9 +243,9 @@ function WaveformRangeEditor({
       {error && <p role="alert">{error}</p>}
       <div className="waveform-range-actions">
         <button type="button" onClick={onCancel}>
-          Cancel
+          取消
         </button>
-        <button type="submit">Apply ranges</button>
+        <button type="submit">应用范围</button>
       </div>
     </form>
   );
@@ -264,11 +268,7 @@ export function WaveformMeasurements({
   const format = (value: number | undefined) =>
     value === undefined ? "—" : Number(value.toPrecision(8)).toString();
   return (
-    <div
-      className="ac-cursor-readout"
-      role="status"
-      aria-label="Marker measurements"
-    >
+    <div className="ac-cursor-readout" role="status" aria-label="标记测量值">
       <strong>
         A: {format(a)} {unit} · B: {format(b)} {unit}
         {a !== undefined && b !== undefined && (

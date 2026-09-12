@@ -13,30 +13,30 @@ const GROUPS: readonly {
   items: readonly { kind: SelectionClass; label: string }[];
 }[] = [
   {
-    title: "Circuit",
+    title: "电路",
     items: [
-      { kind: "instance", label: "Instances" },
-      { kind: "route", label: "Wires" },
-      { kind: "junction", label: "Junctions" },
-      { kind: "terminal", label: "Pins" },
+      { kind: "instance", label: "实例" },
+      { kind: "route", label: "导线" },
+      { kind: "junction", label: "连接点" },
+      { kind: "terminal", label: "引脚" },
     ],
   },
   {
-    title: "Electrical text",
+    title: "电气文本",
     items: [
-      { kind: "instance-name", label: "Instance names" },
-      { kind: "instance-value", label: "Instance values" },
-      { kind: "net-name", label: "Net / power names" },
-      { kind: "pin-name", label: "Pin names" },
-      { kind: "route-marker", label: "Route markers" },
+      { kind: "instance-name", label: "实例名称" },
+      { kind: "instance-value", label: "实例值" },
+      { kind: "net-name", label: "网络 / 电源名称" },
+      { kind: "pin-name", label: "引脚名称" },
+      { kind: "route-marker", label: "线路标记" },
     ],
   },
   {
-    title: "Markup",
+    title: "标注",
     items: [
-      { kind: "drafting-text", label: "Note text / callouts" },
-      { kind: "drafting-line", label: "Lines / arrows" },
-      { kind: "drafting-shape", label: "Shapes" },
+      { kind: "drafting-text", label: "说明文本 / 标注框" },
+      { kind: "drafting-line", label: "直线 / 箭头" },
+      { kind: "drafting-shape", label: "图形" },
     ],
   },
 ] as const;
@@ -80,29 +80,25 @@ export function SelectionFilterPopover({
     >
       <header>
         <div>
-          <p className="selection-filter-kicker">Selection</p>
-          <h2 id="selection-filter-title">Selection Filter</h2>
+          <p className="selection-filter-kicker">选择</p>
+          <h2 id="selection-filter-title">选择筛选器</h2>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close selection filter"
-        >
-          Close
+        <button type="button" onClick={onClose} aria-label="关闭选择筛选器">
+          关闭
         </button>
       </header>
-      <div className="selection-filter-presets" aria-label="Filter presets">
+      <div className="selection-filter-presets" aria-label="筛选预设">
         <button type="button" onClick={() => onChange(ALL_SELECTION_FILTER)}>
-          All
+          全部
         </button>
         <button type="button" onClick={() => onChange(NO_SELECTION_FILTER)}>
-          None
+          无
         </button>
         <button
           type="button"
           onClick={() => onChange(DEFAULT_SELECTION_FILTER)}
         >
-          Default
+          默认
         </button>
       </div>
       {GROUPS.map((group) => (

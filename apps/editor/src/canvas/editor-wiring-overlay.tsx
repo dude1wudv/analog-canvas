@@ -57,7 +57,7 @@ export function EditorWiringOverlay({
           >
             <input
               ref={netLabelEditorInputRef}
-              aria-label="Net Label"
+              aria-label="网络标签"
               value={netLabelPlacement.draft}
               onChange={(event) =>
                 onNetLabelDraftChange(event.currentTarget.value)

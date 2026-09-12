@@ -74,48 +74,48 @@ export function SelectionInspectorDetails({
   return (
     <>
       <dl className="inspector">
-        <dt>Selected</dt>
+        <dt>已选择</dt>
         <dd>{snapshot.selected}</dd>
-        <dt>Internal routes</dt>
+        <dt>内部线路</dt>
         <dd data-testid="selected-internal-route-count">
           {snapshot.internalRouteCount}
         </dd>
-        <dt>Revision</dt>
+        <dt>修订版本</dt>
         <dd data-testid="revision">{snapshot.revision}</dd>
-        <dt>Source status</dt>
+        <dt>源文件状态</dt>
         <dd data-testid="source-status">{snapshot.sourceStatus}</dd>
-        <dt>Documents</dt>
+        <dt>文档</dt>
         <dd data-testid="document-count">{snapshot.documentCount}</dd>
-        <dt>Current Document</dt>
+        <dt>当前文档</dt>
         <dd data-testid="active-document-id">{snapshot.activeDocumentId}</dd>
-        <dt>Document instances</dt>
+        <dt>文档实例</dt>
         <dd data-testid="active-instance-count">
           {snapshot.activeInstanceCount}
         </dd>
-        <dt>Instances</dt>
+        <dt>实例</dt>
         <dd data-testid="instance-count">{snapshot.projectInstanceCount}</dd>
-        <dt>Nets</dt>
+        <dt>网络</dt>
         <dd data-testid="net-count">{snapshot.netCount}</dd>
-        <dt>Tool</dt>
+        <dt>工具</dt>
         <dd data-testid="active-tool">{snapshot.tool}</dd>
-        <dt>Flightlines</dt>
+        <dt>飞线</dt>
         <dd data-testid="flightline-count">{snapshot.flightlineCount}</dd>
-        <dt>Crossings</dt>
+        <dt>交叉点</dt>
         <dd data-testid="crossing-count">{snapshot.crossingCount}</dd>
-        <dt>Annotations</dt>
+        <dt>注释</dt>
         <dd data-testid="annotation-count">{snapshot.annotationCount}</dd>
-        <dt>Status</dt>
+        <dt>状态</dt>
         <dd aria-live="polite">{snapshot.status}</dd>
       </dl>
-      <section aria-label="SPICE import report" className="diagnostics">
-        <h2>SPICE Import Report</h2>
+      <section aria-label="SPICE 导入报告" className="diagnostics">
+        <h2>SPICE 导入报告</h2>
         <p data-testid="import-report-lifecycle">
           Historical messages captured while importing{" "}
           {importReport?.entryPath ?? "the current source"}; they are not
           current ERC results.
         </p>
         {!importReport || importReport.diagnostics.length === 0 ? (
-          <p>No import messages</p>
+          <p>没有导入消息</p>
         ) : null}
         <ul data-testid="import-report-diagnostics">
           {importReport?.diagnostics.map((diagnostic, index) => (
@@ -162,8 +162,8 @@ function netTraceHopDetail(hop: NetTraceHop): string {
 }
 
 function netTraceHopAction(hop: NetTraceHop): string {
-  if (hop.direction === "global") return "Global";
-  return hop.direction === "down" ? "Enter" : "Return";
+  if (hop.direction === "global") return "全局";
+  return hop.direction === "down" ? "进入" : "返回";
 }
 
 /** Concrete hierarchy edges for the currently highlighted logical Net. */
@@ -174,7 +174,7 @@ export function NetTraceSection({
 }: NetTraceSectionProps) {
   return (
     <section
-      aria-label="Hierarchy Net trace"
+      aria-label="层次化网络追踪"
       className="diagnostics erc-diagnostics net-trace"
     >
       <h2>Hierarchy Net trace ({trace.highlights.length} Cells)</h2>
@@ -223,7 +223,7 @@ function DiagnosticFilters({
       diagnostics.some((diagnostic) => diagnostic.severity === filter),
   );
   return (
-    <div className="diagnostic-filters" aria-label="Issue severities">
+    <div className="diagnostic-filters" aria-label="问题严重程度">
       {filters.map((filter) => {
         const count =
           filter === "all"
@@ -312,10 +312,7 @@ export function ProjectDiagnosticsSection({
     previousBlockingRef.current = hasBlockingIssue;
   }, [hasBlockingIssue]);
   return (
-    <section
-      aria-label="Project diagnostics"
-      className="diagnostics erc-diagnostics"
-    >
+    <section aria-label="项目诊断" className="diagnostics erc-diagnostics">
       <details
         ref={sectionRef}
         open={sectionOpen || undefined}
@@ -323,23 +320,23 @@ export function ProjectDiagnosticsSection({
       >
         <summary>
           <h2>
-            Issues{" "}
+            问题{" "}
             {checkStatus === "unchecked" || checkStatus === "failed"
               ? ""
               : `(${availableDiagnostics.length})`}
           </h2>
-          <span>{hasBlockingIssue ? "Action required" : "Review"}</span>
+          <span>{hasBlockingIssue ? "需要处理" : "查看"}</span>
         </summary>
         <div className="diagnostics-body">
           {checkStatus !== "current" ? (
             <p data-testid="diagnostic-check-state" role="status">
               {checkStatus === "stale"
-                ? "Last check is out of date. Use Check and Save to check again."
+                ? "上次检查已过期，请使用“检查并保存”重新检查。"
                 : checkStatus === "failed"
-                  ? `Check failed: ${checkError ?? "Unknown error"}. Saving is independent.`
+                  ? `检查失败：${checkError ?? "未知错误"}。保存操作不受影响。`
                   : checkStatus === "checking"
-                    ? "Checking…"
-                    : "Not checked. Use Check and Save to check ERC and visual issues."}
+                    ? "正在检查…"
+                    : "尚未检查。请使用“检查并保存”检查 ERC 和视觉问题。"}
             </p>
           ) : null}
           {observationCount > 0 ? (
@@ -349,8 +346,8 @@ export function ProjectDiagnosticsSection({
               aria-pressed={showObservations}
               onClick={() => setShowObservations((current) => !current)}
             >
-              {showObservations ? "Hide" : "Show"} non-blocking observations (
-              {observationCount})
+              {showObservations ? "隐藏" : "显示"}非阻断性观察项（
+              {observationCount}）
             </button>
           ) : null}
           <DiagnosticFilters
@@ -359,13 +356,11 @@ export function ProjectDiagnosticsSection({
             onSeverityFilterChange={setSeverityFilter}
           />
           {availableDiagnostics.length === 0 && checkStatus === "current" ? (
-            <p data-testid="no-current-diagnostics">
-              No current actionable diagnostics
-            </p>
+            <p data-testid="no-current-diagnostics">当前没有需要处理的诊断</p>
           ) : availableDiagnostics.length > 0 &&
             visibleDiagnostics.length === 0 ? (
             <p data-testid="no-matching-diagnostics">
-              No diagnostics match the current filters
+              没有符合当前筛选条件的诊断
             </p>
           ) : null}
           <ul data-testid="project-diagnostics">

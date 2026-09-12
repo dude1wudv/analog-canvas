@@ -1,7 +1,7 @@
 {
   "name": "Analog Canvas",
   "short_name": "Analog Canvas",
-  "description": "Local-first circuit schematic editor",
+  "description": "本地优先的电路原理图编辑器",
   "id": "./",
   "start_url": "./",
   "scope": "./",

@@ -27,9 +27,9 @@ describe("DrawingToolbar", () => {
     expect(markup).toContain('data-testid="examples-toggle"');
     expect(markup).toContain('data-testid="draw-tool-wire"');
     expect(markup).toContain('aria-pressed="true"');
-    expect(markup).toContain("Insert component (I)");
-    expect(markup).toContain("Document settings");
+    expect(markup).toContain("插入元件（I）");
+    expect(markup).toContain("文档设置");
     expect(markup).toContain('data-testid="digital-simulation-toggle"');
-    expect(markup).toContain("Digital Simulation");
+    expect(markup).toContain("数字仿真");
   });
 });

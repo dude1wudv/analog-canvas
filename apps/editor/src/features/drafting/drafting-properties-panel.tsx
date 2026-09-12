@@ -118,11 +118,11 @@ export function DraftingPropertiesPanel({
     return (
       <section
         className="property-section drafting-text-properties"
-        aria-label="Drawing text properties"
+        aria-label="绘图文本属性"
         data-testid="drafting-properties"
       >
         <div className="property-card">
-          <div className="property-section-heading">Text</div>
+          <div className="property-section-heading">文本</div>
           <ColorOverrideControl
             label="Text color"
             value={object.styleOverride?.color}
@@ -130,7 +130,7 @@ export function DraftingPropertiesPanel({
             disabled={object.locked}
             onChange={(color) => onStyleChange({ color })}
           />
-          <small>Auto inherits the document text color.</small>
+          <small>自动继承文档文本颜色。</small>
           <button
             type="button"
             className="drafting-text-lock"
@@ -203,13 +203,13 @@ export function DraftingPropertiesPanel({
   return (
     <section
       className="context-actions drawing-properties"
-      aria-label="Drawing style"
+      aria-label="绘图样式"
       data-testid="drafting-properties"
     >
-      <h2>Drawing style</h2>
+      <h2>绘图样式</h2>
       {object.kind === "arrow" ? (
         <div className="drawing-arrow-style">
-          <span>Style</span>
+          <span>样式</span>
           <ArrowStylePicker
             value={arrowPresetFor(object)}
             disabled={object.locked}
@@ -233,9 +233,9 @@ export function DraftingPropertiesPanel({
         </label>
       ) : null}
       <label>
-        Line style
+        线条样式
         <select
-          aria-label="Line style"
+          aria-label="线条样式"
           value={lineStyle}
           disabled={object.locked}
           onChange={(event) =>
@@ -245,9 +245,9 @@ export function DraftingPropertiesPanel({
             })
           }
         >
-          <option value="solid">Solid</option>
-          <option value="dashed">Dashed</option>
-          <option value="dotted">Dotted</option>
+          <option value="solid">实线</option>
+          <option value="dashed">虚线</option>
+          <option value="dotted">点线</option>
         </select>
       </label>
       <label>
@@ -304,7 +304,7 @@ export function DraftingPropertiesPanel({
         <label>
           Radius
           <input
-            aria-label="Circle radius"
+            aria-label="圆形半径"
             type="number"
             min="1"
             step="1"
@@ -324,7 +324,7 @@ export function DraftingPropertiesPanel({
           <label>
             Width
             <input
-              aria-label="Rectangle width"
+              aria-label="矩形宽度"
               type="number"
               min="1"
               step="1"
@@ -341,7 +341,7 @@ export function DraftingPropertiesPanel({
           <label>
             Height
             <input
-              aria-label="Rectangle height"
+              aria-label="矩形高度"
               type="number"
               min="1"
               step="1"
@@ -359,9 +359,9 @@ export function DraftingPropertiesPanel({
       ) : null}
       {object.kind === "construction-line" && points.length > 2 ? (
         <label>
-          Curve segment
+          曲线段
           <select
-            aria-label="Curve segment"
+            aria-label="曲线段"
             value={String(segmentIndex)}
             disabled={object.locked}
             onChange={(event) => {
@@ -384,7 +384,7 @@ export function DraftingPropertiesPanel({
         <label>
           Tangent angle (°)
           <input
-            aria-label="Tangent angle"
+            aria-label="切线角度"
             type="number"
             min="0"
             max="170"
@@ -411,7 +411,7 @@ export function DraftingPropertiesPanel({
         <label>
           Bearing (°)
           <input
-            aria-label="Drawing bearing"
+            aria-label="绘图方向角"
             type="number"
             min="0"
             max="359"

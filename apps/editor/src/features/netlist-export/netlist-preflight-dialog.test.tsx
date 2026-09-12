@@ -42,8 +42,8 @@ describe("NetlistPreflightDialog", () => {
     expect(markup).toContain("Electrical readiness (1)");
     expect(markup).toContain("ERC_UNCONNECTED_PIN");
     expect(markup).toContain("same current-revision connectivity assessment");
-    expect(markup).toContain('aria-label="Readiness"');
-    expect(markup).toContain('aria-label="Netlist diagnostics"');
+    expect(markup).toContain('aria-label="就绪状态"');
+    expect(markup).toContain('aria-label="网表诊断"');
     expect(markup).toContain('data-has-preview="false"');
     expect(markup).toContain('data-has-diagnostics="true"');
   });
@@ -62,8 +62,8 @@ describe("NetlistPreflightDialog", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="Netlist naming profile"');
+    expect(markup).toContain('aria-label="网表命名方案"');
     expect(markup).toContain('value="cadence-bang"');
-    expect(markup).toContain("Cadence `!` globals");
+    expect(markup).toContain("Cadence `!` 全局网络");
   });
 });

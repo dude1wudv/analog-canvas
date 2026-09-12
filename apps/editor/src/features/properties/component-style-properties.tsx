@@ -29,13 +29,13 @@ export function ComponentStyleProperties({
 
   return (
     <PropertyDisclosure
-      title="Appearance"
-      ariaLabel="Component appearance"
+      title="外观"
+      ariaLabel="元件外观"
       className="component-appearance-card"
     >
-      <small>Line color applies to this component only.</small>
+      <small>线条颜色仅应用于此元件。</small>
       <ColorOverrideControl
-        label="Line"
+        label="线条"
         value={instance.styleOverride?.foreground}
         fallback={defaultForeground}
         onChange={update}

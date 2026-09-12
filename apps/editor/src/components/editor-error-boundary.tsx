@@ -93,17 +93,17 @@ export function EditorCrashScreen({
       <div className="editor-crash-panel" data-kind={kind}>
         <h1 id="editor-crash-title">
           {staleBuild
-            ? "This page is running an old version of the editor"
+            ? "此页面运行的是旧版编辑器"
             : moduleLoadFailure
-              ? "The editor could not finish loading"
-              : "The editor hit an unexpected problem"}
+              ? "编辑器未能完成加载"
+              : "编辑器遇到了意外问题"}
         </h1>
         <p>
           {staleBuild
-            ? "The app was updated after this page opened, so part of it can no longer load. Reloading with a clean copy fixes it. Your recent committed work is kept in this browser's recovery copies."
+            ? "此页面打开后应用已更新，因此部分内容无法继续加载。使用干净副本重新加载即可修复；最近提交的工作仍保存在浏览器恢复副本中。"
             : moduleLoadFailure
-              ? "A required application file was temporarily unavailable. Try again; if the problem continues, reload with a clean copy. Your browser recovery copies are safe."
-              : "Rendering stopped with an internal error. Your recent committed work is kept in this browser's recovery copies."}
+              ? "所需的应用文件暂时不可用。请重试；若问题仍然存在，请使用干净副本重新加载。浏览器恢复副本不会受影响。"
+              : "渲染因内部错误而停止。最近提交的工作仍保存在浏览器恢复副本中。"}
         </p>
         <p>
           <code>{message}</code>
@@ -115,11 +115,11 @@ export function EditorCrashScreen({
               data-testid="crash-reload-clean"
               onClick={onRecover}
             >
-              Reload with a clean copy
+              使用干净副本重新加载
             </button>
           ) : null}
           <button type="button" onClick={onReload}>
-            {moduleLoadFailure ? "Try again" : "Reload editor"}
+            {moduleLoadFailure ? "重试" : "重新加载编辑器"}
           </button>
           {moduleLoadFailure && onRecover ? (
             <button
@@ -127,7 +127,7 @@ export function EditorCrashScreen({
               data-testid="crash-reload-clean"
               onClick={onRecover}
             >
-              Reload with a clean copy
+              使用干净副本重新加载
             </button>
           ) : null}
           <BugReportLink
@@ -136,8 +136,7 @@ export function EditorCrashScreen({
           />
         </div>
         <p className="editor-crash-note">
-          After reloading, use File / Recover Local Work… if your latest changes
-          are missing.
+          重新加载后，如果最新更改丢失，请使用“文件 / 恢复本地工作…”。
         </p>
       </div>
     </div>

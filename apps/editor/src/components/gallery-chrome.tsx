@@ -20,8 +20,8 @@ export function GalleryChrome({
         <a
           className="gallery-home-link"
           href="/editor"
-          aria-label="Open the editor"
-          title="Open the editor"
+          aria-label="打开编辑器"
+          title="打开编辑器"
           data-testid="gallery-editor-link"
         >
           <span className="app-brand-mark" aria-hidden="true" />
@@ -33,7 +33,7 @@ export function GalleryChrome({
       </div>
       <div className="gallery-credit-group">
         <div className="tokenzhang-credit">
-          <span className="tokenzhang-credit-kicker">Presented by</span>
+          <span className="tokenzhang-credit-kicker">出品方</span>
           <a
             className="tokenzhang-link"
             href="https://tokenzhang.com"
@@ -57,7 +57,7 @@ export function GalleryChrome({
             className="analytics-link gallery-analytics-link"
             href="/analytics"
             data-testid="gallery-analytics"
-            title="Open visitor analytics"
+            title="打开访客统计"
           >
             {visitStats.uv.toLocaleString()} visitors ·{" "}
             {visitStats.pv.toLocaleString()} views
@@ -72,7 +72,7 @@ export function GalleryChrome({
           href="/editor?new=1"
           data-testid="gallery-new-circuit"
         >
-          New Circuit
+          新建电路
         </a>
       </nav>
     </header>

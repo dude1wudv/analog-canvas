@@ -106,12 +106,12 @@ export function createGalleryExampleCommands({
         credentials: "same-origin",
       });
       if (!response.ok) {
-        setStatus("This gallery entry is unavailable");
+        setStatus("此画廊条目不可用");
         return;
       }
       const payload = (await response.json()) as GalleryEntryPayload;
       if (!payload.projectText) {
-        setStatus("This gallery entry is unavailable");
+        setStatus("此画廊条目不可用");
         return;
       }
       const galleryProject = normalizeImportedProject(
@@ -137,7 +137,7 @@ export function createGalleryExampleCommands({
         install();
       }
     } catch {
-      setStatus("This gallery entry is unavailable");
+      setStatus("此画廊条目不可用");
     }
   };
 
@@ -163,7 +163,7 @@ export function createGalleryExampleCommands({
         ? ((await response.json()) as GalleryEntryPayload)
         : null;
       if (!payload?.projectText) {
-        setStatus("This gallery entry is unavailable");
+        setStatus("此画廊条目不可用");
         return;
       }
       const imported = parseProject(payload.projectText);
@@ -172,7 +172,7 @@ export function createGalleryExampleCommands({
       // Hierarchical scenes cannot be flattened into one clipboard fragment.
       await openGalleryEntryById(entryId);
     } catch {
-      setStatus("This gallery entry is unavailable");
+      setStatus("此画廊条目不可用");
     }
   };
 

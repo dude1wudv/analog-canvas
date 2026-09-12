@@ -464,7 +464,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
       setProblem(
         uiProblem(
           "SIMULATION_BATCH_SELECTION_REQUIRED",
-          "Select at least two saved folders to run as a batch",
+          "请至少选择两个已保存的文件夹进行批量运行",
         ),
       );
       return;
@@ -676,8 +676,8 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
         uiProblem(
           "SIMULATION_ARCHIVE_STORAGE_FAILED",
           saved.code === "quota-exceeded"
-            ? "Browser storage is full; export the complete run ZIP instead"
-            : "Browser result archives are unavailable; export the complete run ZIP instead",
+            ? "浏览器存储空间已满；请改为导出完整运行 ZIP"
+            : "浏览器结果归档不可用；请改为导出完整运行 ZIP",
         ),
       );
       return;
@@ -697,7 +697,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
       setProblem(
         uiProblem(
           "SIMULATION_ARCHIVE_UNAVAILABLE",
-          "The selected browser archive is no longer available",
+          "所选浏览器归档已不可用",
         ),
       );
       return;
@@ -739,7 +739,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
       setProblem(
         uiProblem(
           "SIMULATION_ARCHIVE_DELETE_FAILED",
-          "The browser archive could not be removed",
+          "无法删除浏览器归档",
         ),
       );
       return;
@@ -760,7 +760,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
         setProblem(
           uiProblem(
             "PLOT_EXPORT_UNAVAILABLE",
-            "Open Plot with at least one visible chart before exporting an image",
+            "导出图像前，请打开绘图并确保至少有一个可见图表",
           ),
         );
         return;
@@ -772,7 +772,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
           "PLOT_EXPORT_FAILED",
           error instanceof Error
             ? error.message
-            : "The visible plot could not be exported",
+            : "无法导出当前可见绘图",
         ),
       );
     } finally {
@@ -795,7 +795,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
       ["finished", "failed", "cancelled", "lost"].includes(item.state),
     ).length ?? 0;
   const statusLabel = busy
-    ? "Preparing…"
+    ? "正在准备…"
     : batch
       ? `Batch ${batch.state} · ${finishedBatchItems}/${batch.items.length}`
       : run
@@ -803,11 +803,11 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
           ? (run.result?.outcome.status ?? run.state)
           : run.state
         : prepared
-          ? "Deck prepared"
-          : "No run yet";
+          ? "仿真输入已准备"
+          : "尚未运行";
   const staleMessage =
     run?.inputStatus === "changed"
-      ? "Result belongs to an earlier Project revision. Run again to use the current circuit."
+      ? "结果属于较早的项目版本。请重新运行以使用当前电路。"
       : "";
   const activeProblem = problem ?? run?.error;
   const runPresentation = run
@@ -898,14 +898,14 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
   const artifactGroups = [
     {
       key: "prepare" as const,
-      label: "Prepare",
-      description: "Compiled input",
+      label: "准备",
+      description: "已编译输入",
       artifacts: prepared?.artifacts ?? [],
     },
     {
       key: "run" as const,
       label: "Run",
-      description: "Execution output",
+      description: "执行输出",
       artifacts:
         run?.artifacts.filter(
           (artifact) => !runPreparedArtifactIds.has(artifact.id),
@@ -959,7 +959,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
         await interaction.confirm({
           title: `Delete folder ${folder.name}?`,
           message:
-            "This removes its source files and saved drafts from the Project. Undo restores the folder; archived results are kept.",
+            "这会从项目中移除其源文件和已保存草稿。撤销可恢复该文件夹；归档结果会保留。",
         })
       ) {
         if (codeRef.current && !(await codeRef.current.save())) return;
@@ -987,7 +987,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     const name = await interaction.name({
       kind: "folder",
       ...(action === "rename" && current ? { folderId: current.id } : {}),
-      label: action === "rename" ? "Folder name" : "New simulation folder name",
+      label: action === "rename" ? "文件夹名称" : "新仿真文件夹名称",
       validate: (value) =>
         session
           .currentProject()
@@ -1057,10 +1057,10 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
             }
             onClick={() => void archiveCurrentRun()}
           >
-            {artifactBusy === "archive:save" ? "Archiving…" : "Archive"}
+            {artifactBusy === "archive:save" ? "正在归档…" : "归档"}
           </button>
           <details className="simulation-result-export">
-            <summary>Export</summary>
+            <summary>导出</summary>
             <div>
               {resultTab === "plot" ? (
                 <>
@@ -1070,8 +1070,8 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
                     onClick={() => void exportVisiblePlots("svg")}
                   >
                     {artifactBusy === "plots:svg"
-                      ? "Preparing SVG…"
-                      : "Visible plots · SVG"}
+                      ? "正在准备 SVG…"
+                      : "可见绘图 · SVG"}
                   </button>
                   <button
                     type="button"
@@ -1079,14 +1079,14 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
                     onClick={() => void exportVisiblePlots("png")}
                   >
                     {artifactBusy === "plots:png"
-                      ? "Preparing PNG…"
-                      : "Visible plots · PNG"}
+                      ? "正在准备 PNG…"
+                      : "可见绘图 · PNG"}
                   </button>
                 </>
               ) : null}
               {resultCsvArtifacts.length ? (
                 <section>
-                  <small>Complete result data</small>
+                  <small>完整结果数据</small>
                   {resultCsvArtifacts.map((artifact) => (
                     <button
                       key={artifact.id}
@@ -1117,7 +1117,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
   const resultContent = (
     <section
       className="simulation-results-dock"
-      aria-label="Simulation results"
+      aria-label="仿真结果"
     >
       <div ref={resultsBodyRef} className="simulation-results-body">
         {resultTab === "plot" ? (
@@ -1253,7 +1253,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
                       props.onOperatingPointProjection?.(null);
                     }}
                   >
-                    <option value="">Choose a record…</option>
+                    <option value="">选择记录…</option>
                     {resultRecordGroups(run.outputData)
                       .get("op")!
                       .map(({ index, analysis }) => (
@@ -1279,7 +1279,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
                   );
                 }}
               >
-                {canvasOpEnabled ? "Hide canvas values" : "Show on canvas"}
+                {canvasOpEnabled ? "隐藏画布数值" : "在画布上显示"}
               </button>
               <label>
                 Canvas labels
@@ -1297,13 +1297,13 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
                       });
                   }}
                 >
-                  <option value="named">Named and focused</option>
-                  <option value="all">All collected</option>
+                  <option value="named">已命名及聚焦项</option>
+                  <option value="all">全部采集项</option>
                 </select>
               </label>
               <span>
                 {run?.inputStatus === "changed"
-                  ? "Paused: the circuit changed"
+                  ? "已暂停：电路发生变化"
                   : `${canvasOpProjection?.values.length ?? 0} direct Net voltage${canvasOpProjection?.values.length === 1 ? "" : "s"}`}
               </span>
             </div>
@@ -1332,8 +1332,8 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
                     <table>
                       <thead>
                         <tr>
-                          <th>Vector</th>
-                          <th>Value</th>
+                          <th>向量</th>
+                          <th>数值</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1381,7 +1381,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
                         }));
                       }}
                     >
-                      <option value="">Choose before comparing…</option>
+                      <option value="">比较前请选择…</option>
                       {records.map(({ index, analysis }) => (
                         <option key={index} value={index}>
                           {resultRecordLabel(index, analysis)}
@@ -1409,8 +1409,8 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
                     {retainedComparisonRuns.some(
                       (candidate) => candidate.id === currentComparisonRun?.id,
                     )
-                      ? "Current kept"
-                      : "Keep current"}
+                      ? "已保留当前结果"
+                      : "保留当前结果"}
                   </button>
                   {retainedComparisonRuns.length ? (
                     <button
@@ -1440,10 +1440,10 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
             {archives.length ? (
               <section
                 className="simulation-archive-list"
-                aria-label="Saved result archives"
+                aria-label="已保存的结果归档"
               >
                 <header>
-                  <strong>Browser archives</strong>
+                  <strong>浏览器归档</strong>
                   <small>Local to this browser · {archives.length}/10</small>
                 </header>
                 <ul>
@@ -1549,7 +1549,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
                 .then(receive);
           }}
         >
-          {batchRunning ? "Cancel batch" : "Cancel run"}
+          {batchRunning ? "取消批量运行" : "取消运行"}
         </button>
       ) : selectedFolder ? (
         <button
@@ -1573,7 +1573,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
         className={`simulation-status-chip simulation-status-${batch?.state ?? run?.state ?? (prepared ? "prepared" : "idle")}`}
         role="status"
       >
-        {activeDirty ? "Source changed" : statusLabel}
+        {activeDirty ? "源文件已更改" : statusLabel}
       </span>
       {batch ? (
         <details
@@ -1585,7 +1585,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
         >
           <summary
             aria-label={`Batch queue: ${batch.state}, ${finishedBatchItems} of ${batch.items.length} finished`}
-            title="Batch queue"
+            title="批量队列"
           >
             <span aria-hidden="true">≡</span>
           </summary>
@@ -1630,8 +1630,8 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
       <button
         className="simulation-minimize-button"
         onClick={props.onMinimize}
-        aria-label="Minimize simulation"
-        title="Minimize simulation"
+        aria-label="最小化仿真"
+        title="最小化仿真"
       >
         <span className="simulation-minimize-glyph" aria-hidden="true" />
       </button>
@@ -1639,10 +1639,10 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
         className="simulation-maximize-button"
         onClick={props.onToggleMaximized}
         aria-label={
-          props.maximized ? "Restore simulation panel" : "Maximize simulation"
+          props.maximized ? "还原仿真面板" : "最大化仿真面板"
         }
         title={
-          props.maximized ? "Restore simulation panel" : "Maximize simulation"
+          props.maximized ? "还原仿真面板" : "最大化仿真面板"
         }
       >
         {props.maximized ? "↙" : "□"}
@@ -1652,17 +1652,17 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
         onClick={async () => {
           if (
             await interaction.confirm({
-              title: "Exit Simulation?",
+              title: "退出仿真？",
               message:
-                "Unsaved source drafts and temporary run files will be discarded. An active run will be cancelled.",
-              acceptLabel: "Exit Simulation",
+                "未保存的源文件草稿和临时运行文件将被丢弃，正在进行的运行将被取消。",
+              acceptLabel: "退出仿真",
             })
           ) {
             codeRef.current?.discard();
             props.onExit();
           }
         }}
-        aria-label="Exit simulation"
+        aria-label="退出仿真"
       >
         ×
       </button>
@@ -1673,7 +1673,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     <section
       hidden={!open}
       className={`spice-simulation-surface${props.maximized ? " maximized" : ""}`}
-      aria-label="Analog simulation"
+      aria-label="模拟仿真"
       onKeyDown={(e) => {
         e.stopPropagation();
         if (e.key !== "Escape") return;

@@ -723,7 +723,7 @@ export function ScalarResultsExplorer({
                     </WaveformPlotSlot>
                   </div>
                 ) : (
-                  <p className="simulation-empty-plot">Outputs hidden</p>
+                  <p className="simulation-empty-plot">输出已隐藏</p>
                 )}
               </div>
             </div>
@@ -755,7 +755,7 @@ export function ScalarResultsExplorer({
                   </div>
                   <button
                     type="button"
-                    aria-label="Close plot"
+                    aria-label="关闭绘图"
                     onClick={() => setExpandedQuantity(null)}
                   >
                     ×
@@ -786,7 +786,7 @@ export function ScalarResultsExplorer({
                         true,
                       )
                     ) : (
-                      <p className="simulation-empty-plot">Outputs hidden</p>
+                      <p className="simulation-empty-plot">输出已隐藏</p>
                     )}
                   </div>
                 </div>

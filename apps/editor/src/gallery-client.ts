@@ -312,15 +312,10 @@ export function galleryCountLabel(
   } = {},
 ): string | null {
   if (total === null) return null;
-  const noun = total === 1 ? "circuit" : "circuits";
-  const base = `${total.toLocaleString()} ${
-    options.filtered ? `filtered ${noun}` : noun
-  }`;
+  const base = `${total.toLocaleString()} 个${options.filtered ? "筛选后的" : ""}电路`;
   const search = options.search ?? null;
   const clause = search
-    ? ` · ${search.visible} ${search.visible === 1 ? "match" : "matches"}${
-        search.settled ? "" : " so far"
-      }`
+    ? ` · ${search.visible} 个匹配${search.settled ? "" : "（目前）"}`
     : "";
   return `${base}${clause}`;
 }

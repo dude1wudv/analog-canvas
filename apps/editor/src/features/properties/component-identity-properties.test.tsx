@@ -62,9 +62,9 @@ describe("component identity properties", () => {
     expect(markup).not.toContain("Identity");
     expect(markup).not.toContain("<details");
     expect(markup).not.toContain("Cell");
-    expect(markup).toContain('<option value="">None</option>');
+    expect(markup).toContain('<option value="">无</option>');
     expect(markup).toContain("sky130_fd_pr__nfet_01v8");
-    expect(markup).toContain("Custom…");
+    expect(markup).toContain("自定义…");
     expect(markup).not.toContain("datalist");
     expect(markup).toMatch(
       /<div class="component-source-code"[^>]*><code>M1 drain gate source bulk sky130_fd_pr__nfet_01v8 W=1u L=150n<\/code><\/div>$/u,
@@ -103,7 +103,7 @@ describe("component identity properties", () => {
     );
     expect(markup).not.toContain("Identity");
     expect(markup).not.toContain("Cell");
-    expect(markup).not.toContain('aria-label="Netlist Reference"');
+    expect(markup).not.toContain('aria-label="网表位号"');
     // A retained Instance has nowhere to stand a label yet.
     expect(markup).not.toContain('aria-label="Component label"');
   });
@@ -140,7 +140,7 @@ describe("component identity properties", () => {
         onModelTargetChange={vi.fn()}
       />,
     );
-    expect(markup).toContain('aria-label="Netlist Reference"');
+    expect(markup).toContain('aria-label="网表位号"');
     expect(markup).toContain("Edit annotation");
     expect(markup).not.toContain('aria-label="Component label"');
     expect(markup).toContain('value="R1"');

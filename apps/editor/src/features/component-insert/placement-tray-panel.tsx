@@ -38,7 +38,7 @@ export function PlacementTrayPanel({
 
   return (
     <PropertyDisclosure
-      title="Placement Tray"
+      title="待放置区"
       summary={
         <span
           className="placement-tray-count"
@@ -50,7 +50,7 @@ export function PlacementTrayPanel({
         </span>
       }
       className="context-actions placement-tray"
-      ariaLabel="Placement Tray"
+      ariaLabel="待放置区"
       role="region"
     >
       <div className="component-mirror-row">

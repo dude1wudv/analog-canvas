@@ -78,7 +78,7 @@ export function CodeHelperList({
       ref={root}
       className="simulation-helper-list"
       role="dialog"
-      aria-label="Insert / Helper"
+      aria-label="插入 / 助手"
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === "Escape") {
@@ -101,8 +101,8 @@ export function CodeHelperList({
     >
       <input
         autoFocus
-        aria-label="Search commands or purpose"
-        placeholder="Search commands or purpose… / 搜索用途"
+        aria-label="搜索命令或用途"
+        placeholder="搜索命令或用途…"
         value={query}
         onChange={(event) => {
           setQuery(event.currentTarget.value);
@@ -112,7 +112,7 @@ export function CodeHelperList({
       <div
         className="simulation-helper-options"
         role="listbox"
-        aria-label="Helpers"
+        aria-label="助手"
       >
         {entries.map((item, i) => (
           <div key={item.key}>
@@ -131,9 +131,7 @@ export function CodeHelperList({
             </button>
           </div>
         ))}
-        {!entries.length && (
-          <p>No matching helper. You can keep writing native SPICE.</p>
-        )}
+        {!entries.length && <p>没有匹配的助手；你仍可继续编写原生 SPICE。</p>}
       </div>
     </div>
   );

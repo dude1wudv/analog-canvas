@@ -17,11 +17,11 @@ describe("NetNameProperties", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="Net identity"');
-    expect(markup).toContain('aria-label="Net Label scope"');
+    expect(markup).toContain('aria-label="网络标识"');
+    expect(markup).toContain('aria-label="网络标签作用域"');
     expect(markup).toContain('value="local" selected=""');
     expect(markup).toContain('data-scope="global"');
-    expect(markup).toContain("Preferred export spelling");
+    expect(markup).toContain("首选导出拼写");
     expect(markup).toContain("VDD, vdd");
     expect(markup).toContain(
       "Wire membership and source provenance are unchanged",
@@ -41,7 +41,7 @@ describe("NetNameProperties", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="Net Label scope"');
+    expect(markup).toContain('aria-label="网络标签作用域"');
     expect(markup).toContain("disabled");
   });
 });

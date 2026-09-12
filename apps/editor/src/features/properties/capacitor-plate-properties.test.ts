@@ -40,7 +40,7 @@ describe("capacitor plate Properties projection", () => {
     expect(capacitorPlatePropertyRows(document, instance)).toEqual([
       {
         role: "capacitor-top-plate",
-        label: "Top plate",
+        label: "上极板",
         pinName: "1",
         sourceNodePosition: 1,
         netId: "net-out",
@@ -48,7 +48,7 @@ describe("capacitor plate Properties projection", () => {
       },
       {
         role: "capacitor-bottom-plate",
-        label: "Bottom plate",
+        label: "下极板",
         pinName: "2",
         sourceNodePosition: 2,
         netId: "net-return",
@@ -72,13 +72,13 @@ describe("capacitor plate Properties projection", () => {
 
     expect(capacitorPlatePropertyRows(document, instance)).toEqual([
       expect.objectContaining({
-        label: "Top plate",
+        label: "上极板",
         pinName: "P1",
         sourceNodePosition: 1,
         netId: null,
       }),
       expect.objectContaining({
-        label: "Bottom plate",
+        label: "下极板",
         pinName: "P2",
         sourceNodePosition: 2,
         netId: null,

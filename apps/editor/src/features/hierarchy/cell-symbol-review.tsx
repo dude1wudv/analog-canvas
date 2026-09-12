@@ -39,16 +39,15 @@ export function CellSymbolReview({
       });
     setDraft({ ...draft, pinPlacements: placements });
   };
-  if (!cell.netlist)
-    return <p>Create a formal Cell interface before using it as a DUT.</p>;
+  if (!cell.netlist) return <p>将 Cell 用作 DUT 前，请先创建正式接口。</p>;
   return (
     <details className="cell-symbol-review">
-      <summary>Review Symbol</summary>
+      <summary>检查符号</summary>
       <p>
         Preview only until Apply. Pin order and electrical connections do not
         change.
       </p>
-      {ports.length === 0 && <p>This Cell has a valid zero-port interface.</p>}
+      {ports.length === 0 && <p>此 Cell 具有有效的零端口接口。</p>}
       <div style={{ width: 300, maxWidth: "100%", height: 170 }}>
         {symbol && (
           <SymbolArtwork
@@ -67,7 +66,7 @@ export function CellSymbolReview({
               min="10"
               step="10"
               value={draft.minimumBodySize?.[axis] ?? ""}
-              placeholder="Auto"
+              placeholder="自动"
               onChange={(e) =>
                 setDraft({
                   ...draft,

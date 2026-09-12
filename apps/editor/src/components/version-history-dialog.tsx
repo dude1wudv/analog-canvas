@@ -116,11 +116,11 @@ export function VersionHistoryDialog({
         data-testid="version-history-dialog"
       >
         <header className="version-history-header">
-          <p>Up to two previous versions are kept</p>
+          <p>最多保留两个历史版本</p>
           <h2 id="version-history-title">Version history — {entryName}</h2>
         </header>
         {versions === null ? (
-          <p className="version-history-note">Loading history…</p>
+          <p className="version-history-note">正在加载历史记录…</p>
         ) : versions.length === 0 ? (
           <p className="version-history-note" data-testid="version-empty">
             No earlier versions yet — history starts with the first update.
@@ -157,7 +157,7 @@ export function VersionHistoryDialog({
                   disabled={busy}
                   onClick={() => void restore(version.versionId)}
                 >
-                  Restore
+                  恢复
                 </button>
               </article>
             ))}
@@ -170,7 +170,7 @@ export function VersionHistoryDialog({
         ) : null}
         <div className="version-history-actions">
           <button type="button" disabled={busy} onClick={onClose}>
-            Close
+            关闭
           </button>
         </div>
       </section>

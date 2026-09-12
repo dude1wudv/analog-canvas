@@ -51,14 +51,14 @@ export function NoiseResultsExplorer({
       {analysis.integrated?.length ? (
         <section
           className="simulation-integrated-results"
-          aria-label="Integrated noise"
+          aria-label="积分噪声"
         >
-          <h4>Integrated noise</h4>
+          <h4>积分噪声</h4>
           <table>
             <thead>
               <tr>
-                <th>Quantity</th>
-                <th>Value</th>
+                <th>物理量</th>
+                <th>值</th>
               </tr>
             </thead>
             <tbody>

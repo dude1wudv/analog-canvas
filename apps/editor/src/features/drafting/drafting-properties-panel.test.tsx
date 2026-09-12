@@ -59,7 +59,7 @@ describe("unified arrow styles", () => {
     expect(markup).not.toContain('aria-label="Arrow head');
     expect(markup).not.toContain(">Reverse<");
     expect(markup).not.toContain(">Rotate<");
-    expect(markup).toContain('aria-label="Drawing bearing"');
+    expect(markup).toContain('aria-label="绘图方向角"');
   });
   it.each(["Arrow style", "New arrow style"])(
     "%s omits reversed line arrows and the headless line",
@@ -110,7 +110,7 @@ describe("unified arrow styles", () => {
     const object = { ...arrow(), outline: { width: 30 } } as DraftingObject;
     const markup = render(object);
     expect(markup).toContain('aria-label="Arrow width"');
-    expect(markup).not.toContain('aria-label="Tangent angle"');
+    expect(markup).not.toContain('aria-label="切线角度"');
   });
 });
 

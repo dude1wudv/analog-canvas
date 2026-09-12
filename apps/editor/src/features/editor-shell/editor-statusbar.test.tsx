@@ -37,8 +37,8 @@ describe("editor statusbar", () => {
     );
     expect(markup).toContain('data-testid="wire-options"');
     expect(markup).toContain("Saved locally");
-    expect(markup).toContain('aria-label="Current zoom"');
-    expect(markup).toContain('aria-label="Annotation grid"');
+    expect(markup).toContain('aria-label="当前缩放比例"');
+    expect(markup).toContain('aria-label="注释网格"');
   });
 
   function statusbarWithIssues(issues: {
@@ -89,7 +89,7 @@ describe("editor statusbar", () => {
     expect(markup).toContain('data-testid="statusbar-issues"');
     expect(markup).toContain('data-severity="error"');
     expect(markup).toContain("2 errors, 1 warning");
-    expect(markup).toContain("Action required");
+    expect(markup).toContain("需要处理");
   });
 
   it("shows a compact entry point only while selection is filtered", () => {
@@ -138,7 +138,7 @@ describe("editor statusbar", () => {
       });
       expect(markup).toContain('data-severity="none"');
       expect(markup).not.toContain("2 errors");
-      expect(markup).not.toContain("No issues");
+      expect(markup).not.toContain("未发现问题");
       expect(markup).toContain(`data-check-status="${checkStatus}"`);
     },
   );
@@ -161,6 +161,6 @@ describe("editor statusbar", () => {
     });
     expect(markup).toContain('data-testid="statusbar-issues"');
     expect(markup).toContain('data-severity="none"');
-    expect(markup).toContain("No issues");
+    expect(markup).toContain("未发现问题");
   });
 });

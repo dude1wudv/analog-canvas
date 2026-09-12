@@ -21,27 +21,27 @@ export function NetNameProperties({
   return (
     <section
       className="property-section net-name-properties"
-      aria-label="Net identity"
+      aria-label="网络标识"
     >
-      <div className="property-section-heading">Net identity</div>
+      <div className="property-section-heading">网络标识</div>
       <label>
         Label scope
         <select
           key={`${annotationId}-${authoredScope}`}
-          aria-label="Net Label scope"
+          aria-label="网络标签作用域"
           value={authoredScope}
           disabled={!editableScope}
           onChange={(event) =>
             onScopeChange(event.currentTarget.value as "local" | "global")
           }
         >
-          <option value="local">Local to Cell</option>
-          <option value="global">Global across Cells</option>
+          <option value="local">Cell 内局部</option>
+          <option value="global">跨 Cell 全局</option>
         </select>
       </label>
       <dl className="component-readonly-fields">
         <div>
-          <dt>Effective scope</dt>
+          <dt>有效作用域</dt>
           <dd>
             {effectiveScope === "global" ? (
               <span className="net-scope-badge" data-scope="global">
@@ -53,12 +53,12 @@ export function NetNameProperties({
           </dd>
         </div>
         <div>
-          <dt>Preferred export spelling</dt>
+          <dt>首选导出拼写</dt>
           <dd>{preferredSpelling ?? "Unnamed"}</dd>
         </div>
         {spellings.length > 1 ? (
           <div className="net-spelling-variants">
-            <dt>Spelling variants</dt>
+            <dt>拼写变体</dt>
             <dd>{spellings.join(", ")}</dd>
           </div>
         ) : null}

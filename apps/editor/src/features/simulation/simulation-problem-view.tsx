@@ -36,7 +36,7 @@ export function SimulationProblemView({
     ...(value.sourceRef === undefined ? {} : { sourceRef: value.sourceRef }),
   });
   return (
-    <section className="simulation-problem" aria-label="Simulation problem">
+    <section className="simulation-problem" aria-label="仿真问题">
       <header>
         <strong>{problem.code}</strong>
         <small>

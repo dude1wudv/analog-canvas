@@ -78,13 +78,10 @@ export function DcResultsExplorer({
   const xLabels = waveformAxisLabels(...xExtent, analysis.sweep.unit ?? "");
 
   return (
-    <section
-      className="transient-results-explorer"
-      aria-label="DC sweep results"
-    >
+    <section className="transient-results-explorer" aria-label="DC 扫描结果">
       <header>
         <div>
-          <small>DC sweep</small>
+          <small>DC 扫描</small>
           <strong>{analysis.plotName}</strong>
         </div>
         <span>{analysis.sweep.values.length} points</span>

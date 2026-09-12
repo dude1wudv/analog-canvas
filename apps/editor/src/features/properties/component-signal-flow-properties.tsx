@@ -141,13 +141,13 @@ export function ComponentSignalFlowProperties({
   return (
     <section
       className="property-card component-signal-flow-card"
-      aria-label="Signal flow transfer function"
+      aria-label="信号流传递函数"
     >
-      <div className="property-section-heading">Transfer function</div>
+      <div className="property-section-heading">传递函数</div>
       <label>
-        Formula
+        公式
         <input
-          aria-label="Signal flow formula"
+          aria-label="信号流公式"
           value={formula}
           placeholder={presentation.defaultFormula}
           onChange={(event) => setFormula(event.currentTarget.value)}
@@ -159,9 +159,9 @@ export function ComponentSignalFlowProperties({
         <label>
           Coefficient
           <input
-            aria-label="Signal flow coefficient"
+            aria-label="信号流系数"
             value={coefficient}
-            placeholder="Optional"
+            placeholder="可选"
             onChange={(event) => setCoefficient(event.currentTarget.value)}
             onBlur={commit}
             onKeyDown={commitOnEnter}
@@ -173,13 +173,13 @@ export function ComponentSignalFlowProperties({
           <label>
             Min width
             <input
-              aria-label="Signal flow minimum width"
+              aria-label="信号流最小宽度"
               type="number"
               min={20}
               max={1000}
               step={10}
               value={bodyWidth}
-              placeholder="Auto"
+              placeholder="自动"
               onChange={(event) => setBodyWidth(event.currentTarget.value)}
               onBlur={commit}
               onKeyDown={commitOnEnter}
@@ -188,13 +188,13 @@ export function ComponentSignalFlowProperties({
           <label>
             Min height
             <input
-              aria-label="Signal flow minimum height"
+              aria-label="信号流最小高度"
               type="number"
               min={20}
               max={500}
               step={10}
               value={bodyHeight}
-              placeholder="Auto"
+              placeholder="自动"
               onChange={(event) => setBodyHeight(event.currentTarget.value)}
               onBlur={commit}
               onKeyDown={commitOnEnter}

@@ -12,17 +12,17 @@ describe("EditorHelpDialog", () => {
     );
 
     expect(markup).toContain('role="dialog"');
-    expect(markup).toContain("About Analog Canvas");
-    expect(markup).toContain("Version <strong>0.2.0</strong>");
+    expect(markup).toContain("关于 Analog Canvas");
+    expect(markup).toContain("版本 <strong>0.2.0</strong>");
     expect(markup).toContain(
-      'href="https://github.com/cascode-ai/analog-canvas"',
+      'href="https://github.com/dude1wudv/analog-canvas"',
     );
     expect(markup).toContain(
-      'href="https://github.com/cascode-ai/analog-canvas/commits/main"',
+      'href="https://github.com/dude1wudv/analog-canvas/commits/main"',
     );
     expect(markup).toContain('href="https://www.tokenzhang.com"');
-    expect(markup).toContain(">Change Log</a>");
-    expect(markup).toContain(">Owner</a>");
+    expect(markup).toContain(">更新记录</a>");
+    expect(markup).toContain(">所有者</a>");
     expect(markup).toContain('target="_blank"');
     expect(markup).toContain('rel="noreferrer"');
   });
@@ -36,15 +36,15 @@ describe("EditorHelpDialog", () => {
       markup.indexOf('id="help-data"'),
     );
 
-    expect(shortcuts).toContain("Create");
-    expect(shortcuts).toContain("Edit");
-    expect(shortcuts).toContain("Workspace");
+    expect(shortcuts).toContain("创建");
+    expect(shortcuts).toContain("编辑");
+    expect(shortcuts).toContain("工作区");
     expect(shortcuts.match(/class="help-shortcut-item"/gu)).toHaveLength(12);
     for (const key of ["I", "P", "W", "T", "Q", "U", "C", "R", "F"]) {
       expect(shortcuts).toContain(`>${key}</kbd>`);
     }
-    expect(shortcuts).toContain("Mirror left / right");
-    expect(shortcuts).toContain("Mirror top / bottom");
+    expect(shortcuts).toContain("左右镜像");
+    expect(shortcuts).toContain("上下镜像");
     expect(shortcuts).not.toContain("File and history");
     expect(shortcuts).not.toContain("Select all placed components");
   });
@@ -54,13 +54,13 @@ describe("EditorHelpDialog", () => {
       <EditorHelpDialog closeButtonRef={{ current: null }} onClose={vi.fn()} />,
     );
 
-    expect(markup).toContain("Manage Cells…");
-    expect(markup).toContain("Place Cell");
-    expect(markup).toContain("Select a hierarchical block");
+    expect(markup).toContain("管理 Cell…");
+    expect(markup).toContain("放置 Cell");
+    expect(markup).toContain("选中层次化模块");
     expect(markup).not.toContain("Select a rectangle");
     expect(markup).not.toContain("convert it into a hierarchical block");
-    expect(markup).toContain("Cell and <strong>Place Cell</strong>");
-    expect(markup).toContain("Up</strong> or <kbd>Shift+E</kbd>");
+    expect(markup).toContain("<strong>放置 Cell</strong>");
+    expect(markup).toContain("<kbd>Shift+E</kbd>");
   });
 
   it("keeps prose separated from inline emphasis and shortcut keys", () => {
@@ -69,15 +69,15 @@ describe("EditorHelpDialog", () => {
     );
 
     for (const boundary of [
-      "inputs. Use <strong>File / Save</strong>",
-      "File / Refresh app</strong> when",
-      "tool from <strong>Draw</strong>",
-      "the left <strong>Library</strong>",
-      "Wire (or <kbd>W</kbd>)",
-      "Delete</kbd> or <kbd>Backspace</kbd>",
-      "places it and <kbd>Esc</kbd>",
-      "Cell and <strong>Place Cell</strong>",
-      "Up</strong> or <kbd>Shift+E</kbd>",
+      "<strong>文件 / 保存</strong>更新正式云项目",
+      "文件 / 刷新应用</strong>",
+      "从<strong>绘制</strong>中选择绘图工具",
+      "<strong>元件库</strong>",
+      "导线（或按 <kbd>W</kbd>",
+      "删除</kbd> 或 <kbd>Backspace</kbd>",
+      "点击完成放置，按",
+      "<strong>放置 Cell</strong>",
+      "<kbd>Shift+E</kbd>",
     ]) {
       expect(markup).toContain(boundary);
     }

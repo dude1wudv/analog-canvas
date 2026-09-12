@@ -63,13 +63,13 @@ describe("ConnectAgentPanel", () => {
     const markup = renderToStaticMarkup(
       <ConnectAgentPanel {...baseProps({ status: "idle" })} />,
     );
-    expect(markup).toContain("Connect Agent");
-    expect(markup).toContain("Not connected");
+    expect(markup).toContain("连接 Agent");
+    expect(markup).toContain("未连接");
     expect(markup).toContain('data-testid="agent-preset-review"');
     expect(markup).toContain('data-testid="agent-preset-layout"');
     expect(markup).toContain('data-testid="agent-preset-full"');
-    expect(markup).toContain("Review");
-    expect(markup).toContain("Full Circuit Edit");
+    expect(markup).toContain("检查");
+    expect(markup).toContain("完整电路编辑");
   });
 
   it("shows an expiring connection hand-off while waiting for the Agent", () => {
@@ -89,7 +89,7 @@ describe("ConnectAgentPanel", () => {
     expect(markup).toContain('data-testid="agent-copy-instructions"');
     expect(markup).toContain('data-testid="agent-copy-text"');
     expect(markup).toContain('class="agent-copy-card"');
-    expect(markup).toContain("Plain text");
+    expect(markup).toContain("纯文本");
     expect(markup).toContain("Connect to Analog Canvas.");
     expect(markup).toContain(
       "Claim: {&quot;claimCode&quot;:&quot;CLAIM-12345&quot;}",
@@ -100,7 +100,7 @@ describe("ConnectAgentPanel", () => {
     expect(markup).toContain("circuit.snapshot, circuit.render");
     expect(markup).toContain('data-testid="agent-pause"');
     expect(markup).toContain('data-testid="agent-revoke"');
-    expect(markup).toContain('aria-label="Copy connection setup"');
+    expect(markup).toContain('aria-label="复制连接设置"');
     // No grant presets after connecting.
     expect(markup).not.toContain('data-testid="agent-grant"');
   });
@@ -150,7 +150,7 @@ describe("ConnectAgentPanel", () => {
         })}
       />,
     );
-    expect(markup).toContain("Disconnected");
+    expect(markup).toContain("已断开");
     expect(markup).not.toContain('data-testid="agent-claim"');
     expect(markup).not.toContain('data-testid="agent-revoke"');
     expect(markup).toContain('data-testid="agent-new-connection"');
@@ -176,8 +176,8 @@ describe("ConnectAgentPanel", () => {
       />,
     );
     expect(markup).toContain('data-testid="agent-properties"');
-    expect(markup).toContain("Connected");
-    expect(markup).toContain("Manage");
+    expect(markup).toContain("已连接");
+    expect(markup).toContain("管理");
     expect(markup).toContain('data-testid="agent-pause"');
     expect(markup).not.toContain('data-testid="agent-revoke"');
   });

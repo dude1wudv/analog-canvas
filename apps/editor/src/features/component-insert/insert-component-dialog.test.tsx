@@ -19,7 +19,7 @@ describe("InsertComponentDialog", () => {
 
     expect(markup).toContain('role="dialog"');
     expect(markup).toContain('role="combobox"');
-    expect(markup).toContain('aria-label="Component search"');
+    expect(markup).toContain('aria-label="搜索元件"');
     expect(markup).toContain('aria-expanded="true"');
     expect(markup).toContain('role="listbox"');
     expect(markup).toContain('class="insert-tile-grid"');
@@ -56,7 +56,7 @@ describe("InsertComponentDialog", () => {
     expect(markup).not.toContain('aria-label="Reference name"');
     expect(markup).not.toContain('aria-label="Initial rotation"');
     expect(markup).not.toContain('aria-label="Power rail Net name"');
-    expect(markup).not.toContain(">Apply</button>");
+    expect(markup).not.toContain(">应用</button>");
     expect(markup).not.toContain("library-component-");
   });
 
@@ -97,8 +97,8 @@ describe("InsertComponentDialog", () => {
       />,
     );
 
-    expect(markup).toContain("Place Hierarchical Cell");
-    expect(markup).toContain('aria-label="Cell search"');
+    expect(markup).toContain("放置层次化 Cell");
+    expect(markup).toContain('aria-label="搜索Cell"');
     expect(markup).toContain('data-testid="insert-cell-document-amplifier"');
     expect(markup).not.toContain('data-testid="insert-component-nmos"');
     expect(markup).toContain(">Amplifier</span>");

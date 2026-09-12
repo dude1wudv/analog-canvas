@@ -78,7 +78,7 @@ export function SimulationMeasurementEditor({
   const addButton = (
     <button
       type="button"
-      aria-label="Add measurement"
+      aria-label="添加测量"
       disabled={!canAdd}
       onClick={() => {
         const analysis = analyses[0]!;
@@ -101,9 +101,7 @@ export function SimulationMeasurementEditor({
 
   return (
     <div className="simulation-measurement-editor">
-      {!outputs.length ? (
-        <small>Add an Output signal before defining a measurement.</small>
-      ) : null}
+      {!outputs.length ? <small>定义测量前请先添加输出信号。</small> : null}
       {measurements.map((measurement, index) => {
         const method = measurement.method;
         const window = methodWindow(method);
@@ -122,7 +120,7 @@ export function SimulationMeasurementEditor({
             </legend>
             <div className="simulation-measurement-fields">
               <label>
-                Name
+                名称
                 <input
                   value={measurement.label}
                   onChange={(event) =>
@@ -154,7 +152,7 @@ export function SimulationMeasurementEditor({
                 </select>
               </label>
               <label>
-                Output
+                输出
                 <select
                   value={measurement.outputId}
                   onChange={(event) =>
@@ -236,8 +234,8 @@ export function SimulationMeasurementEditor({
                       }));
                     }}
                   >
-                    <option value="all">Entire analysis</option>
-                    <option value="window">Window</option>
+                    <option value="all">整个分析范围</option>
+                    <option value="window">窗口</option>
                   </select>
                 </label>
               ) : null}
@@ -289,7 +287,7 @@ export function SimulationMeasurementEditor({
             <div className="simulation-measurement-actions">
               <button
                 type="button"
-                aria-label="Remove measurement"
+                aria-label="移除测量"
                 onClick={() =>
                   onChange(
                     measurements.filter(

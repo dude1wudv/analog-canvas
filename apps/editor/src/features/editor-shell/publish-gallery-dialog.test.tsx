@@ -44,7 +44,7 @@ describe("PublishGalleryDialog", () => {
     // No queue to wait in, and no passphrase to guess.
     expect(markup).not.toContain("review");
     expect(markup).not.toContain("passphrase");
-    expect(markup).not.toMatch(/disabled=""[^>]*>Publish</u);
+    expect(markup).not.toMatch(/disabled=""[^>]*>发布</u);
   });
 
   it("reopens on the draft it was closed with", () => {
@@ -111,9 +111,9 @@ describe("PublishGalleryDialog", () => {
     // Advisory, never a hard gate: the checker has false positives and a
     // sketch is legitimate to share.
     expect(markup).not.toContain("publish-gallery-gates-blocking");
-    expect(markup).toContain("publishing stays open");
+    expect(markup).toContain("仍可继续发布");
     expect(markup).toContain("M1.g, R2.2");
-    expect(markup).not.toMatch(/disabled=""[^>]*>Publish</u);
+    expect(markup).not.toMatch(/disabled=""[^>]*>发布</u);
   });
 
   it("shows the same advisory failures for a moderator", () => {
@@ -138,7 +138,7 @@ describe("PublishGalleryDialog", () => {
       }),
     );
     expect(markup).not.toContain("publish-gallery-gates-blocking");
-    expect(markup).toContain("publishing stays open");
-    expect(markup).not.toMatch(/disabled=""[^>]*>Publish</u);
+    expect(markup).toContain("仍可继续发布");
+    expect(markup).not.toMatch(/disabled=""[^>]*>发布</u);
   });
 });

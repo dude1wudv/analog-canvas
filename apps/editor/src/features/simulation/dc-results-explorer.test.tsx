@@ -40,7 +40,7 @@ describe("DcResultsExplorer", () => {
         labels={{ "probe-out": "Output" }}
       />,
     );
-    expect(markup).toContain('aria-label="DC sweep results"');
+    expect(markup).toContain('aria-label="DC 扫描结果"');
     expect(markup).toContain('aria-label="DC voltage"');
     expect(markup).not.toContain("Voltage DC sweep");
     expect(markup).toContain("3 points");

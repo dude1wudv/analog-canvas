@@ -49,13 +49,13 @@ describe("DocumentSettingsSection", () => {
 
     // Docked beside the canvas, not a dialog that hides what it rescales.
     expect(markup).not.toContain('role="dialog"');
-    expect(markup).toContain('aria-label="Document settings"');
-    expect(markup).toContain('aria-label="Font size"');
-    expect(markup).toContain('aria-label="Junction dot size"');
+    expect(markup).toContain('aria-label="文档设置"');
+    expect(markup).toContain('aria-label="字号"');
+    expect(markup).toContain('aria-label="连接点大小"');
     // One Net answers for every NMOS or PMOS, so these belong to the Document
     // rather than to whichever transistor is selected.
-    expect(markup).toContain('aria-label="Default NMOS bulk Net"');
-    expect(markup).toContain('aria-label="Default PMOS bulk Net"');
+    expect(markup).toContain('aria-label="默认 NMOS 体端网络"');
+    expect(markup).toContain('aria-label="默认 PMOS 体端网络"');
   });
 
   it("shows repeated Ground markers as one Logical Net choice", () => {
@@ -97,7 +97,7 @@ describe("DocumentSettingsSection", () => {
     expect(markup.match(/value="net-ground-a"/g)).toHaveLength(2);
     expect(markup).not.toContain('value="net-ground-b"');
     expect(markup).toContain(
-      'aria-label="Default NMOS bulk Net"><option value="">None</option><option value="net-ground-a" selected="">0</option>',
+      'aria-label="默认 NMOS 体端网络"><option value="">无</option><option value="net-ground-a" selected="">0</option>',
     );
   });
 });

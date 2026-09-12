@@ -36,7 +36,7 @@ describe("SimulationMeasurementResults", () => {
         ]}
       />,
     );
-    expect(markup).toContain("Measurements");
+    expect(markup).toContain("测量");
     expect(markup).toContain("2 values");
     expect(markup.match(/simulation-measurement-output"/gu)).toHaveLength(1);
     expect(markup.match(/<strong>Vout<\/strong>/gu)).toHaveLength(1);

@@ -15,18 +15,18 @@ export function AnnotationColorProperties({
   return (
     <section
       className="property-section annotation-text-properties"
-      aria-label="Text properties"
+      aria-label="文本属性"
     >
-      <PropertyDisclosure title="Text appearance" ariaLabel="Text appearance">
+      <PropertyDisclosure title="文本外观" ariaLabel="文本外观">
         <ColorOverrideControl
-          label="Text color"
+          label="文本颜色"
           value={annotation.textColor}
           fallback={inheritedColor}
-          autoTitle="Use the inherited text color"
+          autoTitle="使用继承的文本颜色"
           disabled={annotation.locked}
           onChange={onChange}
         />
-        <small>Auto uses the inherited text color.</small>
+        <small>自动使用继承的文本颜色。</small>
       </PropertyDisclosure>
     </section>
   );

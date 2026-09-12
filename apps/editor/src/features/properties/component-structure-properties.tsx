@@ -20,20 +20,20 @@ export function FormalPortProperties({
   ) => void;
 }) {
   return (
-    <div className="formal-port-properties" aria-label="Cell Pin properties">
+    <div className="formal-port-properties" aria-label="Cell Pin 属性">
       <label>
-        <span>Terminal name</span>
+        <span>端子名称</span>
         <input
           key={`${terminal.id}-${revision}-terminal-name`}
-          aria-label="Cell Pin name"
+          aria-label="Cell Pin 名称"
           defaultValue={terminal.name}
           onBlur={(event) => onRename(event.currentTarget.value)}
         />
       </label>
       <label>
-        <span>Direction</span>
+        <span>方向</span>
         <select
-          aria-label="Cell Pin direction"
+          aria-label="Cell Pin 方向"
           value={terminal.direction}
           onChange={(event) =>
             onDirectionChange(
@@ -42,10 +42,10 @@ export function FormalPortProperties({
             )
           }
         >
-          <option value="input">Input</option>
-          <option value="output">Output</option>
-          <option value="inout">Inout</option>
-          <option value="passive">Passive</option>
+          <option value="input">输入</option>
+          <option value="output">输出</option>
+          <option value="inout">双向</option>
+          <option value="passive">无源</option>
         </select>
       </label>
       <small>
@@ -75,11 +75,8 @@ export function CellSymbolLayoutProperties({
 }) {
   const bodySize = cell.presentation.cellSymbol?.minimumBodySize;
   return (
-    <div
-      className="cell-symbol-layout-properties"
-      aria-label="Cell symbol layout"
-    >
-      <div className="property-section-heading">Cell symbol layout</div>
+    <div className="cell-symbol-layout-properties" aria-label="Cell 符号布局">
+      <div className="property-section-heading">Cell 符号布局</div>
       <small>
         Editing <strong>{cell.name}</strong>. These definition-level changes
         apply to every parent instance; connected routes follow the moved pin.
@@ -104,7 +101,7 @@ export function CellSymbolLayoutProperties({
           Width
           <input
             key={`${cell.id}-${cell.revision}-symbol-width`}
-            aria-label="Cell symbol width"
+            aria-label="Cell 符号宽度"
             defaultValue={String(bodySize?.width ?? 100)}
             inputMode="numeric"
             onBlur={(event) =>
@@ -119,7 +116,7 @@ export function CellSymbolLayoutProperties({
           Height
           <input
             key={`${cell.id}-${cell.revision}-symbol-height`}
-            aria-label="Cell symbol height"
+            aria-label="Cell 符号高度"
             defaultValue={String(bodySize?.height ?? 60)}
             inputMode="numeric"
             onBlur={(event) =>
@@ -152,11 +149,11 @@ export function CellSymbolLayoutProperties({
                   )
                 }
               >
-                <option value="auto">Auto</option>
-                <option value="west">Left</option>
-                <option value="east">Right</option>
-                <option value="north">Top</option>
-                <option value="south">Bottom</option>
+                <option value="auto">自动</option>
+                <option value="west">左侧</option>
+                <option value="east">右侧</option>
+                <option value="north">顶层</option>
+                <option value="south">底部</option>
               </select>
             </label>
             <label>

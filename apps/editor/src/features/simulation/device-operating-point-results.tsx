@@ -11,10 +11,10 @@ export function DeviceOperatingPointResults({
   return (
     <section
       className="simulation-device-operating-points"
-      aria-label="MOS operating-point details"
+      aria-label="MOS 工作点详情"
     >
       <header>
-        <h3>MOS operating-point details</h3>
+        <h3>MOS 工作点详情</h3>
       </header>
       <div>
         {devices.map((device) => (

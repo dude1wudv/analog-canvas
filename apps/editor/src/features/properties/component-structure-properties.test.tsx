@@ -37,7 +37,7 @@ describe("component structure properties", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="Cell Pin name"');
+    expect(markup).toContain('aria-label="Cell Pin 名称"');
     expect(markup).toContain("VIN");
     expect(markup).toContain('value="input" selected=""');
   });

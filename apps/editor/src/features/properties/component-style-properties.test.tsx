@@ -32,24 +32,26 @@ describe("component style properties", () => {
       />,
     );
 
-    expect(markup).toContain("Appearance");
+    expect(markup).toContain("外观");
     const appearance = markup.match(
-      /<details[^>]*aria-label="Component appearance"[^>]*>/u,
+      /<details[^>]*aria-label="元件外观"[^>]*>/u,
     )?.[0];
     expect(appearance).toBeDefined();
     expect(appearance).not.toContain('open=""');
-    expect(markup).toContain("<legend>Line</legend>");
-    expect(markup).not.toContain("<legend>Background</legend>");
-    expect(markup).toContain('aria-label="Line custom RGB"');
-    expect(markup).not.toContain('type="color"');
+    expect(markup).toContain("<legend>直线</legend>");
+    expect(markup).toContain("<legend>背景</legend>");
+    expect(markup).not.toContain("Line / foreground");
+    expect(markup).not.toContain("Background / fill");
+    expect(markup).toContain('aria-label="直线自定义 RGB"');
+    expect(markup).toContain('aria-label="背景颜色选择器"');
     expect(
       markup.match(/<details class="component-rgb-details">/gu),
     ).toHaveLength(1);
     expect(markup.match(/<summary>RGB<\/summary>/gu)).toHaveLength(1);
     expect(markup).toContain('aria-pressed="true"');
-    expect(markup).toContain("Light gray · #9ca3af");
-    expect(markup.match(/component-color-swatch/gu)).toHaveLength(4);
-    expect(markup).toContain("Line color applies to this component only.");
+    expect(markup).toContain("灰色 · #6b7280");
+    expect(markup).not.toContain("Violet");
+    expect(markup).toContain("颜色仅应用于此元件。");
   });
 
   it("converts custom RGB values to canonical six-digit hex", () => {
