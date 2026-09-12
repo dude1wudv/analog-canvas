@@ -2,8 +2,8 @@
 
 Analog Canvas 是一款本地优先、感知电气连接关系的 Web 原理图编辑器。你可以绘制并组织层次化电路，导入结构化 SPICE，导出确定性的 SPICE/Spectre 网表和矢量 SVG/PDF，将选定作品发布到社区画廊，并让已授权的 Agent 通过同一套强类型编辑模型连接项目。
 
-[浏览画廊](https://analog-canvas.tokenzhang.com/) ·
-[打开编辑器](https://analog-canvas.tokenzhang.com/editor) ·
+[浏览画廊](https://analog.sunmmyapi.xyz/) ·
+[打开编辑器](https://analog.sunmmyapi.xyz/editor) ·
 [项目文档](docs/README.md) ·
 [GitHub 仓库](https://github.com/dude1wudv/analog-canvas)
 
@@ -37,7 +37,7 @@ Analog Canvas 是一款本地优先、感知电气连接关系的 Web 原理图�
 
 ## 快速开始
 
-- **使用在线版本：** 浏览[社区画廊](https://analog-canvas.tokenzhang.com/)，或[新建电路](https://analog-canvas.tokenzhang.com/editor)。
+- **使用在线版本：** 浏览[社区画廊](https://analog.sunmmyapi.xyz/)，或[新建电路](https://analog.sunmmyapi.xyz/editor)。
 - **学习编辑器：** 阅读[入门指南](docs/user/getting-started.md)、[原理图层次结构](docs/user/schematic-hierarchy.md)、[兼容性说明](docs/user/project-compatibility.md)和[故障排查](docs/user/troubleshooting.md)。
 - **了解项目：** 查看[当前架构](docs/overall-product-plan.md)和[文档索引](docs/README.md)。
 - **开发或贡献：** 阅读[工作规则](AGENTS.md)、[当前开发阅读清单](docs/README.md#contributor-reading-order)和[测试系统](docs/testing/README.md)。

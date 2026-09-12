@@ -1,0 +1,222 @@
+.image-spice-dialog {
+  width: min(1080px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid var(--icm-border-strong);
+  border-radius: 12px;
+  background: var(--icm-surface);
+  color: var(--icm-text);
+  font:
+    14px/1.5 system-ui,
+    sans-serif;
+}
+.image-spice-dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+.image-spice-dialog header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.image-spice-dialog h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.image-spice-dialog header p {
+  margin-top: 6px;
+  color: var(--icm-text-muted);
+}
+.image-spice-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  gap: 24px;
+}
+.image-spice-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
+}
+.image-spice-dialog input:not([type="checkbox"]),
+.image-spice-dialog textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--icm-border-strong);
+  border-radius: 6px;
+  background: var(--icm-surface);
+  color: var(--icm-text);
+  font: inherit;
+}
+.image-spice-dialog textarea {
+  resize: vertical;
+  font: 12px/1.6 var(--font-mono);
+}
+.image-spice-dialog figure {
+  margin: 12px 0;
+}
+.image-spice-dialog img {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  background: white;
+  border-radius: 6px;
+}
+.image-spice-dialog figcaption {
+  overflow-wrap: anywhere;
+  color: var(--icm-text-muted);
+  font-size: 12px;
+}
+.image-spice-dialog button {
+  padding: 8px 12px;
+  border: 1px solid var(--icm-border-strong);
+  border-radius: 6px;
+  background: var(--icm-surface-muted);
+  color: var(--icm-text);
+  cursor: pointer;
+}
+.image-spice-dialog button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.image-spice-actions {
+  display: flex;
+  gap: 8px;
+}
+.image-spice-note {
+  color: var(--icm-text-muted);
+  font-size: 12px;
+}
+.image-spice-issues {
+  padding: 12px;
+  border-left: 3px solid var(--icm-warning);
+  margin-top: 12px;
+  background: var(--icm-surface-muted);
+  overflow-wrap: anywhere;
+}
+.image-spice-networks {
+  max-height: 240px;
+  overflow: auto;
+  margin-top: 8px;
+}
+.image-spice-dialog table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 12px;
+}
+.image-spice-dialog td,
+.image-spice-dialog th {
+  padding: 6px;
+  border-bottom: 1px solid var(--icm-border);
+  overflow-wrap: anywhere;
+}
+.image-spice-dialog label.image-spice-confirm {
+  flex-direction: row;
+  align-items: flex-start;
+}
+.image-spice-dialog footer {
+  border-top: 1px solid var(--icm-border);
+  margin-top: 16px;
+  padding-top: 16px;
+}
+.image-spice-dialog footer button {
+  background: var(--icm-accent);
+  color: white;
+}
+.image-spice-dialog [role="alert"] {
+  color: var(--icm-error);
+}
+@media (max-width: 760px) {
+  .image-spice-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .image-spice-dialog {
+    padding: 16px;
+  }
+}
+
+.image-spice-dialog select {
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--icm-border-strong);
+  border-radius: 6px;
+  background: var(--icm-surface);
+  color: var(--icm-text);
+  font: inherit;
+}
+.ai-settings-dialog {
+  width: min(880px, calc(100vw - 32px));
+}
+.ai-settings-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 28px;
+}
+.ai-provider-list {
+  border-right: 1px solid var(--icm-border);
+  padding-right: 20px;
+}
+.ai-provider-list button {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  gap: 5px;
+  width: 100%;
+  margin: 10px 0;
+  overflow-wrap: anywhere;
+}
+.ai-provider-list button[aria-pressed="true"] {
+  background: var(--icm-accent-soft);
+  border-color: var(--icm-accent);
+}
+.ai-provider-list small {
+  color: var(--icm-text-muted);
+}
+.ai-eyebrow {
+  font: 10px var(--font-mono);
+  color: var(--icm-text-muted);
+  letter-spacing: 0.1em;
+}
+.ai-test-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 12px 0;
+}
+.ai-test-row label {
+  flex: 1;
+  margin: 0;
+}
+.ai-test-row button {
+  flex-shrink: 0;
+}
+.image-spice-dialog button.ai-primary {
+  background: var(--icm-accent);
+  color: white;
+}
+.ai-success {
+  color: var(--icm-accent);
+}
+.ai-config-card {
+  padding: 4px 14px 14px;
+  border: 1px solid var(--icm-border);
+  border-radius: 8px;
+  background: var(--icm-surface-muted);
+}
+@media (max-width: 760px) {
+  .ai-settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .ai-provider-list {
+    border-right: 0;
+    padding-right: 0;
+  }
+  .ai-test-row {
+    flex-wrap: wrap;
+  }
+}

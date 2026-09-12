@@ -34,6 +34,9 @@ importers:
       "@icm/symbols":
         specifier: workspace:*
         version: link:packages/symbols
+      "@noble/hashes":
+        specifier: 2.4.0
+        version: 2.4.0
     devDependencies:
       "@playwright/test":
         specifier: 1.62.1
@@ -41,6 +44,9 @@ importers:
       "@types/node":
         specifier: 24.13.3
         version: 24.13.3
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       pngjs:
         specifier: ^7.0.0
         version: 7.0.0
@@ -1140,6 +1146,13 @@ packages:
       {
         integrity: sha512-rIrWquuBSoJuoMBdC/1qD+AUHTorlccPicoVy6P2xbUgnuDBpCcpbHtOAsB8L3hdCHtNBg92lF8e3Fz+pkcQbw==,
       }
+
+  "@noble/hashes@2.4.0":
+    resolution:
+      {
+        integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==,
+      }
+    engines: { node: ">= 20.19.0" }
 
   "@oxc-project/types@0.143.0":
     resolution:
@@ -3011,6 +3024,8 @@ snapshots:
       mhchemparser: 4.2.1
       mj-context-menu: 1.0.0
       speech-rule-engine: 5.0.0-rc.4
+
+  "@noble/hashes@2.4.0": {}
 
   "@oxc-project/types@0.143.0": {}
 

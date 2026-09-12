@@ -1,0 +1,36 @@
+.local-account-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 250px;
+  padding: 8px;
+}
+.local-account-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+}
+.local-account-form input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid var(--icm-border-strong);
+  border-radius: 6px;
+  background: var(--icm-surface);
+  color: var(--icm-text);
+}
+.local-account-form button {
+  padding: 8px;
+  cursor: pointer;
+}
+.local-account-form button[type="submit"] {
+  background: var(--icm-accent);
+  color: white;
+  border: 0;
+  border-radius: 6px;
+}
+.local-account-form [role="alert"] {
+  color: var(--icm-error);
+  font-size: 12px;
+}
