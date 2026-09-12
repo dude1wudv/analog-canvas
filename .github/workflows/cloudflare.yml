@@ -1,9 +1,7 @@
 name: Deploy Cloudflare
 
-# Production deploys only from a release (ADR 0057): a v* tag, or a manual
-# dispatch naming a commit. Merging to main deploys the preview instead
-# (deploy-preview.yml); this workflow promotes a commit the preview has
-# already proved. Nothing here can be triggered by an ordinary merge.
+# Production deploys only from a release (a v* tag or explicit commit
+# dispatch). Nothing here can be triggered by an ordinary merge.
 on:
   push:
     tags:
@@ -11,14 +9,12 @@ on:
   workflow_dispatch:
     inputs:
       sha:
-        description: "Full commit SHA to release; it must have a successful Deploy Preview run"
+        description: "Full commit SHA to release"
         required: true
         type: string
 
 permissions:
   contents: read
-  # To ask whether the preview deployed this commit.
-  actions: read
 
 concurrency:
   group: cloudflare-production
@@ -37,23 +33,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.sha || github.ref }}
-      # The preview is where a commit is looked at before the public sees it
-      # (ADR 0057). A commit that never deployed there, or deployed and
-      # failed, cannot be released: this is the one gate between main and
-      # the live site, and it asks a question CI cannot answer.
-      - name: The release must have a green preview deploy
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          release_sha="$(git rev-parse 'HEAD^{commit}')"
-          count="$(gh run list --repo "$GITHUB_REPOSITORY" \
-            --workflow deploy-preview.yml --commit "$release_sha" \
-            --status success --json databaseId --jq 'length')"
-          if [ "$count" = "0" ]; then
-            echo "::error::No successful preview deploy exists for $release_sha. Merge it to main, let the preview deploy and verify it, then release that commit."
-            exit 1
-          fi
-          echo "Preview deploy verified for $release_sha ($count successful run(s))."
       - uses: pnpm/action-setup@v4
         with:
           version: 11.16.0

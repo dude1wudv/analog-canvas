@@ -23,18 +23,8 @@ describe("production deploys only from a release (ADR 0057)", () => {
 
   it("deploys the named commit, not a branch head", () => {
     expect(workflow).toContain("ref: ${{ inputs.sha || github.ref }}");
-    expect(workflow).toContain("git rev-parse 'HEAD^{commit}'");
   });
 
-  it("refuses a commit the preview never proved", () => {
-    // The preview is the one place a commit is looked at before the public
-    // sees it. A release of a commit with no green preview deploy is the
-    // 2026-09-01 outage waiting to happen again.
-    expect(workflow).toContain("The release must have a green preview deploy");
-    expect(workflow).toContain("--workflow deploy-preview.yml");
-    expect(workflow).toContain("--status success");
-    expect(workflow).toContain("No successful preview deploy exists");
-  });
 
   it("has no staging job and deploys no environment", () => {
     // env.staging inherited the production custom domain on 2026-09-03 and

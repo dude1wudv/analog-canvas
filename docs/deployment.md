@@ -2,78 +2,25 @@
 
 ## Channels and data isolation
 
-| Channel    | Trigger and configuration                                                         | Data boundary                                                                                                                                              |
-| ---------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Preview    | main push; `.github/workflows/deploy-preview.yml`; `wrangler.preview.jsonc`       | Own accounts and Projects; anonymous HTTP read-through to public Gallery; Gallery writes refused; private CI acceptance uses the same isolated Project API |
-| Production | `v*` tag or commit dispatch; `.github/workflows/cloudflare.yml`; `wrangler.jsonc` | Public product and its private storage                                                                                                                     |
+| Channel | Trigger and configuration | Data boundary |
+| --- | --- | --- |
+| Self-hosted | `containers/self-host/deploy.sh <commit>` on the operator host | Persistent local data, secrets, and simulator services remain on the host |
+| Production | `v*` tag or explicit commit dispatch; `.github/workflows/cloudflare.yml`; `wrangler.jsonc` | Public product and its private storage |
 
-Preview is served at `analog-canvas-preview.tokenzhang.com`, labelled and
-unindexed. Production is `analog-canvas.tokenzhang.com`. The separate
-configuration files do not inherit routes or bindings. Preview has no
-Production Durable Object binding or Production cookies. Human testers use a
-Preview-only Google OAuth client; its consent-screen test-user roster controls
-who can sign in. Its simulation capability can be issued without OAuth; public
-site access is not unrestricted compute authority.
+The standalone Cloudflare Preview channel has been retired. Main pushes no longer
+deploy or verify a Preview Worker, and production release no longer requires a
+successful Preview run. Use the self-host deployment path for the active hosted
+environment.
 
-The channels share source and contracts, not a guarantee of a single promoted
-build artifact: the workflows build their selected checkout. Channel-controlled
-features and runtime bindings may differ.
-[ADR 0057](adr/0057-release-channels-preview-and-production.md) explains the choice.
-
-The deployed cross-Project journey receives a repository secret as a
-host-scoped HttpOnly cookie. Only `/api/projects` recognizes that identity, and
-only when `ICM_CHANNEL=preview`; Gallery, account, moderation and Production
-routes do not. The journey seeds one DUT Project in the Preview Worker’s own
-GalleryDO, imports it through the public `project_cells` resource, runs the
-resulting Testbench, preserves its receipt, and removes the seed. Missing or
-incorrect credentials fail closed as the same 401/403 seen by an ordinary
-visitor.
-
-Human Preview login uses this callback:
-
-```text
-https://analog-canvas-preview.tokenzhang.com/api/auth/google/callback
-```
-
-The `cloudflare-preview` GitHub environment supplies
-`PREVIEW_GOOGLE_CLIENT_ID` and `PREVIEW_GOOGLE_CLIENT_SECRET`. Deployment maps
-them to the Preview Worker's standard OAuth secret names when both are present.
-Human login remains dark when neither is configured; a partial pair fails the
-deployment. Preview's `AUTH` and `GALLERY` bindings are independent namespaces;
-the same Google account may therefore use Preview and Production without
-sharing sessions, internal user IDs, limits, or Projects. Preview Projects are
-disposable test data and never synchronize or promote to Production.
+Production releases still require Cloudflare credentials configured in the
+`cloudflare-production` environment; removing the Preview channel does not
+remove production Cloudflare authentication.
 
 ## Releasing to Production
 
-Select a candidate commit that Preview has successfully deployed and verified.
-The current Production workflow accepts **at least one successful
-`deploy-preview.yml` run for that exact commit**. It does not select the latest
-completed run, require the currently serving Preview to have that SHA, or
-compare a separate Profile-qualified promotion receipt. Do not report those
-stronger guarantees from this check.
+Select the intended commit and use either a version tag or explicit dispatch.
+[ADR 0057](adr/0057-release-channels-preview-and-production.md) explains the choice.
 
-Use either a version tag (choose the intended unused release version):
-
-```bash
-git tag v0.3.0 <sha>
-git push origin v0.3.0
-```
-
-or an explicit commit dispatch:
-
-```bash
-gh workflow run "Deploy Cloudflare" -f sha=<sha>
-```
-
-Ordinary merges do not trigger Production. Normal hotfixes use the same route;
-the incident exception below is separate. Runtime configuration, including the
-simulator gateway, ships only when the selected release contains it.
-
-Before treating a release as validated, inspect the candidate's actual Preview
-evidence and the relevant required checks. Local unit tests, build success, and
-recorded rawfiles cannot certify deployed bindings, secrets, model identity, or
-the hosted request path.
 
 ## Deploy, verify, recover
 
