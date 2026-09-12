@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 
 import {
   MAX_IMAGE_BYTES,
-  chatCompletionsUrl,
+  aiCompletionUrl,
   parseRecognitionResponse,
   recognizeCircuitImage,
   testAiConnection,
@@ -61,22 +61,25 @@ describe("image-to-SPICE validation and response contracts", () => {
     ).toThrow();
   });
 
-  it("normalizes an OpenAI-compatible base URL without duplicating its endpoint", () => {
-    expect(chatCompletionsUrl("https://vision.example.test")).toBe(
-      "https://vision.example.test/v1/chat/completions",
-    );
-    expect(chatCompletionsUrl("https://vision.example.test/")).toBe(
-      "https://vision.example.test/v1/chat/completions",
-    );
-    expect(chatCompletionsUrl("https://vision.example.test/v1")).toBe(
-      "https://vision.example.test/v1/chat/completions",
+  it("normalizes either OpenAI-compatible endpoint without duplicating it", () => {
+    expect(
+      aiCompletionUrl("https://vision.example.test", "chat-completions"),
+    ).toBe("https://vision.example.test/v1/chat/completions");
+    expect(
+      aiCompletionUrl("https://vision.example.test/", "chat-completions"),
+    ).toBe("https://vision.example.test/v1/chat/completions");
+    expect(aiCompletionUrl("https://vision.example.test/v1", "responses")).toBe(
+      "https://vision.example.test/v1/responses",
     );
     expect(
-      chatCompletionsUrl("https://vision.example.test/v1/chat/completions/"),
-    ).toBe("https://vision.example.test/v1/chat/completions");
-    expect(chatCompletionsUrl("https://gateway.example.test/openai/v1")).toBe(
-      "https://gateway.example.test/openai/v1/chat/completions",
-    );
+      aiCompletionUrl(
+        "https://vision.example.test/v1/chat/completions/",
+        "responses",
+      ),
+    ).toBe("https://vision.example.test/v1/responses");
+    expect(
+      aiCompletionUrl("https://gateway.example.test/openai/v1", "responses"),
+    ).toBe("https://gateway.example.test/openai/v1/responses");
   });
 
   it("requires HTTPS and rejects URLs that could hide or alter credentials", () => {
@@ -86,7 +89,7 @@ describe("image-to-SPICE validation and response contracts", () => {
       "https://vision.example.test?key=secret",
       "https://vision.example.test/v1#chat-completions",
     ]) {
-      expect(() => chatCompletionsUrl(url), url).toThrow();
+      expect(() => aiCompletionUrl(url, "chat-completions"), url).toThrow();
     }
   });
 
@@ -149,6 +152,8 @@ describe("image-to-SPICE validation and response contracts", () => {
     const result = await recognizeCircuitImage(
       {
         baseUrl: "https://vision.example.test/v1/",
+        protocol: "chat-completions",
+        reasoningEffort: "low",
         apiKey: "provider-secret",
         model: "vision-model",
         imageDataUrl: "data:image/png;base64,ZmFrZQ==",
@@ -174,6 +179,7 @@ describe("image-to-SPICE validation and response contracts", () => {
 
     const body = JSON.parse(String(init?.body)) as {
       model: string;
+      reasoning_effort: string;
       messages: Array<{
         role: string;
         content: Array<{
@@ -183,6 +189,7 @@ describe("image-to-SPICE validation and response contracts", () => {
       }>;
     };
     expect(body.model).toBe("vision-model");
+    expect(body.reasoning_effort).toBe("low");
     const userMessage = body.messages.find(
       (message) => message.role === "user",
     );
@@ -194,6 +201,62 @@ describe("image-to-SPICE validation and response contracts", () => {
           image_url: expect.objectContaining({
             url: "data:image/png;base64,ZmFrZQ==",
           }),
+        }),
+      ]),
+    );
+  });
+
+  it("uses the Responses image contract and parses completed output text", async () => {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        Response.json({
+          status: "completed",
+          output: [
+            {
+              type: "message",
+              status: "completed",
+              content: [{ type: "output_text", text: recognitionPayload() }],
+            },
+          ],
+        }),
+    );
+
+    const result = await recognizeCircuitImage(
+      {
+        baseUrl: "https://vision.example.test/v1/chat/completions",
+        protocol: "responses",
+        reasoningEffort: "high",
+        apiKey: "provider-secret",
+        model: "vision-model",
+        imageDataUrl: "data:image/png;base64,ZmFrZQ==",
+        signal: new AbortController().signal,
+      },
+      fetchMock as unknown as typeof fetch,
+    );
+
+    expect(result).toEqual({ spice: trimmedValidSpice, uncertainties: [] });
+    const [input, init] = fetchMock.mock.calls[0]!;
+    expect(input).toBe("https://vision.example.test/v1/responses");
+    const body = JSON.parse(String(init?.body)) as {
+      reasoning: { effort: string };
+      instructions: string;
+      input: Array<{
+        role: string;
+        content: Array<{
+          type: string;
+          image_url?: string;
+          detail?: string;
+        }>;
+      }>;
+    };
+    expect(body.reasoning.effort).toBe("high");
+    expect(body.instructions).toContain("structural SPICE");
+    expect(body.input[0]?.content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "input_image",
+          image_url: "data:image/png;base64,ZmFrZQ==",
+          detail: "high",
         }),
       ]),
     );
@@ -211,6 +274,8 @@ describe("image-to-SPICE validation and response contracts", () => {
     const error = await recognizeCircuitImage(
       {
         baseUrl: "https://vision.example.test",
+        protocol: "chat-completions",
+        reasoningEffort: "low",
         apiKey: "provider-secret",
         model: "vision-model",
         imageDataUrl: "data:image/png;base64,ZmFrZQ==",
@@ -233,6 +298,8 @@ describe("image-to-SPICE validation and response contracts", () => {
       recognizeCircuitImage(
         {
           baseUrl: "https://vision.example.test",
+          protocol: "chat-completions",
+          reasoningEffort: "low",
           apiKey: "provider-secret",
           model: "vision-model",
           imageDataUrl: "data:image/png;base64,ZmFrZQ==",
@@ -265,6 +332,8 @@ describe("image-to-SPICE validation and response contracts", () => {
     const pending = recognizeCircuitImage(
       {
         baseUrl: "https://vision.example.test",
+        protocol: "chat-completions",
+        reasoningEffort: "low",
         apiKey: "provider-secret",
         model: "vision-model",
         imageDataUrl: "data:image/png;base64,ZmFrZQ==",
@@ -278,6 +347,36 @@ describe("image-to-SPICE validation and response contracts", () => {
     expect(requestSignal).toBe(controller.signal);
   });
 
+  it("reports a timed-out request separately from user cancellation", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    const pending = recognizeCircuitImage(
+      {
+        baseUrl: "https://vision.example.test",
+        protocol: "responses",
+        reasoningEffort: "low",
+        apiKey: "provider-secret",
+        model: "vision-model",
+        imageDataUrl: "data:image/png;base64,ZmFrZQ==",
+        signal: controller.signal,
+      },
+      fetchMock as unknown as typeof fetch,
+    );
+
+    controller.abort("timeout");
+
+    await expect(pending).rejects.toThrow("超时");
+  });
+
   it("tests a selected model with a tiny image without parsing the response as SPICE", async () => {
     const fetchMock = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>
@@ -288,6 +387,8 @@ describe("image-to-SPICE validation and response contracts", () => {
     const result = await testAiConnection(
       {
         baseUrl: "https://vision.example.test/v1",
+        protocol: "chat-completions",
+        reasoningEffort: "low",
         apiKey: " provider-secret ",
         model: " vision-model ",
         signal: controller.signal,
@@ -303,12 +404,14 @@ describe("image-to-SPICE validation and response contracts", () => {
     );
     const body = JSON.parse(String(init?.body)) as {
       model: string;
+      reasoning_effort: string;
       messages: Array<{
         role: string;
         content: unknown;
       }>;
     };
     expect(body.model).toBe("vision-model");
+    expect(body.reasoning_effort).toBe("low");
     const userMessage = body.messages.find(
       (message) => message.role === "user",
     );

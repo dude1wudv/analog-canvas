@@ -117,20 +117,24 @@ down -v`。executor 的 `run-root` 是模拟执行工作目录，和 Worker 的 
 在编辑器选择「文件 → 从电路图识别 SPICE…」：
 
 1. 选择 PNG、JPEG 或 WebP，文件上限为 10 MiB，解码后分辨率上限为 4000 万像素。
-2. 在「AI 接口设置」添加一个或多个 HTTPS OpenAI-compatible Chat Completions
-   配置。每组配置可包含多个模型，页面最多保留 20 组配置。
-3. API Key、接口地址、模型列表和识别草稿只保留在当前页面的内存中；不会写入
-   `localStorage`、session storage、项目文件或本站服务端。刷新或离开页面后清除。
-4. 可先用「测试连通性」向选中模型发送一张微小图片；该请求可能产生少量费用，
-   目标接口必须支持浏览器 CORS、图片 `image_url` data URL 和非流式响应。
-5. 选择图片后点击「识别电路图」。原图直接发送到所选接口，最多等待两分钟，
+2. 在「AI 接口设置」添加一个或多个 HTTPS OpenAI-compatible 配置，并选择
+   Chat Completions 或 Responses API。每组配置可包含多个模型，页面最多保留
+   20 组配置。
+3. 每组配置可选择 `low`、`medium`、`high` 或 `max` 思考强度。Responses API
+   使用 `reasoning.effort`，Chat Completions 使用 `reasoning_effort`，均原样传入。
+4. API Key、接口地址、协议、模型列表、思考强度和识别草稿只保留在当前页面的
+   内存中；不会写入 `localStorage`、session storage、项目文件或本站服务端。
+   刷新或离开页面后清除。
+5. 可先用「测试连通性」向选中模型发送一张微小图片；该请求可能产生少量费用，
+   目标接口必须支持浏览器 CORS、对应协议的图片 data URL 和非流式响应。
+6. 选择图片后点击「识别电路图」。原图直接发送到所选接口，最多等待十分钟，
    可以取消。识别结果必须是 JSON，包含 `spice` 和 `uncertainties`；接口拒绝、
    截断、超限、无效 JSON 或带额外 prose 的结果都会被拒绝。
-6. 编辑器先按结构 SPICE 规则检查 JSON、允许的记录和现有 Import SPICE 结果。
+7. 编辑器先按结构 SPICE 规则检查 JSON、允许的记录和现有 Import SPICE 结果。
    仅接受 `.model`、`.subckt`、`.ends`、`.global`、`.param`、`.end` 等结构
    指令；`.include`、`.lib`、控制块、仿真分析和行为源会被拒绝。检查结果会列出
    器件引脚到网络的映射以及 AI 报告的不确定项。
-7. 对照原图逐项核对连接、极性、引脚顺序、器件值和不确定项，勾选确认后点击
+8. 对照原图逐项核对连接、极性、引脚顺序、器件值和不确定项，勾选确认后点击
    「通过 Import SPICE 建立工程」。也可先下载 `.cir`，再用原有 Import SPICE
    流程处理。
 

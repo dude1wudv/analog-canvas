@@ -7573,16 +7573,28 @@ test("recognizes an uploaded schematic and imports its checked SPICE into the Pl
     "base64",
   );
   await page.route(
-    "https://vision.example.test/v1/chat/completions",
+    "https://vision.example.test/v1/responses",
     async (route) => {
+      const request = route.request().postDataJSON() as {
+        reasoning?: { effort?: string };
+        input?: Array<{ content?: Array<{ type?: string }> }>;
+      };
+      expect(request.reasoning?.effort).toBe("medium");
+      expect(request.input?.[0]?.content).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "input_image" }),
+        ]),
+      );
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          choices: [
+          status: "completed",
+          output: [
             {
-              finish_reason: "stop",
-              message: { content: imageResult },
+              type: "message",
+              status: "completed",
+              content: [{ type: "output_text", text: imageResult }],
             },
           ],
         }),
@@ -7598,6 +7610,8 @@ test("recognizes an uploaded schematic and imports its checked SPICE into the Pl
   const settings = page.getByRole("dialog", { name: "AI 接口设置" });
   await settings.getByLabel("配置名称").fill("Recognition gateway");
   await settings.getByLabel("API 地址").fill("https://vision.example.test/v1");
+  await settings.getByLabel("API 协议").selectOption("responses");
+  await settings.getByLabel("思考强度").selectOption("medium");
   await settings.getByLabel("API Key").fill("recognition-key");
   await settings.getByLabel("模型列表（每行一个 ID）").fill("vision-model");
   await settings.getByRole("button", { name: "应用配置", exact: true }).click();
