@@ -42,29 +42,17 @@ manifest projects the shared sources into the HTTP Kit.
 For run visibility, automatic browser archives and source/result exports, see
 [simulation result handoff](simulation-result-handoff.md).
 
-Production and Preview enable the Agent connection surface with
-`VITE_ICM_AGENT_UI=enabled`. Click **Agent** for a Claim Code.
-The connection grants full circuit editing, file and simulation access to the
-current Project immediately; there is no permission-tier selection.
-The button opens the connection card immediately and reuses a live session.
-Copy its message into your Agent chat; opening the card again does not replace
-the connection. A connection expires after 30 minutes without Agent operations
-or manual edits; continued activity keeps renewing it with no total time limit.
-The 30-minute connection-code deadline only limits initial pairing.
-After disconnecting or idle expiry, clicking Agent creates a new one.
-The MCP adapter defaults to Production; for Preview, start it with
-`ANALOG_CANVAS_API_URL=https://analog-canvas-preview.tokenzhang.com`.
-Connections, accounts, and private Projects stay within their own channel.
+7: - `@icm/agent-routing` — Agent-local transient RouteGraph → typed-edit expander. ADR 0008: these types never enter the API schema or persisted model; Agent-side scaffolding with no in-repo importers.
+- `@icm/platform-node` — Node filesystem storage/recovery adapters; no in-repo importers.
+- `apps/editor` — the React/SVG editor and installable PWA, plus the Gallery, account, and moderation surfaces. `analytics/` is the self-contained first-party analytics module; `dev/` holds the Vite dev-server plugins (local Agent relay, netlist conversion, local simulation).
+- `apps/local-host` — loopback-only static host for `apps/editor/dist` with a local simulation transport seam (`bin: interactive-circuit-maker`; its only dependency is `@icm/spice-run`).
+- `apps/mcp-server` — stdio MCP server (`bin: analog-canvas-mcp`) over `agent-client`, with generated doc resources. Release packaging (`scripts/package-mcp.mjs`) bundles it with Vite and takes the version from `config/agent-mcp-distribution.json`, not from its `package.json`.
+- `worker/` — self-hosted workerd Worker and the Cloudflare production Worker. Production deploys from a `v*` tag or an explicit commit via `.github/workflows/cloudflare.yml`; the former Cloudflare Preview channel has been retired.
+8: The retired Cloudflare Preview channel is no longer an active deployment target. Use the self-hosted editor URL and the operator-host deployment procedure for active Agent/simulation work.
 
-For local development, `pnpm dev` starts the real Agent relay on first use
-through the editor's own `/api/agent/` routes, including its WebSocket. No
-separate Worker process needs to be launched manually. Use the loopback origin
-in the copied message from an Agent on the same computer. The local relay
-does not start cloud account, Gallery, or hosted simulation services, and
-restarting the development server ends its in-memory sessions.
+For local development, `pnpm dev` starts the real Agent relay on first use through the editor's own `/api/agent/` routes, including its WebSocket. No separate Worker process needs to be launched manually. Use the loopback origin in the copied message from an Agent on the same computer. The local relay does not start cloud account, Gallery, or hosted simulation services, and restarting the development server ends its in-memory sessions.
 
-An unconfigured production build still keeps the Agent UI dormant. Explicit
-deployment flags control availability without changing the API or MCP contract.
+An unconfigured production build still keeps the Agent UI dormant. Explicit deployment flags control availability without changing the API or MCP contract.
 
 ## External Agent bootstrap (no MCP)
 
