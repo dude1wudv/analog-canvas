@@ -74,15 +74,12 @@ export function CellInterfaceEditor({
   const terminals = cell.netlist.terminals;
 
   return (
-    <div className="cell-interface-editor" aria-label="Cell interface">
+    <div className="cell-interface-editor" aria-label="Cell 接口">
       <div className="cell-interface-grid">
-        <section
-          className="cell-interface-section"
-          aria-label="Formal terminals"
-        >
+        <section className="cell-interface-section" aria-label="形式端口">
           <header>
             <div>
-              <h3>Terminals</h3>
+              <h3>端口</h3>
               <p>
                 Ordered interface shared by {callerCount} caller
                 {callerCount === 1 ? "" : "s"}.
@@ -98,7 +95,7 @@ export function CellInterfaceEditor({
             <div
               className="cell-interface-table"
               role="table"
-              aria-label="Formal terminal order"
+              aria-label="形式端口顺序"
             >
               {terminals.map((terminal, index) => (
                 <div
@@ -132,10 +129,10 @@ export function CellInterfaceEditor({
                       )
                     }
                   >
-                    <option value="input">Input</option>
-                    <option value="output">Output</option>
-                    <option value="inout">Inout</option>
-                    <option value="passive">Passive</option>
+                    <option value="input">输入</option>
+                    <option value="output">输出</option>
+                    <option value="inout">双向</option>
+                    <option value="passive">无源</option>
                   </select>
                   <div className="cell-interface-order-actions">
                     <button
@@ -161,14 +158,11 @@ export function CellInterfaceEditor({
           )}
         </section>
 
-        <section
-          className="cell-interface-section"
-          aria-label="Formal parameters"
-        >
+        <section className="cell-interface-section" aria-label="形式参数">
           <header>
             <div>
-              <h3>Parameters</h3>
-              <p>Defaults belong to the Cell; callers may override them.</p>
+              <h3>参数</h3>
+              <p>默认值属于该 Cell；调用方可以覆盖。</p>
             </div>
             <button
               type="button"
@@ -181,7 +175,7 @@ export function CellInterfaceEditor({
             </button>
           </header>
           {formalParameters.length === 0 ? (
-            <p className="cell-interface-empty">No formal parameters.</p>
+            <p className="cell-interface-empty">没有形式参数。</p>
           ) : (
             <div className="cell-parameter-list">
               {formalParameters.map((parameter, index) => (
@@ -191,7 +185,7 @@ export function CellInterfaceEditor({
                 >
                   <input
                     aria-label={`Formal parameter ${index + 1} name`}
-                    placeholder="Name"
+                    placeholder="名称"
                     value={parameter.name}
                     onChange={(event) => {
                       const name = event.currentTarget.value;
@@ -204,7 +198,7 @@ export function CellInterfaceEditor({
                   />
                   <input
                     aria-label={`Formal parameter ${parameter.name} default`}
-                    placeholder="Required"
+                    placeholder="必填"
                     value={parameter.defaultValue ?? ""}
                     onChange={(event) => {
                       const defaultValue = event.currentTarget.value;
@@ -254,18 +248,18 @@ export function CellInterfaceEditor({
 
       <details className="cell-external-interface">
         <summary>
-          <span>External subcircuit definitions</span>
+          <span>外部子电路定义</span>
           <small>{externalDefinitions.length} shared</small>
         </summary>
         <div className="cell-external-grid">
           <label>
             Definition
             <select
-              aria-label="External subcircuit definition"
+              aria-label="外部子电路定义"
               value={externalId}
               onChange={(event) => setExternalId(event.currentTarget.value)}
             >
-              <option value="__new__">New definition</option>
+              <option value="__new__">新建定义</option>
               {externalDefinitions.map((definition) => (
                 <option key={definition.id} value={definition.id}>
                   {definition.name}
@@ -274,9 +268,9 @@ export function CellInterfaceEditor({
             </select>
           </label>
           <label>
-            Target
+            目标
             <input
-              aria-label="External subcircuit target"
+              aria-label="外部子电路目标"
               value={externalName}
               onChange={(event) => setExternalName(event.currentTarget.value)}
             />
@@ -284,7 +278,7 @@ export function CellInterfaceEditor({
           <label>
             Ordered terminals
             <input
-              aria-label="External subcircuit terminals"
+              aria-label="外部子电路端口"
               placeholder="INP, INN, OUT"
               value={externalTerminals}
               onChange={(event) =>
@@ -293,9 +287,9 @@ export function CellInterfaceEditor({
             />
           </label>
           <label>
-            Formal parameters
+            形式参数
             <input
-              aria-label="External subcircuit formal parameters"
+              aria-label="外部子电路形式参数"
               placeholder="gain=10, bias"
               value={externalParameters}
               onChange={(event) =>

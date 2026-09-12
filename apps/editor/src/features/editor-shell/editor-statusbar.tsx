@@ -34,8 +34,8 @@ function issuesBadge(issues: {
             ? "Check failed"
             : issues.checkStatus === "checking"
               ? "Checking…"
-              : "Not checked",
-      title: "Open Issues — use Check and Save to check",
+              : "尚未检查",
+      title: "打开问题列表——使用“检查并保存”开始检查",
     };
   }
   const plural = (count: number, noun: string) =>
@@ -47,20 +47,20 @@ function issuesBadge(issues: {
         issues.warningCount > 0
           ? `${plural(issues.errorCount, "error")}, ${plural(issues.warningCount, "warning")}`
           : plural(issues.errorCount, "error"),
-      title: "Action required — open the issues list",
+      title: "需要处理——打开问题列表",
     };
   }
   if (issues.warningCount > 0) {
     return {
       severity: "warning",
       label: plural(issues.warningCount, "warning"),
-      title: "Review findings — open the issues list",
+      title: "查看检查结果——打开问题列表",
     };
   }
   return {
     severity: "none",
-    label: "No issues found",
-    title: "Open the issues list",
+    label: "未发现问题",
+    title: "打开问题列表",
   };
 }
 
@@ -127,7 +127,7 @@ export function EditorStatusbar({
             className="statusbar-tool"
             data-testid="selection-filter-status"
             onClick={onOpenSelectionFilter}
-            title="Open Selection Filter (Ctrl+F)"
+            title="打开选择筛选器（Ctrl+F）"
           >
             {selectionFilterSummary}
           </button>
@@ -154,9 +154,9 @@ export function EditorStatusbar({
                   )
                 }
               >
-                <option value="orthogonal">Orthogonal</option>
+                <option value="orthogonal">正交</option>
                 <option value="octilinear">45° octilinear</option>
-                <option value="free">Any angle</option>
+                <option value="free">任意角度</option>
               </select>
             </label>
             <label>
@@ -169,11 +169,11 @@ export function EditorStatusbar({
                   )
                 }
               >
-                <option value="auto">Auto</option>
-                <option value="horizontal-first">Horizontal first</option>
-                <option value="vertical-first">Vertical first</option>
-                <option value="diagonal-first">Diagonal first</option>
-                <option value="orthogonal-first">Orthogonal first</option>
+                <option value="auto">自动</option>
+                <option value="horizontal-first">优先水平</option>
+                <option value="vertical-first">优先垂直</option>
+                <option value="diagonal-first">优先对角</option>
+                <option value="orthogonal-first">优先正交</option>
               </select>
             </label>
           </span>
@@ -182,7 +182,7 @@ export function EditorStatusbar({
           <output
             className="statusbar-recovery"
             data-testid="recovery-state"
-            aria-label="Browser recovery state"
+            aria-label="浏览器恢复状态"
           >
             {recoveryLabel}
           </output>
@@ -212,7 +212,7 @@ export function EditorStatusbar({
           className="statusbar-analytics"
           href="/analytics"
           data-testid="statusbar-analytics"
-          title="Open visitor analytics"
+          title="打开访客统计"
           onClick={(event) => {
             if (
               event.button !== 0 ||
@@ -231,7 +231,7 @@ export function EditorStatusbar({
           {visitStats.pv.toLocaleString()} views
         </a>
       ) : null}
-      <div className="canvas-controls" aria-label="Canvas view controls">
+      <div className="canvas-controls" aria-label="画布视图控件">
         <button
           type="button"
           aria-label="Zoom out"
@@ -240,19 +240,14 @@ export function EditorStatusbar({
         >
           <ToolIcon name="zoom-out" />
         </button>
-        <output aria-label="Current zoom">{zoomPercent}%</output>
-        <button
-          type="button"
-          aria-label="Zoom in"
-          title="Zoom in"
-          onClick={onZoomIn}
-        >
+        <output aria-label="当前缩放比例">{zoomPercent}%</output>
+        <button type="button" aria-label="放大" title="放大" onClick={onZoomIn}>
           <ToolIcon name="zoom-in" />
         </button>
         <button
           type="button"
-          aria-label="Fit view"
-          title="Fit view (Home)"
+          aria-label="适合窗口"
+          title="适合窗口（Home）"
           onClick={onFitView}
         >
           <ToolIcon name="fit" />

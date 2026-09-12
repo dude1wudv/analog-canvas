@@ -173,8 +173,8 @@ export function PublishGalleryDialog({
         data-testid="publish-gallery-dialog"
       >
         <header className="publish-gallery-header">
-          <p>Share this circuit on the public wall</p>
-          <h2 id="publish-gallery-title">Publish to Gallery</h2>
+          <p>将此电路分享到公开展示墙</p>
+          <h2 id="publish-gallery-title">发布到画廊</h2>
         </header>
         {signedOut ? (
           // Nothing to fill in until there is an account to publish under:
@@ -247,10 +247,10 @@ export function PublishGalleryDialog({
             ) : null}
             <div className="publish-gallery-fields">
               <label>
-                Circuit name
+                电路名称
                 <input
                   dir="auto"
-                  aria-label="Circuit name"
+                  aria-label="电路名称"
                   value={name}
                   maxLength={120}
                   autoFocus
@@ -260,11 +260,11 @@ export function PublishGalleryDialog({
               <label>
                 <span>
                   Description{" "}
-                  <span className="publish-gallery-optional">optional</span>
+                  <span className="publish-gallery-optional">可选</span>
                 </span>
                 <textarea
                   dir="auto"
-                  aria-label="Description"
+                  aria-label="说明"
                   value={description}
                   maxLength={300}
                   rows={3}
@@ -275,7 +275,8 @@ export function PublishGalleryDialog({
               </label>
               <div className="publish-gallery-tags" data-testid="publish-tags">
                 <span className="publish-gallery-tags-label">
-                  Tags <span className="publish-gallery-optional">up to 5</span>
+                  标签{" "}
+                  <span className="publish-gallery-optional">最多 5 个</span>
                 </span>
                 {tags.length > 0 ? (
                   <div className="publish-gallery-tag-chips">
@@ -285,7 +286,7 @@ export function PublishGalleryDialog({
                         type="button"
                         className="publish-gallery-tag"
                         data-testid={`publish-tag-${tag}`}
-                        title="Remove tag"
+                        title="移除标签"
                         onClick={() =>
                           setTags((previous) =>
                             previous.filter((candidate) => candidate !== tag),
@@ -299,8 +300,8 @@ export function PublishGalleryDialog({
                 ) : null}
                 <input
                   dir="auto"
-                  aria-label="Add tag"
-                  placeholder="Type a tag and press Enter"
+                  aria-label="添加标签"
+                  placeholder="输入标签后按 Enter"
                   value={tagDraft}
                   maxLength={24}
                   onChange={(event) => setTagDraft(event.currentTarget.value)}
@@ -342,7 +343,7 @@ export function PublishGalleryDialog({
                 className="publish-gallery-gates"
                 data-testid="publish-gallery-gates"
               >
-                <p>Quality checks — worth a look, publishing stays open:</p>
+                <p>质量检查——建议查看，但仍可继续发布：</p>
                 <ul>
                   {gateReport.failures.map((failure) => (
                     <li key={failure.code}>

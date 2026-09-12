@@ -115,7 +115,7 @@ describe("Cloud Project client", () => {
       await saveCloudProject(project, null, respondWith(404, {}).fetchLike),
     ).toEqual({
       status: "unreachable",
-      message: "Cloud Project service is unavailable (404)",
+      message: "云项目服务不可用（404）",
     });
   });
 

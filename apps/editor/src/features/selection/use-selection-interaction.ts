@@ -571,7 +571,7 @@ export function useSelectionInteraction(
       clearCommandMoveSession();
       options.snapGuides([]);
       options.cancelInteraction();
-      options.setStatus("Move cancelled because the document changed");
+      options.setStatus("文档已更改，移动操作已取消");
       return false;
     }
     session.latestPoint = point;
@@ -1150,7 +1150,7 @@ export function useSelectionInteraction(
             movingVisual?.restore();
             boundaryRouteVisual?.restore();
             options.setStatus(
-              error instanceof Error ? error.message : "Move failed",
+              error instanceof Error ? error.message : "移动失败",
             );
             return;
           }

@@ -235,9 +235,7 @@ describe("pin-onto-pin move bond", () => {
         pinName: "P",
       }),
     );
-    expect(statuses.some((s) => s.includes("Snapped pin endpoints"))).toBe(
-      true,
-    );
+    expect(statuses.some((s) => s.includes("已吸附引脚端点"))).toBe(true);
   });
 
   it("joins two differently named nets and retires both names", () => {

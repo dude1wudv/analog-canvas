@@ -157,22 +157,18 @@ export function CellManagerDialog({
       >
         <header className="cell-manager-header">
           <div>
-            <p>Project hierarchy</p>
-            <h2 id="cell-manager-title">Cell Manager</h2>
+            <p>项目层次结构</p>
+            <h2 id="cell-manager-title">Cell 管理器</h2>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close Cell Manager"
-          >
-            Close
+          <button type="button" onClick={onClose} aria-label="关闭 Cell 管理器">
+            关闭
           </button>
         </header>
 
         <div className="cell-manager-body">
-          <aside className="cell-manager-list" aria-label="Cells">
+          <aside className="cell-manager-list" aria-label="Cell">
             <div className="cell-manager-list-heading">
-              <span>Cells</span>
+              <span>Cell</span>
               <span>{cells.length}</span>
             </div>
             <div className="cell-manager-list-scroll">
@@ -186,7 +182,7 @@ export function CellManagerDialog({
                 >
                   <span>
                     <strong>{cell.name}</strong>
-                    {cell.isTop ? <em>Top</em> : null}
+                    {cell.isTop ? <em>顶层</em> : null}
                   </span>
                   <small>
                     {cell.portCount} ports · {cell.callers.length} callers
@@ -232,7 +228,7 @@ export function CellManagerDialog({
                   <div>
                     <div className="cell-manager-title-row">
                       <h3>{selectedEntry.name}</h3>
-                      {selectedEntry.isTop ? <span>Top Cell</span> : null}
+                      {selectedEntry.isTop ? <span>顶层 Cell</span> : null}
                     </div>
                     <p>
                       {selectedEntry.portCount} ports ·{" "}
@@ -244,7 +240,7 @@ export function CellManagerDialog({
                       type="button"
                       onClick={() => onOpen(selectedEntry.id)}
                     >
-                      Open
+                      打开
                     </button>
                     <button
                       type="button"
@@ -262,7 +258,7 @@ export function CellManagerDialog({
                       }
                       onClick={() => setDeleteId(selectedEntry.id)}
                     >
-                      Delete
+                      删除
                     </button>
                   </div>
                 </header>
@@ -324,7 +320,7 @@ export function CellManagerDialog({
                 ) : null}
               </>
             ) : (
-              <p className="cell-interface-empty">No Cell selected.</p>
+              <p className="cell-interface-empty">未选择 Cell。</p>
             )}
           </div>
         </div>
@@ -344,8 +340,8 @@ export function CellManagerDialog({
                 aria-labelledby="import-cell-dialog-title"
               >
                 <header className="editor-action-dialog-header">
-                  <p>Project hierarchy</p>
-                  <h2 id="import-cell-dialog-title">Import Cloud Cell</h2>
+                  <p>项目层次结构</p>
+                  <h2 id="import-cell-dialog-title">导入云端 Cell</h2>
                 </header>
                 <div className="editor-action-dialog-body">
                   <label>
@@ -371,7 +367,7 @@ export function CellManagerDialog({
                         setImportCellId(loaded.project.topDocumentId);
                       }}
                     >
-                      <option value="">Choose a saved Project…</option>
+                      <option value="">选择已保存的项目…</option>
                       {cloudProjects
                         .filter((cloud) => cloud.id !== activeCloudProjectId)
                         .map((cloud) => (
@@ -403,7 +399,7 @@ export function CellManagerDialog({
                 </div>
                 <footer className="editor-action-dialog-actions">
                   <button type="button" onClick={dismissActionDialog}>
-                    Cancel
+                    取消
                   </button>
                   <button
                     type="button"
@@ -433,13 +429,13 @@ export function CellManagerDialog({
                 className="editor-action-dialog"
                 role="dialog"
                 aria-modal="true"
-                aria-label="Delete Cell"
+                aria-label="删除 Cell"
                 onKeyDown={(event) => {
                   if (event.key === "Escape") dismissActionDialog();
                 }}
               >
                 <header className="editor-action-dialog-header">
-                  <p>Project hierarchy</p>
+                  <p>项目层次结构</p>
                   <h2 id="delete-cell-dialog-title">
                     Delete {deleteTarget.name}?
                   </h2>
@@ -452,7 +448,7 @@ export function CellManagerDialog({
                 </div>
                 <footer className="editor-action-dialog-actions">
                   <button type="button" autoFocus onClick={dismissActionDialog}>
-                    Cancel
+                    取消
                   </button>
                   <button
                     type="button"
@@ -462,7 +458,7 @@ export function CellManagerDialog({
                       dismissActionDialog();
                     }}
                   >
-                    Delete Cell
+                    删除 Cell
                   </button>
                 </footer>
               </section>
@@ -481,7 +477,7 @@ export function CellManagerDialog({
                 }}
               >
                 <header className="editor-action-dialog-header">
-                  <p>Project hierarchy</p>
+                  <p>项目层次结构</p>
                   <h2 id="cell-name-dialog-title">
                     {renameTarget ? "Rename Cell" : "New Cell"}
                   </h2>
@@ -493,7 +489,7 @@ export function CellManagerDialog({
                       : "Create a reusable schematic definition in this project."}
                   </p>
                   <label className="editor-action-dialog-field">
-                    <span>Cell name</span>
+                    <span>Cell 名称</span>
                     <input
                       id="cell-name-input"
                       autoFocus
@@ -506,7 +502,7 @@ export function CellManagerDialog({
                 </div>
                 <footer className="editor-action-dialog-actions">
                   <button type="button" onClick={dismissActionDialog}>
-                    Cancel
+                    取消
                   </button>
                   <button
                     type="submit"

@@ -23,7 +23,7 @@ describe("approved simulation Code layout", () => {
             onSelect: () => {},
             onAction: () => {},
           }}
-          actions={<button>Run</button>}
+          actions={<button>运行</button>}
           console={null}
           results={null}
           outputPane="console"
@@ -58,7 +58,7 @@ describe("approved simulation Code layout", () => {
             { path: "experiment.json", kind: "authored" },
           ]}
           onSelectFile={() => {}}
-          actions={<button>Run</button>}
+          actions={<button>运行</button>}
           outputPane="console"
           onSelectOutputPane={() => {}}
           console={<p>Run console</p>}

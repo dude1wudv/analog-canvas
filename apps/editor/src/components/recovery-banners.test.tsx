@@ -26,7 +26,7 @@ describe("recovery banners", () => {
     );
     expect(html).toContain("startup-recovery-banner");
     expect(html).toContain("OTA");
-    expect(html).toContain("Restore");
+    expect(html).toContain("恢复");
     expect(html).toContain("Download backup");
     expect(html).toContain("Ignore");
     expect(html).not.toContain('role="dialog"');

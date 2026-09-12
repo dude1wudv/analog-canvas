@@ -15,28 +15,28 @@ export interface StyleKnob {
 export const STYLE_KNOBS: readonly StyleKnob[] = [
   {
     key: "fontScale",
-    label: "Font size",
-    description: "All schematic text and labels",
+    label: "字号",
+    description: "所有原理图文本与标签",
   },
   {
     key: "wireStrokeScale",
-    label: "Wire thickness",
-    description: "Drawn wire strokes",
+    label: "导线粗细",
+    description: "绘制的导线线条",
   },
   {
     key: "symbolStrokeScale",
-    label: "Symbol thickness",
-    description: "Device artwork, supplies, and rails",
+    label: "符号粗细",
+    description: "器件图形、电源与电源轨",
   },
   {
     key: "annotationStrokeScale",
-    label: "Drawing thickness",
-    description: "Rectangles, arrows, and annotation strokes",
+    label: "绘图线宽",
+    description: "矩形、箭头和注释线条",
   },
   {
     key: "junctionRadiusScale",
-    label: "Junction dot size",
-    description: "Connection dot radius",
+    label: "连接点大小",
+    description: "连接点半径",
   },
 ];
 

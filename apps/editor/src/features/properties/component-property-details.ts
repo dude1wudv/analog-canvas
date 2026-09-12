@@ -188,7 +188,7 @@ export function componentDetailFields(
     },
     {
       path: "parameters",
-      label: "Parameters",
+      label: "参数",
       kind: "text",
       description: "",
     },

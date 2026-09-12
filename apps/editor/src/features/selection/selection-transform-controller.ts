@@ -141,7 +141,7 @@ export function createSelectionTransformController({
   const align = (mode: EdgeAlignmentMode): void => {
     const plan = planSelectionAlignment(alignmentContext, mode);
     if (plan.participantCount < 2) {
-      setStatus("Select at least two parts or text objects to align");
+      setStatus("请至少选择两个元件或文本对象进行对齐");
       return;
     }
     if (plan.blockingMessage) {
@@ -149,7 +149,7 @@ export function createSelectionTransformController({
       return;
     }
     if (plan.edits.length === 0) {
-      setStatus("Selection is already aligned");
+      setStatus("所选对象已经对齐");
       return;
     }
     if (transact(plan.edits).ok) {

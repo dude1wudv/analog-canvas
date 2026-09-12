@@ -42,18 +42,18 @@ describe("TimingSimulationPanel", () => {
 
     expect(markup).toContain('data-testid="timing-simulation-panel"');
     expect(markup).toContain('role="dialog"');
-    expect(markup).toContain("Digital Simulation");
-    expect(markup).toContain("Saved Nets");
+    expect(markup).toContain("数字仿真");
+    expect(markup).toContain("已保存网络");
     expect(markup).toContain('<aside class="simulation-saved-nets"');
     expect(markup).toContain('class="simulation-saved-net-list" role="list"');
     expect(markup).toContain('role="listitem"');
     expect(markup).toContain('aria-label="Edit waveform name for clock"');
     expect(markup).toContain(">clock</span>");
-    expect(markup).toContain("Names below only affect waveform labels.");
+    expect(markup).toContain("下列名称仅影响波形标签。");
     expect(markup).toContain("Pick Nets");
     expect(markup).toContain("Run Simulation");
-    expect(markup).toContain("Export SVG");
-    expect(markup).toContain("Export PNG");
+    expect(markup).toContain("导出 SVG");
+    expect(markup).toContain("导出 PNG");
     expect(markup).toContain("Place on Canvas");
     expect(markup).toContain("Temporary results");
     expect(markup).not.toContain("<details");

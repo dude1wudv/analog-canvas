@@ -61,16 +61,16 @@ Keep credentials private. Do not invent symbol IDs, pin names, revisions, or raw
 }
 
 const STATUS_LABEL: Record<AgentConnectionStatus, string> = {
-  idle: "Not connected",
-  creating: "Creating connection…",
-  "waiting-for-agent": "Waiting for Agent",
-  connected: "Connected",
-  working: "Working",
-  paused: "Paused",
-  reconnecting: "Reconnecting",
-  offline: "Relay offline",
-  revoked: "Disconnected",
-  expired: "Session expired",
+  idle: "未连接",
+  creating: "正在创建连接…",
+  "waiting-for-agent": "正在等待 Agent",
+  connected: "已连接",
+  working: "工作中",
+  paused: "已暂停",
+  reconnecting: "正在重新连接",
+  offline: "中继离线",
+  revoked: "已断开",
+  expired: "会话已过期",
 };
 
 function formatRemaining(expiresAt: number | null, now: number): string {
@@ -345,7 +345,7 @@ export function AgentPropertiesSection(
   return (
     <section
       className="agent-properties"
-      aria-label="Agent connection"
+      aria-label="Agent 连接"
       data-testid="agent-properties"
     >
       <div className="agent-properties-summary">
@@ -369,7 +369,7 @@ export function AgentPropertiesSection(
               data-testid="agent-pause"
               onClick={props.onPause}
             >
-              Pause
+              暂停
             </button>
           ) : null}
           {!props.expanded && props.status === "paused" ? (
@@ -378,7 +378,7 @@ export function AgentPropertiesSection(
               data-testid="agent-resume"
               onClick={props.onResume}
             >
-              Resume
+              继续
             </button>
           ) : null}
           {!props.expanded &&
@@ -388,7 +388,7 @@ export function AgentPropertiesSection(
               data-testid="agent-reconnect"
               onClick={props.onReconnect}
             >
-              Retry relay
+              重试中继
             </button>
           ) : null}
           {!props.expanded && terminal ? (
@@ -397,7 +397,7 @@ export function AgentPropertiesSection(
               data-testid="agent-new-connection"
               onClick={props.onNewConnection}
             >
-              New connection
+              新建连接
             </button>
           ) : null}
           <button
@@ -405,7 +405,7 @@ export function AgentPropertiesSection(
             onClick={props.onToggleDetails}
             aria-expanded={props.expanded}
           >
-            {props.expanded ? "Hide" : "Manage"}
+            {props.expanded ? "隐藏" : "管理"}
           </button>
         </div>
       </div>

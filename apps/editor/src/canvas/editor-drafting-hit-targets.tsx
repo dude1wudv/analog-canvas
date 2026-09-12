@@ -352,7 +352,7 @@ export function EditorDraftingHandles({
         <rect
           className="draft-handle draft-group-scale-handle"
           data-testid={`draft-group-scale-${selectedGroup.id}`}
-          aria-label="Scale waveform"
+          aria-label="缩放波形"
           x={handle.x - 5}
           y={handle.y - 5}
           width="10"

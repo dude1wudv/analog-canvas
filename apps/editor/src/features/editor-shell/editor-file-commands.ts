@@ -73,14 +73,14 @@ export function createEditorFileCommands({
   onChunkLoadFailure,
 }: EditorFileCommandDependencies) {
   const exportSvg = (): void => {
-    setStatus("Preparing SVG export");
+    setStatus("正在准备导出 SVG");
     void createSvgExportArtifact(document, resolver, project.name)
       .then((artifact) => {
         requestBrowserDownload(artifact, project.name);
         setStatus(artifact.report);
       })
       .catch((error: unknown) => {
-        setStatus(error instanceof Error ? error.message : "Export failed");
+        setStatus(error instanceof Error ? error.message : "导出失败");
       });
   };
 
@@ -162,7 +162,7 @@ export function createEditorFileCommands({
       );
       return;
     }
-    setStatus("Importing SPICE sources");
+    setStatus("正在导入 SPICE 源文件");
     try {
       const result = await importSpiceSources(
         convertImportSources(sourceInputs),
@@ -201,7 +201,7 @@ export function createEditorFileCommands({
         );
       });
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "SPICE import failed");
+      setStatus(error instanceof Error ? error.message : "SPICE 导入失败");
     }
   };
 

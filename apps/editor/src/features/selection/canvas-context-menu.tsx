@@ -84,7 +84,7 @@ export function CanvasContextMenu({
     >
       {alignmentEnabled ? (
         <div className="context-menu-section">
-          <div className="context-menu-heading">Align</div>
+          <div className="context-menu-heading">对齐</div>
           {EDGE_ALIGNMENT_MODES.map(({ mode, label }) => (
             <button
               key={mode}

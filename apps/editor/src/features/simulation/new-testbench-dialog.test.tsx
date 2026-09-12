@@ -28,7 +28,7 @@ describe("NewTestbenchDialog", () => {
     );
 
     expect(markup).toContain('role="dialog"');
-    expect(markup).toContain("New Testbench Cell");
+    expect(markup).toContain("新建 Testbench Cell");
     expect(markup).toContain("Auto-derived");
     expect(markup).toContain("not a copied symbol");
     expect(markup).toContain('value="Main_tb"');

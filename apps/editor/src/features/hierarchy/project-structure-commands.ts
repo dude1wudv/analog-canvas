@@ -123,7 +123,7 @@ export function createProjectStructureCommands({
         ),
       )
     ) {
-      setStatus("Updated Cell port direction");
+      setStatus("已更新 Cell 端口方向");
     }
   };
 
@@ -156,9 +156,7 @@ export function createProjectStructureCommands({
         setStatus(`Renamed Cell Pin to ${nextName}`);
       }
     } catch (error) {
-      setStatus(
-        error instanceof Error ? error.message : "Could not rename port",
-      );
+      setStatus(error instanceof Error ? error.message : "无法重命名端口");
     }
   };
 
@@ -214,9 +212,7 @@ export function createProjectStructureCommands({
       }
       return committed;
     } catch (error) {
-      setStatus(
-        error instanceof Error ? error.message : "Could not rename port",
-      );
+      setStatus(error instanceof Error ? error.message : "无法重命名端口");
       return false;
     }
   };
@@ -256,9 +252,7 @@ export function createProjectStructureCommands({
       if (committed) setStatus(`Deleted Cell Pin ${terminal.name}`);
       return committed;
     } catch (error) {
-      setStatus(
-        error instanceof Error ? error.message : "Could not delete port",
-      );
+      setStatus(error instanceof Error ? error.message : "无法删除端口");
       return false;
     }
   };
@@ -276,7 +270,7 @@ export function createProjectStructureCommands({
     );
     if (edits.length === 0) return;
     if (commitStructure("reorder-cell-interface-terminal", edits)) {
-      setStatus("Reordered formal terminal interface");
+      setStatus("已重新排列形式端口接口");
     }
   };
 
@@ -296,13 +290,11 @@ export function createProjectStructureCommands({
         })),
       );
       if (commitStructure("set-cell-formal-parameters", [...proposal.edits])) {
-        setStatus("Updated Cell formal parameters");
+        setStatus("已更新 Cell 形式参数");
       }
     } catch (error) {
       setStatus(
-        error instanceof Error
-          ? error.message
-          : "Could not update Cell formal parameters",
+        error instanceof Error ? error.message : "无法更新 Cell 形式参数",
       );
     }
   };
@@ -330,9 +322,7 @@ export function createProjectStructureCommands({
       }
     } catch (error) {
       setStatus(
-        error instanceof Error
-          ? error.message
-          : "Could not update external subcircuit interface",
+        error instanceof Error ? error.message : "无法更新外部子电路接口",
       );
     }
   };
@@ -350,7 +340,7 @@ export function createProjectStructureCommands({
       width % 10 !== 0 ||
       height % 10 !== 0
     ) {
-      setStatus("Cell symbol size must use positive 10-unit grid values");
+      setStatus("Cell 符号尺寸必须使用正的 10 单位网格值");
       return;
     }
     const current = child.presentation.cellSymbol;
@@ -388,13 +378,11 @@ export function createProjectStructureCommands({
           ),
         )
       ) {
-        setStatus("Moved Cell symbol pin in every parent instance");
+        setStatus("已在所有父级实例中移动 Cell 符号引脚");
       }
     } catch (error) {
       setStatus(
-        error instanceof Error
-          ? error.message
-          : "Could not move Cell symbol pin",
+        error instanceof Error ? error.message : "无法移动 Cell 符号引脚",
       );
     }
   };

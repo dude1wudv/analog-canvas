@@ -241,6 +241,6 @@ describe("selection inspection model", () => {
     expect(model.selectedNoConnect?.id).toBe("nc-r1-1");
     expect(model.selectedEndpointNetId).toBeNull();
     expect(model.hasInspectableSelection).toBe(true);
-    expect(model.selectionShelfSummary).toBe("Endpoint");
+    expect(model.selectionShelfSummary).toBe("端点");
   });
 });

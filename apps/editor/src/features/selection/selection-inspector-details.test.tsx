@@ -96,7 +96,7 @@ describe("selection inspector details", () => {
       />,
     );
 
-    expect(markup).toContain("SPICE Import Report");
+    expect(markup).toContain("SPICE 导入报告");
     expect(markup).toContain("Historical messages captured while importing");
     expect(markup).toContain("circuit.spi");
     expect(markup).toContain("SPICE_NOTE");
@@ -135,8 +135,8 @@ describe("selection inspector details", () => {
     expect(markup).toContain("ERC / ERC_UNCONNECTED_PIN");
     expect(markup).not.toContain("VISUAL / VISUAL_SHORT_SEGMENT");
     expect(markup).toContain('data-testid="diagnostic-observations-toggle"');
-    expect(markup).toContain("Show non-blocking observations (1)");
-    expect(markup).toContain("Issues (1)");
+    expect(markup).toContain("显示非阻断性观察项（1）");
+    expect(markup).toContain("问题 (1)");
   });
 
   it("offers one-click angled-wire repair and reports protected routes", () => {
@@ -280,7 +280,7 @@ describe("selection inspector details", () => {
     );
     expect(markup).toContain('data-testid="net-trace-hops"');
     expect(markup).toContain('data-testid="net-trace-hop-0"');
-    expect(markup).toContain("Enter");
+    expect(markup).toContain("进入");
     expect(markup).toContain("XBIAS.OUT");
     expect(markup).toContain("Bias Child Cell / net-child");
   });
@@ -323,7 +323,7 @@ describe("selection inspector details", () => {
       />,
     );
 
-    expect(markup).toContain("Global");
+    expect(markup).toContain("全局");
     expect(markup).toContain("vdd");
     expect(markup).toContain("document-child / net-vdd-child");
   });

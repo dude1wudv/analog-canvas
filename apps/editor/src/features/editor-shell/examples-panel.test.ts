@@ -84,7 +84,7 @@ describe("gallery panel view", () => {
     expect(
       deriveGalleryPanelView(feed, { searchQuery: "", selectedTags: [] })
         .countLabel,
-    ).toBe("120 circuits");
+    ).toBe("120 个电路");
     // A pre-totals API answers null; the panel then says nothing at all.
     expect(
       deriveGalleryPanelView(
@@ -100,7 +100,7 @@ describe("gallery panel view", () => {
         searchQuery: "",
         selectedTags: ["bias"],
       }).countLabel,
-    ).toBe("120 filtered circuits");
+    ).toBe("120 个筛选后的电路");
   });
 
   it("counts text matches separately from the wall's size", () => {
@@ -111,7 +111,7 @@ describe("gallery panel view", () => {
     expect(view.visibleEntries.map((candidate) => candidate.id)).toEqual([
       "g-2",
     ]);
-    expect(view.countLabel).toBe("120 circuits · 1 match");
+    expect(view.countLabel).toBe("120 个电路 · 1 个匹配");
   });
 
   it("searches the same fields the wall searches", () => {
@@ -135,7 +135,7 @@ describe("gallery panel view", () => {
     expect(view.emptyMessage).toBe(
       "No matches yet — searching older circuits…",
     );
-    expect(view.countLabel).toBe("120 circuits · 0 matches so far");
+    expect(view.countLabel).toBe("120 个电路 · 0 个匹配（目前）");
   });
 
   it("says nothing matches only once the feed is exhausted", () => {
@@ -144,7 +144,7 @@ describe("gallery panel view", () => {
       selectedTags: [],
     });
     expect(view.emptyMessage).toBe("No circuits match “zzz”.");
-    expect(view.countLabel).toBe("120 circuits · 0 matches");
+    expect(view.countLabel).toBe("120 个电路 · 0 个匹配");
   });
 
   it("stands the bundled circuits in while the feed is unavailable", () => {

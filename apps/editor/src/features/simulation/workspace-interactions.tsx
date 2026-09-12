@@ -253,7 +253,7 @@ export function WorkspaceInteractions({ children }: { children: ReactNode }) {
               <p>{confirmation.message}</p>
               <div>
                 <button type="button" onClick={() => finishConfirm(false)}>
-                  Cancel
+                  取消
                 </button>
                 <button
                   type="button"

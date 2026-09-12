@@ -148,7 +148,7 @@ export function createEditorNavigationController({
       parentDocumentId,
     );
     if (!path) {
-      setStatus("Caller path could not be resolved");
+      setStatus("无法解析调用方路径");
       return;
     }
     setDocumentStack([...path]);
@@ -349,7 +349,7 @@ export function createEditorNavigationController({
       enterHierarchy(selectedInstance.id);
       return;
     }
-    setStatus("Select a hierarchical block before entering a Cell");
+    setStatus("进入 Cell 前请先选择层次化模块");
   };
 
   const returnToParentDocument = (): void => {
@@ -410,9 +410,7 @@ export function createEditorNavigationController({
         setStatus(`Cleared Net highlight ${highlightedNetOrigin.netId}`);
         return;
       }
-      setStatus(
-        "Select a wire, connected pin, or Net Label before highlighting a Net",
-      );
+      setStatus("高亮网络前请先选择导线、已连接引脚或网络标签");
       return;
     }
     if (selectedHighlightIsActive) {

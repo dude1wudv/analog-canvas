@@ -213,8 +213,6 @@ describe("Gallery and example commands", () => {
     await commands.openGalleryEntryById("missing");
 
     expect(input.replaceActiveProject).not.toHaveBeenCalled();
-    expect(input.setStatus).toHaveBeenCalledWith(
-      "This gallery entry is unavailable",
-    );
+    expect(input.setStatus).toHaveBeenCalledWith("此画廊条目不可用");
   });
 });

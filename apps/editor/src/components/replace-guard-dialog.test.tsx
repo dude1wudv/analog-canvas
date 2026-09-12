@@ -38,7 +38,7 @@ describe("ReplaceGuardDialog", () => {
         onDiscard={vi.fn()}
       />,
     );
-    expect(html).toContain("Saving to Cloud…");
+    expect(html).toContain("正在保存到云端…");
     expect(html).toContain("disabled");
   });
 });

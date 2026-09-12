@@ -190,7 +190,7 @@ export default function SimulationCodeEditor(props: SimulationCodeEditorProps) {
           lintGutter(),
           configuration.current.of(extensions()),
           EditorView.contentAttributes.of({
-            "aria-label": "Simulation source editor",
+            "aria-label": "仿真源代码编辑器",
             spellcheck: "false",
             "data-simulation-code-input": "true",
           }),
@@ -512,20 +512,20 @@ export default function SimulationCodeEditor(props: SimulationCodeEditorProps) {
           else setHelperOpen((open) => !open);
         }}
       >
-        Helper
+        助手
       </button>
       {unknownCommand && !helperOpen && !props.helperContent && (
         <button
           className="simulation-find-helper"
           onClick={() => setHelperOpen(true)}
         >
-          Find a helper…
+          查找助手…
         </button>
       )}
       {props.picking && (
         <>
           <small>{props.picking.label}</small>
-          <button onClick={props.picking.onStop}>Done</button>
+          <button onClick={props.picking.onStop}>完成</button>
         </>
       )}
     </div>

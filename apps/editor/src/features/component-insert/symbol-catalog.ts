@@ -42,6 +42,23 @@ export interface ComponentCatalogGroup {
   symbols: SymbolDefinition[];
 }
 
+const CATEGORY_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+  Transistors: "晶体管",
+  Passives: "无源器件",
+  "Power and Ports": "电源与端口",
+  Sources: "源",
+  Switches: "开关",
+  "Analog Blocks": "模拟模块",
+  "Logic Gates": "逻辑门",
+  "Signal Flow": "信号流",
+  Annotations: "注释",
+  "Extended Devices": "扩展器件",
+};
+
+export function categoryDisplayName(category: string): string {
+  return CATEGORY_DISPLAY_NAMES[category] ?? category;
+}
+
 export function symbolCategory(symbolId: string): string {
   if (isAnnotationPaletteSymbol(symbolId)) return ANNOTATION_CATEGORY;
   // Keep diode and adjustable-passive tiles in Extended Devices,

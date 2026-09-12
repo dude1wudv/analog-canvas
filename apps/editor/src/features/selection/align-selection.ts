@@ -26,12 +26,12 @@ export const EDGE_ALIGNMENT_MODES: readonly {
   mode: EdgeAlignmentMode;
   label: string;
 }[] = [
-  { mode: "left", label: "Align left" },
-  { mode: "h-center", label: "Align horizontal center" },
-  { mode: "right", label: "Align right" },
-  { mode: "top", label: "Align top" },
-  { mode: "v-center", label: "Align vertical center" },
-  { mode: "bottom", label: "Align bottom" },
+  { mode: "left", label: "左对齐" },
+  { mode: "h-center", label: "水平居中对齐" },
+  { mode: "right", label: "右对齐" },
+  { mode: "top", label: "顶部对齐" },
+  { mode: "v-center", label: "垂直居中对齐" },
+  { mode: "bottom", label: "底部对齐" },
 ];
 
 export interface SelectionAlignmentContext {

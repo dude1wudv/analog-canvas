@@ -30,7 +30,7 @@ export function AnnotationColorProperties({
   return (
     <section
       className="property-section annotation-text-properties"
-      aria-label="Text properties"
+      aria-label="文本属性"
     >
       <AnnotationPropertyCodeEditor
         baseline={format(annotation)}

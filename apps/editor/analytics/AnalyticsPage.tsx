@@ -187,7 +187,7 @@ export function AnalyticsPage() {
 
   return (
     <div className="analytics-shell">
-      <header className="analytics-top-bar" aria-label="Page controls">
+      <header className="analytics-top-bar" aria-label="页面控件">
         <div className="analytics-top-bar-left">
           <button
             type="button"
@@ -222,7 +222,7 @@ export function AnalyticsPage() {
       <main className="analytics-page" id="content">
         <div className="analytics-container">
           <header className="analytics-head">
-            <h1>Analytics</h1>
+            <h1>统计</h1>
             <p className="analytics-sub">
               First-party counts · UTC days · updated{" "}
               <time dateTime={summary?.generatedAt}>{generated}</time>
@@ -236,7 +236,7 @@ export function AnalyticsPage() {
             </p>
           )}
 
-          <dl className="analytics-metrics" aria-label="Totals">
+          <dl className="analytics-metrics" aria-label="汇总">
             <Metric label="Unique visitors" value={summary?.totals.uv} />
             <Metric label="Page views" value={summary?.totals.pv} />
             <Metric label="Visitors today" value={summary?.today.uv} />
@@ -248,7 +248,7 @@ export function AnalyticsPage() {
             aria-labelledby="analytics-map-h"
           >
             <SectionHead
-              title="Origins"
+              title="来源地区"
               id="analytics-map-h"
               aside="Map"
               meta={<p className="analytics-note">≈1° request buckets</p>}
@@ -261,7 +261,7 @@ export function AnalyticsPage() {
             aria-labelledby="analytics-chart-h"
           >
             <SectionHead
-              title="Daily traffic"
+              title="每日流量"
               id="analytics-chart-h"
               meta={
                 <>
@@ -286,7 +286,7 @@ export function AnalyticsPage() {
               onSubmit={(event) => event.preventDefault()}
             >
               <label className="analytics-range-field">
-                <span>From</span>
+                <span>开始日期</span>
                 <input
                   className="analytics-range-input"
                   type="date"
@@ -299,7 +299,7 @@ export function AnalyticsPage() {
                 />
               </label>
               <label className="analytics-range-field">
-                <span>To</span>
+                <span>结束日期</span>
                 <input
                   className="analytics-range-input"
                   type="date"
@@ -329,7 +329,7 @@ export function AnalyticsPage() {
               aria-labelledby="analytics-countries-h"
             >
               <SectionHead
-                title="ISO 3166 Code"
+                title="ISO 3166 代码"
                 id="analytics-countries-h"
                 aside="Top"
               />
@@ -348,11 +348,7 @@ export function AnalyticsPage() {
               className="analytics-section"
               aria-labelledby="analytics-sources-h"
             >
-              <SectionHead
-                title="Sources"
-                id="analytics-sources-h"
-                aside="Top"
-              />
+              <SectionHead title="来源" id="analytics-sources-h" aside="Top" />
               <BreakdownTable
                 heading="Source"
                 rows={summary?.sources ?? []}
@@ -368,7 +364,7 @@ export function AnalyticsPage() {
               className="analytics-section analytics-section--wide"
               aria-labelledby="analytics-pages-h"
             >
-              <SectionHead title="Pages" id="analytics-pages-h" aside="Top" />
+              <SectionHead title="页面" id="analytics-pages-h" aside="Top" />
               <BreakdownTable
                 heading="Path"
                 rows={summary?.paths ?? []}
@@ -444,7 +440,7 @@ function DailyChart({ days }: { days: DayRow[] }) {
         className="analytics-chart"
         viewBox={`0 0 ${width} ${height}`}
         role="img"
-        aria-label="Daily page views and unique visitors"
+        aria-label="每日浏览量和独立访客数"
       >
         <text
           className="analytics-chart-tick"
@@ -483,7 +479,7 @@ function DailyChart({ days }: { days: DayRow[] }) {
       className="analytics-chart"
       viewBox={`0 0 ${width} ${height}`}
       role="img"
-      aria-label="Daily page views and unique visitors"
+      aria-label="每日浏览量和独立访客数"
     >
       {days.map((day, index) => {
         const pvHeight = (day.pv / max) * plotHeight;
@@ -548,7 +544,7 @@ function WorldHeatmap({ points }: { points: Summary["points"] }) {
         className="analytics-map-svg"
         viewBox={`0 0 ${MAP_W} ${MAP_H}`}
         role="img"
-        aria-label="World heatmap of request origins"
+        aria-label="请求来源世界热力图"
       >
         <defs>
           <radialGradient id="analytics-heat-gradient">

@@ -75,10 +75,9 @@ export function ReplaceGuardDialog({
             </svg>
           </span>
           <div className="replace-guard-copy">
-            <h2 id="replace-guard-title">Unsaved changes</h2>
+            <h2 id="replace-guard-title">有未保存的更改</h2>
             <p>
-              Continuing to <strong>{intent}</strong> will drop your latest
-              edits.
+              继续<strong>{intent}</strong>会丢弃最新编辑。
             </p>
             <p className="replace-guard-hint">
               Save keeps this Project in Cloud Projects (up to{" "}
@@ -95,7 +94,7 @@ export function ReplaceGuardDialog({
             onClick={onDiscard}
             disabled={saving}
           >
-            Continue without saving
+            不保存并继续
           </button>
           <button
             type="button"
@@ -104,7 +103,7 @@ export function ReplaceGuardDialog({
             onClick={onCancel}
             disabled={saving}
           >
-            Stay
+            留在此处
           </button>
           <button
             type="button"
@@ -112,7 +111,7 @@ export function ReplaceGuardDialog({
             onClick={onSaveAndContinue}
             disabled={saving}
           >
-            {saving ? "Saving to Cloud…" : "Save to Cloud and continue"}
+            {saving ? "正在保存到云端…" : "保存到云端并继续"}
           </button>
         </div>
       </section>

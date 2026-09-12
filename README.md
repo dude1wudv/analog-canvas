@@ -1,17 +1,13 @@
 # Analog Canvas
 
-Analog Canvas is a local-first, connectivity-aware schematic editor for the
-web. Draw and organize hierarchical circuits, import structural SPICE, export
-deterministic SPICE/Spectre netlists and vector SVG/PDF, publish selected work
-to the Community Gallery, and connect authorized Agents through the same typed
-edit model.
+Analog Canvas 是一款本地优先、感知电气连接关系的 Web 原理图编辑器。你可以绘制并组织层次化电路，导入结构化 SPICE，导出确定性的 SPICE/Spectre 网表和矢量 SVG/PDF，将选定作品发布到社区画廊，并让已授权的 Agent 通过同一套强类型编辑模型连接项目。
 
-[Browse the Gallery](https://analog-canvas.tokenzhang.com/) ·
-[Open the editor](https://analog-canvas.tokenzhang.com/editor) ·
-[Documentation](docs/README.md) ·
-[GitHub repository](https://github.com/cascode-ai/analog-canvas)
+[浏览画廊](https://analog-canvas.tokenzhang.com/) ·
+[打开编辑器](https://analog-canvas.tokenzhang.com/editor) ·
+[项目文档](docs/README.md) ·
+[GitHub 仓库](https://github.com/dude1wudv/analog-canvas)
 
-## Highlights
+## 主要特性
 
 - **Connectivity-aware editing:** place devices, route wires, distinguish
   Crossings from Junctions, label Nets, and make undoable multi-object edits
@@ -33,38 +29,22 @@ edit model.
   through a version-pinned stdio MCP adapter, an HTTP Agent Kit, and the
   published OpenAPI contract. See the [Agent integration guide](docs/agent/README.md).
 
-## Project ownership and privacy
+## 项目归属与隐私
 
-An explicit **File / Save** updates one private Cloud Project in place. Local
-`.icproj.json` files are portable import/export and backup artifacts; browser
-recovery is an origin-local crash-safety copy. Neither is confused with formal
-Cloud Save, and Community Gallery entries remain separate public publications.
-The hosted service keeps its visitor reporting first-party and honors browser
-Do Not Track instead of embedding a third-party analytics tracker.
+明确执行 **文件 / 保存** 会原地更新一个私有云项目。本地 `.icproj.json` 文件是可移植的导入、导出与备份产物；浏览器恢复数据则是保存在当前站点下的崩溃保护副本。两者都不会与正式的云端保存混淆，社区画廊条目也始终是独立的公开发布内容。托管服务仅使用第一方访客统计，并遵循浏览器的“请勿跟踪”（Do Not Track）设置，不嵌入第三方分析器。
 
-**Check and Save** runs ERC and visual checks on demand, displays findings in
-Issues and the canvas, and saves through that same Cloud Project service.
-Findings do not block saving; editing invalidates the last check without
-automatically rerunning it. File / Save and Ctrl+S remain save-only.
+**检查并保存** 会按需运行 ERC 和视觉检查，在“问题”列表与画布上显示结果，并通过同一个云项目服务保存。检查结果不会阻止保存；继续编辑会使上次检查失效，但不会自动重新运行。文件 / 保存和 Ctrl+S 始终只执行保存。
 
-## Start here
+## 快速开始
 
-- **Use the hosted product:** browse the
-  [Community Gallery](https://analog-canvas.tokenzhang.com/) or start a
-  [new circuit](https://analog-canvas.tokenzhang.com/editor).
-- **Learn the editor:** [Getting started](docs/user/getting-started.md),
-  [schematic hierarchy](docs/user/schematic-hierarchy.md),
-  [compatibility](docs/user/project-compatibility.md), and
-  [troubleshooting](docs/user/troubleshooting.md).
-- **Understand the product:** [current architecture](docs/overall-product-plan.md)
-  and [documentation map](docs/README.md).
-- **Develop or contribute:** [working rules](AGENTS.md),
-  [current development reading set](docs/README.md#contributor-reading-order), and
-  [test system](docs/testing/README.md).
+- **使用在线版本：** 浏览[社区画廊](https://analog-canvas.tokenzhang.com/)，或[新建电路](https://analog-canvas.tokenzhang.com/editor)。
+- **学习编辑器：** 阅读[入门指南](docs/user/getting-started.md)、[原理图层次结构](docs/user/schematic-hierarchy.md)、[兼容性说明](docs/user/project-compatibility.md)和[故障排查](docs/user/troubleshooting.md)。
+- **了解项目：** 查看[当前架构](docs/overall-product-plan.md)和[文档索引](docs/README.md)。
+- **开发或贡献：** 阅读[工作规则](AGENTS.md)、[当前开发阅读清单](docs/README.md#contributor-reading-order)和[测试系统](docs/testing/README.md)。
 
-## Run locally
+## 本地运行
 
-Requires Node.js 24 or newer and pnpm 11.16.0 or newer.
+需要 Node.js 24 或更高版本，以及 pnpm 11.16.0 或更高版本。
 
 ```powershell
 pnpm install --frozen-lockfile
@@ -164,22 +144,19 @@ syntax and the [attribution](packages/spice/third-party/netlist-crawler/README.m
 
 ## License
 
-Copyright © 2026 Zengchun Chen and Zhishuai Zhang.
+版权所有 © 2026 Zengchun Chen、Zhishuai Zhang。
 
-Except where otherwise noted, Analog Canvas is licensed under the
-[GNU Affero General Public License v3.0 only](LICENSE.md)
-(`AGPL-3.0-only`). Modified versions that are distributed or made available
-for remote network interaction must provide their Corresponding Source under
-the same license. Third-party dependencies, reference material, and assets
-retain their respective copyright and license terms.
+除非另有说明，Analog Canvas 仅按 [GNU Affero General Public License v3.0](LICENSE.md)（`AGPL-3.0-only`）授权。经修改的版本若被分发或用于远程网络交互，必须按相同许可证提供其对应源代码。第三方依赖、参考资料和资源仍受其各自的版权与许可证条款约束。
 
-## Citation
+## 引用
 
-If you use Analog Canvas in research, teaching, or another publication, cite:
+若在研究、教学或其他出版物中使用 Analog Canvas，请引用：
 
 > Zengchun Chen and Zhishuai Zhang. _Analog Canvas_. 2026.
-> Available at: https://analog-canvas.tokenzhang.com/
-> Source code: https://github.com/cascode-ai/analog-canvas
+>
+> 在线地址：https://analog-canvas.tokenzhang.com/
+>
+> 源代码：https://github.com/dude1wudv/analog-canvas
 
 ```bibtex
 @software{chen2026analogcanvas,
@@ -187,6 +164,6 @@ If you use Analog Canvas in research, teaching, or another publication, cite:
   title = {Analog Canvas},
   year = {2026},
   url = {https://analog-canvas.tokenzhang.com/},
-  note = {Source code: https://github.com/cascode-ai/analog-canvas}
+  note = {Source code: https://github.com/dude1wudv/analog-canvas}
 }
 ```

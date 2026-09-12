@@ -86,14 +86,14 @@ export const CANVAS_PROPERTY_FIELDS: readonly CanvasPropertyField[] = [
   },
   {
     path: "display.value",
-    label: "Value",
+    label: "值",
     kind: "boolean",
     description: "",
     help: "Show or hide the value or MOS W/L label without changing its parameters.",
   },
   {
     path: "appearance",
-    label: "Appearance",
+    label: "外观",
     kind: "text",
     description: "",
   },

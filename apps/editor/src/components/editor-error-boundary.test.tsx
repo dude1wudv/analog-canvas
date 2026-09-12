@@ -11,12 +11,12 @@ describe("EditorCrashScreen", () => {
         onReload={() => undefined}
       />,
     );
-    expect(html).toContain("The editor hit an unexpected problem");
+    expect(html).toContain("编辑器遇到了意外问题");
     expect(html).toContain("boom in scene build");
-    expect(html).toContain("Reload editor");
+    expect(html).toContain("重新加载编辑器");
     expect(html).toContain('data-testid="crash-report-bug"');
-    expect(html).toContain("Report bug");
-    expect(html).toContain("Recover Local Work");
+    expect(html).toContain("报告问题");
+    expect(html).toContain("恢复本地工作");
   });
 
   it("offers a clean reload when the build is the thing that is stale", () => {
@@ -32,8 +32,8 @@ describe("EditorCrashScreen", () => {
         onRecover={() => undefined}
       />,
     );
-    expect(html).toContain("running an old version of the editor");
-    expect(html).toContain("Reload with a clean copy");
+    expect(html).toContain("运行的是旧版编辑器");
+    expect(html).toContain("使用干净副本重新加载");
     expect(html).toContain("crash-reload-clean");
   });
 
@@ -41,7 +41,7 @@ describe("EditorCrashScreen", () => {
     const html = renderToStaticMarkup(
       <EditorCrashScreen message="boom" onReload={() => undefined} />,
     );
-    expect(html).toContain("The editor hit an unexpected problem");
+    expect(html).toContain("编辑器遇到了意外问题");
     expect(html).not.toContain("crash-reload-clean");
   });
 
@@ -54,11 +54,11 @@ describe("EditorCrashScreen", () => {
         onRecover={() => undefined}
       />,
     );
-    expect(html).toContain("The editor could not finish loading");
-    expect(html).toContain("temporarily unavailable");
-    expect(html).toContain("Try again");
-    expect(html).toContain("Reload with a clean copy");
-    expect(html).not.toContain("running an old version");
+    expect(html).toContain("编辑器未能完成加载");
+    expect(html).toContain("暂时不可用");
+    expect(html).toContain("重试");
+    expect(html).toContain("使用干净副本重新加载");
+    expect(html).not.toContain("运行的是旧版编辑器");
     expect(html).toContain('data-kind="load"');
   });
 });

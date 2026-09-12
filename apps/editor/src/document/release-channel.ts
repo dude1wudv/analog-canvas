@@ -10,8 +10,8 @@
 export type ReleaseChannel = "production" | "preview";
 
 export interface ProjectStoreCopy {
-  singular: "Cloud Project" | "Preview Project";
-  plural: "Cloud Projects" | "Preview Projects";
+  singular: "云项目" | "预览项目";
+  plural: "云项目" | "预览项目";
   destination: "Cloud" | "Preview Projects";
 }
 
@@ -19,13 +19,13 @@ export interface ProjectStoreCopy {
 export function projectStoreCopy(channel: ReleaseChannel): ProjectStoreCopy {
   return channel === "preview"
     ? {
-        singular: "Preview Project",
-        plural: "Preview Projects",
+        singular: "预览项目",
+        plural: "预览项目",
         destination: "Preview Projects",
       }
     : {
-        singular: "Cloud Project",
-        plural: "Cloud Projects",
+        singular: "云项目",
+        plural: "云项目",
         destination: "Cloud",
       };
 }

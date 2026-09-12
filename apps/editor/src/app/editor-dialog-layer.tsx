@@ -105,7 +105,7 @@ export function EditorDialogLayer({
               }}
             >
               <header className="editor-action-dialog-header">
-                <p>Cell contents</p>
+                <p>Cell 内容</p>
                 <h2 id="clear-canvas-dialog-title">
                   {cellReset.pending.command} in {cellReset.documentName}?
                 </h2>
@@ -119,7 +119,7 @@ export function EditorDialogLayer({
               </div>
               <footer className="editor-action-dialog-actions">
                 <button type="button" autoFocus onClick={cellReset.onCancel}>
-                  Cancel
+                  取消
                 </button>
                 <button
                   type="button"
@@ -152,10 +152,10 @@ export function EditorDialogLayer({
           <section
             className="agent-dialog"
             role="dialog"
-            aria-label="Approve Agent file import"
+            aria-label="批准 Agent 文件导入"
           >
             <div className="agent-panel-header">
-              <h2>Approve Agent file import</h2>
+              <h2>批准 Agent 文件导入</h2>
             </div>
             <p>
               The Agent staged a {agentFileApproval.candidate.kind} candidate.
@@ -164,15 +164,15 @@ export function EditorDialogLayer({
             </p>
             <dl className="agent-file-candidate-summary">
               <div>
-                <dt>Project</dt>
+                <dt>项目</dt>
                 <dd>{agentFileApproval.candidate.projectName}</dd>
               </div>
               <div>
-                <dt>Documents</dt>
+                <dt>文档</dt>
                 <dd>{agentFileApproval.candidate.documentCount}</dd>
               </div>
               <div>
-                <dt>Instances</dt>
+                <dt>实例</dt>
                 <dd>{agentFileApproval.candidate.instanceCount}</dd>
               </div>
             </dl>

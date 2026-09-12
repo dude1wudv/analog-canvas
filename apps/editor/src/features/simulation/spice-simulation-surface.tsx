@@ -408,7 +408,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
       setProblem(
         uiProblem(
           "SIMULATION_BATCH_SELECTION_REQUIRED",
-          "Select at least two saved folders to run as a batch",
+          "请至少选择两个已保存的文件夹进行批量运行",
         ),
       );
       return;
@@ -636,8 +636,8 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
         uiProblem(
           "SIMULATION_ARCHIVE_STORAGE_FAILED",
           saved.code === "quota-exceeded"
-            ? "Browser storage is full; export the complete run ZIP instead"
-            : "Browser result archives are unavailable; export the complete run ZIP instead",
+            ? "浏览器存储空间已满；请改为导出完整运行 ZIP"
+            : "浏览器结果归档不可用；请改为导出完整运行 ZIP",
         ),
       );
       return;
@@ -662,7 +662,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
       setProblem(
         uiProblem(
           "SIMULATION_ARCHIVE_UNAVAILABLE",
-          "The selected browser archive is no longer available",
+          "所选浏览器归档已不可用",
         ),
       );
       return;
@@ -709,7 +709,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
       setProblem(
         uiProblem(
           "SIMULATION_ARCHIVE_DELETE_FAILED",
-          "The browser archive could not be removed",
+          "无法删除浏览器归档",
         ),
       );
       return;
@@ -727,7 +727,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
       ["finished", "failed", "cancelled", "lost"].includes(item.state),
     ).length ?? 0;
   const statusLabel = busy
-    ? "Preparing…"
+    ? "正在准备…"
     : batch
       ? `Batch ${batch.state} · ${finishedBatchItems}/${batch.items.length}`
       : run
@@ -735,11 +735,11 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
           ? (run.result?.outcome.status ?? run.state)
           : run.state
         : prepared
-          ? "Deck prepared"
-          : "No run yet";
+          ? "仿真输入已准备"
+          : "尚未运行";
   const staleMessage =
     run?.inputStatus === "changed"
-      ? "Result belongs to an earlier Project revision. Run again to use the current circuit."
+      ? "结果属于较早的项目版本。请重新运行以使用当前电路。"
       : "";
   const activeProblem = problem ?? run?.error;
   const runPresentation = run
@@ -752,7 +752,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     {
       key: "run" as const,
       label: "Run",
-      description: "Execution output",
+      description: "执行输出",
       artifacts:
         run?.artifacts.filter(
           (artifact) => !runPreparedArtifactIds.has(artifact.id),
@@ -852,7 +852,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
         await interaction.confirm({
           title: `Delete folder ${folder.name}?`,
           message:
-            "This removes its source files and saved drafts from the Project. Undo restores the folder; archived results are kept.",
+            "这会从项目中移除其源文件和已保存草稿。撤销可恢复该文件夹；归档结果会保留。",
         })
       ) {
         if (codeRef.current && !(await codeRef.current.save())) return;
@@ -1112,7 +1112,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
   const resultContent = (
     <section
       className="simulation-results-dock"
-      aria-label="Simulation results"
+      aria-label="仿真结果"
     >
       <div className="simulation-results-body">
         {run && archivedRunIds.current.has(run.id) ? (
@@ -1222,7 +1222,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
         className={`simulation-status-chip simulation-status-${batch?.state ?? run?.state ?? (prepared ? "prepared" : "idle")}`}
         role="status"
       >
-        {activeDirty ? "Source changed" : statusLabel}
+        {activeDirty ? "源文件已更改" : statusLabel}
       </span>
       {batch ? (
         <details
@@ -1234,7 +1234,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
         >
           <summary
             aria-label={`Batch queue: ${batch.state}, ${finishedBatchItems} of ${batch.items.length} finished`}
-            title="Batch queue"
+            title="批量队列"
           >
             <span aria-hidden="true">≡</span>
           </summary>
@@ -1327,7 +1327,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     <section
       hidden={!open}
       className={`spice-simulation-surface${props.maximized ? " maximized" : ""}`}
-      aria-label="Analog simulation"
+      aria-label="模拟仿真"
       onKeyDown={(e) => {
         e.stopPropagation();
         if (e.key !== "Escape") return;

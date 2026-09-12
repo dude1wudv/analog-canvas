@@ -21,11 +21,8 @@ export function CellSymbolLayoutProperties({
 }) {
   const bodySize = cell.presentation.cellSymbol?.minimumBodySize;
   return (
-    <div
-      className="cell-symbol-layout-properties"
-      aria-label="Cell symbol layout"
-    >
-      <div className="property-section-heading">Cell symbol layout</div>
+    <div className="cell-symbol-layout-properties" aria-label="Cell 符号布局">
+      <div className="property-section-heading">Cell 符号布局</div>
       <small>
         Editing <strong>{cell.name}</strong>. These definition-level changes
         apply to every parent instance; connected routes follow the moved pin.
@@ -50,7 +47,7 @@ export function CellSymbolLayoutProperties({
           Width
           <input
             key={`${cell.id}-${cell.revision}-symbol-width`}
-            aria-label="Cell symbol width"
+            aria-label="Cell 符号宽度"
             defaultValue={String(bodySize?.width ?? 100)}
             inputMode="numeric"
             onBlur={(event) =>
@@ -65,7 +62,7 @@ export function CellSymbolLayoutProperties({
           Height
           <input
             key={`${cell.id}-${cell.revision}-symbol-height`}
-            aria-label="Cell symbol height"
+            aria-label="Cell 符号高度"
             defaultValue={String(bodySize?.height ?? 60)}
             inputMode="numeric"
             onBlur={(event) =>
@@ -98,11 +95,11 @@ export function CellSymbolLayoutProperties({
                   )
                 }
               >
-                <option value="auto">Auto</option>
-                <option value="west">Left</option>
-                <option value="east">Right</option>
-                <option value="north">Top</option>
-                <option value="south">Bottom</option>
+                <option value="auto">自动</option>
+                <option value="west">左侧</option>
+                <option value="east">右侧</option>
+                <option value="north">顶层</option>
+                <option value="south">底部</option>
               </select>
             </label>
             <label>

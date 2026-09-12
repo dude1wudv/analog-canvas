@@ -90,10 +90,10 @@ export function EditorPropertiesDock({
       // Fit View insets the camera by the docks that float over the
       // canvas, so the drawing lands where it can be seen.
       data-canvas-overlay="true"
-      aria-label="Properties"
+      aria-label="属性"
       role="complementary"
     >
-      <section className="selection-shelf" aria-label="Selection">
+      <section className="selection-shelf" aria-label="选择">
         <button
           type="button"
           ref={shelfRef}
@@ -104,7 +104,7 @@ export function EditorPropertiesDock({
         >
           <span className="selection-shelf-title">
             <ToolIcon name="inspect" />
-            <span>Properties</span>
+            <span>属性</span>
             {agentIndicator ? (
               <span
                 className={`agent-shelf-indicator ${agentIndicator.terminal ? "terminal" : ""}`}

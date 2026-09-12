@@ -117,7 +117,7 @@ describe("Project structure commands", () => {
 
     expect(input.commitStructure).not.toHaveBeenCalled();
     expect(input.setStatus).toHaveBeenCalledWith(
-      "Cell symbol size must use positive 10-unit grid values",
+      "Cell 符号尺寸必须使用正的 10 单位网格值",
     );
   });
 

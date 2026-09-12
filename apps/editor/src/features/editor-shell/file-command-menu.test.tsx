@@ -9,8 +9,8 @@ describe("FileCommandMenu", () => {
   it("presents one Cloud Save protocol and explicit local interchange", () => {
     const markup = renderToStaticMarkup(
       <FileCommandMenu
-        projectStoreLabel="Cloud Projects"
-        projectStoreItemLabel="Cloud Project"
+        projectStoreLabel="云项目"
+        projectStoreItemLabel="云项目"
         cloudProjects={[
           {
             id: "cloud-1",
@@ -41,7 +41,7 @@ describe("FileCommandMenu", () => {
     );
 
     expect(markup).not.toContain("Save as Cloud Copy");
-    expect(markup).toContain(`Cloud Projects (1/${CLOUD_PROJECT_LIMIT})`);
+    expect(markup).toContain(`云项目 (1/${CLOUD_PROJECT_LIMIT})`);
     expect(markup).toContain("Saved Circuit");
     expect(markup).toContain('class="cloud-project-time"');
     expect(markup).toContain("cloud-project-cloud-1");
@@ -60,8 +60,8 @@ describe("FileCommandMenu", () => {
   it("identifies the isolated Preview Project store", () => {
     const markup = renderToStaticMarkup(
       <FileCommandMenu
-        projectStoreLabel="Preview Projects"
-        projectStoreItemLabel="Preview Project"
+        projectStoreLabel="预览项目"
+        projectStoreItemLabel="预览项目"
         cloudProjects={[]}
         activeCloudProjectId={null}
         canRevert={false}
@@ -83,6 +83,6 @@ describe("FileCommandMenu", () => {
       />,
     );
 
-    expect(markup).toContain(`Preview Projects (0/${CLOUD_PROJECT_LIMIT})`);
+    expect(markup).toContain(`预览项目 (0/${CLOUD_PROJECT_LIMIT})`);
   });
 });

@@ -66,7 +66,7 @@ function Root() {
   if (/^\/analytics\/?$/.test(path)) {
     return (
       <Suspense
-        fallback={<div className="analytics-loading">Loading analytics…</div>}
+        fallback={<div className="analytics-loading">正在加载统计…</div>}
       >
         <AnalyticsPage />
       </Suspense>
@@ -75,7 +75,7 @@ function Root() {
   if (/^\/?$/.test(path)) {
     return (
       <Suspense
-        fallback={<div className="analytics-loading">Loading gallery…</div>}
+        fallback={<div className="analytics-loading">正在加载画廊…</div>}
       >
         <GalleryFeed visitStats={stats} />
       </Suspense>
@@ -84,7 +84,7 @@ function Root() {
   if (/^\/moderation\/?$/.test(path)) {
     return (
       <Suspense
-        fallback={<div className="analytics-loading">Loading moderation…</div>}
+        fallback={<div className="analytics-loading">正在加载审核页…</div>}
       >
         <Moderation />
       </Suspense>
@@ -93,7 +93,7 @@ function Root() {
   if (/^\/mine\/?$/.test(path)) {
     return (
       <Suspense
-        fallback={<div className="analytics-loading">Loading submissions…</div>}
+        fallback={<div className="analytics-loading">正在加载提交记录…</div>}
       >
         <MySubmissions />
       </Suspense>
@@ -101,7 +101,7 @@ function Root() {
   }
   return (
     <Suspense
-      fallback={<div className="analytics-loading">Loading editor…</div>}
+      fallback={<div className="analytics-loading">正在加载编辑器…</div>}
     >
       <EditorApp
         visitStats={stats}

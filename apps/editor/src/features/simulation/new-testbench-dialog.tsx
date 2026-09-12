@@ -75,8 +75,8 @@ export function NewTestbenchDialog({
         }}
       >
         <header className="editor-action-dialog-header">
-          <p>Project hierarchy</p>
-          <h2 id="new-testbench-title">New Testbench Cell</h2>
+          <p>项目层次结构</p>
+          <h2 id="new-testbench-title">新建 Testbench Cell</h2>
         </header>
         <div className="editor-action-dialog-body">
           <p>
@@ -103,7 +103,7 @@ export function NewTestbenchDialog({
             </select>
           </label>
           <div className="editor-action-dialog-field">
-            <span>Symbol View</span>
+            <span>符号视图</span>
             <strong>
               {dut?.presentation.cellSymbol ? "Reviewed" : "Auto-derived"}
             </strong>
@@ -113,16 +113,14 @@ export function NewTestbenchDialog({
             </small>
           </div>
           <label className="editor-action-dialog-field">
-            <span>Testbench Cell name</span>
+            <span>Testbench Cell 名称</span>
             <input
-              aria-label="Testbench Cell name"
+              aria-label="Testbench Cell 名称"
               value={name}
               onChange={(event) => setName(event.currentTarget.value)}
             />
           </label>
-          {duplicate ? (
-            <p role="alert">A Cell with this name already exists.</p>
-          ) : null}
+          {duplicate ? <p role="alert">已存在同名 Cell。</p> : null}
           <label>
             <input
               type="checkbox"
@@ -134,7 +132,7 @@ export function NewTestbenchDialog({
         </div>
         <footer className="editor-action-dialog-actions">
           <button type="button" onClick={onCancel}>
-            Cancel
+            取消
           </button>
           <button
             type="submit"

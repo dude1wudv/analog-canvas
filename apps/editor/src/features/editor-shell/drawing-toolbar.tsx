@@ -119,7 +119,7 @@ export function DrawingToolbar({
   return (
     <div
       className="toolbar-row draw-toolbar"
-      aria-label="Drawing tools"
+      aria-label="绘图工具"
       data-testid="draw-toolbar"
     >
       <ImmediatePanelButton
@@ -155,23 +155,23 @@ export function DrawingToolbar({
         type="button"
         className="draw-tool"
         data-testid="draw-tool-undo"
-        title="Undo (Ctrl+Z)"
+        title="撤销（Ctrl+Z）"
         onClick={undo.execute}
         disabled={!undo.enabled}
       >
         <ToolIcon name="undo" />
-        <span>Undo</span>
+        <span>撤销</span>
       </button>
       <button
         type="button"
         className="draw-tool"
         data-testid="draw-tool-redo"
-        title="Redo (Ctrl+Shift+Z)"
+        title="重做（Ctrl+Shift+Z）"
         onClick={redo.execute}
         disabled={!redo.enabled}
       >
         <ToolIcon name="redo" />
-        <span>Redo</span>
+        <span>重做</span>
       </button>
       <span className="draw-toolbar-divider" aria-hidden="true" />
       <button
@@ -179,22 +179,22 @@ export function DrawingToolbar({
         className="draw-tool"
         data-testid="draw-tool-wire"
         aria-pressed={tool === "wire"}
-        title="Wire (W)"
+        title="导线（W）"
         onClick={() => onActivateTool("wire")}
       >
         <ToolIcon name="wire" />
-        <span>Wire</span>
+        <span>导线</span>
       </button>
       <button
         type="button"
         className="draw-tool"
         data-testid="draw-tool-text"
-        aria-label="Text"
-        title="Text (T)"
+        aria-label="文本"
+        title="文本（T）"
         onClick={onAddText}
       >
         <ToolIcon name="text" />
-        <span>Text</span>
+        <span>文本</span>
       </button>
       <span className="toolbar-divider" aria-hidden="true" />
       <button
@@ -202,11 +202,11 @@ export function DrawingToolbar({
         className="draw-tool"
         data-testid="draw-tool-document-style"
         aria-pressed={documentSettingsOpen}
-        title="Document settings"
+        title="文档设置"
         onClick={onOpenDocumentSettings}
       >
         <ToolIcon name="style" />
-        <span>Style</span>
+        <span>样式</span>
       </button>
       {simulation ? (
         <button
@@ -214,11 +214,11 @@ export function DrawingToolbar({
           className="draw-tool"
           data-testid="digital-simulation-toggle"
           aria-pressed={simulation.open}
-          title="Digital Simulation"
+          title="数字仿真"
           onClick={simulation.onToggle}
         >
           <ToolIcon name="simulation" />
-          <span>Simulation</span>
+          <span>仿真</span>
         </button>
       ) : null}
       <span className="draw-toolbar-project-spacer" aria-hidden="true" />

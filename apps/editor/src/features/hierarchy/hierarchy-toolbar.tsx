@@ -30,17 +30,17 @@ export function HierarchyToolbar({
   if (documents.length <= 1 && navigationDepth === 0 && !canEnter) return null;
 
   return (
-    <div className="toolbar-row" aria-label="Document hierarchy">
+    <div className="toolbar-row" aria-label="文档层次结构">
       <div
         className="document-nav"
-        aria-label="Cell navigation"
+        aria-label="Cell 导航"
         data-testid="cell-navigation"
       >
         <button
           type="button"
           onClick={onUp}
           disabled={navigationDepth === 0}
-          title="Return to the parent Cell (Shift+E)"
+          title="返回父 Cell（Shift+E）"
         >
           Up
         </button>
@@ -48,12 +48,12 @@ export function HierarchyToolbar({
           type="button"
           onClick={onTop}
           disabled={activeDocumentId === topDocumentId}
-          title="Return to the top Cell"
+          title="返回顶层 Cell"
         >
-          Top
+          顶层
         </button>
         <select
-          aria-label="Cells"
+          aria-label="Cell"
           data-testid="document-selector"
           value={activeDocumentId}
           onChange={(event) => onSelectDocument(event.currentTarget.value)}
@@ -70,7 +70,7 @@ export function HierarchyToolbar({
           type="button"
           onClick={onEnter}
           disabled={!canEnter}
-          title="Enter the selected Cell (E)"
+          title="进入所选 Cell（E）"
         >
           Enter Cell
         </button>

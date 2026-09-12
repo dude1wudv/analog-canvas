@@ -10,6 +10,7 @@ import {
   annotationTextPreset,
 } from "../component-insert/annotation-preview-symbols";
 import {
+  categoryDisplayName,
   componentCatalog,
   findPaletteSymbol,
   libraryDescription,
@@ -206,7 +207,7 @@ export function ShapesPanel({
     <aside
       id="shapes-library-panel"
       className={open ? "shapes-panel" : "shapes-panel collapsed"}
-      aria-label="Shapes"
+      aria-label="图形"
       aria-hidden={!open}
       inert={!open ? true : undefined}
       data-testid="shapes-library-panel"
@@ -216,8 +217,8 @@ export function ShapesPanel({
         <details className="shapes-fold" open data-testid="shapes-fold-library">
           <summary className="shapes-fold-summary">
             <span className="shapes-fold-label">
-              <span className="shapes-fold-label-full">All devices</span>
-              <span className="shapes-fold-label-compact">All</span>
+              <span className="shapes-fold-label-full">所有器件</span>
+              <span className="shapes-fold-label-compact">全部</span>
             </span>
             <span className="shapes-fold-count">{librarySymbolCount}</span>
           </summary>
@@ -235,7 +236,7 @@ export function ShapesPanel({
                 >
                   <summary className="shapes-category-header">
                     <span className="shapes-category-label">
-                      {group.category}
+                      {categoryDisplayName(group.category)}
                     </span>
                     <span className="shapes-category-count">
                       {group.symbols.length}

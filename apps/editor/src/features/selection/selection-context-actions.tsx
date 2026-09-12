@@ -26,15 +26,14 @@ export function MosBulkConnectionSection({
 }) {
   if (connection === null) return null;
   const { terminal, netName, status } = connection;
-  const label =
-    netName ?? (status === "no-connect" ? "No Connect" : "Unconnected");
+  const label = netName ?? (status === "no-connect" ? "No Connect" : "未连接");
   const origin = {
-    explicit: "Explicit connection",
-    "cell-default": "Cell default",
-    "instance-override": "Instance override",
-    "supply-default": "Supply default",
-    "no-connect": "Intentionally left unconnected",
-    unresolved: "Choose a net for the bulk terminal",
+    explicit: "显式连接",
+    "cell-default": "Cell 默认值",
+    "instance-override": "实例覆盖值",
+    "supply-default": "电源默认值",
+    "no-connect": "有意保持未连接",
+    unresolved: "请为体端选择网络",
   }[status];
   const description = `${terminal} → ${label} · ${origin}${
     explicitRouteVisible ? " · Dashed bulk route shown" : ""
@@ -42,10 +41,10 @@ export function MosBulkConnectionSection({
   return (
     <section
       className="mos-bulk-bar"
-      aria-label="MOS bulk connection"
+      aria-label="MOS 体端连接"
       data-state={status}
     >
-      <h2>Bulk</h2>
+      <h2>体端</h2>
       <span
         className="mos-bulk-status"
         title={description}
@@ -57,17 +56,17 @@ export function MosBulkConnectionSection({
         type="button"
         className="bulk-draw-action"
         data-testid="draw-bulk-connection"
-        aria-label="Draw bulk connection"
+        aria-label="绘制体端连接"
         disabled={!canDraw}
         title={
           canDraw
-            ? `Draw a connection from ${terminal} on the canvas`
-            : "Place the component on the canvas before drawing its bulk connection"
+            ? `在画布上从 ${terminal} 绘制连接`
+            : "请先将元件放到画布上，再绘制体端连接"
         }
         onClick={onDraw}
       >
         <ToolIcon name="wire" />
-        {status === "unresolved" ? "Connect" : "Draw"}
+        {status === "unresolved" ? "连接" : "绘制"}
       </button>
     </section>
   );
@@ -88,14 +87,14 @@ export function RoutingGuidanceSection({
 }) {
   if (total === 0) return null;
   return (
-    <section className="context-actions" aria-label="Routing guidance">
-      <h2>Imported routing guidance</h2>
+    <section className="context-actions" aria-label="布线指引">
+      <h2>导入的布线指引</h2>
       <div className="component-mirror-row">
         {(
           [
-            ["focused", "Focused"],
+            ["focused", "已聚焦"],
             ["all", "All"],
-            ["hidden", "Hide"],
+            ["hidden", "隐藏"],
           ] as const
         ).map(([candidate, label]) => (
           <button
@@ -208,8 +207,8 @@ export function EndpointActionsSection({
 }) {
   if (kind === "junction")
     return (
-      <section className="context-actions" aria-label="Junction actions">
-        <h2>Junction</h2>
+      <section className="context-actions" aria-label="连接点操作">
+        <h2>连接点</h2>
         <button type="button" onClick={onDeleteJunction}>
           Delete junction and attached wires
         </button>
@@ -217,8 +216,8 @@ export function EndpointActionsSection({
     );
   if (kind !== "terminal") return null;
   return (
-    <section className="context-actions" aria-label="Endpoint actions">
-      <h2>Endpoint</h2>
+    <section className="context-actions" aria-label="端点操作">
+      <h2>端点</h2>
       <button type="button" onClick={onDisconnect}>
         Disconnect endpoint
       </button>
@@ -230,10 +229,10 @@ export function EndpointActionsSection({
         onClick={onToggleNoConnect}
         disabled={!noConnect && endpointNetId !== null}
       >
-        {noConnect ? "Clear No Connect" : "Mark No Connect"}
+        {noConnect ? "清除 No Connect" : "标记 No Connect"}
       </button>
       {!noConnect && endpointNetId ? (
-        <small>Disconnect this endpoint before marking No Connect.</small>
+        <small>标记为 No Connect 前，请先断开此端点。</small>
       ) : null}
     </section>
   );
@@ -262,10 +261,10 @@ export function AnnotationActionsSection({
     );
   if (kind !== "net-label") return null;
   return (
-    <section className="context-actions" aria-label="Annotation actions">
-      <h2>Annotation</h2>
+    <section className="context-actions" aria-label="注释操作">
+      <h2>注释</h2>
       <button type="button" onClick={onToggleHighlight}>
-        {highlightActive ? "Clear Net highlight (H)" : "Highlight Net (H)"}
+        {highlightActive ? "清除网络高亮（H）" : "高亮网络（H）"}
       </button>
     </section>
   );

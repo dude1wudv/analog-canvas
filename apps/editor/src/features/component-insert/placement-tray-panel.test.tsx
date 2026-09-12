@@ -30,9 +30,7 @@ describe("placement tray panel", () => {
       />,
     );
 
-    const tray = markup.match(
-      /<details[^>]*aria-label="Placement Tray"[^>]*>/u,
-    )?.[0];
+    const tray = markup.match(/<details[^>]*aria-label="待放置区"[^>]*>/u)?.[0];
     expect(tray).toBeDefined();
     expect(tray).toContain('role="region"');
     expect(tray).not.toContain('open=""');

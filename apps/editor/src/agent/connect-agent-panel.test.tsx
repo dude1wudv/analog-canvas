@@ -123,7 +123,7 @@ describe("ConnectAgentPanel", () => {
     expect(markup).not.toContain("Scopes:");
     expect(markup).toContain('data-testid="agent-pause"');
     expect(markup).toContain('data-testid="agent-revoke"');
-    expect(markup).toContain('aria-label="Copy connection setup"');
+    expect(markup).toContain('aria-label="复制连接设置"');
     // No grant presets after connecting.
     expect(markup).not.toContain('data-testid="agent-grant"');
   });
@@ -173,7 +173,7 @@ describe("ConnectAgentPanel", () => {
         })}
       />,
     );
-    expect(markup).toContain("Disconnected");
+    expect(markup).toContain("已断开");
     expect(markup).not.toContain('data-testid="agent-claim"');
     expect(markup).not.toContain('data-testid="agent-revoke"');
     expect(markup).toContain('data-testid="agent-new-connection"');
@@ -199,8 +199,8 @@ describe("ConnectAgentPanel", () => {
       />,
     );
     expect(markup).toContain('data-testid="agent-properties"');
-    expect(markup).toContain("Connected");
-    expect(markup).toContain("Manage");
+    expect(markup).toContain("已连接");
+    expect(markup).toContain("管理");
     expect(markup).toContain('data-testid="agent-pause"');
     expect(markup).not.toContain('data-testid="agent-revoke"');
   });

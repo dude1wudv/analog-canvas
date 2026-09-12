@@ -216,9 +216,7 @@ describe("pin-onto-wire move snap float dust", () => {
       y: 300,
     });
     expect(transactions.some((t) => t.result?.ok)).toBe(true);
-    expect(statuses.some((s) => s.includes("Snapped pin endpoints"))).toBe(
-      true,
-    );
+    expect(statuses.some((s) => s.includes("已吸附引脚端点"))).toBe(true);
   });
 
   it("clean lattice point: identical gesture commits and splits the route", () => {
@@ -229,9 +227,7 @@ describe("pin-onto-wire move snap float dust", () => {
     expect(resolved.snap.electricalMatch!.target.point.x).toBe(40);
     const applied = transactions.some((t) => t.result?.ok);
     expect(applied).toBe(true);
-    expect(statuses.some((s) => s.includes("Snapped pin endpoints"))).toBe(
-      true,
-    );
+    expect(statuses.some((s) => s.includes("已吸附引脚端点"))).toBe(true);
   });
 });
 

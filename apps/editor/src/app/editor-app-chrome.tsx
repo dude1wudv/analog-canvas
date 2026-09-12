@@ -91,7 +91,7 @@ export function ReleaseChannelBadge({
 }) {
   return releaseChannel === "preview" ? (
     <span className="app-channel-badge" data-testid="release-channel-badge">
-      Preview
+      预览
     </span>
   ) : null;
 }
@@ -159,8 +159,8 @@ export function EditorAppChrome({
           <a
             className="gallery-home-link"
             href="/"
-            aria-label="Back to the gallery"
-            title="Back to the gallery"
+            aria-label="返回画廊"
+            title="返回画廊"
             onClick={(event) => {
               if (
                 event.button !== 0 ||
@@ -182,7 +182,7 @@ export function EditorAppChrome({
             <p title={`${projectName} / ${documentName}`}>
               <input
                 className="app-project-name"
-                aria-label="Circuit name"
+                aria-label="电路名称"
                 data-testid="project-name-input"
                 value={displayedProjectName}
                 size={Math.max(displayedProjectName.length, 6)}
@@ -199,8 +199,8 @@ export function EditorAppChrome({
                 <span
                   className="project-unsaved-indicator"
                   data-testid="project-unsaved-indicator"
-                  aria-label="Unsaved changes"
-                  title="Unsaved changes"
+                  aria-label="有未保存的更改"
+                  title="有未保存的更改"
                 >
                   ●
                 </span>
@@ -211,7 +211,7 @@ export function EditorAppChrome({
         </div>
         <nav
           className="app-command-surface"
-          aria-label="Editor commands"
+          aria-label="编辑器命令"
           onClick={(event) => {
             const target = event.target;
             if (
@@ -225,7 +225,7 @@ export function EditorAppChrome({
           <div className="menubar-row">
             <FileCommandMenu {...fileCommands} />
             <details className="command-menu" name="editor-command-menu">
-              <summary>Edit</summary>
+              <summary>编辑</summary>
               <div className="command-popover">
                 <button type="button" onClick={onInsertComponent}>
                   Insert component… (I)
@@ -235,7 +235,7 @@ export function EditorAppChrome({
                   data-testid="edit-manage-cells"
                   onClick={onManageCells}
                 >
-                  Manage Cells…
+                  管理 Cell…
                 </button>
                 {onNewTestbench ? (
                   <button type="button" onClick={onNewTestbench}>
@@ -247,7 +247,7 @@ export function EditorAppChrome({
                   onClick={placeProjectCell.execute}
                   disabled={!placeProjectCell.enabled}
                 >
-                  Place Cell from this Project…
+                  从此项目放置 Cell…
                 </button>
                 <button
                   type="button"
@@ -256,7 +256,7 @@ export function EditorAppChrome({
                   aria-expanded={selectionFilterOpen}
                   onClick={onOpenSelectionFilter}
                 >
-                  Selection Filter… (Ctrl+F)
+                  选择筛选器…（Ctrl+F）
                 </button>
                 <button
                   type="button"
@@ -265,28 +265,28 @@ export function EditorAppChrome({
                   aria-expanded={searchOpen}
                   onClick={onOpenSearch}
                 >
-                  Search schematic… (Ctrl+Shift+F)
+                  搜索原理图…（Ctrl+Shift+F）
                 </button>
                 <button
                   type="button"
                   onClick={undo.execute}
                   disabled={!undo.enabled}
                 >
-                  Undo
+                  撤销
                 </button>
                 <button
                   type="button"
                   onClick={redo.execute}
                   disabled={!redo.enabled}
                 >
-                  Redo
+                  重做
                 </button>
                 <button
                   type="button"
                   onClick={deleteSelection.execute}
                   disabled={!deleteSelection.enabled}
                 >
-                  Delete
+                  删除
                 </button>
                 <span className="command-group-label">Selection image</span>
                 {copySelectionImages.map((action) => (
@@ -315,25 +315,25 @@ export function EditorAppChrome({
                   disabled={!rotate.enabled}
                 >
                   <ToolIcon name="rotate" />
-                  Rotate
+                  旋转
                 </button>
                 <button
                   type="button"
                   onClick={mirrorLeftRight.execute}
                   disabled={!mirrorLeftRight.enabled}
                 >
-                  Mirror left/right (Shift+R)
+                  左右镜像（Shift+R）
                 </button>
                 <button
                   type="button"
                   onClick={mirrorTopBottom.execute}
                   disabled={!mirrorTopBottom.enabled}
                 >
-                  Mirror top/bottom (Ctrl+R)
+                  上下镜像（Ctrl+R）
                 </button>
                 {alignmentActions.length > 0 ? (
                   <>
-                    <span className="command-group-label">Align</span>
+                    <span className="command-group-label">对齐</span>
                     {alignmentActions.map((action) => (
                       <button
                         key={action.mode}
@@ -416,15 +416,13 @@ export function EditorAppChrome({
               <button
                 type="button"
                 data-testid="open-analog-simulation"
-                aria-label="Analog simulation"
+                aria-label="模拟仿真"
                 aria-pressed={
                   simulationState === "open" || simulationState === "maximized"
                 }
                 onClick={simulationAction}
               >
-                {simulationState === "minimized"
-                  ? "Simulation · Minimized"
-                  : "Simulation"}
+                {simulationState === "minimized" ? "仿真 · 已最小化" : "仿真"}
               </button>
             ) : null}
             {agentAction ? (
@@ -448,10 +446,10 @@ export function EditorAppChrome({
               data-testid="publish-gallery-button"
               aria-haspopup="dialog"
               aria-expanded={publishGalleryOpen}
-              title="Publish to Gallery"
+              title="发布到画廊"
               onClick={onPublishGallery}
             >
-              Publish<span className="publish-label-long"> to Gallery</span>
+              发布<span className="publish-label-long">到画廊</span>
             </button>
           </div>
         </nav>
@@ -474,10 +472,10 @@ export function EditorAppChrome({
             aria-controls="editor-help-dialog"
             onClick={onOpenHelp}
           >
-            Help
+            帮助
           </button>
           <div className="tokenzhang-credit">
-            <span className="tokenzhang-credit-kicker">Presented by</span>
+            <span className="tokenzhang-credit-kicker">出品方</span>
             <a
               className="tokenzhang-link"
               href="https://tokenzhang.com"

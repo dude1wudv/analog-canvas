@@ -69,7 +69,7 @@ function ModelTargetControl({
         Model
         <select
           key={`${instanceId}-${revision}-model-target`}
-          aria-label="Component model target"
+          aria-label="元件模型目标"
           value={customMode ? CUSTOM_MODEL_OPTION : current}
           onChange={(event) => {
             const next = event.currentTarget.value;
@@ -84,13 +84,13 @@ function ModelTargetControl({
             onChange(next);
           }}
         >
-          <option value="">None</option>
+          <option value="">无</option>
           {modelTarget.suggestions.map((model) => (
             <option value={model} key={model}>
               {model}
             </option>
           ))}
-          <option value={CUSTOM_MODEL_OPTION}>Custom…</option>
+          <option value={CUSTOM_MODEL_OPTION}>自定义…</option>
         </select>
       </label>
       {customMode ? (
@@ -99,9 +99,9 @@ function ModelTargetControl({
           <input
             ref={customInput}
             dir="auto"
-            aria-label="Custom model name"
+            aria-label="自定义模型名称"
             value={customDraft}
-            placeholder="Model name"
+            placeholder="模型名称"
             onChange={(event) => setCustomDraft(event.currentTarget.value)}
             onBlur={commitCustom}
             onKeyDown={(event) => {
@@ -212,17 +212,17 @@ export function ComponentIdentityProperties({
       {hasEditableIdentityControls ? (
         <div
           className="property-card component-identity-controls"
-          aria-label="Component controls"
+          aria-label="元件控件"
         >
           <dl className="component-readonly-fields">
             {instance.reference && !fieldsMovedToCode ? (
               <div>
-                <dt>Netlist Reference</dt>
+                <dt>网表位号</dt>
                 <dd>
                   <input
                     dir="auto"
                     key={`${instance.id}-${revision}-reference`}
-                    aria-label="Netlist Reference"
+                    aria-label="网表位号"
                     defaultValue={reference}
                     onBlur={(event) =>
                       commitIdentityInput(event, reference, onReferenceChange)
@@ -236,7 +236,7 @@ export function ComponentIdentityProperties({
             ) : null}
             {onEditAnnotation && !fieldsMovedToCode ? (
               <div>
-                <dt>Visual annotation</dt>
+                <dt>视觉注释</dt>
                 <dd>
                   <button type="button" onClick={onEditAnnotation}>
                     Edit annotation
@@ -246,7 +246,7 @@ export function ComponentIdentityProperties({
             ) : null}
             {targetDescription && !fieldsMovedToCode ? (
               <div className="property-identity-target">
-                <dt>Target</dt>
+                <dt>目标</dt>
                 <dd>{targetDescription}</dd>
               </div>
             ) : null}
@@ -257,9 +257,9 @@ export function ComponentIdentityProperties({
         <div
           className="property-card property-terminal-card"
           role="group"
-          aria-label="Capacitor plate terminals"
+          aria-label="电容极板端子"
         >
-          <div className="property-section-heading">Electrical terminals</div>
+          <div className="property-section-heading">电气端子</div>
           <dl className="component-readonly-fields">
             {capacitorPlateRows.map((row) => (
               <div key={row.role}>
@@ -277,9 +277,9 @@ export function ComponentIdentityProperties({
         <div
           className="property-card property-terminal-card"
           role="group"
-          aria-label="Property-only electrical terminals"
+          aria-label="仅属性电气端子"
         >
-          <div className="property-section-heading">Electrical terminals</div>
+          <div className="property-section-heading">电气端子</div>
           <label>
             {propertyTerminal.label}
             <select
@@ -289,23 +289,23 @@ export function ComponentIdentityProperties({
                 propertyTerminal.onChange(event.currentTarget.value || null)
               }
             >
-              <option value="">Unconnected</option>
+              <option value="">未连接</option>
               {propertyTerminal.options.map((option) => (
                 <option value={option.netId} key={option.netId}>
                   {option.label}
                 </option>
               ))}
             </select>
-            <small>Property-only terminal · no canvas pin or wire</small>
+            <small>仅属性端子 · 无画布引脚或导线</small>
           </label>
         </div>
       ) : null}
       {modelTarget && !fieldsMovedToCode ? (
         <div
           className="property-card property-target-card"
-          aria-label="Netlist target"
+          aria-label="网表目标"
         >
-          <div className="property-section-heading">Netlist target</div>
+          <div className="property-section-heading">网表目标</div>
           <ModelTargetControl
             instanceId={instance.id}
             revision={revision}
@@ -313,13 +313,13 @@ export function ComponentIdentityProperties({
             onChange={onModelTargetChange}
           />
           {modelTarget.externalSubcircuit ? (
-            <small>External subcircuit · SPICE emits an X card</small>
+            <small>外部子电路 · SPICE 将输出 X 卡片</small>
           ) : null}
         </div>
       ) : null}
       <div
         className="component-source-code"
-        aria-label="SPICE component code"
+        aria-label="SPICE 元件代码"
         data-exact={sourceCode.exact}
       >
         <code>{sourceCode.code}</code>

@@ -40,20 +40,20 @@ export function ProjectSearchDialog({
       >
         <header>
           <div>
-            <p className="help-kicker">Project navigation</p>
-            <h2 id="project-search-title">Search schematic</h2>
+            <p className="help-kicker">项目导航</p>
+            <h2 id="project-search-title">搜索原理图</h2>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close search">
-            Close
+          <button type="button" onClick={onClose} aria-label="关闭搜索">
+            关闭
           </button>
         </header>
         <input
           dir="auto"
           ref={inputRef}
           data-testid="project-search-input"
-          aria-label="Search project"
+          aria-label="搜索项目"
           value={query}
-          placeholder="Instance, Net, port, property…"
+          placeholder="实例、网络、端口、属性…"
           onChange={(event) => onQueryChange(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
@@ -69,7 +69,7 @@ export function ProjectSearchDialog({
               values.
             </p>
           ) : results.length === 0 ? (
-            <p>No matching project objects.</p>
+            <p>没有匹配的项目对象。</p>
           ) : (
             results.map((result) => (
               <button

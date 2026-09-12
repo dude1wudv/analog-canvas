@@ -238,7 +238,7 @@ export function ExamplesPanel({
       className={
         open ? "shapes-panel examples-panel" : "shapes-panel collapsed"
       }
-      aria-label="Gallery"
+      aria-label="画廊"
       aria-hidden={!open}
       inert={!open ? true : undefined}
       data-testid="examples-panel"
@@ -251,8 +251,8 @@ export function ExamplesPanel({
               type="search"
               className="examples-panel-search"
               value={searchQuery}
-              placeholder="Name, author, tag…"
-              aria-label="Search circuits"
+              placeholder="名称、作者、标签…"
+              aria-label="搜索电路"
               data-testid="examples-panel-search"
               onChange={(event) => setSearchQuery(event.target.value)}
             />
@@ -273,7 +273,7 @@ export function ExamplesPanel({
                   <div
                     className="examples-panel-tag-options"
                     role="group"
-                    aria-label="Filter by tag"
+                    aria-label="按标签筛选"
                     data-testid="examples-panel-tag-options"
                   >
                     {tagOptions.map((option) => (
@@ -358,7 +358,7 @@ export function ExamplesPanel({
                     }}
                   />
                   <span className="shapes-example-copy">
-                    <span className="shapes-example-kicker">Example</span>
+                    <span className="shapes-example-kicker">示例</span>
                     <span className="shapes-example-name">{example.name}</span>
                   </span>
                 </button>

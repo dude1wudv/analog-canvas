@@ -171,6 +171,6 @@ export function describeExportFailure(error: unknown): {
     };
   }
   return {
-    status: error instanceof Error ? error.message : "Export failed",
+    status: error instanceof Error ? error.message : "导出失败",
   };
 }

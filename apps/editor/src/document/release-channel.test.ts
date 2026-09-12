@@ -12,13 +12,13 @@ const answering = (status: number, body: unknown): typeof fetch =>
 describe("release channel discovery", () => {
   it("names each channel's private Project store without changing its API", () => {
     expect(projectStoreCopy("production")).toEqual({
-      singular: "Cloud Project",
-      plural: "Cloud Projects",
+      singular: "云项目",
+      plural: "云项目",
       destination: "Cloud",
     });
     expect(projectStoreCopy("preview")).toEqual({
-      singular: "Preview Project",
-      plural: "Preview Projects",
+      singular: "预览项目",
+      plural: "预览项目",
       destination: "Preview Projects",
     });
   });

@@ -100,10 +100,10 @@ describe("editor shell", () => {
     expect(markup).toContain("Smoke Project");
     expect(markup).toContain("Schematic canvas");
     expect(markup).not.toContain("Cell netlist interface");
-    expect(markup).not.toContain("Netlist Reference");
+    expect(markup).not.toContain("网表位号");
     expect(markup).not.toContain("Component model");
     // Cell navigation is hierarchy navigation, so a flat Project does not
-    // carry a row of controls that cannot do anything yet. Manage Cells… stays
+    // carry a row of controls that cannot do anything yet. 管理 Cell… stays
     // reachable from Edit.
     expect(markup).not.toContain('data-testid="cell-navigation"');
     expect(markup).toContain('data-testid="edit-manage-cells"');
@@ -123,14 +123,14 @@ describe("editor shell", () => {
     expect(netlistMenu).not.toContain('data-testid="open-analog-simulation"');
     expect(markup).toContain('data-testid="open-analog-simulation"');
     expect(netlistMenu).toContain('data-testid="check-and-save"');
-    expect(markup).not.toContain("<summary>Run</summary>");
+    expect(markup).not.toContain("<summary>运行</summary>");
     const agentEnd =
       markup.indexOf("</button>", markup.indexOf('data-testid="open-agent"')) +
       "</button>".length;
     expect(markup.slice(agentEnd)).toMatch(
       /^<button[^>]*data-testid="publish-gallery-button"/u,
     );
-    expect(markup).toContain("Not checked");
+    expect(markup).toContain("尚未检查");
     expect(erc).not.toHaveBeenCalled();
     expect(checks).not.toHaveBeenCalled();
     erc.mockRestore();
@@ -188,14 +188,14 @@ describe("editor shell", () => {
     // About folded into Help: one entry, not two saying the same thing.
     expect(markup).not.toContain(">About</button>");
     expect(markup).toContain('data-testid="editor-report-bug"');
-    expect(markup).toContain("Report bug");
-    expect(markup).toContain(">Help</button>");
+    expect(markup).toContain("报告问题");
+    expect(markup).toContain(">帮助</button>");
     expect(markup).toContain('class="app-chrome-actions"');
-    expect(markup).toContain("Presented by");
+    expect(markup).toContain("出品方");
     expect(markup).toContain('href="https://tokenzhang.com"');
     expect(markup).toContain('src="/tokenzhang-favicon.png"');
     const navigationEnd = markup.indexOf("</nav>");
-    const helpButton = markup.indexOf(">Help</button>");
+    const helpButton = markup.indexOf(">帮助</button>");
     const ownerLink = markup.indexOf('href="https://tokenzhang.com"');
     expect(helpButton).toBeGreaterThan(navigationEnd);
     expect(ownerLink).toBeGreaterThan(helpButton);
@@ -220,7 +220,7 @@ describe("editor shell", () => {
     expect(markup).not.toContain("Manage Agent");
     expect(markup).not.toContain("agent-shelf-indicator");
     expect(markup).not.toContain("Agent:");
-    expect(markup).not.toContain("Approve Agent file import");
+    expect(markup).not.toContain("批准 Agent 文件导入");
   });
 
   it("keeps analog Simulation authoring out of a production editor without changing project data", () => {
@@ -251,8 +251,8 @@ describe("editor shell", () => {
       <App project={project} timingUiEnabled={false} />,
     );
 
-    expect(localMarkup).toContain('title="Digital Simulation"');
-    expect(productionMarkup).not.toContain('title="Digital Simulation"');
+    expect(localMarkup).toContain('title="数字仿真"');
+    expect(productionMarkup).not.toContain('title="数字仿真"');
     expect(localMarkup).not.toContain('data-testid="timing-simulation-panel"');
   });
 
@@ -268,7 +268,7 @@ describe("editor shell", () => {
     expect(markup).toContain('href="/analytics"');
     expect(markup).toContain("17 visitors");
     expect(markup).toContain("42 views");
-    expect(markup).not.toContain(">Analytics</a>");
+    expect(markup).not.toContain(">统计</a>");
     const statusbar = markup.indexOf('class="app-statusbar"');
     expect(markup.indexOf('href="/analytics"')).toBeGreaterThan(statusbar);
   });
@@ -278,13 +278,13 @@ describe("editor shell", () => {
     const markup = renderToStaticMarkup(<App project={project} />);
 
     expect(markup).toContain(
-      '<section class="selection-shelf" aria-label="Selection">',
+      '<section class="selection-shelf" aria-label="选择">',
     );
     expect(markup).toContain('data-testid="selection-shelf"');
-    expect(markup).toContain('aria-label="Properties"');
+    expect(markup).toContain('aria-label="属性"');
     // The panel toggles live in the horizontal toolbar; there is no rail.
     expect(markup).not.toContain('aria-label="Tool rail"');
-    expect(markup).toContain('aria-label="Shapes"');
+    expect(markup).toContain('aria-label="图形"');
     expect(markup).toContain('data-testid="shapes-chip-resistor"');
     expect(markup).not.toContain('data-testid="shapes-insert"');
     expect(markup).toContain('data-testid="library-toggle"');
@@ -294,7 +294,7 @@ describe("editor shell", () => {
     expect(markup).not.toContain("Common-Source Amplifier");
     expect(markup).not.toContain("Two-Stage Op Amp");
     expect(markup).toContain('data-open="true"');
-    expect(markup).toContain(">Library</span>");
+    expect(markup).toContain(">元件库</span>");
     expect(markup).toContain('class="app-statusbar"');
     expect(markup).toContain("Insert component… (I)");
     expect(markup).not.toContain('data-testid="draw-tool-insert"');
