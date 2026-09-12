@@ -17,7 +17,8 @@
     "@icm/render-svg": "workspace:*",
     "@icm/simulation-service": "workspace:*",
     "@icm/spice-run": "workspace:*",
-    "@icm/symbols": "workspace:*"
+    "@icm/symbols": "workspace:*",
+    "@noble/hashes": "2.4.0"
   },
   "scripts": {
     "build": "pnpm -r --if-present build",
@@ -103,10 +104,12 @@
   "devDependencies": {
     "@playwright/test": "1.62.1",
     "@types/node": "24.13.3",
+    "esbuild": "0.28.2",
     "pngjs": "^7.0.0",
     "prettier": "3.9.6",
     "typescript": "7.0.2",
     "vite": "8.2.1",
-    "vitest": "4.1.10"
+    "vitest": "4.1.10",
+    "workerd": "1.20260911.1"
   }
 }

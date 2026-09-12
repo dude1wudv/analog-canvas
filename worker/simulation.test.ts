@@ -897,6 +897,57 @@ describe("simulation route", () => {
     }
   });
 
+  it("uses the fixed simulation service binding for the operator host", async () => {
+    const seen: {
+      url?: string;
+      authorization?: string | null;
+      body?: string;
+    } = {};
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("the fixed simulation service must handle this request");
+    }) as typeof fetch;
+    try {
+      const env: SimulationEnv = {
+        SIMULATION_UPSTREAM_URL: "https://sim-fixed.example.test/",
+        SIMULATION_UPSTREAM_TOKEN: "fixed-token",
+        SIMULATION_SERVICE: {
+          fetch: async (input, init) => {
+            seen.url = String(input);
+            seen.authorization = new Headers(init?.headers).get(
+              "authorization",
+            );
+            seen.body = String(init?.body);
+            return Response.json({
+              environment: HOSTED_ENVIRONMENT,
+              log: "ok",
+              exitCode: 0,
+            });
+          },
+        },
+      };
+      const response = await routeSimulationRequest(
+        post({
+          netlist: NETLIST,
+          testbench: TESTBENCH,
+          executorTarget: "operator-host",
+        }),
+        env,
+      );
+      expect(response?.status).toBe(200);
+      expect((await response!.json()) as unknown).toMatchObject({
+        execution: { target: "operator-host" },
+      });
+      expect(seen.url).toBe("https://sim-fixed.example.test/run");
+      expect(seen.authorization).toBe("Bearer fixed-token");
+      expect(JSON.parse(seen.body!)).toMatchObject({
+        deck: expect.stringContaining(TESTBENCH),
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
   it("can select the bound Cloudflare container while the operator host is configured", async () => {
     let containerRuns = 0;
     const realFetch = globalThis.fetch;

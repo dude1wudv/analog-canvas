@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import {
+  type AccountMenuViewProps,
   AccountMenuView,
   fetchSessionUser,
   type AccountState,
@@ -12,16 +13,19 @@ function markupFor(
   state: AccountState,
   notice: string | null = null,
   showGalleryLinks = true,
+  onLocalAuthenticate?: AccountMenuViewProps["onLocalAuthenticate"],
 ): string {
+  const props: AccountMenuViewProps = {
+    state,
+    notice,
+    showGalleryLinks,
+    onEmailStart: () => undefined,
+    onRename: () => undefined,
+    onSignOut: () => undefined,
+    ...(onLocalAuthenticate ? { onLocalAuthenticate } : {}),
+  };
   return renderToStaticMarkup(
-    createElement(AccountMenuView, {
-      state,
-      notice,
-      showGalleryLinks,
-      onEmailStart: () => undefined,
-      onRename: () => undefined,
-      onSignOut: () => undefined,
-    }),
+    createElement(AccountMenuView, props),
   );
 }
 
@@ -48,6 +52,25 @@ describe("AccountMenuView", () => {
     expect(markup).not.toContain("google/start");
     expect(markup).toContain('data-testid="signin-email-input"');
     expect(markup).toContain("Sign-in failed — try again.");
+  });
+
+  it("offers the local account form when local auth is enabled", () => {
+    const markup = markupFor(
+      {
+        providers: { github: false, google: false, email: false, local: true },
+        user: null,
+      },
+      null,
+      true,
+      async () => null,
+    );
+    expect(markup).toContain('data-testid="account-signin"');
+    expect(markup).toContain("账号密码登录");
+    expect(markup).toContain('autoComplete="username"');
+    expect(markup).toContain('autoComplete="current-password"');
+    expect(markup).toContain('pattern="[a-z0-9_]{3,32}"');
+    expect(markup).not.toContain("github/start");
+    expect(markup).not.toContain("signin-email-input");
   });
 
   it("shows the signed-in identity with rename, badge, and sign out", () => {

@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { LocalAccountForm } from "./local-account-form";
+import "./local-account.css";
 
 /**
  * Gallery accounts (roadmap phase G2), dark-shipped: the worker reports
@@ -21,6 +23,7 @@ export interface AuthProviders {
   github: boolean;
   google: boolean;
   email: boolean;
+  local?: boolean;
 }
 
 export interface AccountState {
@@ -85,7 +88,11 @@ export async function loadAccountState(
     });
     if (!response.ok) return { providers: NO_PROVIDERS, user: null };
     const providers = (await response.json()) as AuthProviders;
-    const anyProvider = providers.github || providers.google || providers.email;
+    const anyProvider =
+      providers.github ||
+      providers.google ||
+      providers.email ||
+      providers.local;
     return {
       providers,
       user: anyProvider ? await fetchSessionUser(fetchLike) : null,
@@ -152,6 +159,11 @@ export interface AccountMenuViewProps {
   onEmailStart: (email: string) => void;
   onRename: (displayName: string) => void;
   onSignOut: () => void;
+  onLocalAuthenticate?: (
+    username: string,
+    password: string,
+    register: boolean,
+  ) => Promise<string | null>;
 }
 
 /** Presentational account area; all effects live in `AccountMenu`. */
@@ -162,6 +174,7 @@ export function AccountMenuView({
   onEmailStart,
   onRename,
   onSignOut,
+  onLocalAuthenticate,
 }: AccountMenuViewProps) {
   const [email, setEmail] = useState("");
   const [renaming, setRenaming] = useState(false);
@@ -252,7 +265,12 @@ export function AccountMenuView({
     );
   }
 
-  if (!providers.github && !providers.google && !providers.email) {
+  if (
+    !providers.github &&
+    !providers.google &&
+    !providers.email &&
+    !providers.local
+  ) {
     // Dark ship: with no provider configured, sign-in does not exist.
     return null;
   }
@@ -261,6 +279,9 @@ export function AccountMenuView({
     <details className="account-signin" data-testid="account-signin">
       <summary>登录</summary>
       <div className="account-signin-panel">
+        {providers.local && onLocalAuthenticate && (
+          <LocalAccountForm authenticate={onLocalAuthenticate} />
+        )}
         {providers.github ? (
           <a href="/api/auth/github/start" data-testid="signin-github">
             使用 GitHub 继续
@@ -330,6 +351,30 @@ export function AccountMenu({
     <AccountMenuView
       state={state}
       notice={notice}
+      onLocalAuthenticate={async (username, password, register) => {
+        try {
+          const response = await fetch(
+            `/api/auth/local/${register ? "register" : "login"}`,
+            {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ username, password }),
+            },
+          );
+          const payload = (await response.json()) as {
+            user?: SessionUser;
+            message?: string;
+          };
+          if (!response.ok || !payload.user)
+            return payload.message ?? "无法登录，请稍后重试。";
+          cacheSessionUser(fetch, payload.user);
+          setState({ providers: state.providers, user: payload.user });
+          return null;
+        } catch {
+          return "登录服务暂不可用，请稍后重试。";
+        }
+      }}
       showGalleryLinks={showGalleryLinks}
       onEmailStart={(email) => {
         void requestEmailLink(email).then(setNotice);

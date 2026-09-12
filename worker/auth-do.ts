@@ -12,6 +12,12 @@
 // Provider HTTP calls go through an injectable fetch seam so
 // tests never touch the network.
 
+import {
+  hashLocalPassword,
+  readLocalCredentials,
+  verifyLocalPassword,
+} from "./local-password";
+
 export const AUTH_SESSION_COOKIE = "icm_session";
 export const AUTH_STATE_COOKIE = "icm_oauth_state";
 export const AUTH_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -47,6 +53,9 @@ export type AuthNamespaceLike = {
 
 export type AuthEnv = {
   AUTH: AuthNamespaceLike;
+  AUTH_LOCAL_ENABLED?: string;
+  LOCAL_ADMIN_USERNAME?: string;
+  LOCAL_ADMIN_PASSWORD_HASH?: string;
   GH_OAUTH_CLIENT_ID?: string;
   GH_OAUTH_CLIENT_SECRET?: string;
   GOOGLE_CLIENT_ID?: string;
@@ -81,11 +90,13 @@ function enabledProviders(env: AuthEnv): {
   github: boolean;
   google: boolean;
   email: boolean;
+  local?: boolean;
 } {
   return {
     github: Boolean(env.GH_OAUTH_CLIENT_ID && env.GH_OAUTH_CLIENT_SECRET),
     google: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
     email: Boolean(env.RESEND_API_KEY),
+    ...(env.AUTH_LOCAL_ENABLED === "true" ? { local: true } : {}),
   };
 }
 
@@ -184,6 +195,7 @@ function noStoreJson(payload: unknown, status = 200): Response {
  */
 export class AuthDO {
   private readonly sql: SqlStorage;
+  private localPasswordBusy = false;
   /**
    * Provider/network seam; tests replace it. The arrow wrapper is
    * load-bearing: assigning the global `fetch` itself and invoking it as
@@ -196,7 +208,7 @@ export class AuthDO {
   now: () => Date = () => new Date();
 
   constructor(
-    state: DurableObjectStateLike,
+    private readonly state: DurableObjectStateLike,
     private readonly env: AuthEnv,
   ) {
     this.sql = state.storage.sql;
@@ -272,6 +284,41 @@ export class AuthDO {
         PRIMARY KEY (day, email_hash)
       ) WITHOUT ROWID
     `);
+    this.bootstrapLocalAdmin();
+  }
+
+  private bootstrapLocalAdmin(): void {
+    const username = this.env.LOCAL_ADMIN_USERNAME?.trim().toLowerCase();
+    const hash = this.env.LOCAL_ADMIN_PASSWORD_HASH;
+    if (
+      this.env.AUTH_LOCAL_ENABLED !== "true" ||
+      !username ||
+      !hash ||
+      !/^[a-z0-9_]{3,32}$/u.test(username) ||
+      !/^scrypt\$32768\$8\$3\$[a-f0-9]{32}\$[a-f0-9]{64}$/u.test(hash)
+    )
+      return;
+    this.sql.exec(
+      "CREATE TABLE IF NOT EXISTS local_credentials (username TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL) WITHOUT ROWID",
+    );
+    this.state.storage.transactionSync(() => {
+      if (
+        this.sql
+          .exec(
+            "SELECT user_id FROM local_credentials WHERE username = ?",
+            username,
+          )
+          .toArray().length
+      )
+        return;
+      const user = this.upsertUser("local", username, null, username);
+      this.sql.exec(
+        "INSERT INTO local_credentials(username, user_id, password_hash) VALUES (?, ?, ?)",
+        username,
+        user.id,
+        hash,
+      );
+    });
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -284,6 +331,12 @@ export class AuthDO {
     }
     const route = url.pathname.slice("/api/auth/".length).replace(/\/+$/u, "");
     const method = request.method;
+    if (
+      (route === "local/register" || route === "local/login") &&
+      method === "POST"
+    ) {
+      return this.localSignIn(request, route === "local/register");
+    }
     if (route === "providers" && method === "GET") {
       return noStoreJson(enabledProviders(this.env));
     }
@@ -322,6 +375,156 @@ export class AuthDO {
 
   // --- sessions ---------------------------------------------------------
 
+  private async localSignIn(
+    request: Request,
+    registering: boolean,
+  ): Promise<Response> {
+    if (this.env.AUTH_LOCAL_ENABLED !== "true")
+      return noStoreJson({ error: "provider-disabled" }, 404);
+    if (!sameOrigin(request))
+      return noStoreJson({ error: "cross-origin" }, 403);
+    const credentials = await readLocalCredentials(request);
+    if (!credentials)
+      return noStoreJson(
+        {
+          error: "invalid-credentials",
+          message:
+            "用户名需为 3–32 位字母、数字或下划线；密码需为 12–128 字符。",
+        },
+        400,
+      );
+    this.sql.exec(
+      "CREATE TABLE IF NOT EXISTS local_credentials (username TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL) WITHOUT ROWID",
+    );
+    this.sql.exec(
+      "CREATE TABLE IF NOT EXISTS local_login_rates (bucket TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, count INTEGER NOT NULL) WITHOUT ROWID",
+    );
+    const now = this.now().getTime();
+    this.sql.exec("DELETE FROM local_login_rates WHERE expires_at <= ?", now);
+    // The self-host ingress overwrites CF-Connecting-IP; never trust a client-supplied forwarding chain.
+    const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+    const buckets = [
+      {
+        key: `account:${credentials.username}`,
+        limit: 10,
+        window: 15 * 60_000,
+      },
+      {
+        key: `${registering ? "register" : "login"}:${await sha256(ip)}`,
+        limit: registering ? 5 : 40,
+        window: registering ? 60 * 60_000 : 15 * 60_000,
+      },
+    ];
+    for (const bucket of buckets) {
+      const current = this.sql
+        .exec<{ count: number }>(
+          "SELECT count FROM local_login_rates WHERE bucket = ?",
+          bucket.key,
+        )
+        .toArray()[0];
+      if (current && current.count >= bucket.limit) {
+        const response = noStoreJson(
+          { error: "rate-limited", message: "尝试次数过多，请稍后重试。" },
+          429,
+        );
+        response.headers.set(
+          "Retry-After",
+          String(Math.ceil(bucket.window / 1000)),
+        );
+        return response;
+      }
+    }
+    for (const bucket of buckets)
+      this.sql.exec(
+        "INSERT INTO local_login_rates(bucket, expires_at, count) VALUES (?, ?, 1) ON CONFLICT(bucket) DO UPDATE SET count = count + 1",
+        bucket.key,
+        now + bucket.window,
+      );
+    // Bound memory use: scrypt owns ~32 MiB; concurrent login bursts must not multiply it.
+    if (this.localPasswordBusy)
+      return noStoreJson(
+        { error: "busy", message: "登录服务忙，请稍后重试。" },
+        503,
+      );
+    this.localPasswordBusy = true;
+    try {
+      type CredentialRow = { user_id: string; password_hash: string };
+      let row = this.sql
+        .exec<CredentialRow>(
+          "SELECT user_id, password_hash FROM local_credentials WHERE username = ?",
+          credentials.username,
+        )
+        .toArray()[0];
+      if (registering) {
+        if (row)
+          return noStoreJson(
+            { error: "username-unavailable", message: "此用户名不可用。" },
+            409,
+          );
+        const passwordHash = await hashLocalPassword(credentials.password);
+        const created = this.state.storage.transactionSync(() => {
+          if (
+            this.sql
+              .exec(
+                "SELECT user_id FROM local_credentials WHERE username = ?",
+                credentials.username,
+              )
+              .toArray().length
+          )
+            return null;
+          const user = this.upsertUser(
+            "local",
+            credentials.username,
+            null,
+            credentials.username,
+          );
+          this.sql.exec(
+            "INSERT INTO local_credentials(username, user_id, password_hash) VALUES (?, ?, ?)",
+            credentials.username,
+            user.id,
+            passwordHash,
+          );
+          return { user_id: user.id, password_hash: passwordHash };
+        });
+        if (!created)
+          return noStoreJson(
+            { error: "username-unavailable", message: "此用户名不可用。" },
+            409,
+          );
+        row = created;
+      } else {
+        // Equal KDF cost for unknown usernames; never disclose whether an account exists on login.
+        const encoded =
+          row?.password_hash ??
+          "scrypt$32768$8$3$00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000";
+        if (!(await verifyLocalPassword(credentials.password, encoded)) || !row)
+          return noStoreJson(
+            { error: "invalid-credentials", message: "用户名或密码错误。" },
+            401,
+          );
+      }
+      const user = this.sql
+        .exec<UserRow>("SELECT * FROM users WHERE id = ?", row.user_id)
+        .one();
+      const token = await this.createSession(user.id);
+      const response = noStoreJson(
+        { user: this.publicUser(user) },
+        registering ? 201 : 200,
+      );
+      response.headers.append(
+        "Set-Cookie",
+        sessionCookie(
+          token,
+          new URL(request.url).protocol === "https:",
+          AUTH_SESSION_TTL_SECONDS,
+        ),
+      );
+      return response;
+    } finally {
+      this.localPasswordBusy = false;
+    }
+  }
+
   private async sessionUser(request: Request): Promise<SessionUser | null> {
     const token = parseCookies(request.headers.get("Cookie"))[
       AUTH_SESSION_COOKIE
@@ -352,8 +555,12 @@ export class AuthDO {
       provider: row.provider,
       role: row.role ?? "user",
       isAdmin:
-        row.email !== null &&
-        adminEmails(this.env).includes(row.email.toLowerCase()),
+        (row.provider === "local" &&
+          Boolean(this.env.LOCAL_ADMIN_USERNAME) &&
+          row.provider_id ===
+            this.env.LOCAL_ADMIN_USERNAME?.trim().toLowerCase()) ||
+        (row.email !== null &&
+          adminEmails(this.env).includes(row.email.toLowerCase())),
     };
   }
 

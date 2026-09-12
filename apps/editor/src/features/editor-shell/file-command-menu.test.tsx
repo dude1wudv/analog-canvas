@@ -48,6 +48,7 @@ describe("FileCommandMenu", () => {
     expect(markup).toContain("cloud-project-cloud-1");
     expect(markup).toContain("导入项目文件…");
     expect(markup).toContain("导入 SPICE…");
+    expect(markup).toContain("从电路图识别 SPICE…");
     expect(markup).toContain("导入 Cadence SPICE（`!` 全局网络）…");
     expect(markup).toContain('data-testid="cadence-spice-files"');
     expect(markup).toContain("导出项目文件…");
