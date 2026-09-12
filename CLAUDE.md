@@ -85,7 +85,7 @@ Dependencies flow strictly downward; `@icm/model` is the root everything shares.
 - `apps/editor` — the React/SVG editor and installable PWA.
 - `apps/local-host` — dependency-free loopback-only static host for `apps/editor/dist` (`bin: interactive-circuit-maker`).
 - `apps/mcp-server` — stdio MCP server (`bin: analog-canvas-mcp`) over `agent-client`, with generated doc resources.
-- `worker/` (not a workspace package) — Cloudflare Worker serving `apps/editor/dist` with Analytics and AgentSession Durable Objects (`wrangler.jsonc`; production deploys from a `v*` release tag via `.github/workflows/cloudflare.yml`, and every merge to `main` deploys the preview Worker from `wrangler.preview.jsonc` via `.github/workflows/deploy-preview.yml`; ADR 0057).
+- `worker/` (not a workspace package) — self-hosted workerd Worker and the Cloudflare production Worker; production deploys from a `v*` release tag via `.github/workflows/cloudflare.yml` or the operator-host self-host script. The former Cloudflare Preview channel has been retired.
 
 ### Build mechanics
 

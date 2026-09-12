@@ -38,11 +38,9 @@ claim UI or reconnect a prior browser session. Trusted development or staging
 builds can enable that browser surface with `VITE_ICM_AGENT_UI=enabled`; the
 API and MCP contracts themselves are unchanged.
 
-The preview channel enables it (`VITE_ICM_AGENT_UI: enabled` in
-`.github/workflows/deploy-preview.yml`), because the preview is where
-simulation runs and simulation is Agent-first (ADR 0055): open **Agent →
-Connect Agent** in the preview editor for a Claim Code and start the MCP
-adapter with `ANALOG_CANVAS_API_URL=https://analog-canvas-preview.tokenzhang.com`.
+The retired Cloudflare Preview channel is no longer an active deployment
+target. Use the self-hosted editor URL and the operator-host deployment
+procedure for active Agent/simulation work.
 
 ## External Agent bootstrap (no MCP)
 
