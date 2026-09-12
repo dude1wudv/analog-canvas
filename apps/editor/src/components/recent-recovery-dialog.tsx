@@ -58,11 +58,11 @@ function generationLine(
 }
 
 const SOURCE_LABELS: Record<BrowserRecoverySource, string> = {
-  new: "New Project",
-  "opened-file": "Opened file",
-  "spice-import": "SPICE import",
-  "cloud-project": "Cloud Project",
-  recovered: "Earlier restore",
+  new: "新建项目",
+  "opened-file": "已打开文件",
+  "spice-import": "SPICE 导入",
+  "cloud-project": "云项目",
+  recovered: "较早的恢复记录",
 };
 
 /**
@@ -124,16 +124,16 @@ export function RecentRecoveryDialog({
       >
         <header className="help-dialog-header">
           <div>
-            <p className="help-kicker">Browser safety copies</p>
-            <h2 id="recent-recovery-title">Recover recent work</h2>
+            <p className="help-kicker">浏览器安全副本</p>
+            <h2 id="recent-recovery-title">恢复最近工作</h2>
           </div>
           <button
             type="button"
             ref={closeRef}
             onClick={onClose}
-            aria-label="Close recent work recovery"
+            aria-label="关闭最近工作恢复"
           >
-            Close
+            关闭
           </button>
         </header>
         <div className="help-dialog-content">
@@ -162,11 +162,11 @@ export function RecentRecoveryDialog({
                   </div>
                   <dl className="recovery-generation-list">
                     <div>
-                      <dt>Latest copy</dt>
+                      <dt>最新副本</dt>
                       <dd>{generationLine(session, "latest")}</dd>
                     </div>
                     <div>
-                      <dt>Previous copy</dt>
+                      <dt>上一份副本</dt>
                       <dd>{generationLine(session, "previous")}</dd>
                     </div>
                   </dl>
@@ -213,7 +213,7 @@ export function RecentRecoveryDialog({
                       onClick={() => onDeleteSession(session.workingCopyId)}
                       aria-label={`Delete recovery copy of ${session.projectName}`}
                     >
-                      Delete
+                      删除
                     </button>
                   </div>
                 </li>

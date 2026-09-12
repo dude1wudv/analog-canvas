@@ -92,36 +92,36 @@ describe("editor shell", () => {
     const project = createEmptyProject("project-smoke", "Smoke Project");
     const markup = renderToStaticMarkup(<App project={project} />);
     expect(markup).toContain("Smoke Project");
-    expect(markup).toContain("Schematic canvas");
-    expect(markup).toContain("Export SPICE netlist");
-    expect(markup).toContain("Export Spectre netlist");
+    expect(markup).toContain("原理图画布");
+    expect(markup).toContain("导出 SPICE 网表");
+    expect(markup).toContain("导出 Spectre 网表");
     expect(markup).not.toContain("Cell netlist interface");
-    expect(markup).not.toContain("Netlist Reference");
+    expect(markup).not.toContain("网表位号");
     expect(markup).not.toContain("Component model");
     // Cell navigation is hierarchy navigation, so a flat Project does not
-    // carry a row of controls that cannot do anything yet. Manage Cells… stays
+    // carry a row of controls that cannot do anything yet. 管理 Cell… stays
     // reachable from Edit.
     expect(markup).not.toContain('data-testid="cell-navigation"');
     expect(markup).toContain('data-testid="edit-manage-cells"');
     expect(markup).not.toContain('data-testid="cell-command-menu"');
-    expect(markup).toContain("Manage Cells…");
-    expect(markup).toContain("Instance Table…");
-    const netlistStart = markup.indexOf("<summary>Netlist</summary>");
+    expect(markup).toContain("管理 Cell…");
+    expect(markup).toContain("实例表…");
+    const netlistStart = markup.indexOf("<summary>网表</summary>");
     const netlistEnd = markup.indexOf("</details>", netlistStart);
     const netlistMenu = markup.slice(netlistStart, netlistEnd);
     expect(netlistStart).toBeGreaterThan(-1);
-    expect(markup).toContain("Check Report…");
+    expect(markup).toContain("检查报告…");
     expect(netlistMenu).not.toContain('data-testid="open-analog-simulation"');
     expect(markup).toContain('data-testid="open-analog-simulation"');
     expect(netlistMenu).toContain('data-testid="check-and-save"');
-    expect(markup).not.toContain("<summary>Run</summary>");
+    expect(markup).not.toContain("<summary>运行</summary>");
     const agentEnd =
       markup.indexOf("</details>", markup.indexOf("<summary>Agent</summary>")) +
       "</details>".length;
     expect(markup.slice(agentEnd)).toMatch(
       /^<button[^>]*data-testid="publish-gallery-button"/u,
     );
-    expect(markup).toContain("Not checked");
+    expect(markup).toContain("尚未检查");
     expect(erc).not.toHaveBeenCalled();
     expect(checks).not.toHaveBeenCalled();
     erc.mockRestore();
@@ -179,21 +179,21 @@ describe("editor shell", () => {
     // About folded into Help: one entry, not two saying the same thing.
     expect(markup).not.toContain(">About</button>");
     expect(markup).toContain('data-testid="editor-report-bug"');
-    expect(markup).toContain("Report bug");
-    expect(markup).toContain(">Help</button>");
+    expect(markup).toContain("报告问题");
+    expect(markup).toContain(">帮助</button>");
     expect(markup).toContain('class="app-chrome-actions"');
-    expect(markup).toContain("Presented by");
+    expect(markup).toContain("出品方");
     expect(markup).toContain('href="https://tokenzhang.com"');
     expect(markup).toContain('src="/tokenzhang-favicon.png"');
     const navigationEnd = markup.indexOf("</nav>");
-    const helpButton = markup.indexOf(">Help</button>");
+    const helpButton = markup.indexOf(">帮助</button>");
     const ownerLink = markup.indexOf('href="https://tokenzhang.com"');
     expect(helpButton).toBeGreaterThan(navigationEnd);
     expect(ownerLink).toBeGreaterThan(helpButton);
     expect(markup).not.toContain('role="dialog"');
     // The Connect Agent command is available (WP-WA5), but the authorization
     // panel itself must not render until the user opens it.
-    expect(markup).toContain("Connect Agent");
+    expect(markup).toContain("连接 Agent");
     expect(markup).not.toContain('data-testid="connect-agent-panel"');
   });
 
@@ -204,11 +204,11 @@ describe("editor shell", () => {
     );
 
     expect(markup).not.toContain("<summary>Agent</summary>");
-    expect(markup).not.toContain("Connect Agent");
+    expect(markup).not.toContain("连接 Agent");
     expect(markup).not.toContain("Manage Agent");
     expect(markup).not.toContain("agent-shelf-indicator");
     expect(markup).not.toContain("Agent:");
-    expect(markup).not.toContain("Approve Agent file import");
+    expect(markup).not.toContain("批准 Agent 文件导入");
   });
 
   it("keeps the timing surface behind its deployment flag", () => {
@@ -220,8 +220,8 @@ describe("editor shell", () => {
       <App project={project} timingUiEnabled={false} />,
     );
 
-    expect(localMarkup).toContain('title="Digital Simulation"');
-    expect(productionMarkup).not.toContain('title="Digital Simulation"');
+    expect(localMarkup).toContain('title="数字仿真"');
+    expect(productionMarkup).not.toContain('title="数字仿真"');
     expect(localMarkup).not.toContain('data-testid="timing-simulation-panel"');
   });
 
@@ -237,7 +237,7 @@ describe("editor shell", () => {
     expect(markup).toContain('href="/analytics"');
     expect(markup).toContain("17 visitors");
     expect(markup).toContain("42 views");
-    expect(markup).not.toContain(">Analytics</a>");
+    expect(markup).not.toContain(">统计</a>");
     const statusbar = markup.indexOf('class="app-statusbar"');
     expect(markup.indexOf('href="/analytics"')).toBeGreaterThan(statusbar);
   });
@@ -247,13 +247,13 @@ describe("editor shell", () => {
     const markup = renderToStaticMarkup(<App project={project} />);
 
     expect(markup).toContain(
-      '<section class="selection-shelf" aria-label="Selection">',
+      '<section class="selection-shelf" aria-label="选择">',
     );
     expect(markup).toContain('data-testid="selection-shelf"');
-    expect(markup).toContain('aria-label="Properties"');
+    expect(markup).toContain('aria-label="属性"');
     // The panel toggles live in the horizontal toolbar; there is no rail.
     expect(markup).not.toContain('aria-label="Tool rail"');
-    expect(markup).toContain('aria-label="Shapes"');
+    expect(markup).toContain('aria-label="图形"');
     expect(markup).toContain('data-testid="shapes-chip-resistor"');
     expect(markup).toContain('data-testid="shapes-insert"');
     expect(markup).toContain('data-testid="library-toggle"');
@@ -263,9 +263,9 @@ describe("editor shell", () => {
     expect(markup).not.toContain("Common-Source Amplifier");
     expect(markup).not.toContain("Two-Stage Op Amp");
     expect(markup).toContain('data-open="true"');
-    expect(markup).toContain(">Library</span>");
+    expect(markup).toContain(">元件库</span>");
     expect(markup).toContain('class="app-statusbar"');
-    expect(markup).toContain("Insert component (I)");
+    expect(markup).toContain("插入元件（I）");
     expect(markup).toContain("Selection filter");
     expect(markup).not.toContain("Symbols &amp; Tools");
     expect(markup).not.toContain("Search components");

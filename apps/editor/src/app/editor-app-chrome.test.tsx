@@ -10,7 +10,7 @@ describe("editor release channel identity", () => {
     );
 
     expect(markup).toContain('data-testid="release-channel-badge"');
-    expect(markup).toContain("Preview");
+    expect(markup).toContain("预览");
     expect(markup).not.toContain("unreleased features");
     expect(markup).not.toContain("gallery is read-only");
   });

@@ -14,14 +14,14 @@ describe("ReplaceGuardDialog", () => {
         onDiscard={vi.fn()}
       />,
     );
-    expect(html).toContain("Unsaved changes");
-    expect(html).toContain("will drop your latest");
-    expect(html).toContain("Cloud Projects (up to 3)");
-    expect(html).toContain("Export Project File");
+    expect(html).toContain("有未保存的更改");
+    expect(html).toContain("会丢弃最新编辑");
+    expect(html).toContain("云项目中（最多 3");
+    expect(html).toContain("导出项目文件");
     expect(html).toContain(".icproj.json");
-    expect(html).toContain("Save to Cloud and continue");
-    expect(html).toContain("Continue without saving");
-    expect(html).toContain("Stay");
+    expect(html).toContain("保存到云端并继续");
+    expect(html).toContain("不保存并继续");
+    expect(html).toContain("留在此处");
     expect(html).not.toContain("Browser recovery");
   });
 
@@ -35,7 +35,7 @@ describe("ReplaceGuardDialog", () => {
         onDiscard={vi.fn()}
       />,
     );
-    expect(html).toContain("Saving to Cloud…");
+    expect(html).toContain("正在保存到云端…");
     expect(html).toContain("disabled");
   });
 });

@@ -49,8 +49,8 @@ describe("Simulation Output Results", () => {
     expect(markup).toContain('class="simulation-analysis-card"');
     expect(markup).toContain("Operating Point Analysis");
     expect(markup).not.toContain("<small>Bias point</small>");
-    expect(markup).toContain("Measurements");
-    expect(markup.indexOf("Measurements")).toBeGreaterThan(
+    expect(markup).toContain("测量");
+    expect(markup.indexOf("测量")).toBeGreaterThan(
       markup.indexOf("</section>"),
     );
   });
@@ -104,7 +104,7 @@ describe("Simulation Output Results", () => {
 
     expect(markup).toContain("Noise Analysis");
     expect(markup).toContain('class="noise-results-explorer"');
-    expect(markup).toContain('aria-label="Integrated noise"');
+    expect(markup).toContain('aria-label="积分噪声"');
     expect(markup).toContain("Output noise density");
     expect(markup).toContain("Integrated input-referred noise");
     expect(markup).toContain("1.80000e-7 V");
@@ -168,7 +168,7 @@ describe("Simulation Output Results", () => {
 
     expect(markup).toContain("A_v");
     expect(markup).not.toContain("dB(A_v)");
-    expect(markup).toContain('aria-label="Ratio display"');
+    expect(markup).toContain('aria-label="比值显示方式"');
     expect(markup).toContain(">dB</button>");
     expect(markup.match(/class="simulation-plot-layout"/gu)).toHaveLength(1);
   });
@@ -273,16 +273,16 @@ describe("Simulation Output Results", () => {
       />,
     );
 
-    expect(markup.match(/aria-label="A_v display"/gu)).toHaveLength(2);
-    expect(markup.match(/>Value<\/button>/gu)).toHaveLength(2);
+    expect(markup.match(/aria-label="A_v显示方式"/gu)).toHaveLength(2);
+    expect(markup.match(/>值<\/button>/gu)).toHaveLength(2);
     expect(markup.match(/>dB<\/button>/gu)).toHaveLength(2);
-    expect(markup.match(/>Phase<\/button>/gu)).toHaveLength(2);
+    expect(markup.match(/>相位<\/button>/gu)).toHaveLength(2);
     expect(markup).not.toContain("A_v / dB");
     expect(markup).not.toContain("phase(A_v)");
     expect(markup.match(/class="simulation-expression-family"/gu)).toHaveLength(
       2,
     );
-    expect(markup.match(/aria-pressed="true">Value/gu)).toHaveLength(2);
+    expect(markup.match(/aria-pressed="true">值/gu)).toHaveLength(2);
     expect(markup.match(/class="simulation-plot-layout"/gu)).toHaveLength(2);
   });
 });

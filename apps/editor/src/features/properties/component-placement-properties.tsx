@@ -42,10 +42,8 @@ export function ComponentPlacementProperties({
   return (
     <>
       {instance.importProvenance ? (
-        <div className="property-card" aria-label="Imported source evidence">
-          <div className="property-section-heading">
-            Imported source evidence
-          </div>
+        <div className="property-card" aria-label="导入源依据">
+          <div className="property-section-heading">导入源依据</div>
           <small>
             {instance.importProvenance.kind}:{" "}
             {instance.importProvenance.sourceTarget}
@@ -54,22 +52,20 @@ export function ComponentPlacementProperties({
       ) : null}
       {instance.placement ? (
         <PropertyDisclosure
-          title={geometryControls ? "Placement" : "Actions"}
+          title={geometryControls ? "位置" : "操作"}
           className="property-placement-card"
-          ariaLabel={
-            geometryControls ? "Component placement" : "Component actions"
-          }
+          ariaLabel={geometryControls ? "元件位置" : "元件操作"}
           defaultOpen
         >
           {geometryControls ? (
             <div
               className="component-geometry-row property-placement-controls"
-              aria-label="Component geometry"
+              aria-label="元件几何属性"
             >
               <label className="property-coordinate-field">
                 <span>X</span>
                 <input
-                  aria-label="Component X position"
+                  aria-label="元件 X 坐标"
                   inputMode="decimal"
                   value={x}
                   onChange={(event) => onXChange(event.currentTarget.value)}
@@ -78,7 +74,7 @@ export function ComponentPlacementProperties({
               <label className="property-coordinate-field">
                 <span>Y</span>
                 <input
-                  aria-label="Component Y position"
+                  aria-label="元件 Y 坐标"
                   inputMode="decimal"
                   value={y}
                   onChange={(event) => onYChange(event.currentTarget.value)}
@@ -96,8 +92,8 @@ export function ComponentPlacementProperties({
               <button
                 type="button"
                 className="property-placement-icon-button"
-                aria-label="Mirror component left to right, Shift+R"
-                title="Mirror left/right (Shift+R)"
+                aria-label="左右镜像元件，Shift+R"
+                title="左右镜像（Shift+R）"
                 onClick={() => onMirror("left-right")}
               >
                 <ToolIcon name="mirror-horizontal" />
@@ -105,8 +101,8 @@ export function ComponentPlacementProperties({
               <button
                 type="button"
                 className="property-placement-icon-button"
-                aria-label="Mirror component top to bottom, Ctrl+R"
-                title="Mirror top/bottom (Ctrl+R)"
+                aria-label="上下镜像元件，Ctrl+R"
+                title="上下镜像（Ctrl+R）"
                 onClick={() => onMirror("top-bottom")}
               >
                 <ToolIcon name="mirror-vertical" />
@@ -117,14 +113,14 @@ export function ComponentPlacementProperties({
             <button
               type="button"
               className="property-return-to-tray"
-              aria-label="Return component to Placement Tray"
+              aria-label="将元件放回待放置区"
               onClick={onReturnToTray}
             >
-              Return to tray
+              放回待放置区
             </button>
           ) : null}
           {onSwapContactStyle ? (
-            <div className="component-mirror-row" aria-label="Switch drawing">
+            <div className="component-mirror-row" aria-label="开关绘图">
               <button
                 type="button"
                 data-testid="swap-switch-contact-style"
@@ -139,28 +135,28 @@ export function ComponentPlacementProperties({
           {onSwapOutputs || onSwapInputs ? (
             <div
               className="component-mirror-row property-amplifier-actions"
-              aria-label="Amplifier placement actions"
+              aria-label="放大器放置操作"
             >
               {onSwapOutputs ? (
                 <button
                   type="button"
                   data-testid="swap-differential-outputs"
-                  aria-label="Swap the + and - outputs"
-                  title="Swap the + and - outputs"
+                  aria-label="交换 + 与 - 输出"
+                  title="交换 + 与 - 输出"
                   onClick={onSwapOutputs}
                 >
-                  Swap + / − outputs
+                  交换 + / − 输出
                 </button>
               ) : null}
               {onSwapInputs ? (
                 <button
                   type="button"
                   data-testid="swap-differential-inputs"
-                  aria-label="Swap the + and - inputs"
-                  title="Swap + / - inputs (Ctrl+R)"
+                  aria-label="交换 + 与 - 输入"
+                  title="交换 + / - 输入（Ctrl+R）"
                   onClick={onSwapInputs}
                 >
-                  Swap + / − inputs
+                  交换 + / − 输入
                 </button>
               ) : null}
             </div>
@@ -169,7 +165,7 @@ export function ComponentPlacementProperties({
       ) : null}
       {draftChanged ? (
         <button type="button" className="property-discard" onClick={onDiscard}>
-          Discard changes
+          放弃更改
         </button>
       ) : null}
     </>

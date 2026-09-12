@@ -140,13 +140,13 @@ describe("GalleryCountPanel", () => {
       renderToStaticMarkup(
         createElement(GalleryCountPanel, { total, filtered }),
       );
-    expect(render(1280)).toContain(`${(1280).toLocaleString()} circuits`);
-    expect(render(1)).toContain("1 circuit");
+    expect(render(1280)).toContain(`${(1280).toLocaleString()} 个电路`);
+    expect(render(1)).toContain("1 个电路");
     expect(render(1)).not.toContain("circuits");
-    expect(render(1)).toContain("Show contributor leaderboard");
+    expect(render(1)).toContain("显示贡献者排行榜");
     // "Filtered" names the state; "match" belongs to the text query alone.
-    expect(render(3, true)).toContain("3 filtered circuits");
-    expect(render(1, true)).toContain("1 filtered circuit");
+    expect(render(3, true)).toContain("3 个筛选后的电路");
+    expect(render(1, true)).toContain("1 个筛选后的电路");
     // No total (older API, still loading): say nothing rather than guess.
     expect(render(null)).toBe("");
   });
@@ -161,12 +161,12 @@ describe("GalleryCountPanel", () => {
         }),
       );
     // Mid-fetch the clause says it may still grow; settled it stops saying so.
-    expect(render(3, false)).toContain("128 circuits · 3 matches so far");
-    expect(render(3, true)).toContain("128 circuits · 3 matches");
+    expect(render(3, false)).toContain("128 个电路 · 3 个匹配（目前）");
+    expect(render(3, true)).toContain("128 个电路 · 3 个匹配");
     expect(render(3, true)).not.toContain("so far");
-    expect(render(1, true)).toContain("· 1 match");
-    expect(render(1, true)).not.toContain("1 matches");
-    expect(render(0, false)).toContain("· 0 matches so far");
+    expect(render(1, true)).toContain("· 1 个匹配");
+    expect(render(1, true)).not.toContain("1 个匹配项");
+    expect(render(0, false)).toContain("· 0 个匹配（目前）");
   });
 });
 
@@ -179,9 +179,9 @@ describe("GalleryFeed", () => {
     expect(markup).toContain("Analog Canvas");
     expect(markup).toContain('data-testid="gallery-new-circuit"');
     expect(markup).toContain('data-testid="gallery-report-bug"');
-    expect(markup).toContain("Report bug");
+    expect(markup).toContain("报告问题");
     expect(markup).toContain('href="/editor"');
-    expect(markup).toContain("Presented by");
+    expect(markup).toContain("出品方");
     expect(markup).toContain('href="https://tokenzhang.com"');
     expect(markup).toContain('src="/tokenzhang-favicon.png"');
     expect(markup).toContain('class="gallery-credit-group"');

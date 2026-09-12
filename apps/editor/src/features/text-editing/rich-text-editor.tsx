@@ -326,47 +326,47 @@ const FormulaMathfield = forwardRef<
 });
 
 const FORMULA_KEYCAPS = [
-  { label: "xₙ", title: "Subscript", latex: "_{#0}" },
-  { label: "xⁿ", title: "Superscript", latex: "^{#0}" },
-  { label: "a⁄b", title: "Fraction", latex: "\\frac{#0}{#0}" },
-  { label: "√x", title: "Square root", latex: "\\sqrt{#0}" },
-  { label: "ⁿ√x", title: "Nth root", latex: "\\sqrt[#0]{#0}" },
-  { label: "x̅", title: "Overbar", latex: "\\overline{#0}" },
+  { label: "xₙ", title: "下标", latex: "_{#0}" },
+  { label: "xⁿ", title: "上标", latex: "^{#0}" },
+  { label: "a⁄b", title: "分数", latex: "\\frac{#0}{#0}" },
+  { label: "√x", title: "平方根", latex: "\\sqrt{#0}" },
+  { label: "ⁿ√x", title: "n 次方根", latex: "\\sqrt[#0]{#0}" },
+  { label: "x̅", title: "上划线", latex: "\\overline{#0}" },
   { label: "x̂", title: "Hat", latex: "\\hat{#0}" },
-  { label: "x⃗", title: "Vector", latex: "\\vec{#0}" },
-  { label: "|x|", title: "Absolute value", latex: "\\left|#0\\right|" },
-  { label: "{x}", title: "Braces", latex: "\\left\\{#0\\right\\}" },
+  { label: "x⃗", title: "向量", latex: "\\vec{#0}" },
+  { label: "|x|", title: "绝对值", latex: "\\left|#0\\right|" },
+  { label: "{x}", title: "花括号", latex: "\\left\\{#0\\right\\}" },
   {
     label: "dy⁄dx",
-    title: "Derivative",
+    title: "导数",
     latex: "\\frac{\\mathrm{d}#0}{\\mathrm{d}#0}",
   },
   {
     label: "∂y⁄∂x",
-    title: "Partial derivative",
+    title: "偏导数",
     latex: "\\frac{\\partial #0}{\\partial #0}",
   },
-  { label: "Σ", title: "Summation", latex: "\\sum_{#0}^{#0}" },
-  { label: "Π", title: "Product", latex: "\\prod_{#0}^{#0}" },
-  { label: "∫", title: "Integral", latex: "\\int_{#0}^{#0}" },
-  { label: "∬", title: "Double integral", latex: "\\iint_{#0}" },
-  { label: "lim", title: "Limit", latex: "\\lim_{#0 \\to #0}" },
+  { label: "Σ", title: "求和", latex: "\\sum_{#0}^{#0}" },
+  { label: "Π", title: "乘积", latex: "\\prod_{#0}^{#0}" },
+  { label: "∫", title: "积分", latex: "\\int_{#0}^{#0}" },
+  { label: "∬", title: "二重积分", latex: "\\iint_{#0}" },
+  { label: "lim", title: "极限", latex: "\\lim_{#0 \\to #0}" },
   {
     label: "[ ]₂×₂",
-    title: "Two by two matrix",
+    title: "二阶方阵",
     latex: "\\begin{bmatrix}#0&#0\\\\#0&#0\\end{bmatrix}",
   },
   {
     label: "{⋯",
-    title: "Cases",
+    title: "分段表达式",
     latex: "\\begin{cases}#0&#0\\\\#0&#0\\end{cases}",
   },
-  { label: "∞", title: "Infinity", latex: "\\infty" },
+  { label: "∞", title: "无穷大", latex: "\\infty" },
 ] as const;
 
 const FORMULA_MORE_GROUPS = [
   {
-    title: "Greek",
+    title: "希腊字母",
     items: [
       ["α", "Alpha", "\\alpha"],
       ["β", "Beta", "\\beta"],
@@ -656,13 +656,13 @@ export function RichTextEditor({
       <div
         className="rich-text-floating-toolbar"
         role="toolbar"
-        aria-label="Text formatting"
+        aria-label="文本格式"
       >
         {!sourceOnly ? (
           <>
             <button
               type="button"
-              aria-label="Bold"
+              aria-label="粗体"
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => command("bold")}
@@ -671,7 +671,7 @@ export function RichTextEditor({
             </button>
             <button
               type="button"
-              aria-label="Italic"
+              aria-label="斜体"
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => command("italic")}
@@ -680,7 +680,7 @@ export function RichTextEditor({
             </button>
             <button
               type="button"
-              aria-label="Subscript"
+              aria-label="下标"
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => command("subscript")}
@@ -689,7 +689,7 @@ export function RichTextEditor({
             </button>
             <button
               type="button"
-              aria-label="Superscript"
+              aria-label="上标"
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => command("superscript")}
@@ -698,7 +698,7 @@ export function RichTextEditor({
             </button>
             <button
               type="button"
-              aria-label="Overbar"
+              aria-label="上划线"
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => command("overbar")}
@@ -746,8 +746,8 @@ export function RichTextEditor({
         {!sourceOnly && !compact ? (
           <>
             <details className="rich-text-symbol-menu">
-              <summary aria-label="Insert circuit symbol">Ω</summary>
-              <div role="menu" aria-label="Circuit symbols">
+              <summary aria-label="插入电路符号">Ω</summary>
+              <div role="menu" aria-label="电路符号">
                 {[
                   "α",
                   "β",
@@ -786,7 +786,7 @@ export function RichTextEditor({
             </details>
             <button
               type="button"
-              aria-label="Insert formula"
+              aria-label="插入公式"
               aria-pressed={formulaOpen}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
@@ -801,7 +801,7 @@ export function RichTextEditor({
           <>
             <button
               type="button"
-              aria-label="Decrease text size"
+              aria-label="减小字号"
               disabled={disabled || sizeScale <= 0.5}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() =>
@@ -814,7 +814,7 @@ export function RichTextEditor({
             </button>
             <button
               type="button"
-              aria-label="Increase text size"
+              aria-label="增大字号"
               disabled={disabled || sizeScale >= 3}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() =>
@@ -832,20 +832,20 @@ export function RichTextEditor({
         ) : null}
         <button
           type="button"
-          aria-label="Apply text changes"
+          aria-label="应用文本更改"
           disabled={disabled}
           onMouseDown={(event) => event.preventDefault()}
           onClick={onCommit}
         >
-          Apply
+          应用
         </button>
         <button
           type="button"
-          aria-label="Cancel text changes"
+          aria-label="取消文本更改"
           onMouseDown={(event) => event.preventDefault()}
           onClick={onCancel}
         >
-          Cancel
+          取消
         </button>
         <button
           type="button"
@@ -869,7 +869,7 @@ export function RichTextEditor({
               }
               closeFormulaEditor();
             }}
-            title="Replace this annotation with the live netlist instance name"
+            title="将此注释替换为当前网表实例名称"
           >
             Use netlist name
           </button>
@@ -877,7 +877,7 @@ export function RichTextEditor({
         {onReverseCurrentArrow ? (
           <button
             type="button"
-            aria-label="Reverse current arrow"
+            aria-label="反转电流箭头"
             disabled={disabled}
             onMouseDown={(event) => event.preventDefault()}
             onClick={onReverseCurrentArrow}
@@ -890,16 +890,16 @@ export function RichTextEditor({
         <div
           className="rich-text-formula-popover"
           role="dialog"
-          aria-label="Formula"
+          aria-label="公式"
         >
           <div className="rich-text-formula-header">
             <div>
-              <strong>Formula</strong>
-              <span>LaTeX with live preview</span>
+              <strong>公式</strong>
+              <span>LaTeX 实时预览</span>
             </div>
             <button
               type="button"
-              aria-label="Close formula editor"
+              aria-label="关闭公式编辑器"
               onClick={closeFormulaEditor}
             >
               ×
@@ -910,7 +910,7 @@ export function RichTextEditor({
             data-testid="formula-scroll-region"
           >
             <section className="rich-text-formula-preview">
-              <span>Preview</span>
+              <span>预览</span>
               <FormulaMathfield
                 ref={formulaMathfieldRef}
                 value={formulaDraft}
@@ -920,7 +920,7 @@ export function RichTextEditor({
             <div
               className="rich-text-formula-keyboard"
               role="toolbar"
-              aria-label="Formula keyboard"
+              aria-label="公式键盘"
             >
               {FORMULA_KEYCAPS.map((item) => (
                 <button
@@ -938,7 +938,7 @@ export function RichTextEditor({
               ))}
             </div>
             <details className="rich-text-formula-more">
-              <summary>More symbols</summary>
+              <summary>更多符号</summary>
               <div className="rich-text-formula-more-groups">
                 {FORMULA_MORE_GROUPS.map((group) => (
                   <section key={group.title}>
@@ -968,10 +968,10 @@ export function RichTextEditor({
               </div>
             </details>
             <label className="rich-text-formula-source">
-              <span>LaTeX source</span>
+              <span>LaTeX 源码</span>
               <textarea
                 value={formulaDraft}
-                aria-label="Formula LaTeX source"
+                aria-label="公式 LaTeX 源码"
                 spellCheck={false}
                 rows={3}
                 onChange={(event) => updateFormulaDraft(event.target.value)}
@@ -1001,7 +1001,7 @@ export function RichTextEditor({
                   setFormulaDisplay("block");
                 }}
               >
-                Display
+                显示
               </button>
             </div>
             <button
@@ -1009,7 +1009,7 @@ export function RichTextEditor({
               type="button"
               onClick={() => void applyFormula()}
             >
-              Insert
+              插入
             </button>
           </div>
         </div>
@@ -1023,7 +1023,7 @@ export function RichTextEditor({
           disabled={disabled}
           rows={2}
           wrap="soft"
-          aria-label="Canvas text editor"
+          aria-label="画布文本编辑器"
           aria-description="Edit the bound schematic label"
           style={{ fontSize: `${15.116 * sizeScale}px` }}
           onChange={(event) =>
@@ -1045,7 +1045,7 @@ export function RichTextEditor({
           role="textbox"
           // Follow the content's script: RTL text edits right-to-left.
           dir="auto"
-          aria-label="Canvas text editor"
+          aria-label="画布文本编辑器"
           aria-multiline={multiline}
           style={{
             fontSize: `${15.116 * sizeScale}px`,

@@ -1,5 +1,5 @@
 const NEW_BUG_ISSUE_URL =
-  "https://github.com/cascode-ai/analog-canvas/issues/new";
+  "https://github.com/dude1wudv/analog-canvas/issues/new";
 
 export interface BugReportEnvironment {
   pathname: string;
@@ -144,8 +144,8 @@ export function BugReportLink({
       target="_blank"
       rel="noopener noreferrer"
       data-testid={testId}
-      aria-label="Report a bug publicly on GitHub (opens in a new tab)"
-      title="Open a prefilled public GitHub issue in a new tab"
+      aria-label="在 GitHub 上公开报告问题（在新标签页打开）"
+      title="在新标签页打开已预填的公开 GitHub Issue"
       onClick={(event) => {
         // Refresh timestamp, route, and viewport for long-lived editor tabs.
         event.currentTarget.href = reportUrl();
@@ -154,7 +154,7 @@ export function BugReportLink({
       <span className="bug-report-mark" aria-hidden="true">
         !
       </span>
-      <span className="bug-report-label">Report bug</span>
+      <span className="bug-report-label">报告问题</span>
     </a>
   );
 }

@@ -43,8 +43,8 @@ export function DocumentSettingsSection({
   );
 
   return (
-    <section className="context-actions" aria-label="Document settings">
-      <h2>Document</h2>
+    <section className="context-actions" aria-label="文档设置">
+      <h2>文档</h2>
       {STYLE_KNOBS.map((knob) => (
         <label key={knob.key}>
           {knob.label}
@@ -79,15 +79,15 @@ export function DocumentSettingsSection({
       </button>
 
       <label>
-        Default NMOS bulk Net
+        默认 NMOS 体端网络
         <select
-          aria-label="Default NMOS bulk Net"
+          aria-label="默认 NMOS 体端网络"
           value={nmosBulkChoice?.netId ?? ""}
           onChange={(event) =>
             onChangeBulkDefault("nmos", event.currentTarget.value || null)
           }
         >
-          <option value="">None</option>
+          <option value="">无</option>
           {netChoices.map((net) => (
             <option key={net.netId} value={net.netId}>
               {net.label}
@@ -96,15 +96,15 @@ export function DocumentSettingsSection({
         </select>
       </label>
       <label>
-        Default PMOS bulk Net
+        默认 PMOS 体端网络
         <select
-          aria-label="Default PMOS bulk Net"
+          aria-label="默认 PMOS 体端网络"
           value={pmosBulkChoice?.netId ?? ""}
           onChange={(event) =>
             onChangeBulkDefault("pmos", event.currentTarget.value || null)
           }
         >
-          <option value="">None</option>
+          <option value="">无</option>
           {netChoices.map((net) => (
             <option key={net.netId} value={net.netId}>
               {net.label}

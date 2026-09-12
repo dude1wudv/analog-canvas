@@ -50,7 +50,7 @@ export function SourceProbePicker({
       ref={root}
       className="simulation-helper-list simulation-probe-picker"
       role="dialog"
-      aria-label="Save signal"
+      aria-label="保存信号"
       onKeyDown={(e) => {
         e.stopPropagation();
         if (e.key === "Escape") {
@@ -67,8 +67,8 @@ export function SourceProbePicker({
         autoFocus
         value={query}
         onChange={(e) => setQuery(e.currentTarget.value)}
-        aria-label="Search signal"
-        placeholder="Search signal or enter an exact native vector…"
+        aria-label="搜索信号"
+        placeholder="搜索信号或输入准确的原生向量…"
       />
       <div className="simulation-helper-options">
         {filtered.map((choice, index) => (
@@ -99,6 +99,11 @@ export function SourceProbePicker({
           Use native vector: {query.trim()}
         </button>
       )}
+      <small>
+        Inserts a native save statement. Terminal currents may require generated
+        measurement wiring.
+      </small>
+      <button onClick={onClose}>取消</button>
     </div>
   );
 }

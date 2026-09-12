@@ -85,11 +85,11 @@ export function NetlistPreflightDialog({
       >
         <header className="netlist-preflight-header">
           <div>
-            <p>Canonical design-netlist analysis</p>
-            <h2 id="netlist-preflight-title">Check Report</h2>
+            <p>标准设计网表分析</p>
+            <h2 id="netlist-preflight-title">检查报告</h2>
           </div>
         </header>
-        <section className="netlist-preflight-summary" aria-label="Readiness">
+        <section className="netlist-preflight-summary" aria-label="就绪状态">
           <h3>
             {result.ir
               ? electricalDiagnostics.length > 0
@@ -118,13 +118,13 @@ export function NetlistPreflightDialog({
           {result.ir ? (
             <section
               className="netlist-preflight-export"
-              aria-label="Structural netlist"
+              aria-label="结构化网表"
             >
               <div className="netlist-preflight-export-controls">
                 <label>
                   Structural format
                   <select
-                    aria-label="Netlist export format"
+                    aria-label="网表导出格式"
                     value={format}
                     onChange={(event) =>
                       setFormat(event.currentTarget.value as NetlistFormat)
@@ -137,7 +137,7 @@ export function NetlistPreflightDialog({
                 <label>
                   Naming profile
                   <select
-                    aria-label="Netlist naming profile"
+                    aria-label="网表命名方案"
                     value={namingProfile}
                     onChange={(event) =>
                       setNamingProfile(
@@ -145,8 +145,8 @@ export function NetlistPreflightDialog({
                       )
                     }
                   >
-                    <option value="native">Native declarations</option>
-                    <option value="cadence-bang">Cadence `!` globals</option>
+                    <option value="native">原生声明</option>
+                    <option value="cadence-bang">Cadence `!` 全局网络</option>
                   </select>
                 </label>
                 <button
@@ -159,7 +159,7 @@ export function NetlistPreflightDialog({
               <pre
                 className="netlist-preview"
                 data-testid="netlist-preview"
-                aria-label="Structural netlist preview"
+                aria-label="结构化网表预览"
               >
                 {preview}
               </pre>
@@ -168,11 +168,11 @@ export function NetlistPreflightDialog({
           {hasDiagnostics ? (
             <aside
               className="netlist-preflight-diagnostics"
-              aria-label="Netlist diagnostics"
+              aria-label="网表诊断"
             >
               {result.diagnostics.length > 0 ? (
-                <section aria-label="Preflight findings">
-                  <h3>Findings</h3>
+                <section aria-label="预检结果">
+                  <h3>检查结果</h3>
                   <ul className="preflight-findings">
                     {groupedFindings.map((group) => (
                       <li key={`${group.code}-${group.message}`}>
@@ -193,7 +193,7 @@ export function NetlistPreflightDialog({
                 </section>
               ) : null}
               {electricalDiagnostics.length > 0 ? (
-                <section aria-label="Electrical findings">
+                <section aria-label="电气检查结果">
                   <h3>Electrical readiness ({electricalDiagnostics.length})</h3>
                   <p>
                     These findings use the same current-revision connectivity
@@ -225,7 +225,7 @@ export function NetlistPreflightDialog({
             data-testid="check-report-close"
             onClick={onClose}
           >
-            Close
+            关闭
           </button>
         </footer>
       </section>

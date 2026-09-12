@@ -46,19 +46,19 @@ function presentationMode(expression: SimulationExpression): string {
 function presentationModeLabel(mode: string): string {
   switch (mode) {
     case "magnitude":
-      return "Magnitude";
+      return "幅值";
     case "db20":
       return "dB";
     case "phase":
-      return "Phase";
+      return "相位";
     case "real":
-      return "Real";
+      return "实部";
     case "imaginary":
-      return "Imag";
+      return "虚部";
     case "absolute":
-      return "Abs";
+      return "绝对值";
     default:
-      return "Value";
+      return "值";
   }
 }
 
@@ -134,7 +134,7 @@ function ScalarPresentationFamilyResults({
     <div className="simulation-expression-family">
       <div className="ac-view-alignment">
         <div className="ac-view-toolbar">
-          <div role="group" aria-label={`${family.base.label} display`}>
+          <div role="group" aria-label={`${family.base.label}显示方式`}>
             {variants.map(({ spec }) => (
               <button
                 key={spec.id}
@@ -260,8 +260,8 @@ export function SimulationOutputResults({
               <table>
                 <thead>
                   <tr>
-                    <th>Output</th>
-                    <th>Value</th>
+                    <th>输出</th>
+                    <th>值</th>
                   </tr>
                 </thead>
                 <tbody>

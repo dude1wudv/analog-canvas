@@ -4182,7 +4182,7 @@ export function App({
           returnToParentDocument();
           return;
         case "hierarchy-selection-required":
-          setStatus("Select a hierarchical block before entering a Cell");
+          setStatus("进入 Cell 前请先选择层次化模块");
           return;
         case "step-drafting-style": {
           if (!selectedDrafting) return;
@@ -4590,18 +4590,18 @@ export function App({
         }}
         resets={[
           {
-            label: "Clear Drawing",
+            label: "清除图形",
             enabled: clearDrawingPlan.edits.length > 0,
             execute: () => commitCellReset(clearDrawingPlan, "Clear Drawing"),
           },
           {
-            label: "Reset Cell Placement",
+            label: "重置 Cell 放置",
             enabled: resetPlacementPlan.edits.length > 0,
             execute: () =>
               commitCellReset(resetPlacementPlan, "Reset Cell Placement"),
           },
           {
-            label: "Reset Cell Body",
+            label: "重置 Cell 内容",
             enabled: resetBodyPlan.edits.length > 0,
             execute: () => commitCellReset(resetBodyPlan, "Reset Cell Body"),
           },
@@ -4661,9 +4661,7 @@ export function App({
           publicAgentUiEnabled
             ? {
                 label:
-                  agentSession.status === "idle"
-                    ? "Connect Agent"
-                    : "Manage Agent",
+                  agentSession.status === "idle" ? "连接 Agent" : "管理 Agent",
                 execute: () => {
                   if (agentSession.status === "idle") {
                     setAgentPanelOpen(true);
@@ -5196,7 +5194,7 @@ export function App({
             className="properties-resize-handle"
             role="separator"
             aria-orientation="vertical"
-            aria-label="Resize the Properties panel"
+            aria-label="调整属性面板大小"
             aria-valuenow={propertiesWidth}
             aria-valuemin={PROPERTIES_WIDTH_MIN}
             aria-valuemax={PROPERTIES_WIDTH_MAX}
@@ -5240,7 +5238,7 @@ export function App({
             className="simulation-resize-handle"
             role="separator"
             aria-orientation="vertical"
-            aria-label="Resize the Simulation panel"
+            aria-label="调整仿真面板大小"
             aria-valuenow={simulationWidth}
             aria-valuemin={SIMULATION_WIDTH_MIN}
             aria-valuemax={SIMULATION_WIDTH_MAX}
@@ -5297,7 +5295,7 @@ export function App({
             className="library-resize-handle"
             role="separator"
             aria-orientation="vertical"
-            aria-label="Resize the Library panel"
+            aria-label="调整元件库面板大小"
             aria-valuenow={libraryWidth}
             aria-valuemin={LIBRARY_WIDTH_MIN}
             aria-valuemax={LIBRARY_WIDTH_MAX}
@@ -6873,7 +6871,7 @@ export function App({
                   editorCommands.execute({ id: "transform.rotate" }),
               },
               {
-                label: "Mirror left/right (Shift+R)",
+                label: "左右镜像（Shift+R）",
                 enabled: editorCommands.state({
                   id: "transform.mirror",
                   direction: "left-right",
@@ -6885,7 +6883,7 @@ export function App({
                   }),
               },
               {
-                label: "Delete",
+                label: "删除",
                 enabled: hasVisualSelection(visualSelection),
                 execute: () =>
                   editorCommands.execute({ id: "selection.delete" }),

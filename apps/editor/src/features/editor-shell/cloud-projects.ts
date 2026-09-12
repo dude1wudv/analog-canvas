@@ -98,7 +98,7 @@ export async function saveCloudProject(
   } catch (error) {
     return {
       status: "unreachable",
-      message: error instanceof Error ? error.message : "Network error",
+      message: error instanceof Error ? error.message : "网络错误",
     };
   }
   const payload = (await response.json().catch(() => null)) as {
@@ -117,13 +117,13 @@ export async function saveCloudProject(
       ? { status: "not-found" }
       : {
           status: "unreachable",
-          message: "Cloud Project service is unavailable (404)",
+          message: "云项目服务不可用（404）",
         };
   }
   if (response.status === 409 && payload?.error === "revision-conflict") {
     return returnedProject
       ? { status: "conflict", project: returnedProject }
-      : { status: "rejected", message: "Cloud revision conflict" };
+      : { status: "rejected", message: "云端修订版本冲突" };
   }
   if (response.status === 409 && payload?.error === "project-limit") {
     return {
@@ -165,7 +165,7 @@ export async function listCloudProjects(
   } catch (error) {
     return {
       status: "unreachable",
-      message: error instanceof Error ? error.message : "Network error",
+      message: error instanceof Error ? error.message : "网络错误",
     };
   }
 }
@@ -182,7 +182,7 @@ export async function openCloudProject(
   } catch (error) {
     return {
       status: "unreachable",
-      message: error instanceof Error ? error.message : "Network error",
+      message: error instanceof Error ? error.message : "网络错误",
     };
   }
   if (response.status === 401) return { status: "signed-out" };
@@ -231,7 +231,7 @@ export async function deleteCloudProject(
   } catch (error) {
     return {
       status: "failed",
-      message: error instanceof Error ? error.message : "Network error",
+      message: error instanceof Error ? error.message : "网络错误",
     };
   }
 }

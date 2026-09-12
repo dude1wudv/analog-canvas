@@ -209,11 +209,11 @@ export function EditorCanvasSurface({
         <aside
           className="canvas-shortcut-menu"
           data-testid="canvas-empty-state"
-          aria-label="Quick start shortcuts"
+          aria-label="快速入门快捷键"
         >
           <div className="canvas-shortcut-menu-heading">
-            <p className="canvas-shortcut-menu-title">Quick start</p>
-            <span>All shortcuts</span>
+            <p className="canvas-shortcut-menu-title">快速开始</p>
+            <span>全部快捷键</span>
           </div>
           <ul className="canvas-shortcut-list">
             {EDITOR_SHORTCUT_REFERENCE.map((shortcut) => (
@@ -230,7 +230,7 @@ export function EditorCanvasSurface({
         className={className}
         data-testid="schematic-canvas"
         role="img"
-        aria-label="Schematic canvas"
+        aria-label="原理图画布"
         aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown"
         tabIndex={-1}
         viewBox={viewBox}

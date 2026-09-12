@@ -26,8 +26,8 @@ export interface PermissionPreset {
 export const AGENT_PERMISSION_PRESETS: readonly PermissionPreset[] = [
   {
     id: "review",
-    label: "Review",
-    description: "Read the circuit, render it, and download approved views.",
+    label: "检查",
+    description: "读取并渲染电路，以及下载获准的视图。",
     scopes: [
       "circuit.snapshot",
       "circuit.render",
@@ -39,8 +39,8 @@ export const AGENT_PERMISSION_PRESETS: readonly PermissionPreset[] = [
   },
   {
     id: "layout",
-    label: "Layout Edit",
-    description: "Review the circuit and change component placement or routes.",
+    label: "布局编辑",
+    description: "检查电路并更改元件位置或线路。",
     scopes: [
       "circuit.snapshot",
       "circuit.render",
@@ -53,9 +53,8 @@ export const AGENT_PERMISSION_PRESETS: readonly PermissionPreset[] = [
   },
   {
     id: "full",
-    label: "Full Circuit Edit",
-    description:
-      "Edit circuit, connectivity, annotations, and approved imports.",
+    label: "完整电路编辑",
+    description: "编辑电路、连接关系、注释及获准的导入内容。",
     scopes: [
       "circuit.snapshot",
       "circuit.render",
@@ -117,16 +116,16 @@ Do not invent symbol IDs, pin names, revisions, or raw API requests. The connect
 }
 
 const STATUS_LABEL: Record<AgentConnectionStatus, string> = {
-  idle: "Not connected",
-  creating: "Creating connection…",
-  "waiting-for-agent": "Waiting for Agent",
-  connected: "Connected",
-  working: "Working",
-  paused: "Paused",
-  reconnecting: "Reconnecting",
-  offline: "Relay offline",
-  revoked: "Disconnected",
-  expired: "Session expired",
+  idle: "未连接",
+  creating: "正在创建连接…",
+  "waiting-for-agent": "正在等待 Agent",
+  connected: "已连接",
+  working: "工作中",
+  paused: "已暂停",
+  reconnecting: "正在重新连接",
+  offline: "中继离线",
+  revoked: "已断开",
+  expired: "会话已过期",
 };
 
 function formatRemaining(expiresAt: number | null, now: number): string {
@@ -145,7 +144,7 @@ function permissionLabel(scopes: readonly AgentSessionScope[]): string {
       candidate.scopes.length === scopes.length &&
       candidate.scopes.every((scope) => scopes.includes(scope)),
   );
-  return preset?.label ?? "Custom access";
+  return preset?.label ?? "自定义权限";
 }
 
 function useClock(active: boolean, initial: number): number {
@@ -249,7 +248,7 @@ function ClaimHandOff({
   if (claimExpired && status === "waiting-for-agent") {
     return (
       <div className="agent-claim" data-testid="agent-claim-expired">
-        <p>Connection setup expired.</p>
+        <p>连接设置已过期。</p>
         <button type="button" onClick={onNewConnection}>
           Generate another
         </button>
@@ -264,26 +263,23 @@ function ClaimHandOff({
   return (
     <div className="agent-claim" data-testid="agent-claim">
       <p>
-        Give the Agent this one-time setup. It expires in{" "}
-        {formatRemaining(claimExpiresAt, now)}; the connected session lasts{" "}
-        {formatRemaining(expiresAt, now)} and closing this panel does not
-        disconnect it.
+        请将这份一次性连接信息交给 Agent。它将在
+        {formatRemaining(claimExpiresAt, now)}后过期；连接会话可持续
+        {formatRemaining(expiresAt, now)}，关闭此面板不会断开连接。
       </p>
       <div className="agent-copy-card">
         <div className="agent-copy-card-header">
-          <span className="agent-copy-card-label">Plain text</span>
+          <span className="agent-copy-card-label">纯文本</span>
           <div className="agent-copy-card-action">
             <span className="agent-copy-feedback" aria-live="polite">
-              {copied ? "Copied" : ""}
+              {copied ? "已复制" : ""}
             </span>
             <button
               type="button"
               className="agent-copy-button"
               data-testid="agent-copy-instructions"
-              aria-label={
-                copied ? "Connection setup copied" : "Copy connection setup"
-              }
-              title={copied ? "Copied" : "Copy connection setup"}
+              aria-label={copied ? "连接设置已复制" : "复制连接设置"}
+              title={copied ? "已复制" : "复制连接设置"}
               onClick={() => {
                 void navigator.clipboard
                   .writeText(instructions)
@@ -309,7 +305,7 @@ function ClaimHandOff({
         <pre data-testid="agent-copy-text">{instructions}</pre>
       </div>
       <details>
-        <summary>Show connection code and technical details</summary>
+        <summary>显示连接代码和技术详情</summary>
         <code data-testid="agent-claim-code">{claimCode}</code>
         <p className="agent-technical-details">Scopes: {scopes.join(", ")}</p>
         <p className="agent-technical-details">
@@ -341,17 +337,13 @@ export function ConnectAgentPanel(props: ConnectAgentPanelProps): ReactNode {
       data-testid="connect-agent-panel"
       data-status={props.status}
     >
-      <section
-        className="agent-dialog"
-        role="dialog"
-        aria-label="Connect Agent"
-      >
+      <section className="agent-dialog" role="dialog" aria-label="连接 Agent">
         <div className="agent-panel-header">
-          <h2>Connect Agent</h2>
+          <h2>连接 Agent</h2>
           <button
             type="button"
             onClick={props.onClose}
-            aria-label="Hide Agent details"
+            aria-label="隐藏 Agent 详情"
           >
             Hide details
           </button>
@@ -370,7 +362,7 @@ export function ConnectAgentPanel(props: ConnectAgentPanelProps): ReactNode {
 
         {showGrant ? (
           <div className="agent-grant" data-testid="agent-grant">
-            <p>Choose what the Agent may do in this Project.</p>
+            <p>选择允许 Agent 在此项目中执行的操作。</p>
             <ul>
               {AGENT_PERMISSION_PRESETS.map((preset) => (
                 <li key={preset.id}>
@@ -407,7 +399,7 @@ export function AgentPropertiesSection(
   return (
     <section
       className="agent-properties"
-      aria-label="Agent connection"
+      aria-label="Agent 连接"
       data-testid="agent-properties"
     >
       <div className="agent-properties-summary">
@@ -433,7 +425,7 @@ export function AgentPropertiesSection(
               data-testid="agent-pause"
               onClick={props.onPause}
             >
-              Pause
+              暂停
             </button>
           ) : null}
           {props.status === "paused" ? (
@@ -442,7 +434,7 @@ export function AgentPropertiesSection(
               data-testid="agent-resume"
               onClick={props.onResume}
             >
-              Resume
+              继续
             </button>
           ) : null}
           {props.status === "offline" || props.status === "reconnecting" ? (
@@ -451,7 +443,7 @@ export function AgentPropertiesSection(
               data-testid="agent-reconnect"
               onClick={props.onReconnect}
             >
-              Retry relay
+              重试中继
             </button>
           ) : null}
           {terminal ? (
@@ -460,7 +452,7 @@ export function AgentPropertiesSection(
               data-testid="agent-new-connection"
               onClick={props.onNewConnection}
             >
-              New connection
+              新建连接
             </button>
           ) : null}
           <button
@@ -468,7 +460,7 @@ export function AgentPropertiesSection(
             onClick={props.onToggleDetails}
             aria-expanded={props.expanded}
           >
-            {props.expanded ? "Hide" : "Manage"}
+            {props.expanded ? "隐藏" : "管理"}
           </button>
         </div>
       </div>
@@ -476,10 +468,10 @@ export function AgentPropertiesSection(
         <div className="agent-properties-details">
           <ClaimHandOff {...props} now={clock} />
           <details>
-            <summary>Connection details</summary>
-            <p>Access: {permissionLabel(props.scopes)}</p>
+            <summary>连接详情</summary>
+            <p>权限：{permissionLabel(props.scopes)}</p>
             <p className="agent-technical-details">
-              Scopes: {props.scopes.join(", ")}
+              权限范围：{props.scopes.join(", ")}
             </p>
           </details>
           {!terminal ? (
@@ -489,14 +481,14 @@ export function AgentPropertiesSection(
                 data-testid="agent-new-connection"
                 onClick={props.onNewConnection}
               >
-                New connection
+                新建连接
               </button>
               <button
                 type="button"
                 data-testid="agent-revoke"
                 onClick={props.onRevoke}
               >
-                Disconnect
+                断开连接
               </button>
             </div>
           ) : null}
@@ -511,7 +503,7 @@ export function AgentPropertiesSection(
               className="agent-dismiss"
               onClick={props.onDismiss}
             >
-              Dismiss
+              关闭
             </button>
           ) : null}
         </div>

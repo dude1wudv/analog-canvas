@@ -8,7 +8,11 @@ import {
   annotationPolarity,
   annotationTextPreset,
 } from "./annotation-preview-symbols";
-import { componentCatalog, libraryDisplayName } from "./symbol-catalog";
+import {
+  categoryDisplayName,
+  componentCatalog,
+  libraryDisplayName,
+} from "./symbol-catalog";
 import type { ComponentInsertRequest } from "./component-insert-request";
 import type { InsertScope } from "./insert-launch";
 import { SymbolArtwork } from "./symbol-artwork";
@@ -74,10 +78,8 @@ export function InsertComponentDialog({
   onCancel,
 }: InsertComponentDialogProps) {
   const cellsOnly = scope === "cells";
-  const pickerNoun = cellsOnly ? "Cell" : "Component";
-  const dialogTitle = cellsOnly
-    ? "Place Hierarchical Cell"
-    : "Insert Component";
+  const pickerNoun = cellsOnly ? "Cell" : "元件";
+  const dialogTitle = cellsOnly ? "放置层次化 Cell" : "插入元件";
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hiddenCategories, setHiddenCategories] = useState<ReadonlySet<string>>(
@@ -387,7 +389,7 @@ export function InsertComponentDialog({
       >
         <header className="insert-dialog-header">
           <div>
-            <p>{cellsOnly ? "Place reusable design" : "Place device"}</p>
+            <p>{cellsOnly ? "放置可复用设计" : "放置器件"}</p>
             <h2 id="insert-component-title">{dialogTitle}</h2>
           </div>
           {cellsOnly ? null : <kbd>I</kbd>}
@@ -397,7 +399,7 @@ export function InsertComponentDialog({
           ref={inputRef}
           className="insert-quick-search"
           role="combobox"
-          aria-label={`${pickerNoun} search`}
+          aria-label={`搜索${pickerNoun}`}
           aria-autocomplete="list"
           aria-expanded={true}
           aria-controls="insert-component-options"
@@ -405,7 +407,7 @@ export function InsertComponentDialog({
             selected ? `insert-component-option-${selected.key}` : undefined
           }
           value={query}
-          placeholder={`Search ${pickerNoun.toLowerCase()}s`}
+          placeholder={`搜索${pickerNoun}`}
           onChange={(event) => setQuery(event.currentTarget.value)}
         />
 
@@ -413,16 +415,16 @@ export function InsertComponentDialog({
           <div
             className="insert-category-filter"
             role="group"
-            aria-label={`${pickerNoun} categories`}
+            aria-label={`${pickerNoun}分类`}
           >
             <button
               type="button"
               className="insert-category-chip insert-category-clear"
               data-testid="insert-category-clear"
-              title="Hide every category, then pick the ones to show"
+              title="先隐藏所有分类，再选择要显示的分类"
               onClick={clearAllCategories}
             >
-              Clear all
+              全部清除
             </button>
             {availableCategories.map((category) => (
               <button
@@ -433,12 +435,12 @@ export function InsertComponentDialog({
                 data-testid={`insert-category-${categorySlug(category)}`}
                 title={
                   hiddenCategories.has(category)
-                    ? `Show ${category}`
-                    : `Hide ${category}`
+                    ? `显示${categoryDisplayName(category)}`
+                    : `隐藏${categoryDisplayName(category)}`
                 }
                 onClick={() => toggleCategory(category)}
               >
-                {category}
+                {categoryDisplayName(category)}
               </button>
             ))}
           </div>
@@ -449,7 +451,7 @@ export function InsertComponentDialog({
           id="insert-component-options"
           className="insert-tile-grid"
           role="listbox"
-          aria-label={`${pickerNoun} choices`}
+          aria-label={`${pickerNoun}选项`}
         >
           {choices.map((choice) => {
             const label =
@@ -492,9 +494,7 @@ export function InsertComponentDialog({
         </div>
 
         <footer className="insert-dialog-actions">
-          <small>
-            Type to filter · ←↑↓→ choose · Enter or click places · Esc closes
-          </small>
+          <small>输入以筛选 · ←↑↓→ 选择 · 按 Enter 或点击放置 · Esc 关闭</small>
         </footer>
       </div>
     </div>

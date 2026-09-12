@@ -45,8 +45,8 @@ export function SimulationMeasurementResults({
     >
       <summary>
         <span>
-          <strong>Measurements</strong>
-          <small>Saved rules and automatic summaries</small>
+          <strong>测量</strong>
+          <small>已保存规则与自动摘要</small>
         </span>
         <span data-status={unavailable.length ? "attention" : "ready"}>
           {availableCount} {availableCount === 1 ? "value" : "values"}
@@ -100,8 +100,8 @@ export function SimulationMeasurementResults({
                       <table>
                         <thead>
                           <tr>
-                            <th>Measurement</th>
-                            <th>Value</th>
+                            <th>测量项</th>
+                            <th>值</th>
                           </tr>
                         </thead>
                         <tbody>

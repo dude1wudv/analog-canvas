@@ -39,9 +39,9 @@ interface ComparisonSection {
 }
 
 const SUMMARY_COLUMNS: readonly ComparisonColumn[] = [
-  { key: "automatic\u0000maximum", label: "Maximum" },
-  { key: "automatic\u0000minimum", label: "Minimum" },
-  { key: "automatic\u0000peak-to-peak", label: "Peak to peak" },
+  { key: "automatic\u0000maximum", label: "最大值" },
+  { key: "automatic\u0000minimum", label: "最小值" },
+  { key: "automatic\u0000peak-to-peak", label: "峰峰值" },
 ];
 
 function condition(run: SimulationComparisonRun): string {
@@ -94,7 +94,7 @@ function sectionsForRun(run: SimulationComparisonRun): ComparisonSection[] {
     const first = measurements[0]!;
     const automaticColumns: readonly ComparisonColumn[] =
       first.analysis === "op"
-        ? [{ key: "automatic\u0000operating-point", label: "Value" }]
+        ? [{ key: "automatic\u0000operating-point", label: "值" }]
         : SUMMARY_COLUMNS;
     const authoredColumns = new Map<string, ComparisonColumn>();
     const signals = new Map<string, ComparisonSignal>();
@@ -155,15 +155,13 @@ export function SimulationRunComparison({
         <section className="simulation-comparison-run" key={run.id}>
           <header>
             <span>
-              <strong>
-                {run.current ? "Current" : `Previous ${runIndex + 1}`}
-              </strong>
+              <strong>{run.current ? "当前" : `上一个 ${runIndex + 1}`}</strong>
               <small>{condition(run) || run.environment.profileId}</small>
             </span>
             {!run.current && onRemove ? (
               <button
                 type="button"
-                aria-label={`Remove ${run.label} from comparison`}
+                aria-label={`从对比中移除 ${run.label}`}
                 onClick={() => onRemove(run.id)}
               >
                 ×
@@ -179,11 +177,11 @@ export function SimulationRunComparison({
               <div className="simulation-run-comparison-table-wrap">
                 <table
                   className="simulation-run-comparison-table"
-                  aria-label={`${section.label} comparison for ${run.current ? "current run" : `previous run ${runIndex + 1}`}`}
+                  aria-label={`${section.label}对比（${run.current ? "当前运行" : `上一个运行 ${runIndex + 1}`}）`}
                 >
                   <thead>
                     <tr>
-                      <th>Signal</th>
+                      <th>信号</th>
                       {section.columns.map((column) => (
                         <th key={column.key}>{column.label}</th>
                       ))}

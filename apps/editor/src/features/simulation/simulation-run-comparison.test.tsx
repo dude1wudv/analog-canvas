@@ -91,22 +91,20 @@ describe("SimulationRunComparison", () => {
         onRemove={() => undefined}
       />,
     );
-    expect(markup).toContain("Previous 1");
-    expect(markup).toContain("Current");
+    expect(markup).toContain("上一个 1");
+    expect(markup).toContain("当前");
     expect(markup).toContain(
-      "<th>Signal</th><th>Maximum</th><th>Minimum</th><th>Peak to peak</th>",
+      "<th>信号</th><th>最大值</th><th>最小值</th><th>峰峰值</th>",
     );
     expect(markup).toContain(">Transient<");
     expect(markup).toContain(">AC<");
-    expect(markup).toContain(
-      'aria-label="Transient comparison for previous run 1"',
-    );
-    expect(markup).toContain('aria-label="AC comparison for current run"');
+    expect(markup).toContain('aria-label="Transient对比（上一个运行 1）"');
+    expect(markup).toContain('aria-label="AC对比（当前运行）"');
     expect(markup).toContain("<th>Vout</th>");
     expect(markup).toContain("1 V");
     expect(markup).toContain("1.2 V");
-    expect(markup).toContain("Remove Before from comparison");
-    expect(markup).not.toContain("Remove After from comparison");
+    expect(markup).toContain("从对比中移除 Before");
+    expect(markup).not.toContain("从对比中移除 After");
   });
 
   it("keeps distinct saved rules as additional signal-table columns", () => {

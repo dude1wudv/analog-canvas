@@ -60,7 +60,7 @@ describe("component electrical properties", () => {
     expect(markup).toMatch(
       /<details[^>]*aria-label="Component parameters and display"[^>]*open=""/u,
     );
-    expect(markup).toContain("Netlist overrides");
+    expect(markup).toContain("网表覆盖项");
     expect(markup).not.toContain("Advanced parameters");
     expect(markup).toContain('aria-label="Additional parameter name 1"');
     expect(markup).toContain("Apply parameters");
@@ -183,8 +183,8 @@ describe("component electrical properties", () => {
         onAdditionalParametersCancel={vi.fn()}
       />,
     );
-    expect(markup).toContain("Value");
-    expect(markup).not.toContain(">Visual annotation<");
+    expect(markup).toContain("值");
+    expect(markup).not.toContain(">位号<");
   });
 
   it("shows only the active ordinary-source waveform fields", () => {
@@ -294,9 +294,9 @@ describe("the Display row only offers what the drawing can show", () => {
       { id: "X3", symbolId: "voltage-amplifier", placement: null },
       {},
     );
-    expect(markup).not.toContain("Component display toggles");
-    expect(markup).not.toContain("Visual annotation");
-    expect(markup).not.toContain(">Value<");
+    expect(markup).not.toContain("元件显示开关");
+    expect(markup).not.toContain("显示");
+    expect(markup).not.toContain(">值<");
   });
 
   it("keeps both toggles for a part that has both", () => {
@@ -306,9 +306,9 @@ describe("the Display row only offers what the drawing can show", () => {
       { id: "R1", symbolId: "resistor", placement: null, reference: "R1" },
       { referenceAvailable: true, valueSupported: true, valueAvailable: true },
     );
-    expect(markup).toContain("Component display toggles");
-    expect(markup).toContain("Visual annotation");
-    expect(markup).toContain("Value");
+    expect(markup).toContain("元件显示开关");
+    expect(markup).toContain("显示");
+    expect(markup).toContain("值");
   });
 
   it("keeps a value toggle that is merely unset, and says why", () => {
@@ -318,7 +318,7 @@ describe("the Display row only offers what the drawing can show", () => {
       { id: "R1", symbolId: "resistor", placement: null, reference: "R1" },
       { referenceAvailable: true, valueSupported: true, valueAvailable: false },
     );
-    expect(markup).toContain("Value");
+    expect(markup).toContain("值");
     expect(markup).toContain("Set the device parameters first");
   });
 
@@ -328,8 +328,8 @@ describe("the Display row only offers what the drawing can show", () => {
       { id: "S1", symbolId: "ideal-switch", placement: null, reference: "S1" },
       { referenceAvailable: true, valueSupported: false },
     );
-    expect(markup).toContain("Visual annotation");
-    expect(markup).not.toContain(">Value<");
+    expect(markup).toContain("显示");
+    expect(markup).not.toContain(">值<");
   });
 
   it("still hides the reference for a Symbol that draws no label", () => {
@@ -339,6 +339,6 @@ describe("the Display row only offers what the drawing can show", () => {
       { id: "G1", symbolId: "ground", placement: null, reference: "G1" },
       { referenceAvailable: true, referenceLabelRenderable: false },
     );
-    expect(markup).not.toContain("Visual annotation");
+    expect(markup).not.toContain("显示");
   });
 });

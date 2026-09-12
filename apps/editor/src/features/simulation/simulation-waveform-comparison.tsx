@@ -171,12 +171,9 @@ export function SimulationWaveformComparison({
 }) {
   const waveforms = buildComparisonWaveforms(runs);
   return (
-    <section
-      className="simulation-waveform-comparison"
-      aria-label="Waveform overlays"
-    >
+    <section className="simulation-waveform-comparison" aria-label="波形叠加">
       <header>
-        <strong>Waveforms</strong>
+        <strong>波形</strong>
         {actions}
       </header>
       {waveforms.complex.map((group) => (

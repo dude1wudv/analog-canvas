@@ -186,7 +186,7 @@ export function DesignVariablesEditor({
           <div className="simulation-variable-card" key={variable.id}>
             <div className="simulation-inline-fields simulation-variable-row">
               <label>
-                Name
+                名称
                 <input
                   aria-label={`Design Variable name ${variable.name}`}
                   value={variable.name}
@@ -242,7 +242,7 @@ export function DesignVariablesEditor({
                   }))
                 }
               >
-                <option value="">Bind an Instance parameter…</option>
+                <option value="">绑定实例参数…</option>
                 {choices.map((choice) => (
                   <option
                     key={choice.id}
@@ -319,7 +319,7 @@ export function DesignVariablesEditor({
                 })}
               </ul>
             ) : (
-              <small>No parameters bound.</small>
+              <small>未绑定参数。</small>
             )}
           </div>
         );
@@ -458,7 +458,7 @@ export function RunPlanEditor({
               ) : axis.kind === "variable" ? (
                 <span className="simulation-run-plan-target-values">
                   <select
-                    aria-label="Run Plan Design Variable"
+                    aria-label="运行计划设计变量"
                     value={axis.variableId}
                     onChange={(event) =>
                       replaceAxis(index, {
@@ -485,7 +485,7 @@ export function RunPlanEditor({
               ) : (
                 <span className="simulation-run-plan-target-values">
                   <select
-                    aria-label="Run Plan Instance parameter"
+                    aria-label="运行计划实例参数"
                     value={parameterKey(axis)}
                     onChange={(event) => {
                       const choice = choices.find(
@@ -535,7 +535,7 @@ export function RunPlanEditor({
             </div>
           ))}
           <div className="simulation-run-plan-add">
-            <span>Add axis</span>
+            <span>添加坐标轴</span>
             <button
               type="button"
               disabled={axes.length >= 4 || axisKinds.has("corner")}
@@ -601,7 +601,7 @@ export function RunPlanEditor({
             {pointCount > maxItems ? (
               <span role="alert">Maximum for this executor is {maxItems}.</span>
             ) : (
-              <span>Sequential batch</span>
+              <span>顺序批处理</span>
             )}
             <button
               type="button"
@@ -619,7 +619,7 @@ export function RunPlanEditor({
           ) : null}
         </>
       ) : (
-        <small>One run using the nominal Setup values.</small>
+        <small>使用标称设置值运行一次。</small>
       )}
     </div>
   );

@@ -32,11 +32,11 @@ interface ExpandedPlot {
 type AcViewMode = AcPlotKind | "bode";
 
 const VIEW_MODES: readonly { mode: AcViewMode; label: string }[] = [
-  { mode: "magnitude", label: "Magnitude" },
+  { mode: "magnitude", label: "幅值" },
   { mode: "db20", label: "dB" },
-  { mode: "phase", label: "Phase" },
-  { mode: "real", label: "Real" },
-  { mode: "imaginary", label: "Imag" },
+  { mode: "phase", label: "相位" },
+  { mode: "real", label: "实部" },
+  { mode: "imaginary", label: "虚部" },
   { mode: "bode", label: "Bode" },
 ];
 
@@ -172,9 +172,9 @@ function outputTraces(
 }
 
 function groupLabel(quantity: string): string {
-  if (quantity === "voltage") return "Voltage";
-  if (quantity === "current") return "Current";
-  if (quantity === "ratio") return "Ratio";
+  if (quantity === "voltage") return "电压";
+  if (quantity === "current") return "电流";
+  if (quantity === "ratio") return "比值";
   return quantity;
 }
 
@@ -184,7 +184,7 @@ function displayKinds(mode: AcViewMode): readonly AcPlotKind[] {
 
 function plotKindLabel(kind: AcPlotKind): string {
   if (kind === "db20") return "dB";
-  if (kind === "imaginary") return "Imaginary";
+  if (kind === "imaginary") return "虚部";
   return kind[0]!.toUpperCase() + kind.slice(1);
 }
 
@@ -488,7 +488,7 @@ export function ComplexResultsExplorer({
               <div className="ac-view-toolbar">
                 <div
                   role="group"
-                  aria-label={`${groupLabel(quantity)} display`}
+                  aria-label={`${groupLabel(quantity)}显示方式`}
                 >
                   {VIEW_MODES.map(({ mode: candidate, label }) => (
                     <button
@@ -565,7 +565,7 @@ export function ComplexResultsExplorer({
                     </div>
                   ))
                 ) : (
-                  <p className="simulation-empty-plot">Outputs hidden</p>
+                  <p className="simulation-empty-plot">输出已隐藏</p>
                 )}
               </div>
             </div>
@@ -596,7 +596,7 @@ export function ComplexResultsExplorer({
                   </div>
                   <button
                     type="button"
-                    aria-label="Close plot"
+                    aria-label="关闭绘图"
                     onClick={() => setExpandedPlot(null)}
                   >
                     ×
@@ -638,7 +638,7 @@ export function ComplexResultsExplorer({
                         true,
                       )
                     ) : (
-                      <p className="simulation-empty-plot">Outputs hidden</p>
+                      <p className="simulation-empty-plot">输出已隐藏</p>
                     )}
                   </div>
                 </div>

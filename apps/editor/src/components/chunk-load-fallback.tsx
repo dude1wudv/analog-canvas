@@ -72,7 +72,7 @@ export function createChunkLoadFallback(
           data-testid="dialog-chunk-load-fallback"
         >
           <header className="editor-action-dialog-header">
-            <p>Dialog unavailable</p>
+            <p>对话框不可用</p>
             <h2 id="chunk-load-fallback-title">
               This dialog could not be loaded
             </h2>
@@ -90,7 +90,7 @@ export function createChunkLoadFallback(
           <footer className="editor-action-dialog-actions">
             {close ? (
               <button type="button" onClick={() => close()}>
-                Close
+                关闭
               </button>
             ) : null}
             <button
@@ -124,7 +124,7 @@ export function ChunkLoadBanner({
       className="recovery-banner recovery-banner-warning"
       data-testid="chunk-load-banner"
       role="alert"
-      aria-label="Feature failed to load"
+      aria-label="功能加载失败"
     >
       <p>
         {feature} could not load — the app has been updated since this tab

@@ -84,7 +84,7 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
     const files = folder.id === activeId ? props.files : (folder.files ?? []);
     const source: TreeNode = {
       id: folder.id + "/source",
-      name: "Source",
+      name: "源文件",
       folderId: folder.id,
       kind: "directory",
       children: [],
@@ -251,8 +251,8 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
       items.push({
         label:
           targets.length > 1
-            ? "Download selected (" + targets.length + ")…"
-            : "Download…",
+            ? "下载所选项（" + targets.length + "）…"
+            : "下载…",
         disabled: !props.onDownloadSelection,
         run: () =>
           props.onDownloadSelection?.(
@@ -262,17 +262,17 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
       });
     if (targets.length === 1 && node?.file) {
       items.push(
-        { label: "Open", run: () => openFile(node) },
+        { label: "打开", run: () => openFile(node) },
         {
-          label: "Copy contents",
+          label: "复制内容",
           run: () => props.onCopyFile?.(node.file!.path, node.folderId),
         },
       );
       if (node.file.kind === "authored")
         for (const [action, label] of [
-          ["rename", "Rename…"],
-          ["delete", "Delete…"],
-          ["entry", "Use as run entry"],
+          ["rename", "重命名…"],
+          ["delete", "删除…"],
+          ["entry", "设为运行入口"],
         ] as const)
           items.push({
             label,
@@ -281,7 +281,7 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
           });
       if (node.file.draft)
         items.push({
-          label: "Discard draft",
+          label: "丢弃草稿",
           run: () =>
             props.onFileAction?.("discard", node.file!.path, node.folderId),
         });
@@ -292,7 +292,7 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
         (!node || node.kind === "folder" || node.id.includes("/source"))
       ) {
         items.push({
-          label: "New file…",
+          label: "新建文件…",
           run: () => {
             const id = node?.folderId ?? activeId;
             setExpanded((state) => ({
@@ -306,10 +306,10 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
       }
       if (targets.length === 1 && node?.kind === "folder")
         for (const [action, label] of [
-          ["run", "Run folder"],
-          ["duplicate", "Duplicate…"],
-          ["rename", "Rename…"],
-          ["delete", "Delete…"],
+          ["run", "运行文件夹"],
+          ["duplicate", "创建副本…"],
+          ["rename", "重命名…"],
+          ["delete", "删除…"],
         ] as const)
           items.push({
             label,
@@ -318,17 +318,17 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
           });
       if (targets.length > 1 && targets.every((item) => item.kind === "folder"))
         items.push({
-          label: "Run selected folders (" + targets.length + ")",
+          label: "运行所选文件夹（" + targets.length + "）",
           disabled: props.folders.busy,
           run: () => props.folders?.onAction("batch", ids),
         });
       items.push({
-        label: "New experiment…",
+        label: "新建实验…",
         run: () => props.folders?.onAction("new", []),
       });
     }
     items.push({
-      label: "Collapse all",
+      label: "全部折叠",
       run: () =>
         setExpanded(
           Object.fromEntries([...all.keys()].map((id) => [id, false])),
@@ -338,7 +338,7 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
       x,
       y,
       items,
-      node?.file ? "Actions for " + node.file.path : "Folder actions",
+      node?.file ? node.file.path + " 的操作" : "文件夹操作",
     );
   };
   const render = (node: TreeNode, level: number): ReactNode => {
@@ -381,7 +381,7 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
               type="button"
               className="simulation-tree-chevron"
               tabIndex={-1}
-              aria-label={"Toggle " + node.name}
+              aria-label={"展开或折叠 " + node.name}
               aria-expanded={isOpen(node)}
               onClick={(event) => {
                 event.stopPropagation();
@@ -409,7 +409,7 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
               data-folder-id={node.folderId}
               data-file-path={node.file?.path}
               aria-label={
-                node.kind === "folder" ? "Folder " + node.name : node.name
+                node.kind === "folder" ? "文件夹 " + node.name : node.name
               }
               aria-current={active ? "page" : undefined}
               title={node.file?.path ?? node.name}
@@ -465,11 +465,11 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
               <span className="simulation-file-name">{node.name}</span>
               {node.tmp ? <small>tmp</small> : null}
               {node.file?.dirty ? (
-                <span className="simulation-file-state" title="Unsaved">
+                <span className="simulation-file-state" title="未保存">
                   ●
                 </span>
               ) : node.file?.draft ? (
-                <span className="simulation-file-state" title="Saved draft">
+                <span className="simulation-file-state" title="已保存草稿">
                   ◌
                 </span>
               ) : null}
@@ -499,7 +499,7 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
     <div
       className="simulation-folder-tree"
       role="tree"
-      aria-label="Simulation folders"
+      aria-label="仿真文件夹"
       aria-multiselectable="true"
       onContextMenu={(event) => {
         event.preventDefault();

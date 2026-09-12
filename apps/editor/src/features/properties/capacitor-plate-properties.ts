@@ -7,7 +7,7 @@ type Instance = SchematicDocument["instances"][number];
 
 export interface CapacitorPlatePropertyRow {
   readonly role: DevicePinSemanticRole;
-  readonly label: "Top plate" | "Bottom plate";
+  readonly label: "上极板" | "下极板";
   readonly pinName: string;
   readonly sourceNodePosition: number;
   readonly netId: string | null;
@@ -46,7 +46,7 @@ export function capacitorPlatePropertyRows(
     return [
       {
         role,
-        label: role === "capacitor-top-plate" ? "Top plate" : "Bottom plate",
+        label: role === "capacitor-top-plate" ? "上极板" : "下极板",
         pinName: semantic.pinName,
         sourceNodePosition: descriptor.pinOrder.indexOf(semantic.pinName) + 1,
         netId: net?.id ?? null,

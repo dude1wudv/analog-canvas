@@ -33,10 +33,10 @@ describe("InstanceTableDialog", () => {
     );
 
     expect(markup).toContain('aria-labelledby="instance-table-title"');
-    expect(markup).toContain("Active Cell");
-    expect(markup).toContain("Project");
+    expect(markup).toContain("当前 Cell");
+    expect(markup).toContain("项目");
     expect(markup).toContain(">M1</button>");
-    expect(markup).toContain('aria-label="Batch field"');
+    expect(markup).toContain('aria-label="批量字段"');
     expect(markup).toContain("Apply to 0");
   });
 

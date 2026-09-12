@@ -91,9 +91,9 @@ export function ComponentPropertyCodeEditor({
   const copy = async (): Promise<void> => {
     try {
       await navigator.clipboard.writeText(draft);
-      setApplyMessage("JSON copied");
+      setApplyMessage("已复制 JSON");
     } catch {
-      setApplyMessage("Clipboard unavailable; select the code and copy it");
+      setApplyMessage("剪贴板不可用；请选中代码后复制");
     }
   };
 
@@ -135,17 +135,17 @@ export function ComponentPropertyCodeEditor({
   return (
     <section
       className="component-property-code-editor"
-      aria-label="Canvas property code"
+      aria-label="画布属性代码"
       data-testid="component-property-code-editor"
     >
       <header>
-        <strong>Properties</strong>
+        <strong>属性</strong>
         <div className="component-property-header-actions">
           <button
             type="button"
             className="component-property-help"
-            aria-label="Defaults"
-            title="Restore parameter and color defaults"
+            aria-label="默认值"
+            title="恢复参数和颜色默认值"
             onClick={() => change(defaultComponentPropertyCode(context))}
           >
             Defaults
@@ -154,8 +154,8 @@ export function ComponentPropertyCodeEditor({
             <button
               type="button"
               className="component-property-copy"
-              aria-label="Discard draft"
-              title="Discard invalid draft"
+              aria-label="丢弃草稿"
+              title="丢弃无效草稿"
               onClick={() => {
                 setDraft(baseline);
                 setApplyMessage(null);
@@ -168,8 +168,8 @@ export function ComponentPropertyCodeEditor({
           <button
             type="button"
             className="component-property-copy"
-            aria-label="Copy JSON"
-            title="Copy JSON"
+            aria-label="复制 JSON"
+            title="复制 JSON"
             onClick={() => void copy()}
           >
             <svg
@@ -188,7 +188,7 @@ export function ComponentPropertyCodeEditor({
       <Suspense
         fallback={
           <textarea
-            aria-label="Loading Canvas property code"
+            aria-label="正在加载画布属性代码"
             value={draft}
             readOnly
             rows={15}
@@ -204,7 +204,7 @@ export function ComponentPropertyCodeEditor({
         />
       </Suspense>
       <ColorOverrideControl
-        label="Line"
+        label="行"
         value={lineColor}
         fallback={defaultForeground}
         disabled={!parsed.ok}
@@ -214,7 +214,7 @@ export function ComponentPropertyCodeEditor({
         <span>
           {applyMessage ??
             (parsed.ok
-              ? "Live"
+              ? "实时"
               : `${parsed.message} · Canvas keeps the last valid edit`)}
         </span>
       </div>

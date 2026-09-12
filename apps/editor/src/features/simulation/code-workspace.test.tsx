@@ -23,7 +23,7 @@ describe("approved simulation Code layout", () => {
             onSelect: () => {},
             onAction: () => {},
           }}
-          actions={<button>Run</button>}
+          actions={<button>运行</button>}
           console={null}
           results={null}
           outputPane="console"
@@ -37,8 +37,8 @@ describe("approved simulation Code layout", () => {
     expect(markup).toContain("OTA transient");
     expect(markup).toContain('data-workspace-new-folder="true"');
     expect(markup).toContain("+ New experiment");
-    expect(markup).toContain("Source");
-    expect(markup).not.toContain("Run target");
+    expect(markup).toContain("源文件");
+    expect(markup).toContain("Run target");
     expect(markup).not.toContain("New file");
     expect(markup).not.toContain("Setup");
     expect(markup).not.toContain('class="simulation-code-status"');
@@ -57,7 +57,7 @@ describe("approved simulation Code layout", () => {
             { path: "experiment.json", kind: "authored" },
           ]}
           onSelectFile={() => {}}
-          actions={<button>Run</button>}
+          actions={<button>运行</button>}
           outputPane="console"
           onSelectOutputPane={() => {}}
           console={<p>Run console</p>}
@@ -74,7 +74,7 @@ describe("approved simulation Code layout", () => {
     expect(markup.indexOf("Source input")).toBeLessThan(
       markup.indexOf("Run console"),
     );
-    expect(markup).not.toContain("Settings");
+    expect(markup).not.toContain("设置");
     expect(markup).toContain(">Compare</button>");
     expect(markup).toContain(">OP</button>");
     expect(markup).not.toContain(">Files</button>");
@@ -101,7 +101,7 @@ describe("approved simulation Code layout", () => {
             {
               key: "prepare",
               label: "Prepare",
-              description: "Compiled input",
+              description: "编译后输入",
               artifacts: [artifact],
             },
           ]}
@@ -122,12 +122,14 @@ describe("approved simulation Code layout", () => {
         </SimulationCodeWorkspace>
       </WorkspaceInteractions>,
     );
-    expect(markup).toContain('aria-label="Source"');
-    expect(markup).toContain('aria-expanded="true"');
-    expect(markup).toContain('aria-label="Prepare"');
-    expect(markup).toContain('aria-expanded="false"');
-    expect(markup).toContain(">tmp</small>");
-    expect(markup).not.toContain("prepared.cir");
-    expect(markup).not.toContain('aria-label="Download selected files"');
+    expect(markup).toMatch(
+      /class="simulation-explorer-section is-source" open=""/,
+    );
+    expect(markup).toContain(
+      'class="simulation-explorer-section is-temporary" aria-label="Prepare temporary files"',
+    );
+    expect(markup).toContain("临时");
+    expect(markup).toContain("prepared.cir");
+    expect(markup).toContain('aria-label="下载所选文件"');
   });
 });

@@ -174,7 +174,7 @@ export function AccountMenuView({
         {renaming ? (
           <input
             className="account-rename-input"
-            aria-label="Display name"
+            aria-label="显示名称"
             data-testid="account-rename-input"
             value={draftName}
             maxLength={40}
@@ -194,7 +194,7 @@ export function AccountMenuView({
             type="button"
             className="account-name"
             data-testid="account-name"
-            title="Click to change your display name"
+            title="点击修改显示名称"
             onClick={() => {
               setDraftName(user.displayName);
               setRenaming(true);
@@ -207,14 +207,14 @@ export function AccountMenuView({
             badge, Review, My submissions, and Sign out each wrapped onto two
             lines and the header became unreadable. */}
         <details className="account-more">
-          <summary aria-label="Account menu">
+          <summary aria-label="账户菜单">
             {user.isAdmin ? (
               <span className="account-owner-badge" data-testid="account-owner">
-                Owner
+                所有者
               </span>
             ) : user.role === "moderator" ? (
               <span className="account-owner-badge" data-testid="account-mod">
-                Moderator
+                审核员
               </span>
             ) : null}
             <span aria-hidden="true">⋯</span>
@@ -226,7 +226,7 @@ export function AccountMenuView({
                 href="/moderation"
                 data-testid="account-moderation-link"
               >
-                Moderation
+                内容审核
               </a>
             ) : null}
             {showGalleryLinks ? (
@@ -235,7 +235,7 @@ export function AccountMenuView({
                 href="/mine"
                 data-testid="account-mine"
               >
-                My submissions
+                我的提交
               </a>
             ) : null}
             <button
@@ -244,7 +244,7 @@ export function AccountMenuView({
               data-testid="account-signout"
               onClick={onSignOut}
             >
-              Sign out
+              退出登录
             </button>
           </div>
         </details>
@@ -259,16 +259,16 @@ export function AccountMenuView({
 
   return (
     <details className="account-signin" data-testid="account-signin">
-      <summary>Sign in</summary>
+      <summary>登录</summary>
       <div className="account-signin-panel">
         {providers.github ? (
           <a href="/api/auth/github/start" data-testid="signin-github">
-            Continue with GitHub
+            使用 GitHub 继续
           </a>
         ) : null}
         {providers.google ? (
           <a href="/api/auth/google/start" data-testid="signin-google">
-            Continue with Google
+            使用 Google 继续
           </a>
         ) : null}
         {providers.email ? (
@@ -281,14 +281,14 @@ export function AccountMenuView({
           >
             <input
               type="email"
-              aria-label="Email address"
+              aria-label="邮箱地址"
               data-testid="signin-email-input"
               placeholder="you@example.com"
               value={email}
               onChange={(event) => setEmail(event.currentTarget.value)}
             />
             <button type="submit" data-testid="signin-email-send">
-              Email me a link
+              向我发送登录链接
             </button>
           </form>
         ) : null}
@@ -314,7 +314,7 @@ export function AccountMenu({
   useEffect(() => {
     let cancelled = false;
     if (new URLSearchParams(window.location.search).get("auth") === "failed") {
-      setNotice("Sign-in failed — try again.");
+      setNotice("登录失败，请重试。");
       window.history.replaceState(null, "", window.location.pathname);
     }
     void loadAccountState().then((next) => {

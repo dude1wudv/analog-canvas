@@ -23,21 +23,21 @@ describe("ComponentPropertyCodeEditor", () => {
         onApply={vi.fn(() => ({ ok: true as const }))}
       />,
     );
-    expect(markup).toContain('aria-label="Loading Canvas property code"');
+    expect(markup).toContain('aria-label="正在加载画布属性代码"');
     expect(markup).toContain("&quot;at&quot;");
     expect(markup).not.toContain("Apply code");
-    expect(markup).not.toContain("Component properties");
-    expect(markup).toContain('aria-label="Defaults"');
-    expect(markup).not.toContain("Need help?");
-    expect(markup).toContain("<legend>Line</legend>");
-    expect(markup).toContain('aria-label="Line presets"');
-    expect(markup).toContain('aria-label="Line custom RGB"');
-    expect(markup).not.toContain("Background");
+    expect(markup).not.toContain("元件属性");
+    expect(markup).toContain('aria-label="恢复默认"');
+    expect(markup).toContain("Need help?");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup.indexOf("Need help?")).toBeLessThan(
+      markup.indexOf('aria-label="恢复默认"'),
+    );
     expect(markup).toContain("Live");
-    expect(markup).toContain('aria-label="Copy JSON"');
-    expect(markup).toContain('title="Copy JSON"');
-    expect(markup.indexOf('aria-label="Copy JSON"')).toBeLessThan(
-      markup.indexOf('aria-label="Loading Canvas property code"'),
+    expect(markup).toContain('aria-label="复制 JSON"');
+    expect(markup).toContain('title="复制 JSON"');
+    expect(markup.indexOf('aria-label="复制 JSON"')).toBeLessThan(
+      markup.indexOf('aria-label="正在加载画布属性代码"'),
     );
     expect(markup).not.toContain('inputMode="decimal"');
     expect(markup).not.toContain("mirror-horizontal");

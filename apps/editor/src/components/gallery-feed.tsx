@@ -72,10 +72,7 @@ function GalleryOwnerMenu({
       className="gallery-owner-menu"
       data-testid={`gallery-owner-menu-${entry.id}`}
     >
-      <summary
-        aria-label={`Manage ${entry.name}`}
-        title={`Manage ${entry.name}`}
-      >
+      <summary aria-label={`管理 ${entry.name}`} title={`管理 ${entry.name}`}>
         ⋯
       </summary>
       <div className="gallery-owner-popover">
@@ -83,7 +80,7 @@ function GalleryOwnerMenu({
           href={`/g/${entry.id}`}
           data-testid={`gallery-owner-edit-${entry.id}`}
         >
-          Edit and replace
+          编辑并替换
         </a>
         <button
           type="button"
@@ -91,7 +88,7 @@ function GalleryOwnerMenu({
           data-testid={`gallery-owner-withdraw-${entry.id}`}
           onClick={onWithdraw}
         >
-          Withdraw
+          撤回
         </button>
       </div>
     </details>
@@ -111,8 +108,8 @@ function GalleryOwnerRejectButton({
     <button
       type="button"
       className="gallery-owner-reject-shortcut"
-      aria-label={`Reject ${entry.name}`}
-      title={`Reject ${entry.name}`}
+      aria-label={`拒绝 ${entry.name}`}
+      title={`拒绝 ${entry.name}`}
       disabled={busy}
       data-testid={`gallery-owner-reject-${entry.id}`}
       onClick={onReject}
@@ -159,11 +156,8 @@ function RejectEntryDialog({
         aria-labelledby="gallery-reject-title"
         data-testid="gallery-owner-reject-dialog"
       >
-        <h2 id="gallery-reject-title">Reject “{entry.name}”</h2>
-        <p>
-          The circuit will leave the Gallery immediately. The submitter will see
-          this reason in My submissions.
-        </p>
+        <h2 id="gallery-reject-title">拒绝“{entry.name}”</h2>
+        <p>此电路将立即从画廊移除。提交者可在“我的提交”中看到此原因。</p>
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -171,7 +165,7 @@ function RejectEntryDialog({
           }}
         >
           <fieldset className="gallery-owner-reason-options">
-            <legend>Common reasons (choose all that apply)</legend>
+            <legend>常见原因（可多选）</legend>
             <div>
               {OWNER_REJECT_REASONS.map((candidate, index) => (
                 <label key={candidate}>
@@ -188,19 +182,19 @@ function RejectEntryDialog({
             </div>
           </fieldset>
           <label htmlFor="gallery-reject-note">
-            Additional note or other reason <span>(optional)</span>
+            补充说明或其他原因 <span>（可选）</span>
           </label>
           <textarea
             id="gallery-reject-note"
             value={note}
             maxLength={360}
-            placeholder="Add context for the submitter…"
+            placeholder="为提交者补充说明…"
             data-testid="gallery-owner-reject-note"
             onChange={(event) => setNote(event.currentTarget.value)}
           />
           <div className="gallery-owner-dialog-actions">
             <button type="button" disabled={busy} onClick={onClose}>
-              Cancel
+              取消
             </button>
             <button
               type="submit"
@@ -208,7 +202,7 @@ function RejectEntryDialog({
               disabled={busy || !reason}
               data-testid="gallery-owner-reject-confirm"
             >
-              {busy ? "Rejecting…" : "Reject entry"}
+              {busy ? "正在拒绝…" : "拒绝条目"}
             </button>
           </div>
         </form>
@@ -257,7 +251,7 @@ function HeartIcon({ filled }: { filled: boolean }) {
  * says "so far" until the feed is exhausted.
  */
 function contributionLabel(count: number): string {
-  return `${count.toLocaleString()} ${count === 1 ? "circuit" : "circuits"}`;
+  return `${count.toLocaleString()} 个电路`;
 }
 
 function GalleryContributorRow({
@@ -279,7 +273,7 @@ function GalleryContributorRow({
         type="button"
         className="gallery-contributor-author"
         data-testid={`gallery-contributor-author-${rank}`}
-        aria-label={`View ${option.author}'s gallery`}
+        aria-label={`查看 ${option.author} 的画廊`}
         onClick={() => onSelectAuthor(option.author)}
       >
         {option.author}
@@ -347,7 +341,7 @@ export function GalleryCountPanel({
       <summary
         className="gallery-count-panel"
         data-testid="gallery-count-panel"
-        aria-label={`${label}. Show contributor leaderboard`}
+        aria-label={`${label}。显示贡献者排行榜`}
       >
         {label}
       </summary>
@@ -356,25 +350,22 @@ export function GalleryCountPanel({
         data-testid="gallery-contributor-popover"
       >
         <div className="gallery-contributor-heading">
-          <strong>Contributors</strong>
+          <strong>贡献者</strong>
           {contributorStatus === "ready" ? (
-            <span>
-              {contributorAuthors.length.toLocaleString()}{" "}
-              {contributorAuthors.length === 1 ? "author" : "authors"}
-            </span>
+            <span>{contributorAuthors.length.toLocaleString()} 位作者</span>
           ) : null}
         </div>
         {contributorStatus === "loading" || contributorStatus === "idle" ? (
-          <p className="gallery-contributor-status">Loading contributors…</p>
+          <p className="gallery-contributor-status">正在加载贡献者…</p>
         ) : contributorStatus === "unavailable" ? (
           <div className="gallery-contributor-status">
-            <p>Could not load contributors.</p>
+            <p>无法加载贡献者。</p>
             <button type="button" onClick={loadContributors}>
-              Try again
+              重试
             </button>
           </div>
         ) : contributorAuthors.length === 0 ? (
-          <p className="gallery-contributor-status">No contributors yet.</p>
+          <p className="gallery-contributor-status">暂无贡献者。</p>
         ) : (
           <ol className="gallery-contributor-list">
             {contributorAuthors.map((option, index) => (
@@ -784,20 +775,16 @@ export function GalleryFeed({
   return (
     <main className="gallery-shell" data-testid="gallery-feed">
       <GalleryChrome
-        subtitle={view === "shelf" ? "My shelf" : "Community gallery"}
+        subtitle={view === "shelf" ? "我的收藏架" : "社区画廊"}
         visitStats={visitStats}
       />
 
       <div className="gallery-view-tabs">
-        <div
-          className="gallery-view-tablist"
-          role="tablist"
-          aria-label="Circuits"
-        >
+        <div className="gallery-view-tablist" role="tablist" aria-label="电路">
           {(
             [
-              ["gallery", "Community gallery"],
-              ["shelf", "My shelf"],
+              ["gallery", "社区画廊"],
+              ["shelf", "我的收藏架"],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -850,8 +837,8 @@ export function GalleryFeed({
                 data-testid="gallery-search"
                 type="search"
                 value={searchQuery}
-                placeholder="Name, author, tag…"
-                aria-label="Search circuits"
+                placeholder="名称、作者、标签…"
+                aria-label="搜索电路"
                 onChange={(event) => setSearchQuery(event.currentTarget.value)}
               />
               {/* Tags select as a union, so turning every one on is not "no
@@ -867,8 +854,8 @@ export function GalleryFeed({
                   aria-pressed={everyTagSelected}
                   title={
                     everyTagSelected
-                      ? "Stop filtering by tag"
-                      : "Show only circuits that carry at least one tag"
+                      ? "停止按标签筛选"
+                      : "仅显示至少带有一个标签的电路"
                   }
                   onClick={() => {
                     const next = everyTagSelected
@@ -878,7 +865,7 @@ export function GalleryFeed({
                     syncQuery(author, next);
                   }}
                 >
-                  Any tag
+                  任意标签
                 </button>
               ) : null}
               {visibleTags.map(({ tag, count }) => (
@@ -904,7 +891,7 @@ export function GalleryFeed({
                   data-testid="gallery-tags-show-all"
                   onClick={() => setShowAllTags(true)}
                 >
-                  Show {hiddenTagCount} more
+                  再显示 {hiddenTagCount} 个
                 </button>
               ) : null}
               {showAllTags && !normalizedSearchQuery ? (
@@ -914,7 +901,7 @@ export function GalleryFeed({
                   data-testid="gallery-tags-show-fewer"
                   onClick={() => setShowAllTags(false)}
                 >
-                  Show fewer
+                  收起
                 </button>
               ) : null}
               {selectedTags.length > 0 && !everyTagSelected ? (
@@ -927,20 +914,20 @@ export function GalleryFeed({
                     syncQuery(author, []);
                   }}
                 >
-                  Clear {selectedTags.length} selected
+                  清除 {selectedTags.length} 个已选标签
                 </button>
               ) : null}
             </div>
           ) : null}
           {author ? (
             <div className="gallery-filter" data-testid="gallery-filter">
-              <span>Circuits by {author}</span>
+              <span>{author} 发布的电路</span>
               <button
                 type="button"
                 data-testid="gallery-filter-clear"
                 onClick={() => selectAuthor(null)}
               >
-                Show everyone
+                显示所有作者
               </button>
             </div>
           ) : null}
@@ -954,12 +941,12 @@ export function GalleryFeed({
             (bundledFallback.status === "idle" ||
               bundledFallback.status === "loading")) ? (
             <p className="gallery-status" data-testid="gallery-loading">
-              Loading gallery…
+              正在加载画廊…
             </p>
           ) : (
             <section className="gallery-wall">
               <Masonry
-                aria-label="Published circuits"
+                aria-label="已发布电路"
                 items={[
                   ...visibleEntries.map((entry) => ({
                     key: entry.id,
@@ -976,7 +963,7 @@ export function GalleryFeed({
                               entry.id,
                               entry.previewRevision,
                             )}
-                            alt={`Preview of ${entry.name}`}
+                            alt={`${entry.name} 的预览图`}
                             {...(entry.previewWidth !== undefined &&
                             entry.previewHeight !== undefined
                               ? {
@@ -992,8 +979,8 @@ export function GalleryFeed({
                                 <span
                                   className="gallery-tile-star"
                                   data-testid={`gallery-star-${entry.id}`}
-                                  title="Extracts to a SPICE netlist"
-                                  aria-label="Extracts to a SPICE netlist"
+                                  title="可提取为 SPICE 网表"
+                                  aria-label="可提取为 SPICE 网表"
                                 >
                                   ★
                                 </span>
@@ -1006,7 +993,7 @@ export function GalleryFeed({
                                     type="button"
                                     className="gallery-tile-author"
                                     data-testid={`gallery-author-${entry.id}`}
-                                    title={`Show circuits by ${entry.author}`}
+                                    title={`显示 ${entry.author} 发布的电路`}
                                     onClick={(event) => {
                                       event.preventDefault();
                                       event.stopPropagation();
@@ -1027,13 +1014,13 @@ export function GalleryFeed({
                                 aria-pressed={entry.likedByViewer === true}
                                 title={
                                   entry.likedByViewer
-                                    ? "Remove your like"
-                                    : "Like this circuit"
+                                    ? "取消点赞"
+                                    : "点赞此电路"
                                 }
                                 aria-label={
                                   entry.likedByViewer
-                                    ? `Remove your like from ${entry.name}`
-                                    : `Like ${entry.name}`
+                                    ? `取消点赞 ${entry.name}`
+                                    : `点赞 ${entry.name}`
                                 }
                                 onClick={(event) => {
                                   event.preventDefault();
@@ -1060,7 +1047,7 @@ export function GalleryFeed({
                                     type="button"
                                     className="gallery-tile-tag"
                                     data-testid={`gallery-tile-tag-${entry.id}-${tag.replace(/\s/gu, "-")}`}
-                                    title={`Filter by ${tag}`}
+                                    title={`按 ${tag} 筛选`}
                                     onClick={(event) => {
                                       event.preventDefault();
                                       event.stopPropagation();
@@ -1115,7 +1102,7 @@ export function GalleryFeed({
                               />
                               <span className="gallery-tile-copy">
                                 <span className="gallery-tile-kicker">
-                                  Built-in example
+                                  内置示例
                                 </span>
                                 <span className="gallery-tile-name">
                                   {tile.name}
@@ -1135,7 +1122,7 @@ export function GalleryFeed({
                   className="gallery-status"
                   data-testid="gallery-filter-empty"
                 >
-                  No public circuits by {author} yet.
+                  {author} 暂未发布公开电路。
                 </p>
               ) : null}
               {/* Two empty states, because only one of them is a verdict:
@@ -1151,14 +1138,14 @@ export function GalleryFeed({
                     className="gallery-status"
                     data-testid="gallery-search-pending"
                   >
-                    No matches yet — searching older circuits…
+                    暂无匹配项——正在搜索更早的电路…
                   </p>
                 ) : (
                   <p
                     className="gallery-status"
                     data-testid="gallery-search-empty"
                   >
-                    No circuits match “{searchQuery.trim()}”.
+                    没有电路匹配“{searchQuery.trim()}”。
                   </p>
                 )
               ) : null}
@@ -1173,8 +1160,7 @@ export function GalleryFeed({
         </>
       ) : null}
       <footer className="gallery-footnote">
-        Browse freely; open any circuit and edit your own copy. Publishing joins
-        in a later release with sign-in.
+        可自由浏览；打开任意电路即可编辑你自己的副本。登录后可发布作品。
       </footer>
       {rejecting ? (
         <RejectEntryDialog

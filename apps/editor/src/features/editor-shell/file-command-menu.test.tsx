@@ -9,8 +9,8 @@ describe("FileCommandMenu", () => {
   it("presents one Cloud Save protocol and explicit local interchange", () => {
     const markup = renderToStaticMarkup(
       <FileCommandMenu
-        projectStoreLabel="Cloud Projects"
-        projectStoreItemLabel="Cloud Project"
+        projectStoreLabel="云项目"
+        projectStoreItemLabel="云项目"
         cloudProjects={[
           {
             id: "cloud-1",
@@ -42,15 +42,15 @@ describe("FileCommandMenu", () => {
     );
 
     expect(markup).not.toContain("Save as Cloud Copy");
-    expect(markup).toContain(`Cloud Projects (1/${CLOUD_PROJECT_LIMIT})`);
+    expect(markup).toContain(`云项目 (1/${CLOUD_PROJECT_LIMIT})`);
     expect(markup).toContain("Saved Circuit");
     expect(markup).toContain('class="cloud-project-time"');
     expect(markup).toContain("cloud-project-cloud-1");
-    expect(markup).toContain("Import Project File…");
-    expect(markup).toContain("Import SPICE…");
-    expect(markup).toContain("Import Cadence SPICE (`!` globals)…");
+    expect(markup).toContain("导入项目文件…");
+    expect(markup).toContain("导入 SPICE…");
+    expect(markup).toContain("导入 Cadence SPICE（`!` 全局网络）…");
     expect(markup).toContain('data-testid="cadence-spice-files"');
-    expect(markup).toContain("Export Project File…");
+    expect(markup).toContain("导出项目文件…");
     expect(markup).not.toContain("Download Backup");
     expect(markup).not.toContain("Previous Project");
     expect(markup).not.toContain("cloud snapshot");
@@ -59,8 +59,8 @@ describe("FileCommandMenu", () => {
   it("identifies the isolated Preview Project store", () => {
     const markup = renderToStaticMarkup(
       <FileCommandMenu
-        projectStoreLabel="Preview Projects"
-        projectStoreItemLabel="Preview Project"
+        projectStoreLabel="预览项目"
+        projectStoreItemLabel="预览项目"
         cloudProjects={[]}
         activeCloudProjectId={null}
         canRevert={false}
@@ -83,6 +83,6 @@ describe("FileCommandMenu", () => {
       />,
     );
 
-    expect(markup).toContain(`Preview Projects (0/${CLOUD_PROJECT_LIMIT})`);
+    expect(markup).toContain(`预览项目 (0/${CLOUD_PROJECT_LIMIT})`);
   });
 });

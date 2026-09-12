@@ -15,14 +15,14 @@ describe("SelectionFilterPopover", () => {
       />,
     );
     expect(markup).toContain('data-testid="selection-filter-popover"');
-    expect(markup).toContain("Selection Filter");
-    expect(markup).toContain("Instances");
-    expect(markup).toContain("Wires");
-    expect(markup).toContain("Net / power names");
-    expect(markup).toContain("Note text / callouts");
-    expect(markup).toContain(">All<");
-    expect(markup).toContain(">None<");
-    expect(markup).toContain(">Default<");
+    expect(markup).toContain("选择筛选器");
+    expect(markup).toContain("实例");
+    expect(markup).toContain("导线");
+    expect(markup).toContain("网络 / 电源名称");
+    expect(markup).toContain("说明文本 / 标注框");
+    expect(markup).toContain(">全部<");
+    expect(markup).toContain(">无<");
+    expect(markup).toContain(">默认<");
   });
 
   it("renders nothing while closed", () => {

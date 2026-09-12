@@ -461,8 +461,7 @@ export function createSelectionMoveController({
       return {
         snap,
         moves,
-        preparationError:
-          error instanceof Error ? error.message : "Move failed",
+        preparationError: error instanceof Error ? error.message : "移动失败",
       };
     }
   };
@@ -655,7 +654,7 @@ export function createSelectionMoveController({
         prepared.plan.source.revision !== sourceDocument.revision ||
         prepared.plan.source.documentId !== sourceDocument.id
       ) {
-        throw new Error("Move cancelled because the document changed");
+        throw new Error("文档已更改，移动操作已取消");
       }
       const disconnectedEndpointKeys = prefixEdits.flatMap((edit) =>
         edit.kind === "disconnect_endpoint" ? [endpointKey(edit.endpoint)] : [],
@@ -676,14 +675,14 @@ export function createSelectionMoveController({
       );
       if (warning) setStatus(`Moved without connecting: ${warning.message}`);
       else if (prepared.plan.expectedElectricalEffect.kind === "partition")
-        setStatus("Inserted the moved component in series into the wire");
+        setStatus("已将移动的元件串联插入导线");
       else if (prepared.plan.intent !== "transform")
-        setStatus("Snapped pin endpoints and connected them without a wire");
+        setStatus("已吸附引脚端点并直接连接");
       else if (disconnectedEndpointKeys.length)
-        setStatus("Moved selection without wires; original endpoints are open");
-      else if (prefixEdits.length) setStatus("Moved and transformed selection");
+        setStatus("已移动所选对象且未带动导线；原端点保持开路");
+      else if (prefixEdits.length) setStatus("已移动并变换所选对象");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Move failed");
+      setStatus(error instanceof Error ? error.message : "移动失败");
     }
   };
 

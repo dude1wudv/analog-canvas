@@ -146,37 +146,33 @@ export function InstanceTableDialog({
       >
         <header>
           <div>
-            <p className="help-kicker">Project authoring</p>
-            <h2 id="instance-table-title">Instance Table</h2>
+            <p className="help-kicker">项目编辑</p>
+            <h2 id="instance-table-title">实例表</h2>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close instance table"
-          >
-            Close
+          <button type="button" onClick={onClose} aria-label="关闭实例表">
+            关闭
           </button>
         </header>
         <div className="instance-table-controls">
           <label>
             Scope
             <select
-              aria-label="Instance table scope"
+              aria-label="实例表范围"
               value={scope}
               onChange={(event) =>
                 setScope(event.currentTarget.value as "active" | "project")
               }
             >
-              <option value="active">Active Cell</option>
-              <option value="project">Project</option>
+              <option value="active">当前 Cell</option>
+              <option value="project">项目</option>
             </select>
           </label>
           <label>
-            Search
+            搜索
             <input
-              aria-label="Search instances"
+              aria-label="搜索实例"
               value={query}
-              placeholder="Reference, symbol, model…"
+              placeholder="位号、符号、模型…"
               onChange={(event) => setQuery(event.currentTarget.value)}
             />
           </label>
@@ -192,16 +188,16 @@ export function InstanceTableDialog({
           <table>
             <thead>
               <tr>
-                <th aria-label="Selection" />
+                <th aria-label="选择" />
                 <th>ID</th>
-                <th>Netlist Reference</th>
-                <th>Master</th>
-                <th>Symbol</th>
+                <th>网表位号</th>
+                <th>主单元</th>
+                <th>符号</th>
                 <th>Cell</th>
-                <th>Callers</th>
-                <th>Target</th>
-                <th>Parameters</th>
-                <th>Checks</th>
+                <th>调用方</th>
+                <th>目标</th>
+                <th>参数</th>
+                <th>检查</th>
               </tr>
             </thead>
             <tbody>
@@ -246,16 +242,13 @@ export function InstanceTableDialog({
               ))}
             </tbody>
           </table>
-          {rows.length === 0 ? <p>No instances match this scope.</p> : null}
+          {rows.length === 0 ? <p>此作用域内没有匹配的实例。</p> : null}
         </div>
-        <footer
-          className="instance-table-batch"
-          aria-label="Batch property editor"
-        >
+        <footer className="instance-table-batch" aria-label="批量属性编辑器">
           <label>
             Field
             <select
-              aria-label="Batch field"
+              aria-label="批量字段"
               value={fieldKind}
               onChange={(event) =>
                 setFieldKind(
@@ -264,16 +257,16 @@ export function InstanceTableDialog({
                 )
               }
             >
-              <option value="parameter">Netlist parameter</option>
-              <option value="model-target">Model target</option>
-              <option value="reference-renumber">Reference renumber</option>
+              <option value="parameter">网表参数</option>
+              <option value="model-target">模型目标</option>
+              <option value="reference-renumber">位号重编号</option>
             </select>
           </label>
           {fieldKind === "parameter" ? (
             <label>
-              Name
+              名称
               <input
-                aria-label="Parameter name"
+                aria-label="参数名称"
                 value={parameterName}
                 onChange={(event) =>
                   setParameterName(event.currentTarget.value)
@@ -286,7 +279,7 @@ export function InstanceTableDialog({
               <label>
                 Policy
                 <select
-                  aria-label="Reference renumber policy"
+                  aria-label="位号重编号策略"
                   value={renumberPolicy}
                   onChange={(event) =>
                     setRenumberPolicy(
@@ -294,14 +287,14 @@ export function InstanceTableDialog({
                     )
                   }
                 >
-                  <option value="fill-gaps">Fill gaps / repair</option>
-                  <option value="continuous">Continuous</option>
+                  <option value="fill-gaps">填补空缺 / 修复</option>
+                  <option value="continuous">连续</option>
                 </select>
               </label>
               <label>
                 Start at
                 <input
-                  aria-label="Reference start index"
+                  aria-label="位号起始序号"
                   inputMode="numeric"
                   value={startAt}
                   onChange={(event) => setStartAt(event.currentTarget.value)}
@@ -310,9 +303,9 @@ export function InstanceTableDialog({
             </>
           ) : (
             <label>
-              Value
+              值
               <input
-                aria-label="Batch value"
+                aria-label="批量值"
                 value={value}
                 placeholder={
                   fieldKind === "parameter"

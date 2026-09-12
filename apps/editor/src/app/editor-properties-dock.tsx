@@ -96,10 +96,10 @@ export function EditorPropertiesDock({
       // Fit View insets the camera by the docks that float over the
       // canvas, so the drawing lands where it can be seen.
       data-canvas-overlay="true"
-      aria-label="Properties"
+      aria-label="属性"
       role="complementary"
     >
-      <section className="selection-shelf" aria-label="Selection">
+      <section className="selection-shelf" aria-label="选择">
         <button
           type="button"
           ref={shelfRef}
@@ -110,7 +110,7 @@ export function EditorPropertiesDock({
         >
           <span className="selection-shelf-title">
             <ToolIcon name="inspect" />
-            <span>Properties</span>
+            <span>属性</span>
             {agentIndicator ? (
               <span
                 className={`agent-shelf-indicator ${agentIndicator.terminal ? "terminal" : ""}`}
@@ -133,13 +133,13 @@ export function EditorPropertiesDock({
           <MosBulkConnectionSection {...mosBulk} />
           <RoutingGuidanceSection {...routingGuidance} />
           {!hasInspectableSelection ? (
-            <p className="inspect-empty">Select an object to inspect.</p>
+            <p className="inspect-empty">请选择要查看的对象。</p>
           ) : null}
           <GroupDisplayToggles {...groupDisplay} />
           {component ? (
             <section
               className="property-section component-properties"
-              aria-label="Component properties"
+              aria-label="元件属性"
             >
               <ComponentPropertyCodeEditor
                 key={component.code.instance.id}
@@ -185,8 +185,8 @@ export function EditorPropertiesDock({
           <ProjectDiagnosticsSection {...diagnostics} />
           {netTrace ? <NetTraceSection {...netTrace} /> : null}
           {importReview ? (
-            <section className="import-review" aria-label="Import Review">
-              <h2>Import Review</h2>
+            <section className="import-review" aria-label="导入检查">
+              <h2>导入检查</h2>
               <SelectionInspectorDetails {...importReview} />
             </section>
           ) : null}

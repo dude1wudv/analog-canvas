@@ -11,12 +11,12 @@ import {
 
 describe("selection context actions", () => {
   it.each([
-    ["unresolved", null, "Unconnected", "Choose a net"],
-    ["no-connect", null, "No Connect", "Intentionally left unconnected"],
-    ["cell-default", "VDD", "VDD", "Cell default"],
-    ["supply-default", "0", "0", "Supply default"],
-    ["instance-override", "VB", "VB", "Instance override"],
-    ["explicit", "VSS", "VSS", "Explicit connection"],
+    ["unresolved", null, "未连接", "请为体端选择网络"],
+    ["no-connect", null, "No Connect", "有意保持未连接"],
+    ["cell-default", "VDD", "VDD", "Cell 默认值"],
+    ["supply-default", "0", "0", "电源默认值"],
+    ["instance-override", "VB", "VB", "实例覆盖值"],
+    ["explicit", "VSS", "VSS", "显式连接"],
   ] as const)(
     "explains %s bulk state without repeating unresolved text",
     (status, netName, label, origin) => {
@@ -30,7 +30,7 @@ describe("selection context actions", () => {
       );
       expect(markup).toContain(`>${label}</span>`);
       expect(markup).toContain(origin);
-      expect(markup).toContain('aria-label="Draw bulk connection"');
+      expect(markup).toContain('aria-label="绘制体端连接"');
       expect(markup).not.toContain("→ unresolved");
       if (status === "explicit")
         expect(markup).toContain("Dashed bulk route shown");
@@ -55,7 +55,7 @@ describe("selection context actions", () => {
       />,
     );
     expect(markup).toContain('disabled=""');
-    expect(markup).toContain("Place the component on the canvas");
+    expect(markup).toContain("请先将元件放到画布上");
   });
 
   it("renders route label and highlight actions", () => {
@@ -77,19 +77,19 @@ describe("selection context actions", () => {
         onDeleteWire={vi.fn()}
       />,
     );
-    expect(markup).toContain('aria-label="Electrical Net label"');
+    expect(markup).toContain('aria-label="电气网络标签"');
     expect(markup).toContain('value="OUT"');
-    expect(markup).not.toContain('type="color"');
-    expect(markup).toContain('aria-label="Wire color custom RGB"');
-    expect(markup).toContain("Light gray · #9ca3af");
-    expect(markup.match(/component-color-swatch/gu)).toHaveLength(4);
-    expect(markup).not.toContain("Orange");
-    expect(markup).toContain("Use the document ink color");
-    expect(markup).toContain('aria-label="Wire direction arrow"');
+    expect(markup).toContain('aria-label="导线颜色选择器"');
+    expect(markup).toContain('value="#000000"');
+    expect(markup).toContain('aria-label="导线颜色自定义 RGB"');
+    expect(markup).toContain("灰色 · #6b7280");
+    expect(markup).not.toContain("Violet");
+    expect(markup).toContain("使用文档前景色");
+    expect(markup).toContain('aria-label="导线方向箭头"');
     expect(markup).toContain('<option value="middle" selected="">');
-    expect(markup).toContain("Arrow at end");
+    expect(markup).toContain("箭头位于末端");
     expect(markup).toContain("Add current arrow");
-    expect(markup).toContain("Clear Net highlight (H)");
+    expect(markup).toContain("清除网络高亮（H）");
   });
 
   it("blocks No Connect while a terminal remains connected", () => {
@@ -104,9 +104,9 @@ describe("selection context actions", () => {
         onDeleteJunction={vi.fn()}
       />,
     );
-    expect(markup).toContain("Mark No Connect");
+    expect(markup).toContain("标记 No Connect");
     expect(markup).toContain("disabled");
-    expect(markup).toContain("Disconnect this endpoint");
+    expect(markup).toContain("标记为 No Connect 前，请先断开此端点");
   });
 
   it("publishes focused imported guidance counts", () => {

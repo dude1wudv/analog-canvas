@@ -6,8 +6,8 @@ import {
 } from "./cloud-projects";
 
 export interface FileCommandMenuProps {
-  projectStoreLabel: "Cloud Projects" | "Preview Projects";
-  projectStoreItemLabel: "Cloud Project" | "Preview Project";
+  projectStoreLabel: "云项目" | "预览项目";
+  projectStoreItemLabel: "云项目" | "预览项目";
   cloudProjects: readonly CloudProjectSummary[];
   activeCloudProjectId: string | null;
   canRevert: boolean;
@@ -140,13 +140,13 @@ export function FileCommandMenu({
         else setExportGroup(null);
       }}
     >
-      <summary>File</summary>
+      <summary>文件</summary>
       <div className="command-popover">
         <button type="button" onClick={onNewProject}>
-          New Project
+          新建项目
         </button>
         <button type="button" data-testid="save-cloud-project" onClick={onSave}>
-          Save
+          保存
         </button>
         <span className="command-group-label">
           {projectStoreLabel} ({cloudProjects.length}/{CLOUD_PROJECT_LIMIT})
@@ -157,7 +157,7 @@ export function FileCommandMenu({
               type="button"
               className="cloud-project-open"
               data-testid={`cloud-project-${project.id}`}
-              title={`Open revision ${project.revision}`}
+              title={`打开修订版本 ${project.revision}`}
               disabled={project.id === activeCloudProjectId}
               onClick={() => onOpenCloudProject(project)}
             >
@@ -171,17 +171,17 @@ export function FileCommandMenu({
             </button>
             <button
               type="button"
-              aria-label={`Delete ${projectStoreItemLabel} ${project.name}`}
-              title={`Delete this ${projectStoreItemLabel}`}
+              aria-label={`删除${projectStoreItemLabel} ${project.name}`}
+              title={`删除此${projectStoreItemLabel}`}
               disabled={project.id === activeCloudProjectId}
               onClick={() => onDeleteCloudProject(project)}
             >
-              Delete
+              删除
             </button>
           </div>
         ))}
         <label className="file-import">
-          Import Project File…
+          导入项目文件…
           <input
             ref={projectInputRef}
             data-testid="project-file"
@@ -193,7 +193,7 @@ export function FileCommandMenu({
           />
         </label>
         <label className="file-import">
-          Import SPICE…
+          导入 SPICE…
           <input
             data-testid="spice-files"
             type="file"
@@ -203,7 +203,7 @@ export function FileCommandMenu({
           />
         </label>
         <label className="file-import">
-          Import Cadence SPICE (`!` globals)…
+          导入 Cadence SPICE（`!` 全局网络）…
           <input
             data-testid="cadence-spice-files"
             type="file"
@@ -215,11 +215,11 @@ export function FileCommandMenu({
           />
         </label>
         <button type="button" onClick={onExportProject}>
-          Export Project File…
+          导出项目文件…
         </button>
         <div>
           <ExportSubmenu
-            title="Export netlist"
+            title="导出网表"
             open={exportGroup === "netlist"}
             onToggle={() =>
               setExportGroup(exportGroup === "netlist" ? null : "netlist")
@@ -228,40 +228,40 @@ export function FileCommandMenu({
           >
             <button
               type="button"
-              aria-label="Export SPICE netlist"
+              aria-label="导出 SPICE 网表"
               onClick={() => onExportNetlist("spice")}
             >
               SPICE
             </button>
             <button
               type="button"
-              aria-label="Export Spectre netlist"
+              aria-label="导出 Spectre 网表"
               onClick={() => onExportNetlist("spectre")}
             >
               Spectre
             </button>
           </ExportSubmenu>
           <ExportSubmenu
-            title="Export drawing"
+            title="导出图纸"
             open={exportGroup === "drawing"}
             onToggle={() =>
               setExportGroup(exportGroup === "drawing" ? null : "drawing")
             }
             onClose={() => setExportGroup(null)}
           >
-            <button type="button" aria-label="Export SVG" onClick={onExportSvg}>
+            <button type="button" aria-label="导出 SVG" onClick={onExportSvg}>
               SVG
             </button>
             <button
               type="button"
-              aria-label="Export PNG"
+              aria-label="导出 PNG"
               onClick={() => onExportRaster("png")}
             >
               PNG
             </button>
             <button
               type="button"
-              aria-label="Export PDF"
+              aria-label="导出 PDF"
               onClick={() => onExportRaster("pdf")}
             >
               PDF
@@ -269,14 +269,14 @@ export function FileCommandMenu({
           </ExportSubmenu>
         </div>
         <button type="button" onClick={onRefresh}>
-          Refresh app
+          刷新应用
         </button>
         <button type="button" onClick={onRevert} disabled={!canRevert}>
-          Revert to Last Saved
+          恢复到上次保存
         </button>
         {hasRecoverySessions ? (
           <button type="button" onClick={onOpenRecovery}>
-            Recover Local Work…
+            恢复本地工作…
           </button>
         ) : null}
       </div>

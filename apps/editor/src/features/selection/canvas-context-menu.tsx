@@ -97,7 +97,7 @@ export function CanvasContextMenu({
     >
       {variants.length > 0 ? (
         <div className="context-menu-section">
-          <div className="context-menu-heading">Swap device</div>
+          <div className="context-menu-heading">更换器件</div>
           <div className="context-menu-variants" role="group">
             {variants.map((variant) => (
               <button
@@ -120,7 +120,7 @@ export function CanvasContextMenu({
       ) : null}
       {alignmentEnabled ? (
         <div className="context-menu-section">
-          <div className="context-menu-heading">Align</div>
+          <div className="context-menu-heading">对齐</div>
           {EDGE_ALIGNMENT_MODES.map(({ mode, label }) => (
             <button
               key={mode}

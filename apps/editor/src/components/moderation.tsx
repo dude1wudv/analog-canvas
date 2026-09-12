@@ -128,7 +128,7 @@ function SchemaMaintenance() {
 
   return (
     <section className="review-bin" data-testid="schema-maintenance">
-      <h2>Project schema maintenance</h2>
+      <h2>项目架构维护</h2>
       <p className="review-card-meta">
         Back up all stored Projects, validate the complete inventory, then apply
         one transactional convergence to the current Project schema.
@@ -244,7 +244,7 @@ function RejectedList({
   if (entries === null) return null;
   return (
     <section className="review-bin" data-testid="rejected-list">
-      <h2>Rejected entries</h2>
+      <h2>已拒绝条目</h2>
       <p className="review-card-meta">
         Restore a corrected circuit, or move it to the recycle bin before
         permanent deletion.
@@ -264,7 +264,7 @@ function RejectedList({
               <a
                 className="mine-card-preview"
                 href={`/g/${entry.id}`}
-                title="Open in the editor"
+                title="在编辑器中打开"
               >
                 <img
                   src={galleryPreviewUrl(entry.id, entry.previewRevision)}
@@ -289,7 +289,7 @@ function RejectedList({
                   href={`/g/${entry.id}`}
                   data-testid={`rejected-edit-${entry.id}`}
                 >
-                  Edit and replace
+                  编辑并替换
                 </a>
                 <button
                   type="button"
@@ -306,7 +306,7 @@ function RejectedList({
                   data-testid={`rejected-restore-${entry.id}`}
                   onClick={() => void act(entry.id, "restore")}
                 >
-                  Restore
+                  恢复
                 </button>
               </div>
             </article>
@@ -381,10 +381,10 @@ function RecycleBin({
   if (entries === null) return null;
   return (
     <section className="review-bin" data-testid="review-bin">
-      <h2>Recycle bin</h2>
+      <h2>回收站</h2>
       {entries.length === 0 ? (
         <p className="gallery-status" data-testid="bin-empty">
-          The bin is empty.
+          回收站为空。
         </p>
       ) : (
         <div className="mine-list">
@@ -415,7 +415,7 @@ function RecycleBin({
                   data-testid={`bin-delete-${entry.id}`}
                   onClick={() => void act(entry.id, "delete")}
                 >
-                  Delete forever
+                  永久删除
                 </button>
                 <button
                   type="button"
@@ -423,7 +423,7 @@ function RecycleBin({
                   data-testid={`bin-restore-${entry.id}`}
                   onClick={() => void act(entry.id, "restore")}
                 >
-                  Restore
+                  恢复
                 </button>
               </div>
             </article>
@@ -458,7 +458,7 @@ export function Moderation() {
           state.status === "denied" ? "review-denied" : "review-page"
         }
       >
-        <GalleryChrome subtitle="Moderation" />
+        <GalleryChrome subtitle="内容审核" />
         <div className="page-body">
           <p className="gallery-status">
             {state.status === "loading"
@@ -472,11 +472,11 @@ export function Moderation() {
 
   return (
     <main className="review-shell" data-testid="moderation">
-      <GalleryChrome subtitle="Moderation" />
+      <GalleryChrome subtitle="内容审核" />
       <div className="page-body">
         {state.user.isAdmin ? (
           <details className="owner-settings" data-testid="owner-settings">
-            <summary>Owner settings</summary>
+            <summary>所有者设置</summary>
             <form
               className="review-appoint"
               data-testid="review-appoint"
@@ -490,12 +490,12 @@ export function Moderation() {
             >
               <input
                 type="email"
-                aria-label="Moderator email"
-                placeholder="Appoint a moderator by email"
+                aria-label="审核员邮箱"
+                placeholder="通过邮箱任命审核员"
                 value={email}
                 onChange={(event) => setEmail(event.currentTarget.value)}
               />
-              <button type="submit">Appoint</button>
+              <button type="submit">任命</button>
               {notice ? <span className="account-notice">{notice}</span> : null}
             </form>
             <SchemaMaintenance />

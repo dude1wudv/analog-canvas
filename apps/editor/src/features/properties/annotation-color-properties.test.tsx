@@ -29,18 +29,17 @@ describe("annotation color properties", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="Text properties"');
+    expect(markup).toContain('aria-label="文本属性"');
     const appearance = markup.match(
-      /<details[^>]*aria-label="Text appearance"[^>]*>/u,
+      /<details[^>]*aria-label="文本外观"[^>]*>/u,
     )?.[0];
     expect(appearance).toBeDefined();
     expect(appearance).not.toContain('open=""');
-    expect(markup).toContain('aria-label="Text color hex value">Automatic');
-    expect(markup).toContain('aria-label="Text color custom RGB"');
-    expect(markup).toContain('aria-label="Use Red for text color"');
-    expect(markup).not.toContain('type="color"');
-    expect(markup.match(/component-color-swatch/gu)).toHaveLength(4);
-    expect(markup).toContain("Auto uses the inherited text color.");
+    expect(markup).toContain('aria-label="文本颜色十六进制值">自动');
+    expect(markup).toContain(
+      'aria-label="文本颜色选择器" type="color" value="#dc2626"',
+    );
+    expect(markup).toContain("自动使用继承的文本颜色。");
   });
 
   it("shows the annotation-owned override instead of inherited ink", () => {
@@ -63,8 +62,9 @@ describe("annotation color properties", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="Text color hex value">#2563eb');
-    expect(markup).toContain('aria-label="Use Blue for text color"');
-    expect(markup).toContain('aria-pressed="true"');
+    expect(markup).toContain('aria-label="文本颜色十六进制值">#2563eb');
+    expect(markup).toContain(
+      'aria-label="文本颜色选择器" type="color" value="#2563eb"',
+    );
   });
 });

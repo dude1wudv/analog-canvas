@@ -158,22 +158,22 @@ export function deriveSelectionInspectionModel({
   const selectionShelfSummary = selectedInstance
     ? `${selectedInstance.id} · ${selectedInstance.symbolId}`
     : selectedIds.length > 1
-      ? `${selectedIds.length} components`
+      ? `${selectedIds.length} 个元件`
       : selectedRoute
-        ? `Route · ${
+        ? `线路 · ${
             resolveDocumentLogicalNets(document).byBaseNetId.get(
               selectedRoute.netId,
             )?.name ?? selectedRoute.netId
           }`
         : selectedAnnotation
-          ? `Annotation · ${selectedAnnotation.kind}`
+          ? `注释 · ${selectedAnnotation.kind}`
           : selectedDrafting
-            ? `Drawing · ${selectedDrafting.kind}`
+            ? `绘图 · ${selectedDrafting.kind}`
             : selectedEndpoint?.endpoint.kind === "junction"
-              ? "Junction"
+              ? "连接点"
               : selectedEndpoint
-                ? "Endpoint"
-                : "None";
+                ? "端点"
+                : "无";
   const selectedNoConnect =
     selectedEndpoint && selectedEndpoint.endpoint.kind !== "junction"
       ? document.noConnects.find(

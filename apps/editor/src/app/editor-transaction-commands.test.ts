@@ -158,7 +158,7 @@ describe("routing refusals shown to a person", () => {
     // The invariant's own vocabulary never survives to the status bar.
     expect(preserve).not.toContain("preserve effect");
     expect(preserve).not.toContain("endpoint Net membership");
-    expect(preserve).toContain("Nets");
+    expect(preserve).toContain("Net");
     expect(
       plainRoutingRefusal("Routing merge did not join endpoint group a, b"),
     ).not.toContain("endpoint group");

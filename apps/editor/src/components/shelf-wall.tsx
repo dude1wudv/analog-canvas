@@ -88,8 +88,7 @@ export function ShelfWall() {
   if (state.status === "signed-out") {
     return (
       <p className="gallery-status" data-testid="shelf-signed-out">
-        Sign in to keep your own shelf. Circuits you save there stay private to
-        your account until you publish one to the gallery.
+        登录后即可使用自己的收藏架。保存在这里的电路仅你的账户可见，直到你将其发布到画廊。
       </p>
     );
   }
@@ -97,7 +96,7 @@ export function ShelfWall() {
   if (state.status === "unreachable") {
     return (
       <p className="gallery-status" data-testid="shelf-unreachable">
-        Could not reach your shelf: {state.message}
+        无法访问收藏架：{state.message}
       </p>
     );
   }
@@ -105,8 +104,8 @@ export function ShelfWall() {
   if (state.projects.length === 0) {
     return (
       <p className="gallery-status" data-testid="shelf-empty">
-        Your shelf is empty. Open the <a href="/editor">editor</a>, draw
-        something, and use File → Save to keep it here.
+        收藏架为空。请打开<a href="/editor">编辑器</a>绘制内容，然后使用“文件 →
+        保存”将其保存在这里。
       </p>
     );
   }
@@ -114,11 +113,10 @@ export function ShelfWall() {
   return (
     <section className="gallery-wall" data-testid="shelf-wall">
       <p className="shelf-count" data-testid="shelf-count">
-        {state.projects.length} of {CLOUD_PROJECT_LIMIT} saved · only you can
-        see these
+        已保存 {state.projects.length} / {CLOUD_PROJECT_LIMIT} 个 · 仅你可见
       </p>
       <Masonry
-        aria-label="Circuits on your shelf"
+        aria-label="收藏架上的电路"
         items={state.projects.map((project) => ({
           key: project.id,
           node: (
@@ -154,7 +152,7 @@ export function ShelfWall() {
                 disabled={busyId === project.id}
                 onClick={() => void removeProject(project)}
               >
-                Delete
+                删除
               </button>
             </div>
           ),

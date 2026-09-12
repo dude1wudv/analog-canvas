@@ -88,6 +88,6 @@ describe("describeExportFailure", () => {
     expect(describeExportFailure(new Error("Canvas too large"))).toEqual({
       status: "Canvas too large",
     });
-    expect(describeExportFailure("boom")).toEqual({ status: "Export failed" });
+    expect(describeExportFailure("boom")).toEqual({ status: "导出失败" });
   });
 });

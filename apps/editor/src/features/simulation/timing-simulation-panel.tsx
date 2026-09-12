@@ -223,7 +223,7 @@ export function TimingSimulationPanel({
   return (
     <section
       className="digital-simulation-window"
-      aria-label="Digital Simulation"
+      aria-label="数字仿真"
       aria-modal={false}
       role="dialog"
       data-testid="timing-simulation-panel"
@@ -236,7 +236,7 @@ export function TimingSimulationPanel({
         onPointerUp={endWindowDrag}
         onPointerCancel={endWindowDrag}
       >
-        <strong>Digital Simulation</strong>
+        <strong>数字仿真</strong>
         <span
           className={
             stale ? "simulation-run-state stale" : "simulation-run-state"
@@ -250,11 +250,7 @@ export function TimingSimulationPanel({
                 : "Errors"
             : "Temporary results"}
         </span>
-        <button
-          type="button"
-          aria-label="Close Digital Simulation"
-          onClick={close}
-        >
+        <button type="button" aria-label="关闭数字仿真" onClick={close}>
           ×
         </button>
       </header>
@@ -264,19 +260,19 @@ export function TimingSimulationPanel({
           Stop
           <input
             value={stopTime}
-            aria-label="Simulation stop time"
+            aria-label="仿真停止时间"
             onChange={(event) => setStopTime(event.currentTarget.value)}
           />
         </label>
         <select
-          aria-label="Add saved Net"
+          aria-label="添加已保存网络"
           value=""
           onChange={(event) => {
             const netId = event.currentTarget.value;
             if (netId) onToggleSavedNet(netId);
           }}
         >
-          <option value="">Add Net…</option>
+          <option value="">添加网络…</option>
           {netChoices
             .filter((net) => !selectedNetIds.has(net.netId))
             .map((net) => (
@@ -297,10 +293,10 @@ export function TimingSimulationPanel({
           type="button"
           onClick={() => onSetSavedNets(netChoices.map((net) => net.netId))}
         >
-          All
+          全部
         </button>
         <button type="button" onClick={() => onSetSavedNets([])}>
-          Clear
+          清除
         </button>
         <button type="button" className="primary" onClick={run}>
           Run Simulation
@@ -315,12 +311,12 @@ export function TimingSimulationPanel({
           >
             <header>
               <div>
-                <strong>Waveform name</strong>
+                <strong>波形名称</strong>
                 <small>Display only · Net {labelEditor.netName}</small>
               </div>
               <button
                 type="button"
-                aria-label="Close waveform name editor"
+                aria-label="关闭波形名称编辑器"
                 onClick={() => setLabelEditor(null)}
               >
                 ×
@@ -364,14 +360,14 @@ export function TimingSimulationPanel({
             />
           </section>
         ) : null}
-        <aside className="simulation-saved-nets" aria-label="Saved Nets">
+        <aside className="simulation-saved-nets" aria-label="已保存网络">
           <div className="simulation-saved-nets-heading">
-            <span>Saved Nets</span>
-            <small>Names below only affect waveform labels.</small>
+            <span>已保存网络</span>
+            <small>下列名称仅影响波形标签。</small>
           </div>
           <div className="simulation-saved-net-list" role="list">
             {selectedNetChoices.length === 0 ? (
-              <small className="simulation-saved-nets-empty">None</small>
+              <small className="simulation-saved-nets-empty">无</small>
             ) : null}
             {selectedNetChoices.map((net) => {
               const baseNetId = net.netId;
@@ -389,7 +385,7 @@ export function TimingSimulationPanel({
                       className="simulation-saved-net-source"
                       title={netName}
                     >
-                      <small>Net</small>
+                      <small>网络</small>
                       <strong>{netName}</strong>
                     </span>
                     <button
@@ -414,7 +410,7 @@ export function TimingSimulationPanel({
                       })
                     }
                   >
-                    <small>Waveform name</small>
+                    <small>波形名称</small>
                     <span>{flattenRichText(waveformName)}</span>
                     <span aria-hidden="true">✎</span>
                   </button>
@@ -437,10 +433,7 @@ export function TimingSimulationPanel({
             </div>
           )}
           {result && result.diagnostics.length > 0 ? (
-            <ul
-              className="simulation-diagnostics"
-              aria-label="Simulation diagnostics"
-            >
+            <ul className="simulation-diagnostics" aria-label="仿真诊断">
               {result.diagnostics.map((diagnostic, index) => (
                 <li key={`${diagnostic.code}-${index}`}>
                   <strong>{diagnostic.code}</strong> {diagnostic.message}
@@ -465,7 +458,7 @@ export function TimingSimulationPanel({
             )
           }
         >
-          Export SVG
+          导出 SVG
         </button>
         <button
           type="button"
@@ -474,7 +467,7 @@ export function TimingSimulationPanel({
             waveformSvg && exportPng(waveformSvg, `${fileStem}.png`)
           }
         >
-          Export PNG
+          导出 PNG
         </button>
         <button
           type="button"

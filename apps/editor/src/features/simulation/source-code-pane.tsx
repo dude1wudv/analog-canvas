@@ -1096,7 +1096,7 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
                       ? "saved"
                       : "dirty"
               }
-              aria-label="Save project"
+              aria-label="保存项目"
               title={
                 props.projectSaveState === "failed" ||
                 props.projectSaveState === "offline"
@@ -1135,30 +1135,32 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
         maximized={props.maximized}
         onToggleMaximize={props.onToggleMaximize}
         status={
-          !recoveryAvailable || conflict || props.status ? (
-            <>
-              {!recoveryAvailable ? (
-                <span role="alert">
-                  Draft recovery unavailable — save or export before leaving.
-                </span>
-              ) : null}
-              {conflict ? (
-                <>
-                  <span role="alert">Changed elsewhere — draft retained.</span>
-                  <button
-                    onClick={() => {
-                      drafts.current.delete(key(path));
-                      render((value) => value + 1);
-                    }}
-                  >
-                    Discard local draft
-                  </button>
-                </>
-              ) : (
-                props.status
-              )}
-            </>
-          ) : null
+          <>
+            {!recoveryAvailable ? (
+              <span role="alert">
+                Draft recovery unavailable — save or export before leaving.
+              </span>
+            ) : null}
+            {conflict ? (
+              <>
+                <span role="alert">其他位置已有更改——草稿已保留。</span>
+                <button
+                  onClick={() => {
+                    drafts.current.delete(key(path));
+                    render((value) => value + 1);
+                  }}
+                >
+                  Discard local draft
+                </button>
+              </>
+            ) : activeDirty ? (
+              "Unsaved source"
+            ) : buffer && buffer.text !== buffer.base ? (
+              "Draft saved · finish or discard before Run"
+            ) : (
+              props.status
+            )}
+          </>
         }
       >
         <SimulationCodeEditor

@@ -39,7 +39,7 @@ export function RecoveryFailureBanner({
       className="recovery-banner recovery-banner-warning"
       data-testid="recovery-failure-banner"
       role="alert"
-      aria-label="Recovery storage problem"
+      aria-label="恢复存储出现问题"
     >
       <p>
         {failureMessage(state)} Download the Project to keep your work safe.
@@ -48,7 +48,7 @@ export function RecoveryFailureBanner({
         <button type="button" onClick={onDownload}>
           Download Backup
         </button>
-        <button type="button" onClick={onDismiss} aria-label="Dismiss warning">
+        <button type="button" onClick={onDismiss} aria-label="关闭警告">
           Dismiss
         </button>
       </div>
@@ -68,7 +68,7 @@ export function RecoveryAvailableBanner({
     <aside
       className="recovery-banner"
       data-testid="startup-recovery-banner"
-      aria-label="Unsaved recovery available"
+      aria-label="存在未保存的恢复数据"
     >
       <p>
         Unsaved work for <strong>{projectName}</strong> was recovered from{" "}
@@ -77,7 +77,7 @@ export function RecoveryAvailableBanner({
       </p>
       <div className="recovery-banner-actions">
         <button type="button" onClick={onRestore}>
-          Restore
+          恢复
         </button>
         <button type="button" onClick={onDownload}>
           Download backup

@@ -33,13 +33,12 @@ describe("component placement properties", () => {
         onDiscard={vi.fn()}
       />,
     );
-    expect(markup).toMatch(
-      /<details[^>]*aria-label="Component placement"[^>]*open=""/u,
-    );
-    expect(markup).toContain('aria-label="Component geometry"');
-    expect(markup).toContain("Swap + / − outputs");
-    expect(markup).not.toContain("Return to tray");
-    expect(markup).toContain("Discard changes");
+    expect(markup).toContain('aria-label="元件位置"');
+    expect(markup).toContain('open=""');
+    expect(markup).toContain('aria-label="元件几何属性"');
+    expect(markup).toContain("交换 + / − 输出");
+    expect(markup).not.toContain("放回待放置区");
+    expect(markup).toContain("放弃更改");
   });
 
   it("offers return to tray only for a netlist-imported instance", () => {
@@ -74,7 +73,7 @@ describe("component placement properties", () => {
       />,
     );
 
-    expect(markup).toContain("Imported source evidence");
-    expect(markup).toContain("Return to tray");
+    expect(markup).toContain("导入源依据");
+    expect(markup).toContain("放回待放置区");
   });
 });

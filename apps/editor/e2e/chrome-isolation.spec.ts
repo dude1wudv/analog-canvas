@@ -55,12 +55,12 @@ test("carries the version and project resource links inside Help", async ({
   const repositoryLink = about.getByRole("link", { name: "Repository" });
   await expect(repositoryLink).toHaveAttribute(
     "href",
-    "https://github.com/cascode-ai/analog-canvas",
+    "https://github.com/dude1wudv/analog-canvas",
   );
   await expect(repositoryLink).toHaveAttribute("target", "_blank");
   await expect(about.getByRole("link", { name: "Change Log" })).toHaveAttribute(
     "href",
-    "https://github.com/cascode-ai/analog-canvas/commits/main",
+    "https://github.com/dude1wudv/analog-canvas/commits/main",
   );
   await expect(about.getByRole("link", { name: "Owner" })).toHaveAttribute(
     "href",

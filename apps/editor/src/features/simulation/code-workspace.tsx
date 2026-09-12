@@ -148,7 +148,7 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
   return (
     <section
       className={`simulation-code-workspace${props.maximized ? " is-maximized" : ""}`}
-      aria-label="Simulation Code workspace"
+      aria-label="仿真代码工作区"
       onKeyDown={(event) => {
         if (event.defaultPrevented) return;
         if (
@@ -178,13 +178,13 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
           aria-controls={filesId}
           onClick={() => setFilesOpen(!filesOpen)}
         >
-          Explorer
+          资源管理器
         </button>
         <div className="simulation-code-actions">{props.actions}</div>
         <div className="simulation-code-more">
           <button
             type="button"
-            aria-label="More code actions"
+            aria-label="更多代码操作"
             onClick={(event) => {
               const rect = event.currentTarget.getBoundingClientRect();
               ui.menu(
@@ -192,21 +192,21 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
                 rect.bottom,
                 [
                   {
-                    label: "Advanced configuration",
+                    label: "高级配置",
                     run: () => openFile(props.configPath),
                   },
                   {
-                    label: "Copy current file",
+                    label: "复制当前文件",
                     disabled: !props.activePath,
                     run: () => props.onCopyFile?.(props.activePath),
                   },
                   {
-                    label: "Export current file…",
+                    label: "导出当前文件…",
                     disabled: !props.activePath,
                     run: () => props.onExportFile?.(props.activePath),
                   },
                   {
-                    label: "Close all editors",
+                    label: "关闭所有编辑器",
                     run: () => {
                       setOpened([]);
                       props.onSelectFile("");
@@ -214,7 +214,7 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
                   },
                   ...(props.additionalActions ?? []),
                 ],
-                "Code actions",
+                "代码操作",
               );
             }}
           >
@@ -229,7 +229,7 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
             id={filesId}
             className="simulation-code-files"
             style={{ width: filesWidth }}
-            aria-label="Simulation files"
+            aria-label="仿真文件"
           >
             <SimulationFileTree {...props} onSelectFile={openFile} />
           </aside>
@@ -239,7 +239,7 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
             className="workspace-files-resizer"
             role="separator"
             tabIndex={0}
-            aria-label="Resize simulation files"
+            aria-label="调整仿真文件区大小"
             aria-orientation="vertical"
             aria-valuemin={110}
             aria-valuemax={420}
@@ -287,7 +287,7 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
             <div
               className="simulation-code-tabs"
               role="tablist"
-              aria-label="Open simulation files"
+              aria-label="已打开的仿真文件"
             >
               {props.artifactPreview ? (
                 <div className="simulation-code-tab simulation-artifact-tab">
@@ -321,7 +321,7 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
                       title={path}
                     >
                       {path === props.configPath
-                        ? "Configuration"
+                        ? "配置"
                         : path.split("/").at(-1)}
                       {file.kind === "generated" ? " ◇" : ""}
                       {file.dirty ? " ●" : file.draft ? " ◌" : ""}
@@ -357,12 +357,12 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
             {props.artifactPreview ? (
               <section
                 className="simulation-artifact-editor"
-                aria-label="File preview"
+                aria-label="文件预览"
               >
                 <header>
                   <span>
-                    Read-only · tmp
-                    {props.artifactPreview.truncated ? " · First 64 KB" : ""}
+                    只读 · tmp
+                    {props.artifactPreview.truncated ? " · 前 64 KB" : ""}
                   </span>
                   <button
                     type="button"
@@ -373,7 +373,7 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
                       )
                     }
                   >
-                    Download
+                    下载
                   </button>
                 </header>
                 <pre>
@@ -382,7 +382,7 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
               </section>
             ) : !props.activePath ? (
               <p className="workspace-empty-editor">
-                Select a file to edit. Closing tabs does not delete files.
+                请选择要编辑的文件。关闭标签页不会删除文件。
               </p>
             ) : null}
           </div>
@@ -391,7 +391,7 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
       <div
         className="simulation-code-output-resizer"
         role="separator"
-        aria-label="Resize code results"
+        aria-label="调整代码结果区大小"
         aria-orientation="horizontal"
         tabIndex={0}
         aria-valuemin={15}
@@ -445,10 +445,10 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
               ? "32px"
               : `${resultsHeight}%`,
         }}
-        aria-label="Code output"
+        aria-label="代码输出"
       >
         <header className="simulation-code-output-tabs">
-          <div role="tablist" aria-label="Code output view">
+          <div role="tablist" aria-label="代码输出视图">
             {(["console", "plot", "operating-point", "compare"] as const).map(
               (pane) => (
                 <button
@@ -457,7 +457,7 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
                   role="tab"
                   aria-selected={pane === props.outputPane}
                   aria-label={
-                    pane === "operating-point" ? "Operating Point" : undefined
+                    pane === "operating-point" ? "工作点" : undefined
                   }
                   onClick={() => {
                     props.onSelectOutputPane(pane);
@@ -466,10 +466,10 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
                 >
                   {
                     {
-                      console: "Console",
-                      plot: "Plot",
+                      console: "控制台",
+                      plot: "绘图",
                       "operating-point": "OP",
-                      compare: "Compare",
+                      compare: "比较",
                     }[pane]
                   }
                 </button>
@@ -481,7 +481,7 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
           <button
             type="button"
             aria-label={
-              collapsed ? "Expand code output" : "Collapse code output"
+              collapsed ? "展开代码输出" : "折叠代码输出"
             }
             onClick={() => setCollapsed(!collapsed)}
           >
@@ -491,7 +491,7 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
             <button
               type="button"
               aria-label={
-                props.maximized ? "Restore results" : "Maximize results"
+                props.maximized ? "还原结果区" : "最大化结果区"
               }
               onClick={() => {
                 setCollapsed(false);

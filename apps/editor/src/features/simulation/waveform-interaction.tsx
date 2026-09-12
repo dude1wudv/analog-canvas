@@ -122,8 +122,8 @@ export function WaveformInteraction({
     <div
       className="spice-ac-plot interactive"
       tabIndex={0}
-      aria-label="Waveform: drag to zoom, click to measure, Shift-drag to pan"
-      title="Drag to zoom · Click to measure · Shift-drag to pan · Double-click to expand"
+      aria-label="波形：拖动缩放，点击测量，Shift+拖动平移"
+      title="拖动缩放 · 点击测量 · Shift+拖动平移 · 双击展开"
       onDoubleClick={onOpen}
       onBlur={() => {
         lastPick.current = undefined;

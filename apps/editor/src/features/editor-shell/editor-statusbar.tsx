@@ -34,8 +34,8 @@ function issuesBadge(issues: {
             ? "Check failed"
             : issues.checkStatus === "checking"
               ? "Checking…"
-              : "Not checked",
-      title: "Open Issues — use Check and Save to check",
+              : "尚未检查",
+      title: "打开问题列表——使用“检查并保存”开始检查",
     };
   }
   const plural = (count: number, noun: string) =>
@@ -47,20 +47,20 @@ function issuesBadge(issues: {
         issues.warningCount > 0
           ? `${plural(issues.errorCount, "error")}, ${plural(issues.warningCount, "warning")}`
           : plural(issues.errorCount, "error"),
-      title: "Action required — open the issues list",
+      title: "需要处理——打开问题列表",
     };
   }
   if (issues.warningCount > 0) {
     return {
       severity: "warning",
       label: plural(issues.warningCount, "warning"),
-      title: "Review findings — open the issues list",
+      title: "查看检查结果——打开问题列表",
     };
   }
   return {
     severity: "none",
-    label: "No issues found",
-    title: "Open the issues list",
+    label: "未发现问题",
+    title: "打开问题列表",
   };
 }
 
@@ -143,7 +143,7 @@ export function EditorStatusbar({
             className="statusbar-tool"
             data-testid="selection-filter-status"
             onClick={onOpenSelectionFilter}
-            title="Open Selection Filter (Ctrl+F)"
+            title="打开选择筛选器（Ctrl+F）"
           >
             {selectionFilterSummary}
           </button>
@@ -170,9 +170,9 @@ export function EditorStatusbar({
                   )
                 }
               >
-                <option value="orthogonal">Orthogonal</option>
+                <option value="orthogonal">正交</option>
                 <option value="octilinear">45° octilinear</option>
-                <option value="free">Any angle</option>
+                <option value="free">任意角度</option>
               </select>
             </label>
             <label>
@@ -185,11 +185,11 @@ export function EditorStatusbar({
                   )
                 }
               >
-                <option value="auto">Auto</option>
-                <option value="horizontal-first">Horizontal first</option>
-                <option value="vertical-first">Vertical first</option>
-                <option value="diagonal-first">Diagonal first</option>
-                <option value="orthogonal-first">Orthogonal first</option>
+                <option value="auto">自动</option>
+                <option value="horizontal-first">优先水平</option>
+                <option value="vertical-first">优先垂直</option>
+                <option value="diagonal-first">优先对角</option>
+                <option value="orthogonal-first">优先正交</option>
               </select>
             </label>
           </span>
@@ -198,7 +198,7 @@ export function EditorStatusbar({
           <output
             className="statusbar-recovery"
             data-testid="recovery-state"
-            aria-label="Browser recovery state"
+            aria-label="浏览器恢复状态"
           >
             {recoveryLabel}
           </output>
@@ -228,7 +228,7 @@ export function EditorStatusbar({
           className="statusbar-analytics"
           href="/analytics"
           data-testid="statusbar-analytics"
-          title="Open visitor analytics"
+          title="打开访客统计"
           onClick={(event) => {
             if (
               event.button !== 0 ||
@@ -247,7 +247,7 @@ export function EditorStatusbar({
           {visitStats.pv.toLocaleString()} views
         </a>
       ) : null}
-      <div className="canvas-controls" aria-label="Canvas view controls">
+      <div className="canvas-controls" aria-label="画布视图控件">
         <button
           type="button"
           aria-label={
@@ -262,9 +262,9 @@ export function EditorStatusbar({
           <ToolIcon name="grid" />
         </button>
         <select
-          aria-label="Annotation grid"
+          aria-label="注释网格"
           data-testid="annotation-grid-select"
-          title="Placement pitch for text and drawing annotations. Devices, wires, and junctions always stay on the 10-unit grid."
+          title="文本和绘图注释的放置间距。器件、导线和连接点始终位于 10 单位网格上。"
           value={annotationGrid}
           onChange={(event) =>
             onAnnotationGridChange(
@@ -277,9 +277,9 @@ export function EditorStatusbar({
           <option value="1">±1</option>
         </select>
         <select
-          aria-label="Draw angle"
+          aria-label="绘制角度"
           data-testid="draw-angle-select"
-          title="Angle lock for the Arrow and Line tools. Shift while drawing always locks to the 45-degree family; wires stay orthogonal."
+          title="箭头和直线工具的角度锁定。绘制时按 Shift 始终锁定为 45 度角；导线始终保持正交。"
           value={drawAngleMode}
           onChange={(event) =>
             onDrawAngleModeChange(
@@ -287,14 +287,14 @@ export function EditorStatusbar({
             )
           }
         >
-          <option value="free">Free</option>
+          <option value="free">自由</option>
           <option value="45">45°</option>
-          <option value="orthogonal">Ortho</option>
+          <option value="orthogonal">正交</option>
         </select>
         <select
-          aria-label="Scroll wheel"
+          aria-label="鼠标滚轮"
           data-testid="wheel-behavior-select"
-          title="What a plain scroll does. Auto reads the device from the event: a mouse wheel zooms, a trackpad pans. Pick one explicitly if your device is read wrongly. Pinch and Cmd+scroll always zoom."
+          title="设置普通滚动的行为。自动模式会识别设备：鼠标滚轮缩放，触控板滚动平移。如果识别错误，请明确选择一种模式。双指捏合和 Cmd+滚动始终执行缩放。"
           value={wheelBehavior}
           onChange={(event) =>
             onWheelBehaviorChange(
@@ -302,31 +302,26 @@ export function EditorStatusbar({
             )
           }
         >
-          <option value="auto">Scroll: Auto</option>
-          <option value="zoom">Scroll: Zoom</option>
-          <option value="pan">Scroll: Pan</option>
+          <option value="auto">滚轮：自动</option>
+          <option value="zoom">滚轮：缩放</option>
+          <option value="pan">滚轮：平移</option>
         </select>
         <button
           type="button"
-          aria-label="Zoom out"
-          title="Zoom out"
+          aria-label="缩小"
+          title="缩小"
           onClick={onZoomOut}
         >
           <ToolIcon name="zoom-out" />
         </button>
-        <output aria-label="Current zoom">{zoomPercent}%</output>
-        <button
-          type="button"
-          aria-label="Zoom in"
-          title="Zoom in"
-          onClick={onZoomIn}
-        >
+        <output aria-label="当前缩放比例">{zoomPercent}%</output>
+        <button type="button" aria-label="放大" title="放大" onClick={onZoomIn}>
           <ToolIcon name="zoom-in" />
         </button>
         <button
           type="button"
-          aria-label="Fit view"
-          title="Fit view (Home)"
+          aria-label="适合窗口"
+          title="适合窗口（Home）"
           onClick={onFitView}
         >
           <ToolIcon name="fit" />

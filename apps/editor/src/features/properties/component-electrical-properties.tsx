@@ -160,7 +160,7 @@ export function ComponentElectricalProperties({
   }
   return (
     <PropertyDisclosure
-      title="Parameters"
+      title="参数"
       className="property-electrical-section"
       ariaLabel="Component parameters and display"
       defaultOpen
@@ -232,11 +232,8 @@ export function ComponentElectricalProperties({
       ) : null}
       {renderedDisplayable ? (
         <div className="property-display-card">
-          <div className="property-section-heading">Display</div>
-          <div
-            className="display-toggle-row"
-            aria-label="Component display toggles"
-          >
+          <div className="property-section-heading">显示</div>
+          <div className="display-toggle-row" aria-label="元件显示开关">
             {referenceToggleable ? (
               <DisplayToggle
                 label={
@@ -251,7 +248,7 @@ export function ComponentElectricalProperties({
             ) : null}
             {valueSupported ? (
               <DisplayToggle
-                label="Value"
+                label="值"
                 checked={valueVisible}
                 disabled={!valueAvailable}
                 help={
@@ -266,13 +263,10 @@ export function ComponentElectricalProperties({
       {instance.netlist ? (
         <details className="property-details property-details-inline">
           <summary>
-            <span>Netlist overrides</span>
+            <span>网表覆盖项</span>
             <small>{additionalParameters.length}</small>
           </summary>
-          <div
-            className="additional-parameters"
-            aria-label="Additional parameters"
-          >
+          <div className="additional-parameters" aria-label="附加参数">
             <small>
               Model- or dialect-specific raw values. Apply commits all rows as
               one undoable edit.
@@ -280,7 +274,7 @@ export function ComponentElectricalProperties({
             {additionalParameters.map((parameter, index) => (
               <div className="component-geometry-row" key={parameter.id}>
                 <label>
-                  Name
+                  名称
                   <input
                     aria-label={`Additional parameter name ${index + 1}`}
                     value={parameter.name}
@@ -292,7 +286,7 @@ export function ComponentElectricalProperties({
                   />
                 </label>
                 <label>
-                  Value
+                  值
                   <input
                     aria-label={`Additional parameter value ${index + 1}`}
                     value={parameter.value}

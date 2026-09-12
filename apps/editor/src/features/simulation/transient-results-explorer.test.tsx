@@ -95,13 +95,13 @@ describe("Transient Results Explorer", () => {
     expect(markup).toContain('aria-label="Transient voltage"');
     expect(markup).toContain('aria-label="Transient current"');
     expect(markup.match(/data-trace-index=/gu)).toHaveLength(2);
-    expect(markup).toContain('aria-label="Plot tools"');
+    expect(markup).toContain('aria-label="绘图工具"');
     expect(markup.match(/class="waveform-tools-hint"/gu)).toHaveLength(2);
     expect(markup.match(/class="waveform-tool-actions"/gu)).toHaveLength(2);
     expect(markup).not.toContain('aria-label="More plot tools"');
-    expect(markup.match(/drag to zoom, click to measure/gu)).toHaveLength(2);
+    expect(markup.match(/拖动缩放，点击测量/gu)).toHaveLength(2);
     expect(markup).not.toContain('aria-label="Inspect plot"');
-    expect(markup.match(/aria-label="Open plot"/gu)).toHaveLength(2);
+    expect(markup.match(/aria-label="打开绘图"/gu)).toHaveLength(2);
     expect(markup.match(/class="ac-axis-title"/gu)).toHaveLength(4);
     expect(markup).toContain("time/");
     expect(markup).toContain("voltage/");

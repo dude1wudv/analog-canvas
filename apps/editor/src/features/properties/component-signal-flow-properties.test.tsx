@@ -46,11 +46,11 @@ describe("Signal Flow properties", () => {
       />,
     );
 
-    expect(markup).toContain("Transfer function");
-    expect(markup).toContain('aria-label="Signal flow formula"');
-    expect(markup).toContain('aria-label="Signal flow coefficient"');
-    expect(markup).toContain('aria-label="Signal flow minimum width"');
-    expect(markup).toContain('aria-label="Signal flow minimum height"');
+    expect(markup).toContain("传递函数");
+    expect(markup).toContain('aria-label="信号流公式"');
+    expect(markup).toContain('aria-label="信号流系数"');
+    expect(markup).toContain('aria-label="信号流最小宽度"');
+    expect(markup).toContain('aria-label="信号流最小高度"');
     expect(markup).toContain('placeholder="z^-1/(1-z^-1)"');
     expect(markup).toContain('value="1/s"');
     expect(markup).toContain('value="K"');
@@ -78,8 +78,9 @@ describe("Signal Flow properties", () => {
     // Without an override the field carries the default as a real value,
     // not only as placeholder text: the default is the starting point for
     // editing rather than something the author has to retype.
-    const formulaInput =
-      /<input[^>]*aria-label="Signal flow formula"[^>]*>/u.exec(markup)?.[0];
+    const formulaInput = /<input[^>]*aria-label="信号流公式"[^>]*>/u.exec(
+      markup,
+    )?.[0];
     expect(formulaInput).toBeDefined();
     expect(formulaInput).toContain('value="z^-1/(1-z^-1)"');
   });

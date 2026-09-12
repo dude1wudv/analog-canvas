@@ -16,7 +16,7 @@ export function EditorRightDock(props: {
       className={`editor-right-dock${props.simulationOpen ? " with-code" : ""}${showCode ? " showing-code" : ""}`}
     >
       {props.simulationOpen && !props.maximized ? (
-        <nav className="editor-right-dock-tabs" aria-label="Sidebar view">
+        <nav className="editor-right-dock-tabs" aria-label="侧边栏视图">
           <button
             type="button"
             aria-pressed={showCode}
@@ -29,7 +29,7 @@ export function EditorRightDock(props: {
             aria-pressed={!showCode}
             onClick={() => props.onSelectProperties(true)}
           >
-            Properties
+            属性
           </button>
         </nav>
       ) : null}

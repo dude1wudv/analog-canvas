@@ -110,9 +110,9 @@ export async function setMyEntryRecycled(
 // Publishing is direct, so nothing new is ever "pending". Rejection is the
 // Owner's post-publication takedown with an author-visible reason.
 const STATUS_LABELS: Record<string, string> = {
-  public: "Published",
-  rejected: "Rejected",
-  recycled: "Withdrawn",
+  public: "已发布",
+  rejected: "已拒绝",
+  recycled: "已撤回",
 };
 
 export function MySubmissions() {
@@ -184,7 +184,7 @@ export function MySubmissions() {
 
   return (
     <main className="review-shell" data-testid="mine-page">
-      <GalleryChrome subtitle="My submissions" />
+      <GalleryChrome subtitle="我的提交" />
       <div className="page-body">
         {notice ? (
           <p className="gallery-status" data-testid="mine-notice">
@@ -192,15 +192,14 @@ export function MySubmissions() {
           </p>
         ) : null}
         {state.status === "loading" ? (
-          <p className="gallery-status">Loading your submissions…</p>
+          <p className="gallery-status">正在加载你的提交记录…</p>
         ) : state.status === "signed-out" ? (
           <p className="gallery-status" data-testid="mine-signed-out">
-            Sign in (top right) to see your submissions.
+            请在右上角登录以查看你的提交。
           </p>
         ) : state.entries.length === 0 ? (
           <p className="gallery-status">
-            Nothing yet — open the <a href="/editor">editor</a> and use the
-            Publish button.
+            暂无内容——请打开<a href="/editor">编辑器</a>并使用“发布”按钮。
           </p>
         ) : (
           <section className="mine-list" data-testid="mine-list">
@@ -213,7 +212,7 @@ export function MySubmissions() {
                 <a
                   className="mine-card-preview"
                   href={`/g/${entry.id}`}
-                  title="Open in the editor"
+                  title="在编辑器中打开"
                 >
                   <img
                     src={galleryPreviewUrl(entry.id, entry.previewRevision)}
@@ -252,7 +251,7 @@ export function MySubmissions() {
                       disabled={busy === entry.id}
                       onClick={() => void remove(entry)}
                     >
-                      Delete
+                      删除
                     </button>
                     {entry.status === "recycled" && !entry.rejectReason ? (
                       <button
@@ -262,7 +261,7 @@ export function MySubmissions() {
                         disabled={busy === entry.id}
                         onClick={() => void act(entry, "restore")}
                       >
-                        Restore
+                        恢复
                       </button>
                     ) : entry.status === "public" && confirming === entry.id ? (
                       <>
@@ -290,7 +289,7 @@ export function MySubmissions() {
                         data-testid={`mine-withdraw-${entry.id}`}
                         onClick={() => setConfirming(entry.id)}
                       >
-                        Withdraw
+                        撤回
                       </button>
                     ) : null}
                   </div>
