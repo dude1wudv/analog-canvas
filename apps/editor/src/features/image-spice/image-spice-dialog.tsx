@@ -10,6 +10,7 @@ import {
   type StructuralSpiceReview,
 } from "./image-spice";
 import "./image-spice.css";
+const RECOGNITION_TIMEOUT_MS = 10 * 60_000;
 
 export interface ImageSpiceDialogProps {
   onClose: () => void;
@@ -54,14 +55,14 @@ export function ImageSpiceDialog({
     if (element && !element.open) element.showModal();
     return () => {
       generation.current++;
-      pending.current?.abort();
+      pending.current?.abort("cancel");
       element?.close();
     };
   }, []);
 
   function cancel() {
     generation.current++;
-    pending.current?.abort();
+    pending.current?.abort("cancel");
     pending.current = null;
     setBusy(null);
   }
@@ -105,7 +106,10 @@ export function ImageSpiceDialog({
     const controller = new AbortController();
     pending.current = controller;
     const request = ++generation.current;
-    const timeout = window.setTimeout(() => controller.abort(), 120_000);
+    const timeout = window.setTimeout(
+      () => controller.abort("timeout"),
+      RECOGNITION_TIMEOUT_MS,
+    );
     setBusy("recognize");
     setError("");
     setReview(null);
@@ -116,6 +120,8 @@ export function ImageSpiceDialog({
     try {
       const result = await recognizeCircuitImage({
         baseUrl: configuration.baseUrl,
+        protocol: configuration.protocol,
+        reasoningEffort: configuration.reasoningEffort,
         apiKey: configuration.apiKey,
         model: currentModel,
         imageDataUrl: image.dataUrl,

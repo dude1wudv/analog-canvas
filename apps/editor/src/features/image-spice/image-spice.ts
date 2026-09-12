@@ -17,7 +17,10 @@ export function validateImageFile(file: Pick<File, "type" | "size">): void {
   }
 }
 
-export function chatCompletionsUrl(baseUrl: string): string {
+export function aiCompletionUrl(
+  baseUrl: string,
+  protocol: "chat-completions" | "responses",
+): string {
   let url: URL;
   try {
     url = new URL(baseUrl.trim());
@@ -33,10 +36,11 @@ export function chatCompletionsUrl(baseUrl: string): string {
   ) {
     throw new Error("API 地址必须使用 HTTPS，且不能包含凭据、查询参数或片段。");
   }
-  const path = url.pathname.replace(/\/+$/u, "");
-  url.pathname = path.endsWith("/chat/completions")
-    ? path
-    : `${path || "/v1"}/chat/completions`;
+  const endpoint = protocol === "responses" ? "responses" : "chat/completions";
+  const path = url.pathname
+    .replace(/\/+$/u, "")
+    .replace(/\/(?:chat\/completions|responses)$/u, "");
+  url.pathname = `${path || "/v1"}/${endpoint}`;
   return url.toString();
 }
 
@@ -101,6 +105,8 @@ Never claim verified correctness. The user will review node/pin membership befor
 async function requestImageCompletion(
   options: {
     baseUrl: string;
+    protocol: "chat-completions" | "responses";
+    reasoningEffort: "low" | "medium" | "high" | "max";
     apiKey: string;
     model: string;
     imageDataUrl: string;
@@ -109,7 +115,7 @@ async function requestImageCompletion(
   fetchLike: typeof fetch = fetch,
   systemPrompt = RECOGNITION_PROMPT,
 ): Promise<string> {
-  const endpoint = chatCompletionsUrl(options.baseUrl);
+  const endpoint = aiCompletionUrl(options.baseUrl, options.protocol);
   if (!options.apiKey.trim() || !options.model.trim())
     throw new Error("请填写 API Key 和视觉模型名称。");
   if (
@@ -132,32 +138,67 @@ async function requestImageCompletion(
         "Content-Type": "application/json",
         Authorization: `Bearer ${options.apiKey.trim()}`,
       },
-      body: JSON.stringify({
-        model: options.model.trim(),
-        stream: false,
-        messages: [
-          { role: "system", content: systemPrompt },
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text:
-                  systemPrompt === RECOGNITION_PROMPT
-                    ? "识别这张电路图，生成结构 SPICE，并逐项报告不确定之处。"
-                    : "Connection test: reply OK.",
-              },
-              {
-                type: "image_url",
-                image_url: { url: options.imageDataUrl, detail: "high" },
-              },
-            ],
-          },
-        ],
-      }),
+      body: JSON.stringify(
+        options.protocol === "responses"
+          ? {
+              model: options.model.trim(),
+              reasoning: { effort: options.reasoningEffort },
+              stream: false,
+              instructions: systemPrompt,
+              input: [
+                {
+                  role: "user",
+                  content: [
+                    {
+                      type: "input_text",
+                      text:
+                        systemPrompt === RECOGNITION_PROMPT
+                          ? "识别这张电路图，生成结构 SPICE，并逐项报告不确定之处。"
+                          : "Connection test: reply OK.",
+                    },
+                    {
+                      type: "input_image",
+                      image_url: options.imageDataUrl,
+                      detail: "high",
+                    },
+                  ],
+                },
+              ],
+            }
+          : {
+              model: options.model.trim(),
+              reasoning_effort: options.reasoningEffort,
+              stream: false,
+              messages: [
+                { role: "system", content: systemPrompt },
+                {
+                  role: "user",
+                  content: [
+                    {
+                      type: "text",
+                      text:
+                        systemPrompt === RECOGNITION_PROMPT
+                          ? "识别这张电路图，生成结构 SPICE，并逐项报告不确定之处。"
+                          : "Connection test: reply OK.",
+                    },
+                    {
+                      type: "image_url",
+                      image_url: { url: options.imageDataUrl, detail: "high" },
+                    },
+                  ],
+                },
+              ],
+            },
+      ),
     });
   } catch {
-    if (options.signal.aborted) throw new Error("识别已取消或超时。");
+    if (options.signal.aborted) {
+      throw new Error(
+        options.signal.reason === "timeout"
+          ? "请求超时。请降低思考强度、裁剪图片后重试。"
+          : "识别已取消。",
+      );
+    }
     throw new Error(
       "无法连接 AI 接口。请检查地址、网络及接口的浏览器跨域（CORS）支持。",
     );
@@ -167,20 +208,50 @@ async function requestImageCompletion(
     throw new Error(
       `AI 接口返回 HTTP ${response.status}，请检查 Key、模型权限及额度。`,
     );
-  let payload: {
+  let payload: unknown;
+  try {
+    const text = await response.text();
+    if (text.length > 500_000) throw new Error("oversize");
+    payload = JSON.parse(text) as unknown;
+  } catch {
+    throw new Error("AI 接口返回无效或过大的 JSON 响应。");
+  }
+  if (typeof payload !== "object" || payload === null) {
+    throw new Error("AI 接口返回无效或过大的 JSON 响应。");
+  }
+  if (options.protocol === "responses") {
+    const result = payload as {
+      status?: string;
+      output?: Array<{
+        type?: string;
+        status?: string;
+        content?: Array<{ type?: string; text?: string }>;
+      }>;
+    };
+    const content = result.output
+      ?.filter(
+        (item) =>
+          item.type === "message" &&
+          (item.status === undefined || item.status === "completed"),
+      )
+      .flatMap((item) => item.content ?? [])
+      .filter((item) => item.type === "output_text")
+      .map((item) => item.text ?? "")
+      .join("");
+    if (result.status !== "completed" || !content?.trim()) {
+      throw new Error(
+        "AI 未完整完成识别（可能被截断、拒绝或模型不支持图片），请重试。",
+      );
+    }
+    return content;
+  }
+  const result = payload as {
     choices?: {
       finish_reason?: string;
       message?: { content?: string; refusal?: string };
     }[];
   };
-  try {
-    const text = await response.text();
-    if (text.length > 500_000) throw new Error("oversize");
-    payload = JSON.parse(text) as typeof payload;
-  } catch {
-    throw new Error("AI 接口返回无效或过大的 JSON 响应。");
-  }
-  const choice = payload?.choices?.[0];
+  const choice = result.choices?.[0];
   if (
     choice?.finish_reason !== "stop" ||
     choice.message?.refusal ||

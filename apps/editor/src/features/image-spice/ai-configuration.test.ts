@@ -14,6 +14,8 @@ function configuration(
     id: "config-1",
     name: "Vision gateway",
     baseUrl: "https://vision.example.test/v1",
+    protocol: "chat-completions",
+    reasoningEffort: "low",
     apiKey: "provider-secret",
     models: ["vision-model"],
     ...overrides,
@@ -27,6 +29,8 @@ describe("AI interface configuration", () => {
     expect(value.id).toEqual(expect.any(String));
     expect(value.name).toBe("新接口");
     expect(value.baseUrl).toBe("");
+    expect(value.protocol).toBe("chat-completions");
+    expect(value.reasoningEffort).toBe("low");
     expect(value.apiKey).toBe("");
     expect(value.models).toEqual([]);
   });

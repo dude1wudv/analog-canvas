@@ -96,7 +96,7 @@ export function AiSettingsDialog({
     }
     const controller = new AbortController();
     pending.current = controller;
-    const timer = window.setTimeout(() => controller.abort(), 30_000);
+    const timer = window.setTimeout(() => controller.abort("timeout"), 30_000);
     setBusy(true);
     setNotice("");
     setError("");
@@ -153,7 +153,11 @@ export function AiSettingsDialog({
               onClick={() => choose(item)}
             >
               <strong>{item.name}</strong>
-              <small>{item.models.length} 个模型 · Key 已配置</small>
+              <small>
+                {item.models.length} 个模型 ·{" "}
+                {item.protocol === "responses" ? "Responses" : "Chat"} · Key
+                已配置
+              </small>
             </button>
           ))}
           <button
@@ -191,6 +195,21 @@ export function AiSettingsDialog({
             />
           </label>
           <label>
+            API 协议
+            <select
+              value={draft.protocol}
+              disabled={busy}
+              onChange={(event) =>
+                edit({
+                  protocol: event.target.value as AiConfiguration["protocol"],
+                })
+              }
+            >
+              <option value="chat-completions">Chat Completions</option>
+              <option value="responses">Responses API</option>
+            </select>
+          </label>
+          <label>
             API Key
             <input
               type="password"
@@ -199,6 +218,24 @@ export function AiSettingsDialog({
               autoComplete="off"
               onChange={(event) => edit({ apiKey: event.target.value })}
             />
+          </label>
+          <label>
+            思考强度
+            <select
+              value={draft.reasoningEffort}
+              disabled={busy}
+              onChange={(event) =>
+                edit({
+                  reasoningEffort: event.target
+                    .value as AiConfiguration["reasoningEffort"],
+                })
+              }
+            >
+              <option value="low">low（更快）</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="max">max（最强）</option>
+            </select>
           </label>
           <label>
             模型列表（每行一个 ID）
@@ -239,14 +276,17 @@ export function AiSettingsDialog({
               {busy ? "测试中…" : "测试连通性"}
             </button>
             {busy && (
-              <button type="button" onClick={() => pending.current?.abort()}>
+              <button
+                type="button"
+                onClick={() => pending.current?.abort("cancel")}
+              >
                 取消测试
               </button>
             )}
           </div>
           <p className="image-spice-note">
-            测试会向选中的模型发送一张微小图片，可能产生少量 API
-            费用。接口需支持 HTTPS、Chat Completions 图片输入和浏览器 CORS。
+            测试会通过所选协议向模型发送一张微小图片，可能产生少量 API
+            费用。接口需支持 HTTPS、图片输入和浏览器 CORS。
           </p>
           <div className="image-spice-actions">
             <button
