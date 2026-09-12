@@ -288,6 +288,26 @@ describe("image-to-SPICE validation and response contracts", () => {
     expect(String(error)).not.toContain("provider-secret");
     expect(String(error)).not.toContain("upstream diagnostic");
   });
+  it("explains custom API authentication failures without blaming account login", async () => {
+    const fetchMock = vi.fn(
+      async () => new Response("unauthorized", { status: 401 }),
+    );
+
+    await expect(
+      recognizeCircuitImage(
+        {
+          baseUrl: "https://vision.example.test",
+          protocol: "chat-completions",
+          reasoningEffort: "low",
+          apiKey: "provider-secret",
+          model: "vision-model",
+          imageDataUrl: "data:image/png;base64,ZmFrZQ==",
+          signal: new AbortController().signal,
+        },
+        fetchMock as unknown as typeof fetch,
+      ),
+    ).rejects.toThrow("不会影响当前登录账号");
+  });
 
   it("rejects a non-stop completion instead of importing partial model output", async () => {
     const fetchMock = vi.fn(async () =>
@@ -308,6 +328,44 @@ describe("image-to-SPICE validation and response contracts", () => {
         fetchMock as unknown as typeof fetch,
       ),
     ).rejects.toThrow();
+  });
+  it("accepts structured text parts in chat completion responses", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                finish_reason: "stop",
+                message: {
+                  content: [
+                    {
+                      type: "text",
+                      text: '{"spice":"* test\\n.end","uncertainties":[]}',
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+
+    await expect(
+      recognizeCircuitImage(
+        {
+          baseUrl: "https://vision.example.test",
+          protocol: "chat-completions",
+          reasoningEffort: "low",
+          apiKey: "provider-secret",
+          model: "vision-model",
+          imageDataUrl: "data:image/png;base64,ZmFrZQ==",
+          signal: new AbortController().signal,
+        },
+        fetchMock as unknown as typeof fetch,
+      ),
+    ).resolves.toEqual({ spice: "* test\n.end", uncertainties: [] });
   });
 
   it("passes AbortSignal cancellation through to the fetch request", async () => {
