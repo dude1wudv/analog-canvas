@@ -66,6 +66,7 @@ function Root() {
   useEffect(() => {
     const analyticsHost =
       window.location.hostname === "analog-canvas.tokenzhang.com" ||
+      window.location.hostname === "analog.sunmmyapi.xyz" ||
       window.location.hostname.endsWith(".workers.dev");
     if (!analyticsHost || /^\/analytics\/?$/.test(path)) {
       return;

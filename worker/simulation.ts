@@ -48,6 +48,8 @@ export interface SimulationEnv {
    */
   SIMULATION_UPSTREAM_URL?: string;
   SIMULATION_UPSTREAM_TOKEN?: string;
+  /** Self-hosted fixed upstream binding; never grants arbitrary private-network fetch. */
+  SIMULATION_SERVICE?: NgspiceRunner;
   /**
    * Preview policy, not circuit state. Both executors may be configured at
    * once; this chooses the one used when a caller names no target.
@@ -122,13 +124,19 @@ interface HostedExecutionMetadata {
  * requires. Only the path of the caller's URL is kept, so the route module
  * never has to know which kind of runner it was handed.
  */
-function remoteRunner(base: string, token: string | undefined): NgspiceRunner {
+function remoteRunner(
+  base: string,
+  token: string | undefined,
+  service?: NgspiceRunner,
+): NgspiceRunner {
   return {
     fetch: (input, init) => {
       const target = new URL(new URL(input).pathname, base);
       const headers = new Headers(init?.headers);
       if (token) headers.set("authorization", `Bearer ${token}`);
-      return fetch(target, { ...init, headers });
+      return service
+        ? service.fetch(target.toString(), { ...init, headers })
+        : fetch(target, { ...init, headers });
     },
   };
 }
@@ -148,7 +156,11 @@ function runnerFor(
     return upstream
       ? {
           target,
-          runner: remoteRunner(upstream, env.SIMULATION_UPSTREAM_TOKEN),
+          runner: remoteRunner(
+            upstream,
+            env.SIMULATION_UPSTREAM_TOKEN,
+            env.SIMULATION_SERVICE,
+          ),
         }
       : null;
   }

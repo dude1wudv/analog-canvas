@@ -1,0 +1,77 @@
+name: analog-canvas
+services:
+  app:
+    image: analog-canvas:${ANALOG_REVISION:?Set the exact commit}
+    build:
+      context: ../..
+      dockerfile: containers/self-host/Dockerfile
+      target: runtime
+      args:
+        REVISION: ${ANALOG_REVISION}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 1g
+    cpus: 2
+    ports: ["127.0.0.1:8787:8787"]
+    environment:
+      PUBLIC_ORIGIN: https://analog.sunmmyapi.xyz
+      LOCAL_ADMIN_USERNAME: sun
+    volumes:
+      - ${ANALOG_STATE_DIR:?Set state directory}/data:/data
+      - ${ANALOG_STATE_DIR}/secrets:/secrets:ro
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    depends_on: [assets, simulator]
+    networks: [frontend, gateway]
+  assets:
+    image: analog-canvas-assets:${ANALOG_REVISION}
+    build:
+      context: ../..
+      dockerfile: containers/self-host/Dockerfile
+      target: assets
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.5
+    networks: [frontend]
+  executor:
+    image: analog-canvas-ngspice:${ANALOG_REVISION}
+    build:
+      context: ../..
+      dockerfile: containers/ngspice/Dockerfile
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    cpus: 2
+    mem_limit: 2g
+    volumes:
+      - run-root:/var/lib/simulation
+    tmpfs: ["/tmp:size=256m,mode=1777"]
+    networks: [simulation]
+  simulator:
+    image: analog-canvas-ngspice:${ANALOG_REVISION}
+    command: [node, /opt/harness/gateway.mjs]
+    env_file: ["${ANALOG_STATE_DIR}/secrets/runtime.env"]
+    environment:
+      SIMULATION_EXECUTOR_URL: http://executor:8080
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    cpus: 0.5
+    mem_limit: 128m
+    depends_on: [executor]
+    networks: [gateway, simulation]
+volumes:
+  run-root:
+networks:
+  frontend:
+  gateway:
+    internal: true
+  simulation:
+    internal: true

@@ -2922,7 +2922,9 @@ test("copies one explicitly selected transistor without its dangling Wire", asyn
   await page.getByTestId("hit-M1").click();
   await copySelectionAt(page, { x: 560, y: 260 });
 
-  await expect(page.getByTestId("instance-count")).toHaveText("2");
+  await expect(
+    page.getByTestId("editor-test-telemetry").getByTestId("instance-count"),
+  ).toHaveText("2");
   await expect(page.locator('[data-layer="routes"] polyline')).toHaveCount(1);
 });
 
@@ -7461,4 +7463,180 @@ test("keeps the chosen corner shape when the wire tool is picked again", async (
   expect(dx).toBeGreaterThan(0);
   expect(dy).toBeGreaterThan(0);
   expect(dx).not.toBe(dy);
+});
+
+test("keeps multiple AI profiles in page memory and safely tests success, failure, and cancellation", async ({
+  page,
+}) => {
+  let mode: "success" | "failure" | "pending" = "success";
+  await page.route(
+    "https://vision.example.test/v1/chat/completions",
+    async (route) => {
+      if (mode === "pending") return;
+      if (mode === "failure") {
+        await route.fulfill({
+          status: 401,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "provider-key-b upstream details" }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          choices: [
+            {
+              finish_reason: "stop",
+              message: { content: "OK" },
+            },
+          ],
+        }),
+      });
+    },
+  );
+
+  await page.goto("/editor");
+  let fileMenu = await openMenu(page, "文件");
+  await fileMenu
+    .getByRole("button", { name: "AI 接口设置…", exact: true })
+    .click();
+  const settings = page.getByRole("dialog", { name: "AI 接口设置" });
+  await expect(settings).toBeVisible();
+
+  await settings.getByLabel("配置名称").fill("Primary vision");
+  await settings.getByLabel("API 地址").fill("https://vision.example.test/v1");
+  await settings.getByLabel("API Key").fill("provider-key-a");
+  await settings
+    .getByLabel("模型列表（每行一个 ID）")
+    .fill("vision-a\nvision-b");
+  await settings
+    .getByRole("button", { name: "测试连通性", exact: true })
+    .click();
+  await expect(settings.getByRole("status")).toContainText("连接成功");
+  await expect(settings.getByRole("status")).toContainText("支持图片请求");
+  await expect(settings.getByRole("status")).not.toContainText(
+    "provider-key-a",
+  );
+  await settings.getByRole("button", { name: "应用配置", exact: true }).click();
+  await expect(
+    settings.getByRole("button", { name: /Primary vision/u }),
+  ).toBeVisible();
+
+  await settings.getByRole("button", { name: /添加接口 \/ Key/u }).click();
+  await settings.getByLabel("配置名称").fill("Backup vision");
+  await settings.getByLabel("API 地址").fill("https://vision.example.test/v1");
+  await settings.getByLabel("API Key").fill("provider-key-b");
+  await settings.getByLabel("模型列表（每行一个 ID）").fill("vision-backup");
+  mode = "failure";
+  await settings
+    .getByRole("button", { name: "测试连通性", exact: true })
+    .click();
+  const failure = settings.getByRole("alert");
+  await expect(failure).toContainText("HTTP 401");
+  await expect(failure).not.toContainText("provider-key-b");
+  await settings.getByRole("button", { name: "应用配置", exact: true }).click();
+
+  await settings.getByRole("button", { name: /Primary vision/u }).click();
+  await expect(settings.getByLabel("API Key")).toHaveValue("provider-key-a");
+  await expect(settings.getByLabel("模型列表（每行一个 ID）")).toHaveValue(
+    "vision-a\nvision-b",
+  );
+  await expect(page.getByText("provider-key-a", { exact: true })).toHaveCount(
+    0,
+  );
+
+  mode = "pending";
+  await settings
+    .getByRole("button", { name: "测试连通性", exact: true })
+    .click();
+  await expect(
+    settings.getByRole("button", { name: "取消测试", exact: true }),
+  ).toBeVisible();
+  await settings.getByRole("button", { name: "取消测试", exact: true }).click();
+  await expect(settings.getByRole("alert")).toContainText("取消");
+  await expect(
+    settings.getByRole("button", { name: "测试连通性", exact: true }),
+  ).toBeEnabled();
+});
+
+test("recognizes an uploaded schematic and imports its checked SPICE into the Placement Tray", async ({
+  page,
+}) => {
+  const imageSpice = "* Image transcription\nV1 in 0 1\nR1 in 0 1k\n.end\n";
+  const imageResult = JSON.stringify({
+    spice: imageSpice,
+    uncertainties: ["请核对电源极性"],
+  });
+  const onePixelPng = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+    "base64",
+  );
+  await page.route(
+    "https://vision.example.test/v1/chat/completions",
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          choices: [
+            {
+              finish_reason: "stop",
+              message: { content: imageResult },
+            },
+          ],
+        }),
+      });
+    },
+  );
+
+  await page.goto("/editor");
+  let fileMenu = await openMenu(page, "文件");
+  await fileMenu
+    .getByRole("button", { name: "AI 接口设置…", exact: true })
+    .click();
+  const settings = page.getByRole("dialog", { name: "AI 接口设置" });
+  await settings.getByLabel("配置名称").fill("Recognition gateway");
+  await settings.getByLabel("API 地址").fill("https://vision.example.test/v1");
+  await settings.getByLabel("API Key").fill("recognition-key");
+  await settings.getByLabel("模型列表（每行一个 ID）").fill("vision-model");
+  await settings.getByRole("button", { name: "应用配置", exact: true }).click();
+  await settings.getByRole("button", { name: "完成", exact: true }).click();
+
+  fileMenu = await openMenu(page, "文件");
+  await fileMenu
+    .getByRole("button", { name: "从电路图识别 SPICE…", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "从电路图识别 SPICE" });
+  await expect(dialog).toBeVisible();
+  await dialog.locator('input[type="file"]').setInputFiles({
+    name: "divider.png",
+    mimeType: "image/png",
+    buffer: onePixelPng,
+  });
+  await expect(
+    dialog.getByRole("img", { name: "待识别的电路图" }),
+  ).toBeVisible();
+  await expect(dialog.getByLabel("使用的接口 / Key")).toHaveValue(/\S/u);
+  await expect(dialog.getByLabel("识别模型")).toHaveValue("vision-model");
+  await dialog.getByRole("button", { name: "识别电路图", exact: true }).click();
+
+  await expect(dialog).toContainText("结构可导入：2 个器件");
+  await expect(dialog).toContainText("请核对电源极性");
+  await dialog.getByLabel("我已对照原图核对连接和不确定项").check();
+  await dialog
+    .getByRole("button", { name: "通过 Import SPICE 建立工程", exact: true })
+    .click();
+
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByTestId("status")).toContainText(
+    "Imported 1 Documents",
+  );
+  await expect(
+    page.getByTestId("editor-test-telemetry").getByTestId("instance-count"),
+  ).toHaveText("2");
+  const tray = page.getByRole("region", { name: "待放置区" });
+  await tray.locator("summary").click();
+  await expect(tray.getByTestId("unplaced-V1")).toBeVisible();
+  await expect(tray.getByTestId("unplaced-R1")).toBeVisible();
 });

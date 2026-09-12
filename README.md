@@ -2,13 +2,15 @@
 
 Analog Canvas 是一款本地优先、感知电气连接关系的 Web 原理图编辑器。你可以绘制并组织层次化电路，导入结构化 SPICE，导出确定性的 SPICE/Spectre 网表和矢量 SVG/PDF，将选定作品发布到社区画廊，并让已授权的 Agent 通过同一套强类型编辑模型连接项目。
 
-[浏览画廊](https://analog-canvas.tokenzhang.com/) ·
-[打开编辑器](https://analog-canvas.tokenzhang.com/editor) ·
+[浏览画廊](https://analog.sunmmyapi.xyz/) ·
+[打开编辑器](https://analog.sunmmyapi.xyz/editor) ·
 [项目文档](docs/README.md) ·
 [GitHub 仓库](https://github.com/dude1wudv/analog-canvas)
 
 ## 主要特性
 
+- **图片识别建图：** 在「文件 → AI 接口设置」配置多个视觉模型和 Key、测试连通性，再从电路图图片生成可编辑结构 SPICE；核对引脚网络后，复用 Import SPICE 建立工程。器件进入 Placement Tray，第一版不还原版图。
+- **完整自托管：** HK 运行原生 workerd、持久化 SQLite Durable Objects、本地账号密码、云项目、画廊及隔离 ngspice；参见[自托管说明](docs/self-hosting.md)。
 - **感知连接关系的编辑：** 放置器件、布线、区分交叉点与连接点、标记网络，并执行可撤销的多对象编辑，不会把绘图几何关系错误地当成电气连接关系。
 - **可复用的层次结构：** 将每张原理图编写为一个 Cell，定义独立的 Cell Pin，放置可复用的层次化模块，并在父级与子 Cell 之间导航。
 - **项目与数据交换：** 保存私有云项目，导入或导出标准 `.icproj.json`，导入结构化 `.cir`、`.sp` 和 `.spi` 文件，并导出确定性的结构化 SPICE 或 Spectre 网表。预览版编辑器还提供已保存的仿真源文件夹，以及固定的 ngspice/SKY130 环境，可运行符合要求的 OP、DC、AC、TRAN 和 Noise 分析；正式环境是否可用仍由版本发布策略控制。
@@ -24,7 +26,7 @@ Analog Canvas 是一款本地优先、感知电气连接关系的 Web 原理图�
 
 ## 快速开始
 
-- **使用在线版本：** 浏览[社区画廊](https://analog-canvas.tokenzhang.com/)，或[新建电路](https://analog-canvas.tokenzhang.com/editor)。
+- **使用在线版本：** 浏览[社区画廊](https://analog.sunmmyapi.xyz/)，或[新建电路](https://analog.sunmmyapi.xyz/editor)。
 - **学习编辑器：** 阅读[入门指南](docs/user/getting-started.md)、[原理图层次结构](docs/user/schematic-hierarchy.md)、[兼容性说明](docs/user/project-compatibility.md)和[故障排查](docs/user/troubleshooting.md)。
 - **了解项目：** 查看[当前架构](docs/overall-product-plan.md)和[文档索引](docs/README.md)。
 - **开发或贡献：** 阅读[工作规则](AGENTS.md)、[当前开发阅读清单](docs/README.md#contributor-reading-order)和[测试系统](docs/testing/README.md)。
