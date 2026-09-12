@@ -1,25 +1,20 @@
 name: Deploy Cloudflare
 
-# Production deploys only from a release (ADR 0057): a v* tag, or a manual
-# dispatch selecting an accepted ref (main by default). Merging to main deploys the preview instead
-# (deploy-preview.yml); this workflow promotes a commit the preview has
-# already proved. Nothing here can be triggered by an ordinary merge.
+# Production deploys only from a release (a v* tag or explicit commit
+# dispatch). Nothing here can be triggered by an ordinary merge.
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
     inputs:
-      ref:
-        description: "Accepted Git ref to release"
-        required: false
-        default: "main"
+      sha:
+        description: "Full commit SHA to release"
+        required: true
         type: string
 
 permissions:
   contents: read
-  # To ask whether the preview deployed this commit.
-  actions: read
 
 concurrency:
   group: cloudflare-production
@@ -37,36 +32,7 @@ jobs:
       # Everything below deploys exactly that commit, never a moving branch head.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
-      # The preview is where a commit is looked at before the public sees it
-      # (ADR 0057). A commit that never deployed there, or deployed and
-      # failed, cannot be released: this is the one gate between main and
-      # the live site, and it asks a question CI cannot answer.
-      - name: The release must have a green preview deploy
-        id: preview
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          release_sha="$(git rev-parse 'HEAD^{commit}')"
-          run_id="$(gh run list --repo "$GITHUB_REPOSITORY" \
-            --workflow deploy-preview.yml --commit "$release_sha" \
-            --status success --limit 100 --json databaseId,createdAt \
-            --jq 'sort_by(.createdAt) | last | .databaseId // empty')"
-          if [ -z "$run_id" ]; then
-            echo "::error::No successful preview deploy exists for $release_sha. Merge it to main, let the preview deploy and verify it, then release that commit."
-            exit 1
-          fi
-          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
-          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-          echo "Preview deploy $run_id accepted $release_sha."
-      - name: Download the accepted Preview candidate
-        uses: actions/download-artifact@v4
-        with:
-          name: preview-candidate-${{ steps.preview.outputs.release_sha }}
-          path: ${{ runner.temp }}/analog-canvas-candidate
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ steps.preview.outputs.run_id }}
+          ref: ${{ inputs.sha || github.ref }}
       - uses: pnpm/action-setup@v4
         with:
           version: 11.16.0

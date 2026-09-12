@@ -48,107 +48,24 @@ The existing deployment triggers below implement this cadence. See
 
 ## Channels and data isolation
 
-| Channel    | Trigger and configuration                                                         | Data boundary                                                                                                                                              |
-| ---------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Preview    | main push; `.github/workflows/deploy-preview.yml`; `wrangler.preview.jsonc`       | Own accounts and Projects; anonymous HTTP read-through to public Gallery; Gallery writes refused; private CI acceptance uses the same isolated Project API |
-| Production | `v*` tag or manual dispatch; `.github/workflows/cloudflare.yml`; `wrangler.jsonc` | Public product and its private storage                                                                                                                     |
+| Channel | Trigger and configuration | Data boundary |
+| --- | --- | --- |
+| Self-hosted | `containers/self-host/deploy.sh <commit>` on the operator host | Persistent local data, secrets, and simulator services remain on the host |
+| Production | `v*` tag or explicit commit dispatch; `.github/workflows/cloudflare.yml`; `wrangler.jsonc` | Public product and its private storage |
 
-Preview is served at `analog-canvas-preview.tokenzhang.com`, labelled and
-unindexed. Production is `analog-canvas.tokenzhang.com`. The separate
-configuration files do not inherit routes or bindings. Preview has no
-Production Durable Object binding or Production cookies. Human testers use a
-Preview-only Google OAuth client; its consent-screen test-user roster controls
-who can sign in. Its simulation capability can be issued without OAuth; public
-site access is not unrestricted compute authority.
+The standalone Cloudflare Preview channel has been retired. Main pushes no longer
+deploy or verify a Preview Worker, and production release no longer requires a
+successful Preview run. Use the self-host deployment path for the active hosted
+environment.
 
-The channels share one immutable deployment candidate. Preview builds the
-browser assets and Worker bundle once, deploys those exact bytes, and stores the
-candidate only after hosted acceptance succeeds. Production downloads that
-candidate from the successful Preview run, verifies its commit and single
-payload identity, and deploys it without rebuilding. Runtime bindings, routes,
-secrets, queues, buckets and Durable Object namespaces remain channel-specific;
-they are applied by the destination Wrangler configuration rather than baked
-into the candidate.
-[ADR 0057](adr/0057-release-channels-preview-and-production.md) explains the choice.
-
-The release build keeps the accepted behavior at the promoted `main` commit.
-Version 0.4.0 opens the previously Preview-only Simulation and Agent workflows
-on Production. The Preview build declares these browser capabilities
-explicitly, and Production serves the same promoted bytes:
-
-| Browser capability                                               | Preview  | Production |
-| ---------------------------------------------------------------- | -------- | ---------- |
-| Core editor, project format, Gallery and account UI              | Enabled  | Enabled    |
-| Analog Simulation workspace and Testbench authoring entry points | Enabled  | Enabled    |
-| Agent connection controls                                        | Enabled  | Enabled    |
-| Digital Timing UI                                                | Disabled | Disabled   |
-
-These are browser presentation choices. Persisted Simulation data remains
-round-trippable on both channels, and the Agent and Simulation HTTP APIs keep
-their independently deployed contracts. The Preview build also sets
-`VITE_ICM_SIMULATION_TRANSPORT=managed`; local and portable builds retain direct
-execution unless explicitly configured otherwise.
-
-The deployed cross-Project journey receives a repository secret as a
-host-scoped HttpOnly cookie. Only `/api/projects` recognizes that identity, and
-only when `ICM_CHANNEL=preview`; Gallery, account, moderation and Production
-routes do not. The journey seeds one DUT Project in the Preview Worker’s own
-GalleryDO, imports it through the public `project_cells` resource, runs the
-resulting Testbench, preserves its receipt, and removes the seed. Missing or
-incorrect credentials fail closed as the same 401/403 seen by an ordinary
-visitor.
-
-Human Preview login uses this callback:
-
-```text
-https://analog-canvas-preview.tokenzhang.com/api/auth/google/callback
-```
-
-The `cloudflare-preview` GitHub environment supplies
-`PREVIEW_GOOGLE_CLIENT_ID` and `PREVIEW_GOOGLE_CLIENT_SECRET`. Deployment maps
-them to the Preview Worker's standard OAuth secret names when both are present.
-Human login remains dark when neither is configured; a partial pair fails the
-deployment. Preview's `AUTH` and `GALLERY` bindings are independent namespaces;
-the same Google account may therefore use Preview and Production without
-sharing sessions, internal user IDs, limits, or Projects. Preview Projects are
-disposable test data and never synchronize or promote to Production.
+Production releases still require Cloudflare credentials configured in the
+`cloudflare-production` environment; removing the Preview channel does not
+remove production Cloudflare authentication.
 
 ## Releasing to Production
 
-Select a candidate commit that Preview has successfully deployed and verified.
-The Production workflow selects the newest successful `deploy-preview.yml` run
-for that exact commit and downloads its `preview-candidate-<commit>` artifact.
-The artifact is the same Worker bundle and browser asset tree served during
-Preview acceptance. Production never substitutes the latest branch build or
-rebuilds the selected source.
-
-Use either a version tag (choose the intended unused release version):
-
-```bash
-git tag v<version> <sha>
-git push origin v<version>
-```
-
-or the one-click manual promotion:
-
-```bash
-gh workflow run "Deploy Cloudflare"
-```
-
-The manual action defaults to the current `main` ref, so the normal promotion
-requires no commit copy/paste. Its checkout resolves that ref once and then
-requires the exact commit's accepted Preview artifact. Supply `-f ref=<ref>`
-only when deliberately promoting another accepted tag or branch.
-
-Ordinary merges do not trigger Production. Normal hotfixes use the same route;
-the incident exception below is separate. Runtime configuration, including the
-simulator gateway, ships only when the selected release contains it.
-
-Promotion is deliberately small: select the accepted commit once, then let the
-workflow download, verify, deploy and check it. Before treating a release as
-validated, inspect the candidate's actual Preview evidence and the relevant
-required checks. Local unit tests, build success, and recorded rawfiles cannot
-certify deployed bindings, secrets, model identity, or the hosted request path.
+Select the intended commit and use either a version tag or explicit dispatch.
+[ADR 0057](adr/0057-release-channels-preview-and-production.md) explains the choice.
 
 ## Deploy, verify, recover
 

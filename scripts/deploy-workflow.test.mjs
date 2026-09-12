@@ -22,20 +22,10 @@ describe("production deploys only from a release (ADR 0057)", () => {
     expect(workflow).toContain('default: "main"');
   });
 
-  it("resolves the selected ref once and promotes that exact commit", () => {
-    expect(workflow).toContain("ref: ${{ inputs.ref || github.ref }}");
-    expect(workflow).toContain("git rev-parse 'HEAD^{commit}'");
+  it("deploys the named commit, not a branch head", () => {
+    expect(workflow).toContain("ref: ${{ inputs.sha || github.ref }}");
   });
 
-  it("refuses a commit the preview never proved", () => {
-    // The preview is the one place a commit is looked at before the public
-    // sees it. A release of a commit with no green preview deploy is the
-    // 2026-09-01 outage waiting to happen again.
-    expect(workflow).toContain("The release must have a green preview deploy");
-    expect(workflow).toContain("--workflow deploy-preview.yml");
-    expect(workflow).toContain("--status success");
-    expect(workflow).toContain("No successful preview deploy exists");
-  });
 
   it("promotes the exact candidate preserved by that successful Preview run", () => {
     expect(workflow).toContain("actions/download-artifact@v4");
