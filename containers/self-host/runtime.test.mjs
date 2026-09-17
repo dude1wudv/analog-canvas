@@ -373,7 +373,7 @@ test("exposes local auth, registers a user, and persists a Cloud Project across 
     `${runtimeBase}/api/projects`,
     requestOptions(cookie, { name: "Runtime probe", projectText }),
   );
-  assert.equal(create.status, 201);
+  assert.equal(create.status, 201, await create.clone().text());
   const created = (await create.json()).project;
   assert.equal(created.name, "Runtime probe");
   assert.equal(created.revision, 1);
