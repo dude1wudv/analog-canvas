@@ -9,11 +9,7 @@ import {
   propertyCodeChanges,
   reflectedPropertyCode,
 } from "./component-property-code-assists";
-import {
-  CANVAS_PROPERTY_FIELDS,
-  ROTATION_OPTIONS,
-  MIRROR_OPTIONS,
-} from "./component-property-fields";
+import { ROTATION_OPTIONS, MIRROR_OPTIONS } from "./component-property-fields";
 
 const context = {
   instance: {
@@ -42,10 +38,32 @@ function apply(
 }
 
 describe("Canvas property assistance", () => {
+  it("addresses each swap switch independently and refuses nonboolean edits", () => {
+    const amplifier = {
+      ...context,
+      instance: { ...context.instance, symbolId: "opamp-differential" },
+    };
+    const source = formatComponentPropertyCode(amplifier);
+    for (const key of ["inputsSwapped", "outputsSwapped"]) {
+      const path = `appearance.${key}`;
+      expect(
+        propertyCodeSpans(source, amplifier).find(
+          (span) => span.field.path === path,
+        )?.field.kind,
+      ).toBe("boolean");
+      expect(
+        apply(source, propertyCodeChanges(source, amplifier, { [path]: true })),
+      ).toBe(source.replace(`"${key}": false`, `"${key}": true`));
+      expect(
+        propertyCodeChanges(source, amplifier, { [path]: "true" }),
+      ).toEqual([]);
+    }
+  });
+
   it("edits an independent field without repairing another invalid value", () => {
     const source = formatComponentPropertyCode(context).replace(
       '"rotation": 0',
-      '"rotation": 45',
+      '"rotation": 30',
     );
     const changed = apply(
       source,
@@ -55,7 +73,7 @@ describe("Canvas property assistance", () => {
     expect(parseComponentPropertyCode(changed, context).ok).toBe(false);
     const repaired = apply(
       changed,
-      propertyCodeChanges(changed, context, { "placement.rotation": 90 }),
+      propertyCodeChanges(changed, context, { "placement.rotation": 45 }),
     );
     expect(parseComponentPropertyCode(repaired, context).ok).toBe(true);
   });
@@ -70,14 +88,14 @@ describe("Canvas property assistance", () => {
   });
   it("flips a valid orientation while preserving an invalid color", () => {
     const source = formatComponentPropertyCode(context).replace(
-      '"foreground": "auto"',
-      '"foreground": [256, 0, 0]',
+      '"color": "auto"',
+      '"color": [256, 0, 0]',
     );
     const changed = apply(
       source,
       reflectedPropertyCode(source, context, "left-right"),
     );
-    expect(JSON.parse(changed).appearance.foreground).toEqual([256, 0, 0]);
+    expect(JSON.parse(changed).appearance.color).toEqual([256, 0, 0]);
     expect(JSON.parse(changed).placement).not.toEqual(
       JSON.parse(source).placement,
     );
@@ -85,9 +103,15 @@ describe("Canvas property assistance", () => {
   });
   it("addresses all available fields by syntax path and preserves unrelated draft bytes", () => {
     const source = formatComponentPropertyCode(context);
-    expect(propertyCodeSpans(source).map((span) => span.field.path)).toEqual(
-      CANVAS_PROPERTY_FIELDS.map((field) => field.path),
-    );
+    expect(propertyCodeSpans(source).map((span) => span.field.path)).toEqual([
+      "placement.coordinate",
+      "placement.rotation",
+      "placement.mirror",
+      "appearance",
+      "appearance.color",
+      "display.visualAnnotation",
+      "display.value",
+    ]);
     const changed = apply(
       source,
       propertyCodeChanges(source, context, { "display.value": true }),
@@ -115,10 +139,33 @@ describe("Canvas property assistance", () => {
         ).toBe(true);
       }
     expect(
-      propertyCodeChanges(source, context, { "placement.rotation": 45 }),
+      propertyCodeChanges(source, context, { "placement.rotation": 30 }),
     ).toEqual([]);
     expect(
       propertyCodeChanges(source, context, { "placement.mirror": "y" }),
+    ).toEqual([]);
+  });
+  it("edits the VDD connection choice inside the JSON surface", () => {
+    const vddContext = {
+      ...context,
+      instance: { ...context.instance, symbolId: "vdd-port" },
+      connection: "cell-pin" as const,
+    };
+    const source = formatComponentPropertyCode(vddContext);
+    const connection = propertyCodeSpans(source, vddContext).find(
+      (span) => span.field.path === "connection",
+    );
+    expect(connection?.field.kind).toBe("choice");
+    expect(
+      JSON.parse(
+        apply(
+          source,
+          propertyCodeChanges(source, vddContext, { connection: "global" }),
+        ),
+      ).connection,
+    ).toBe("global");
+    expect(
+      propertyCodeChanges(source, vddContext, { connection: "project" }),
     ).toEqual([]);
   });
   it("does not repair invalid JSON implicitly, overwrite invalid drafts, or invent unsupported controls", () => {
@@ -146,6 +193,41 @@ describe("Canvas property assistance", () => {
       propertyCodeChanges(unavailable, noDisplay, { "display.value": true }),
     ).toEqual([]);
   });
+  it("edits merged internal-mark and polarity controls by syntax path", () => {
+    const opampContext = {
+      ...context,
+      instance: { ...context.instance, symbolId: "opamp" },
+    };
+    const opampSource = formatComponentPropertyCode(opampContext);
+    expect(
+      propertyCodeSpans(opampSource, opampContext).map(
+        (span) => span.field.path,
+      ),
+    ).toContain("appearance.internalMark");
+    expect(
+      JSON.parse(
+        apply(
+          opampSource,
+          propertyCodeChanges(opampSource, opampContext, {
+            "appearance.internalMark": "A",
+          }),
+        ),
+      ).appearance.internalMark,
+    ).toBe("A");
+
+    const comparatorContext = {
+      ...context,
+      instance: { ...context.instance, symbolId: "comparator" },
+    };
+    const comparatorSource = formatComponentPropertyCode(comparatorContext);
+    const changed = apply(
+      comparatorSource,
+      propertyCodeChanges(comparatorSource, comparatorContext, {
+        "appearance.inputPolarity": false,
+      }),
+    );
+    expect(JSON.parse(changed).appearance.inputPolarity).toBe(false);
+  });
   it("reflects in canvas directions at every rotation/mirror state without moving the origin", () => {
     for (const rotation of ROTATION_OPTIONS)
       for (const mirror of MIRROR_OPTIONS)
@@ -157,7 +239,8 @@ describe("Canvas property assistance", () => {
           const changed = JSON.parse(
             apply(source, reflectedPropertyCode(source, context, direction)),
           );
-          expect(changed.placement.at).toEqual([210, 140]);
+          expect(changed.placement.coordinate).toEqual([210, 140]);
+          expect(changed.placement.rotation).toBe(code.placement.rotation);
           const before = transformPoint(
             { x: 10, y: 20 },
             { x: 0, y: 0 },

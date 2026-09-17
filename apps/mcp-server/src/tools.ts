@@ -4,6 +4,7 @@ import { SimulationOperationSchema } from "@icm/simulation-service/contract";
 import { SimulationFileOperationSchema } from "@icm/simulation-service/files";
 import {
   AGENT_API_VERSION,
+  AGENT_MCP_VERSION,
   AgentFileDownloadOptionsSchema,
 } from "@icm/agent-adapter";
 import {
@@ -282,10 +283,23 @@ const TOOLS: readonly ToolEntry[] = [
     definition: {
       name: "connection_status",
       description:
-        "Report pairing and editor-attachment state (unpaired/connecting/online/editor-offline/reconnecting/revoked) plus token validity. Tokens themselves are never returned.",
-      inputSchema: jsonSchemaOf(z.strictObject({})),
+        "Report actual MCP runtime version and API origin. Set refresh:false for local readiness without network access. By default read lightweight Session observations without waiting for the editor: attached means a browser socket exists, not verified execution readiness; unknown means the relay could not be checked. No credentials are exposed.",
+      inputSchema: jsonSchemaOf(
+        z.strictObject({ refresh: z.boolean().optional() }),
+      ),
     },
-    handle: async (_args, session) => session.client.status({ refresh: true }),
+    handle: async (args, session) => {
+      const { refresh = true } = z
+        .strictObject({ refresh: z.boolean().optional() })
+        .parse(args);
+      return {
+        ...(await session.client.status({ refresh })),
+        runtime: {
+          version: AGENT_MCP_VERSION,
+          apiBaseUrl: session.client.apiBaseUrl,
+        },
+      };
+    },
   },
   {
     definition: {
@@ -329,7 +343,7 @@ const TOOLS: readonly ToolEntry[] = [
     definition: {
       name: "simulation",
       description:
-        "Prepare one saved Project folder or a raw File Resource workspace, or prepare and sequentially run a bounded batch of saved folders. Start, poll/read, cancel, and list run artifacts through the shared Simulation Resource. Supply the SAME requestId for a start retry. Ordinary failures are recoverable result objects, not session failures. Configure named settings through simulation_folder or full typed replacement through advanced_transact; use ordinary Cell/source edits for DUT/testbench.",
+        "Prepare a saved Project folder or raw File Resource workspace; start, read, cancel and export runs or sequential batches through the shared Simulation Resource. authoring-help exposes native VACASK helpers including Python reporting. Source code owns analyses and native measurements; @spec comments declare acceptance rules. Read outputData.specs or specs.json for verdicts, result.data/result.json for raw numbers and one analysis CSV per record. No automatic measurements or built-in plots. Large receipts use resultPreview and paged artifact access. Supply the SAME requestId for a start retry. Use simulation_files for source and ordinary Cell edits for the DUT/testbench.",
       inputSchema: jsonSchemaOf(SimulationArgs),
     },
     handle: async (args, session) => {
@@ -432,7 +446,7 @@ const TOOLS: readonly ToolEntry[] = [
     definition: {
       name: "export_file",
       description:
-        "Export the browser Project, Canvas SVG/PNG/PDF, or a simulation plot to an explicit local path. Canvas exports require documentId. simulation-plot requires simulation:{runId,analysisIndex,format:svg|png}; it uses the same plot renderer/export as Results, returning a ZIP when the selected record has multiple plots. No GUI click is required.",
+        "Export the browser Project or Canvas SVG/PNG/PDF to an explicit local path. Canvas exports require documentId. Simulation results use simulation export to list artifacts, then simulation_files artifact with outputPath to save raw/CSV/Spec files after digest verification. simulation-plot is retired and returns SIMULATION_PLOT_RETIRED; plot externally from raw/CSV.",
       inputSchema: jsonSchemaOf(ExportFileArgs),
     },
     handle: async (args, session) =>

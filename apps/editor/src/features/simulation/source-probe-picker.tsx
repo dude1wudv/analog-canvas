@@ -5,11 +5,13 @@ import type { SourceProbeChoice } from "./source-probe-choices";
 export function SourceProbePicker({
   choices,
   kind,
+  notice,
   onAdd,
   onClose,
 }: {
   choices: readonly SourceProbeChoice[];
-  kind: "voltage" | "current";
+  kind: "voltage" | "current" | "device-op";
+  notice?: string | undefined;
   onAdd(label: string, expression: SimulationSourceExpression): boolean;
   onClose(): void;
 }) {
@@ -36,8 +38,7 @@ export function SourceProbePicker({
   }, [onClose]);
   const filtered = choices.filter(
     (c) =>
-      c.kind === (kind === "current" ? "current" : "voltage") &&
-      c.label.toLowerCase().includes(query.toLowerCase()),
+      c.kind === kind && c.label.toLowerCase().includes(query.toLowerCase()),
   );
   const add = (choice: SourceProbeChoice) => {
     const key = JSON.stringify(choice.expression);
@@ -63,6 +64,7 @@ export function SourceProbePicker({
         <strong>Save {kind}</strong>
         <button onClick={finish}>Done</button>
       </header>
+      {notice && <p role="status">{notice}</p>}
       <input
         autoFocus
         value={query}
@@ -91,7 +93,7 @@ export function SourceProbePicker({
           onClick={() =>
             add({
               label: query.trim(),
-              kind: kind === "current" ? "current" : "voltage",
+              kind,
               expression: { kind: "vector", vector: query.trim() },
             })
           }

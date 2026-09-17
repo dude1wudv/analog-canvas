@@ -1,8 +1,21 @@
 import type { SchematicEdit } from "@icm/edit-engine";
-import type { SchematicDocument } from "@icm/model";
+import { resolveAnnotationText } from "@icm/derived";
+import {
+  flattenRichText,
+  semanticTextDocument,
+  type SchematicDocument,
+} from "@icm/model";
 
 import { snapCoordinate } from "../../snap/engine";
 import type { ComponentPropertyCodeValue } from "./component-property-code";
+import { instanceLabelAnnotationFor } from "../instance-display/default-instance-display";
+import {
+  NO_INTERNAL_MARK,
+  symbolForInputPolarity,
+  symbolForInputsSwapped,
+  symbolForInternalMark,
+  symbolForOutputsSwapped,
+} from "./component-visual-variants";
 
 type Instance = SchematicDocument["instances"][number];
 
@@ -27,11 +40,36 @@ export function planComponentPropertyCodeEdits(
   value: ComponentPropertyCodeValue,
 ): SchematicEdit[] {
   const edits: SchematicEdit[] = [];
-  if (value.reference !== undefined && value.reference !== instance.reference)
+  if (value.displayName !== undefined) {
+    const label = instanceLabelAnnotationFor(document, instance.id);
+    if (
+      label?.kind === "instance-label" &&
+      flattenRichText(resolveAnnotationText(document, label)).trim() !==
+        value.displayName
+    ) {
+      const {
+        binding: _binding,
+        content: _content,
+        formatOverride: _formatOverride,
+        ...presentation
+      } = label;
+      edits.push({
+        kind: "upsert_schematic_annotation",
+        annotation: {
+          ...presentation,
+          content: semanticTextDocument(value.displayName, "instance-label"),
+        },
+      });
+    }
+  }
+  if (
+    value.netlistName !== undefined &&
+    value.netlistName !== instance.reference
+  )
     edits.push({
       kind: "set_instance_reference",
       instanceId: instance.id,
-      reference: value.reference,
+      reference: value.netlistName,
     });
   if (value.parameters && instance.netlist) {
     const set = Object.fromEntries(
@@ -51,28 +89,60 @@ export function planComponentPropertyCodeEdits(
         ...(unset.length ? { unset } : {}),
       });
   }
-  if (value.symbol && value.symbol !== instance.symbolId)
+  let nextSymbolId = value.symbol ?? instance.symbolId;
+  if (value.appearance.internalMark !== undefined)
+    nextSymbolId =
+      symbolForInternalMark(nextSymbolId, value.appearance.internalMark) ??
+      nextSymbolId;
+  if (value.appearance.inputPolarity !== undefined)
+    nextSymbolId =
+      symbolForInputPolarity(nextSymbolId, value.appearance.inputPolarity) ??
+      nextSymbolId;
+  if (value.appearance.inputsSwapped !== undefined)
+    nextSymbolId =
+      symbolForInputsSwapped(nextSymbolId, value.appearance.inputsSwapped) ??
+      nextSymbolId;
+  if (value.appearance.outputsSwapped !== undefined)
+    nextSymbolId =
+      symbolForOutputsSwapped(nextSymbolId, value.appearance.outputsSwapped) ??
+      nextSymbolId;
+  if (nextSymbolId !== instance.symbolId)
     edits.push({
       kind: "set_instance_symbol",
       instanceId: instance.id,
-      symbolId: value.symbol,
+      symbolId: nextSymbolId,
     });
+
+  let nextSignalFlow = value.signalFlow;
+  if (value.appearance.internalMark !== undefined) {
+    nextSignalFlow = { ...(instance.signalFlowParameters ?? {}) };
+    if (
+      value.appearance.internalMark === NO_INTERNAL_MARK ||
+      value.appearance.internalMark === "A"
+    )
+      delete nextSignalFlow.formula;
+    else nextSignalFlow.formula = value.appearance.internalMark;
+  }
   if (
-    value.signalFlow &&
-    JSON.stringify(value.signalFlow) !==
+    nextSignalFlow &&
+    JSON.stringify(nextSignalFlow) !==
       JSON.stringify(instance.signalFlowParameters ?? {})
   )
     edits.push({
       kind: "set_instance_signal_flow_parameters",
       instanceId: instance.id,
-      parameters: Object.keys(value.signalFlow).length
-        ? value.signalFlow
-        : null,
+      parameters: Object.keys(nextSignalFlow).length ? nextSignalFlow : null,
     });
   if (instance.placement && value.placement) {
     const position = {
-      x: snapCoordinate(value.placement.at[0], document.presentation.grid),
-      y: snapCoordinate(value.placement.at[1], document.presentation.grid),
+      x: snapCoordinate(
+        value.placement.coordinate[0],
+        document.presentation.grid,
+      ),
+      y: snapCoordinate(
+        value.placement.coordinate[1],
+        document.presentation.grid,
+      ),
     };
     if (
       position.x !== instance.placement.position.x ||
@@ -97,9 +167,9 @@ export function planComponentPropertyCodeEdits(
   }
 
   const styleOverride = {
-    ...(value.appearance.foreground === "auto"
+    ...(value.appearance.color === "auto"
       ? {}
-      : { foreground: value.appearance.foreground }),
+      : { foreground: value.appearance.color }),
   };
   const nextStyle = Object.keys(styleOverride).length ? styleOverride : null;
   if (!sameStyle(instance.styleOverride ?? null, nextStyle)) {

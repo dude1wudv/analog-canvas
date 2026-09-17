@@ -2,6 +2,9 @@ import { prepareExecutionInput } from "./prepare-input.js";
 import type { CircuitProject } from "@icm/model";
 import { readSimulationExperimentConfig } from "@icm/model";
 import { simulationAnalysisToCsv } from "@icm/spice-run";
+import { nativeAuthoringHelp } from "@icm/netlist";
+import { simulationLanguageHelp, NGSPICE_LANGUAGE_REFERENCE } from "@icm/spice";
+import { profileEngine } from "./profile-engine.js";
 import {
   SimulationOperationSchema,
   problem,
@@ -11,15 +14,14 @@ import {
   type SimulationOperation,
 } from "./contract.js";
 import { SimulationFiles } from "./files.js";
-import {
-  evaluateSimulationOutputs,
-  simulationDeviceOperatingPointsToCsv,
-  simulationOutputAnalysisToCsv,
-} from "./output-evaluation.js";
-import { automaticMeasurementsToCsv } from "./automatic-measurements.js";
+import { simulationSpecReport, simulationSpecsToCsv } from "./spec-results.js";
+import { vacaskMeasurementResults } from "./vacask-measurements.js";
+import { ngspiceMeasurementResults } from "./ngspice-measurements.js";
+import { executionArtifactEntries } from "./execution-artifacts.js";
 
 import {
   ExecutionFailure,
+  validateExecutionOutput,
   type ExecutionInput,
   type Executor,
 } from "./executor.js";
@@ -32,6 +34,7 @@ type PrepareSource = Extract<
 >["source"];
 type InternalRun = {
   view: Run;
+  engine: "ngspice" | "vacask";
   prepared: Prepared;
   token: string;
   expiresAt: number;
@@ -82,7 +85,11 @@ export class SimulationService {
     this.batches.clear();
     this.batchStarts.clear();
     // Draft/artifact teardown belongs to the File Resource owner.
-    await Promise.allSettled(active.map((r) => this.executor.cancel(r.token)));
+    await Promise.allSettled(
+      active.map((r) =>
+        this.executor.cancel(r.token, r.prepared.environment.profileId),
+      ),
+    );
   }
   async handle(request: unknown, requestId: string): Promise<SimulationReply> {
     const parsed = SimulationOperationSchema.safeParse(request);
@@ -94,6 +101,52 @@ export class SimulationService {
       );
     const op = parsed.data;
     try {
+      if (op.operation === "authoring-help") {
+        let engine: "ngspice" | "vacask" = "vacask";
+        if (op.profileId) {
+          const caps = await this.executor.capabilities(op.profileId);
+          const profile = caps.profiles.find((p) => p.id === op.profileId);
+          const selected =
+            profile && profileEngine(profile, caps.rawfileCollection);
+          if (!selected)
+            return problem(
+              "SIMULATION_PROFILE_UNKNOWN",
+              "Select an advertised Profile for authoring help",
+              "input",
+            );
+          engine = selected;
+        }
+        const helpers =
+          engine === "vacask"
+            ? nativeAuthoringHelp(op)
+            : simulationLanguageHelp
+                .filter((h) => h.context === "deck" || h.context === "control")
+                .filter(
+                  (h) =>
+                    (!op.name || h.name === op.name) &&
+                    (!op.context ||
+                      h.context ===
+                        (op.context === "circuit" ? "deck" : "control")),
+                )
+                .map((h) => ({
+                  name: h.name,
+                  context:
+                    h.context === "deck"
+                      ? ("circuit" as const)
+                      : ("control" as const),
+                  signature: h.signature,
+                  summary: h.summary,
+                  reference: `${NGSPICE_LANGUAGE_REFERENCE}#${h.section}`,
+                  source: h.signature,
+                }));
+        return op.name && !helpers.length
+          ? problem(
+              "SIMULATION_HELPER_NOT_FOUND",
+              "No matching helper; omit name to list available native helpers. This catalogue is not an execution allow-list.",
+              "read",
+            )
+          : { ok: true, helpers };
+      }
       this.prune();
       if (op.operation === "capabilities")
         return {
@@ -129,7 +182,10 @@ export class SimulationService {
           ["running", "cancelling", "lost"].includes(run.view.state)
         ) {
           if (run.view.state !== "lost") run.view.state = "cancelling";
-          await this.executor.cancel(run.token);
+          await this.executor.cancel(
+            run.token,
+            run.prepared.environment.profileId,
+          );
           // Executor acknowledgement means termination requested; only completion confirms cleanup.
         }
         if (op.operation === "read") {
@@ -148,6 +204,7 @@ export class SimulationService {
               this.getProject(),
               run.source.folderId,
               run.source.variant,
+              run.engine,
             );
             run.view.inputStatus =
               revision === null
@@ -186,7 +243,7 @@ export class SimulationService {
           message:
             "This operation failed; the session and authored input remain available.",
           stage:
-            op.operation === "capabilities"
+            op.operation === "capabilities" || op.operation === "authoring-help"
               ? "read"
               : op.operation === "prepare-batch"
                 ? "prepare"
@@ -548,7 +605,10 @@ export class SimulationService {
         const run = this.runs.get(running.runId);
         if (run && ["running", "cancelling", "lost"].includes(run.view.state)) {
           if (run.view.state !== "lost") run.view.state = "cancelling";
-          await this.executor.cancel(run.token);
+          await this.executor.cancel(
+            run.token,
+            run.prepared.environment.profileId,
+          );
         }
       } else {
         batch.view.state = "cancelled";
@@ -580,6 +640,7 @@ export class SimulationService {
       caps,
       this.getProject,
       this.files,
+      (profileId) => this.executor.capabilities(profileId),
     );
     if (!preparation.ok) return preparation;
     const {
@@ -729,6 +790,7 @@ export class SimulationService {
     };
     const entry: InternalRun = {
       view,
+      engine: prepared.input.language === "vacask" ? "vacask" : "ngspice",
       prepared: structuredClone(prepared.view),
       token: crypto.randomUUID(),
       expiresAt: this.now() + TTL,
@@ -753,32 +815,79 @@ export class SimulationService {
     epoch: number,
   ) {
     try {
-      const output = await this.executor.execute(input, run.token, timeoutMs, {
-        preparedId: run.prepared.id,
-        preparedDigest: run.prepared.digest,
-      });
+      const output = validateExecutionOutput(
+        input,
+        await this.executor.execute(input, run.token, timeoutMs, {
+          preparedId: run.prepared.id,
+          preparedDigest: run.prepared.digest,
+        }),
+      );
       if (epoch !== this.epoch) return;
       run.view.result = output.result;
-      if (output.result.data) {
-        run.view.outputData = evaluateSimulationOutputs(
-          output.result.data,
-          run.prepared.vectors,
-          run.prepared.outputs,
-          run.prepared.measurements ?? [],
-          run.prepared.deviceOperatingPoints,
-          true,
-          run.prepared.signalNames,
-        );
-      }
+      const nativeReports =
+        output.result.metadata.environment.simulator.name === "vacask"
+          ? vacaskMeasurementResults(
+              output.result.log,
+              output.result.outcome.status !== "completed-with-dropped-input",
+            )
+          : {
+              measurements: ngspiceMeasurementResults(
+                input.files,
+                input.entryPath ?? "run.cir",
+                output.result.log,
+              ),
+              diagnostics: [],
+            };
+      const nativeMeasurements = nativeReports.measurements;
+      const specs = simulationSpecReport(
+        input.files,
+        input.entryPath ?? "run.cir",
+        nativeMeasurements,
+        {
+          runId: run.view.id,
+          preparedId: run.prepared.id,
+          inputDigest: run.prepared.digest,
+        },
+        output.result.outcome.status === "completed" && !output.cancelled,
+      );
+      // Raw numeric data lives in result.data. Keep legacy output fields readable
+      // for archives, but never produce a second waveform or automatic metrics.
+      run.view.outputData = {
+        schemaVersion: 1,
+        analyses: [],
+        diagnostics: nativeReports.diagnostics,
+        specs,
+      };
       const artifact = async (name: string, type: string, text: string) =>
         run.view.artifacts.push(
           await this.publishArtifact(epoch, name, type, text),
         );
       await artifact("log.txt", "text/plain", output.result.log);
+      await artifact("specs.json", "application/json", JSON.stringify(specs));
+      await artifact("specs.csv", "text/csv", simulationSpecsToCsv(specs));
       if (output.rawfile !== undefined)
         await artifact("out.raw", "text/plain", output.rawfile);
       if (output.executedDeck !== undefined)
         await artifact("executed.cir", "text/plain", output.executedDeck);
+      const nativeArtifacts: {
+        kind: "raw" | "executed";
+        path: string;
+        artifact: ArtifactRef;
+      }[] = [];
+      for (const item of executionArtifactEntries(output)) {
+        const ref = await this.publishArtifact(
+          epoch,
+          item.name,
+          "text/plain",
+          item.text,
+        );
+        run.view.artifacts.push(ref);
+        nativeArtifacts.push({
+          kind: item.kind,
+          path: item.path,
+          artifact: ref,
+        });
+      }
       await artifact(
         "result.json",
         "application/json",
@@ -791,34 +900,6 @@ export class SimulationService {
           analysis.analysis + "-" + i + ".csv",
           "text/csv",
           simulationAnalysisToCsv(analysis),
-        );
-      if (run.view.outputData)
-        await artifact(
-          "outputs.json",
-          "application/json",
-          JSON.stringify(run.view.outputData),
-        );
-      for (const [i, analysis] of (
-        run.view.outputData?.analyses ?? []
-      ).entries())
-        await artifact(
-          `outputs-${analysis.analysis}-${i}.csv`,
-          "text/csv",
-          simulationOutputAnalysisToCsv(analysis),
-        );
-      if (run.view.outputData?.measurements?.length)
-        await artifact(
-          "measurements.csv",
-          "text/csv",
-          automaticMeasurementsToCsv(run.view.outputData.measurements),
-        );
-      if (run.view.outputData?.deviceOperatingPoints?.length)
-        await artifact(
-          "device-operating-points.csv",
-          "text/csv",
-          simulationDeviceOperatingPointsToCsv(
-            run.view.outputData.deviceOperatingPoints,
-          ),
         );
       const evidenceArtifacts = run.view.artifacts.map((item) => ({ ...item }));
       await artifact(
@@ -844,6 +925,7 @@ export class SimulationService {
               measurements: run.prepared.measurements ?? [],
             },
             environment: output.result.metadata.environment,
+            ...(nativeArtifacts.length ? { nativeArtifacts } : {}),
             artifacts: evidenceArtifacts,
           },
           null,

@@ -112,6 +112,55 @@ describe("visual quality diagnostics", () => {
     expect(document.instances[0]!.placement!.position).toEqual({ x: 0, y: 0 });
   });
 
+  it("flags only non-standard wire angles and identifies protected routes", () => {
+    const document = createEmptyDocument("doc", "Wire angle diagnostics");
+    document.nets.push(
+      { id: "n1", terminals: [] },
+      { id: "n2", terminals: [] },
+    );
+    document.junctions.push(
+      { id: "j1", netId: "n1", position: { x: 0, y: 0 } },
+      { id: "j2", netId: "n1", position: { x: 30, y: 30 } },
+      { id: "j3", netId: "n2", position: { x: 0, y: 60 } },
+      { id: "j4", netId: "n2", position: { x: 40, y: 80 } },
+    );
+    document.routes.push(
+      createRoutePath({
+        id: "intentional-45",
+        netId: "n1",
+        start: { kind: "junction", junctionId: "j1" },
+        end: { kind: "junction", junctionId: "j2" },
+        bends: [],
+        modes: ["manual"],
+      }),
+      createRoutePath({
+        id: "legacy-angled",
+        netId: "n2",
+        start: { kind: "junction", junctionId: "j3" },
+        end: { kind: "junction", junctionId: "j4" },
+        bends: [],
+        modes: ["trunk"],
+      }),
+    );
+
+    expect(
+      diagnoseVisualQuality(document, resolver).filter(
+        (item) => item.code === "VISUAL_NON_STANDARD_WIRE_ANGLE",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        objectIds: ["legacy-angled"],
+        category: "structural",
+        gateEligible: true,
+        parameters: {
+          segmentIndexes: "0",
+          segmentCount: 1,
+          repairable: false,
+        },
+      }),
+    ]);
+  });
+
   it("ignores empty instance-label suppressors in overlap diagnostics", () => {
     const document = createEmptyDocument("doc", "Suppressed labels");
     document.annotations = ["a", "b"].map((id) => ({
@@ -170,7 +219,7 @@ describe("visual quality diagnostics", () => {
         id: "P2",
         symbolId: "port-filled",
         placement: {
-          position: { x: 120, y: 100 },
+          position: { x: 100, y: 100 },
           rotation: 180,
           mirror: "none",
         },
@@ -190,6 +239,16 @@ describe("visual quality diagnostics", () => {
         (item) => item.code === "VISUAL_SYMBOL_OVERLAP",
       ),
     ).toBe(true);
+
+    // The old stems reached one cell farther from each placement origin.
+    // This spacing is now clear and must not retain their old overlap bounds.
+    document.instances[1]!.placement!.position.x = 120;
+    document.revision += 1;
+    expect(
+      diagnoseVisualQuality(document, resolver).some(
+        (item) => item.code === "VISUAL_SYMBOL_OVERLAP",
+      ),
+    ).toBe(false);
   });
 
   it("does not treat a one-grid DFF pin escape as wire-through-symbol", () => {

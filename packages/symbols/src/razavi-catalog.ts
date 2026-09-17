@@ -47,6 +47,8 @@ export interface RazaviSymbolCatalogEntry {
          * evidence-exact.
          */
         pinSpanScale?: number;
+        /** Product shape normalization; original PDF evidence remains unchanged. */
+        bodyNormalization?: "equilateral-triangle" | "left-grid-anchor";
       }
     | {
         /**
@@ -57,12 +59,14 @@ export interface RazaviSymbolCatalogEntry {
          * a marked differential pair; `derived-output-drop` leaves an output
          * unbrought-out, for a part that exists in both widths;
          * `derived-lettered-body` adds the body letter an amplifier is named
-         * by, whose text each Instance then owns.
+         * by, whose text each Instance then owns; `derived-reset-pin` adds an
+         * active-high reset terminal to an otherwise shared sequential body.
          */
         kind:
           | "derived-input-swap"
           | "derived-output-drop"
-          | "derived-lettered-body";
+          | "derived-lettered-body"
+          | "derived-reset-pin";
         sourceSymbolId: string;
         converterPath: string;
         converterVersion: number;

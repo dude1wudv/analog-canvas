@@ -3,8 +3,12 @@ import mcpDistribution from "../config/agent-mcp-distribution.json";
 import {
   SESSION_STATE_KEY,
   fileOperationScopes,
+  simulationOperationScopes,
 } from "./agent-session-runtime";
-import { AgentFileResourceRequestSchema } from "@icm/agent-adapter";
+import {
+  AgentFileResourceRequestSchema,
+  AgentSimulationResourceRequestSchema,
+} from "@icm/agent-adapter";
 
 import {
   AGENT_SSE_KEEPALIVE_INTERVAL_MS,
@@ -36,6 +40,23 @@ const limits: Partial<AgentSessionLimits> = {
   maxRequestBytes: 128,
   rateLimit: { windowMs: 60_000, maxRequests: 10 },
 };
+
+it("requires no spending grant for static authoring help without relaxing run access", () => {
+  const scopes = (op: object) =>
+    simulationOperationScopes(
+      AgentSimulationResourceRequestSchema.parse({
+        apiVersion: "3.0",
+        requestId: "scope",
+        ...op,
+      }),
+    );
+  expect(scopes({ operation: "authoring-help", name: "embed" })).toEqual([]);
+  expect(scopes({ operation: "capabilities" })).toEqual([]);
+  expect(
+    scopes({ operation: "start", preparedId: "p", digest: "a".repeat(64) }),
+  ).toEqual(["simulation.run"]);
+  expect(scopes({ operation: "read", runId: "r" })).toEqual(["simulation.run"]);
+});
 
 it("uses existing Project write authorization for Project-owned simulation source only", () => {
   const scopes = (input: unknown) =>
@@ -369,6 +390,7 @@ describe("public Agent session routes", () => {
       readyState: WebSocket.OPEN,
       send: (text: string) => {
         const envelope = JSON.parse(text);
+        if (envelope.kind === "event") return;
         sent++;
         const payload =
           envelope.payload.operation === "prepare"
@@ -471,6 +493,7 @@ describe("public Agent session routes", () => {
       "/api/agent/sessions/{sessionId}/files",
       "/api/agent/sessions/{sessionId}/projects",
       "/api/agent/sessions/{sessionId}/simulation",
+      "/api/agent/sessions/{sessionId}/status",
     ]);
   });
 
@@ -520,7 +543,13 @@ describe("public Agent session routes", () => {
     expect(manifest.launch.args.join(" ")).toContain(
       mcpDistribution.release.asset,
     );
-    expect(manifest.hosts.codex.command).toContain("codex mcp add");
+    expect(manifest.installation.command).toContain(
+      '--install --origin "https://editor.example" --host codex',
+    );
+    expect(manifest.hosts.codex.command).toContain("https://editor.example");
+    expect(manifest.launch.env.ANALOG_CANVAS_API_URL).toBe(
+      "https://editor.example",
+    );
     expect(manifest.hosts.cursor.config.mcpServers["analog-canvas"]).toEqual(
       manifest.launch,
     );
@@ -708,6 +737,20 @@ describe("public Agent session routes", () => {
     });
   });
 
+  it("acknowledges the editor close handshake so the browser can reconnect", async () => {
+    const close = vi.fn();
+    const socket = {
+      readyState: WebSocket.CLOSING,
+      close,
+    } as unknown as WebSocket;
+    const object = new AgentSessionDO(
+      { storage: new MemoryStorage(), getWebSockets: () => [] },
+      {},
+    );
+    await object.webSocketClose(socket);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   it("does not mark the editor offline when a replacement socket is open", async () => {
     const storage = new MemoryStorage();
     const replacement = { readyState: WebSocket.OPEN } as WebSocket;
@@ -807,9 +850,11 @@ describe("public Agent session routes", () => {
       expect(decoder.decode((await reader.read()).value)).toBe(
         ": connected\n\n",
       );
+      const before = await storage.get(SESSION_STATE_KEY);
       const keepalive = reader.read();
       await vi.advanceTimersByTimeAsync(AGENT_SSE_KEEPALIVE_INTERVAL_MS);
       expect(decoder.decode((await keepalive).value)).toBe(": keepalive\n\n");
+      expect(await storage.get(SESSION_STATE_KEY)).toEqual(before);
       await reader.cancel();
     } finally {
       vi.useRealTimers();
@@ -968,6 +1013,7 @@ describe("public Agent session routes", () => {
     const socket = {
       readyState: WebSocket.OPEN,
       send: (text: string) => {
+        if (JSON.parse(text).kind === "event") return;
         sent += 1;
         const request = JSON.parse(text) as { requestId: string };
         queueMicrotask(() => {
@@ -1150,5 +1196,247 @@ describe("public Agent session routes", () => {
     );
     expect(semanticForbidden?.status).toBe(403);
     expect(sent).toBe(2);
+  });
+});
+
+describe("Agent idle expiry", () => {
+  const idleMs = 30 * 60_000;
+  async function fixture() {
+    const storage = new MemoryStorage();
+    const created = AgentSessionMachine.create({
+      sessionId: "idle-session",
+      projectSessionId: "project:1",
+      projectId: "project",
+      documentIds: ["doc"],
+      scopes: [
+        "circuit.snapshot",
+        "project.download",
+        "project.import",
+        "simulation.run",
+      ],
+      now: Date.now(),
+      random: () => crypto.randomUUID(),
+    });
+    const claimed = created.machine.redeemClaim(
+      created.session.claimCode,
+      Date.now(),
+    );
+    if (!claimed.ok) throw new Error("fixture claim failed");
+    await storage.put(SESSION_STATE_KEY, created.machine.serialize());
+    const messages: Array<{
+      kind: string;
+      payload?: { type?: string; expiresAt?: string };
+    }> = [];
+    let object: AgentSessionDO;
+    const socket = {
+      readyState: WebSocket.OPEN,
+      send(text: string) {
+        const envelope = JSON.parse(text);
+        messages.push(envelope);
+        if (!envelope.kind.endsWith("-request")) return;
+        const family = envelope.kind.split("-")[0];
+        const error = { code: "TEST_RESPONSE", message: "fixture" };
+        queueMicrotask(
+          () =>
+            void object.webSocketMessage(
+              socket,
+              JSON.stringify({
+                ...envelope,
+                kind: `${family}-response`,
+                payload: {
+                  apiVersion: "3.0",
+                  requestId: envelope.requestId,
+                  operation: envelope.payload.operation,
+                  ok: false,
+                  error:
+                    family === "project"
+                      ? { ...error, recovery: "retry" }
+                      : family === "simulation"
+                        ? { ...error, stage: "prepare", recovery: "fix-input" }
+                        : error,
+                  ...(family === "circuit" ? { diagnostics: [] } : {}),
+                },
+              }),
+            ),
+        );
+      },
+    } as unknown as WebSocket;
+    const makeObject = () =>
+      new AgentSessionDO({ storage, getWebSockets: () => [socket] }, {});
+    object = makeObject();
+    const post = (
+      path: string,
+      body: unknown,
+      token = claimed.claim.agentToken,
+    ) =>
+      object.fetch(
+        new Request(`https://internal/${path}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(body),
+        }),
+      );
+    const heartbeat = () =>
+      object.webSocketMessage(
+        socket,
+        JSON.stringify({
+          protocolVersion: "1.0",
+          sessionId: "idle-session",
+          kind: "heartbeat",
+          nonce: "ping",
+          projectId: "project",
+          documentIds: ["doc"],
+        }),
+      );
+    const edit = () =>
+      object.webSocketMessage(
+        socket,
+        JSON.stringify({
+          protocolVersion: "1.0",
+          sessionId: "idle-session",
+          messageId: "human-edit",
+          requestId: "human-edit",
+          sentAt: new Date().toISOString(),
+          kind: "event",
+          payload: {
+            type: "document.revision-changed",
+            sessionId: "idle-session",
+            documentId: "doc",
+            revision: 1,
+            actorKind: "human",
+            changedObjectIds: ["R1"],
+          },
+        }),
+      );
+    return {
+      storage,
+      messages,
+      post,
+      heartbeat,
+      edit,
+      claim: claimed.claim,
+      alarm: () => object.alarm(),
+      restore: () => {
+        object = makeObject();
+      },
+    };
+  }
+
+  it.each([
+    ["circuit", { operation: "snapshot", documentId: "doc" }],
+    ["files", { operation: "download", artifact: "project" }],
+    [
+      "simulation",
+      {
+        operation: "prepare",
+        source: {
+          kind: "project-folder",
+          folderId: "folder",
+          expectedStructureRevision: 0,
+        },
+      },
+    ],
+    ["projects", { operation: "list-projects" }],
+  ])(
+    "renews admitted %s operations, persists and reschedules the deadline",
+    async (path, request) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        const start = Date.now();
+        const f = await fixture();
+        vi.setSystemTime(start + idleMs - 1);
+        const result = await f.post(path, {
+          apiVersion: "3.0",
+          requestId: "work",
+          ...request,
+        });
+        expect(result.status).toBe(200);
+        const deadline = Date.now() + idleMs;
+        expect(await f.storage.get(SESSION_STATE_KEY)).toMatchObject({
+          expiresAt: deadline,
+        });
+        expect(f.storage.alarm).toBe(deadline - 60_000);
+        expect(f.messages).toContainEqual(
+          expect.objectContaining({
+            payload: {
+              type: "session.renewed",
+              sessionId: "idle-session",
+              expiresAt: new Date(deadline).toISOString(),
+            },
+          }),
+        );
+        f.restore();
+        vi.setSystemTime(start + idleMs + 1);
+        await f.heartbeat();
+        await f.alarm(); // A stale alarm must not expire or warn about the old deadline.
+        expect(f.storage.alarm).toBe(deadline - 60_000);
+        expect(
+          f.messages.some(
+            (message) => message.payload?.type === "session.expiring",
+          ),
+        ).toBe(false);
+        vi.setSystemTime(deadline - 60_000);
+        await f.alarm();
+        expect(f.storage.alarm).toBe(deadline);
+        vi.setSystemTime(deadline);
+        await f.alarm();
+        expect(f.storage.values.size).toBe(0);
+        expect(f.messages.at(-1)?.payload?.type).toBe("session.expired");
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("counts manual edits but ignores heartbeats, probes, credential refresh and invalid requests", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const start = Date.now();
+      const f = await fixture();
+      vi.setSystemTime(start + 20 * 60_000);
+      await f.heartbeat();
+      await f.post("circuit", {
+        apiVersion: "3.0",
+        requestId: "probe",
+        operation: "capabilities",
+      });
+      await f.post("resume-connector", {
+        connectorToken: f.claim.connectorToken,
+      });
+      await f.post(
+        "circuit",
+        {
+          apiVersion: "3.0",
+          requestId: "unauthorized",
+          operation: "snapshot",
+          documentId: "doc",
+        },
+        "wrong-token",
+      );
+      expect(await f.storage.get(SESSION_STATE_KEY)).toMatchObject({
+        expiresAt: start + idleMs,
+      });
+      await f.edit();
+      const deadline = Date.now() + idleMs;
+      expect(await f.storage.get(SESSION_STATE_KEY)).toMatchObject({
+        expiresAt: deadline,
+      });
+      vi.setSystemTime(deadline);
+      await f.heartbeat();
+      await f.edit(); // A late trusted browser message cannot resurrect a session.
+      expect(
+        await (
+          await f.post("resume-connector", {
+            connectorToken: f.claim.connectorToken,
+          })
+        ).json(),
+      ).toMatchObject({ error: { code: "SESSION_EXPIRED" } });
+      expect(f.storage.values.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

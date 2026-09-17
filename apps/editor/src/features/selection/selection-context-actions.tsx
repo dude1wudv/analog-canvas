@@ -1,10 +1,13 @@
-import type { Ref } from "react";
 import type { MosBulkResolution } from "@icm/derived";
+import type { Annotation, SchematicDocument } from "@icm/model";
 
-import { ColorOverrideControl } from "../properties/color-override-control";
+import {
+  GroupPropertyCodeEditor,
+  type GroupPropertyCodeEditorProps,
+} from "../properties/group-property-code-editor";
+import { RoutePropertyCodeEditor } from "../properties/route-property-code-editor";
+import type { RoutePropertyCodeValue } from "../properties/route-property-code";
 import { ToolIcon } from "../editor-shell/tool-icon";
-
-import { DisplayToggle } from "../component-insert/display-toggle";
 
 export function MosBulkConnectionSection({
   connection,
@@ -112,123 +115,75 @@ export function RoutingGuidanceSection({
   );
 }
 
-export function GroupDisplayToggles({
+export function GroupPropertiesSection({
   active,
-  referencesVisible,
-  valuesVisible,
-  valuesAvailable,
-  onReferencesVisibleChange,
-  onValuesVisibleChange,
-}: {
-  active: boolean;
-  referencesVisible: boolean;
-  valuesVisible: boolean;
-  valuesAvailable: boolean;
-  onReferencesVisibleChange: (visible: boolean) => void;
-  onValuesVisibleChange: (visible: boolean) => void;
-}) {
+  ...properties
+}: { active: boolean } & GroupPropertyCodeEditorProps) {
   if (!active) return null;
   return (
-    <section className="property-section" aria-label="分组显示开关">
-      <div className="property-section-heading">画布标签</div>
-      <div className="display-toggle-row">
-        <DisplayToggle
-          label="视觉注释"
-          checked={referencesVisible}
-          onChange={onReferencesVisibleChange}
-        />
-        <DisplayToggle
-          label="值"
-          checked={valuesVisible}
-          disabled={!valuesAvailable}
-          help={valuesAvailable ? undefined : "请先填写器件参数"}
-          onChange={onValuesVisibleChange}
-        />
-      </div>
-    </section>
+    <GroupPropertyCodeEditor key={properties.selectionKey} {...properties} />
   );
 }
 
 export function RouteActionsSection({
   active,
-  netLabelInputRef,
+  document,
+  route,
   netLabel,
-  color,
-  arrow,
+  bulkOwnerLabel,
   defaultColor,
   highlightActive,
-  onNetLabelChange,
-  onColorChange,
-  onArrowChange,
-  onDeleteNetLabel,
-  onAddCurrentArrow,
+  onApply,
   onToggleHighlight,
   onDeleteWire,
 }: {
   active: boolean;
-  netLabelInputRef: Ref<HTMLInputElement>;
-  netLabel: string;
-  color: string | undefined;
-  arrow: "middle" | "end" | undefined;
+  document: SchematicDocument;
+  route: SchematicDocument["routes"][number] | null;
+  netLabel: Annotation | null;
+  bulkOwnerLabel?: string | null;
   defaultColor: string;
   highlightActive: boolean;
-  onNetLabelChange: (value: string) => void;
-  onColorChange: (value: string | undefined) => void;
-  onArrowChange: (value: "middle" | "end" | undefined) => void;
-  onDeleteNetLabel: () => void;
-  onAddCurrentArrow: () => void;
+  onApply: (value: RoutePropertyCodeValue) => { ok: boolean; message?: string };
   onToggleHighlight: () => void;
   onDeleteWire: () => void;
 }) {
-  if (!active) return null;
+  if (!active || !route) return null;
+  if (bulkOwnerLabel) {
+    return (
+      <section className="context-actions" aria-label="MOS bulk route actions">
+        <h2>Bulk connection</h2>
+        <p>
+          Follows <strong>{bulkOwnerLabel}</strong> line color.
+        </p>
+        <button type="button" onClick={onDeleteWire}>
+          Delete bulk connection
+        </button>
+      </section>
+    );
+  }
   return (
-    <section className="context-actions" aria-label="线路操作">
-      <h2>电气线路</h2>
-      <label>
-        电气网络标签
-        <input
-          ref={netLabelInputRef}
-          aria-label="电气网络标签"
-          value={netLabel}
-          onChange={(event) => onNetLabelChange(event.currentTarget.value)}
-        />
-      </label>
-      <button type="button" onClick={onDeleteNetLabel}>
-        Delete Net label
-      </button>
-      <ColorOverrideControl
-        label="导线颜色"
-        value={color}
-        fallback={defaultColor}
-        onChange={onColorChange}
+    <section className="context-actions" aria-label="Route actions">
+      <RoutePropertyCodeEditor
+        key={route.id}
+        document={document}
+        route={route}
+        netLabel={netLabel}
+        defaultColor={defaultColor}
+        onApply={onApply}
+        actions={
+          <div className="route-property-code-actions">
+            <button type="button" onClick={onToggleHighlight}>
+              {highlightActive
+                ? "Clear Net highlight (H)"
+                : "Highlight Net (H)"}
+            </button>
+            <button type="button" onClick={onDeleteWire}>
+              Delete wire
+            </button>
+          </div>
+        }
       />
-      <label>
-        Direction arrow
-        <select
-          aria-label="导线方向箭头"
-          value={arrow ?? "none"}
-          onChange={(event) =>
-            onArrowChange(
-              event.currentTarget.value === "none"
-                ? undefined
-                : (event.currentTarget.value as "middle" | "end"),
-            )
-          }
-        >
-          <option value="none">无箭头</option>
-          <option value="middle">箭头位于中点</option>
-          <option value="end">箭头位于末端</option>
-        </select>
-      </label>
-      <button type="button" onClick={onAddCurrentArrow}>
-        Add current arrow
-      </button>
-      <button type="button" onClick={onToggleHighlight}>
-        {highlightActive ? "清除网络高亮（H）" : "高亮网络（H）"}
-      </button>
-      <button type="button" onClick={onDeleteWire}>
-        Delete wire
-      </button>
     </section>
   );
 }
@@ -286,24 +241,19 @@ export function EndpointActionsSection({
 export function AnnotationActionsSection({
   kind,
   highlightActive,
-  onReverseCurrentArrow,
   onDeleteCurrentArrow,
   onToggleHighlight,
 }: {
   kind: "current-arrow" | "net-label" | null;
   highlightActive: boolean;
-  onReverseCurrentArrow: () => void;
   onDeleteCurrentArrow: () => void;
   onToggleHighlight: () => void;
 }) {
   if (kind === "current-arrow")
     return (
-      <section className="context-actions" aria-label="电流箭头操作">
-        <h2>电流箭头</h2>
-        <button type="button" onClick={onReverseCurrentArrow}>
-          Reverse direction (X)
-        </button>
-        <small>拖动可沿导线滑动，或移动其标签。</small>
+      <section className="context-actions" aria-label="Current arrow actions">
+        <h2>Current arrow</h2>
+        <small>This legacy annotation can be removed from the drawing.</small>
         <button type="button" onClick={onDeleteCurrentArrow}>
           Delete current arrow
         </button>

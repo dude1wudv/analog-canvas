@@ -10,7 +10,7 @@ import type {
   SimulationExplorerSelection,
   SimulationCodeFile,
 } from "./code-workspace";
-import { simulationArtifactCategory } from "./simulation-artifact-files";
+import { simulationExplorerArtifactCategory } from "./simulation-artifact-files";
 import {
   useWorkspaceInteractions,
   WorkspaceNameInput,
@@ -26,6 +26,7 @@ export interface SimulationFolderNode {
     draft?: boolean;
   }[];
   configPath?: string;
+  cellLabel?: string;
 }
 export type FolderAction =
   "new" | "duplicate" | "rename" | "delete" | "run" | "export" | "batch";
@@ -49,6 +50,7 @@ interface TreeNode {
   file?: SimulationCodeFile;
   expanded?: boolean;
   tmp?: boolean;
+  cellLabel?: string;
 }
 const collect = (node: TreeNode): SimulationExplorerSelection[] =>
   node.entry ? [node.entry] : (node.children ?? []).flatMap(collect);
@@ -57,13 +59,21 @@ const collect = (node: TreeNode): SimulationExplorerSelection[] =>
 export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
   const ui = useWorkspaceInteractions();
   const anchor = useRef<string | undefined>(undefined);
+  const folderActivation = useRef<string | undefined>(undefined);
   const [selected, setSelected] = useState<string[]>([]);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const folders = props.folders?.folders ?? [
     { id: props.workspaceKey, name: props.workspaceKey, files: props.files },
   ];
   const activeId = props.folders?.activeId ?? props.workspaceKey;
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({
+    [activeId]: true,
+  });
   useEffect(() => {
+    // Folder activation owns selection and must not reveal/select its last tab.
+    if (folderActivation.current === activeId) {
+      folderActivation.current = undefined;
+      return;
+    }
     if (!props.activePath) {
       setSelected([]);
       return;
@@ -71,7 +81,7 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
     setSelected([activeId + "/file/" + props.activePath]);
     const parts = props.activePath.split("/").slice(0, -1);
     setExpanded((state) => {
-      const next = { ...state, [activeId]: true, [activeId + "/source"]: true };
+      const next = { ...state, [activeId]: true };
       let path = activeId + "/source";
       for (const part of parts) {
         path += "/" + part;
@@ -119,7 +129,14 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
         entry: { kind: "source", folderId: folder.id, path: file.path },
       });
     }
-    const children = [source];
+    // Keep source IDs namespaced separately from temporary Run artifacts, but
+    // render their real paths directly beneath the experiment folder.
+    const children = source.children!;
+    children.sort(
+      (a, b) =>
+        Number(Boolean(b.children)) - Number(Boolean(a.children)) ||
+        a.name.localeCompare(b.name),
+    );
     if (folder.id === activeId)
       for (const group of props.artifactGroups ?? []) {
         const directory: TreeNode = {
@@ -131,7 +148,8 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
           tmp: true,
         };
         for (const artifact of group.artifacts) {
-          const category = simulationArtifactCategory(artifact);
+          const category = simulationExplorerArtifactCategory(artifact);
+          if (!category) continue;
           let categoryNode = directory.children!.find(
             (node) => node.name === category,
           );
@@ -158,10 +176,11 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
     return {
       id: folder.id,
       name: folder.name,
+      ...(folder.cellLabel ? { cellLabel: folder.cellLabel } : {}),
       folderId: folder.id,
       kind: "folder",
       children,
-      expanded: true,
+      expanded: false,
     };
   });
   const all = new Map<string, TreeNode>();
@@ -260,6 +279,12 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
             targets.some((target) => Boolean(target.children)),
           ),
       });
+    if (
+      targets.length === 1 &&
+      node?.folderId === activeId &&
+      (node.kind === "folder" || node.id === activeId + "/run")
+    )
+      items.push(...(props.additionalActions ?? []));
     if (targets.length === 1 && node?.file) {
       items.push(
         { label: "打开", run: () => openFile(node) },
@@ -298,7 +323,6 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
             setExpanded((state) => ({
               ...state,
               [id]: true,
-              [id + "/source"]: true,
             }));
             props.onNewFile?.(id);
           },
@@ -350,12 +374,14 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
           ui.edit.kind === "file" &&
           ui.edit.path === node.file.path);
     const active =
-      node.entry?.kind === "source"
-        ? node.folderId === activeId &&
-          node.entry.path === props.activePath &&
-          !props.artifactPreview
-        : node.entry?.kind === "artifact" &&
-          node.entry.artifact.id === props.artifactPreview?.artifact.id;
+      node.kind === "folder"
+        ? node.folderId === activeId
+        : node.entry?.kind === "source"
+          ? node.folderId === activeId &&
+            node.entry.path === props.activePath &&
+            !props.artifactPreview
+          : node.entry?.kind === "artifact" &&
+            node.entry.artifact.id === props.artifactPreview?.artifact.id;
     return (
       <div
         key={node.id}
@@ -412,11 +438,16 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
                 node.kind === "folder" ? "文件夹 " + node.name : node.name
               }
               aria-current={active ? "page" : undefined}
-              title={node.file?.path ?? node.name}
+              title={node.cellLabel ?? node.file?.path ?? node.name}
+              aria-description={node.cellLabel}
               onClick={(event) => {
                 choose(node, event);
                 if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
-                  if (node.children) toggle(node);
+                  if (node.kind === "folder") {
+                    if (node.folderId !== activeId)
+                      folderActivation.current = node.folderId;
+                    props.folders?.onSelect(node.folderId);
+                  } else if (node.children) toggle(node);
                   else openFile(node);
                 }
               }}
@@ -478,7 +509,7 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
         </div>
         {node.children && isOpen(node) ? (
           <div role="group" aria-label={node.name + " files"}>
-            {node.id.endsWith("/source") &&
+            {node.kind === "folder" &&
             ui.edit?.kind === "file" &&
             ui.edit.folderId === node.folderId &&
             !ui.edit.path ? (
@@ -515,7 +546,11 @@ export function SimulationFileTree(props: SimulationCodeWorkspaceProps) {
         )
           return;
         event.stopPropagation();
-        if (event.target instanceof HTMLInputElement) return;
+        if (
+          event.target instanceof HTMLInputElement ||
+          event.target instanceof HTMLSelectElement
+        )
+          return;
         if (
           (event.ctrlKey || event.metaKey) &&
           event.key.toLowerCase() === "a"

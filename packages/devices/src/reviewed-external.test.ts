@@ -33,7 +33,38 @@ describe("reviewed external device bindings", () => {
     ).toBeUndefined();
     expect(
       reviewedExternalBindingForMaster("sky130_fd_pr__nfet_g5v0d10v5"),
-    ).toBeUndefined();
+    ).toMatchObject({
+      id: "sky130-nfet-g5v0d10v5",
+      symbolId: "nmos",
+      deviceClass: "mos",
+    });
+    expect(
+      resolveReviewedExternalBinding("sky130_fd_pr__cap_var_lvt", [
+        "C0",
+        "C1",
+        "B",
+      ]),
+    ).toMatchObject({
+      id: "sky130-cap-var-lvt",
+      symbolId: "capacitor",
+    });
+    expect(
+      resolveReviewedExternalBinding("sky130_fd_pr__ind_05_220", [
+        "A",
+        "B",
+        "CT",
+        "SUB",
+      ]),
+    ).toMatchObject({
+      id: "sky130-ind-05-220",
+      symbolId: "inductor",
+      terminals: [
+        { pinName: "1", interaction: "canvas" },
+        { pinName: "2", interaction: "canvas" },
+        { pinName: "CT", interaction: "property", role: "floating" },
+        { pinName: "SUB", interaction: "property", role: "substrate" },
+      ],
+    });
     expect(
       resolveReviewedExternalBinding("sky130_fd_pr__pnp_05v5_W0p68L0p68", [
         "C",
@@ -74,6 +105,18 @@ describe("reviewed external device bindings", () => {
 
   it("converts reviewed geometry in both directions without aliasing counts", () => {
     expect(projectLengthToSky130Micrometres("150n")).toBe("0.15");
+    expect(projectLengthToSky130Micrometres("{WIDTH}")).toBe("{(WIDTH) / 1u}");
+    expect(sky130MicrometresToProjectLength("{WIDTH}")).toBe("{(WIDTH) * 1u}");
+    expect(
+      projectLengthToSky130Micrometres(
+        sky130MicrometresToProjectLength("{WIDTH * 2}"),
+      ),
+    ).toBe("{WIDTH * 2}");
+    expect(
+      sky130MicrometresToProjectLength(
+        projectLengthToSky130Micrometres("{WIDTH * 2}"),
+      ),
+    ).toBe("{WIDTH * 2}");
     expect(projectLengthToSky130Micrometres("5.5u")).toBe("5.5");
     expect(sky130MicrometresToProjectLength("0.15")).toBe("150n");
     expect(sky130MicrometresToProjectLength("5.5")).toBe("5.5u");

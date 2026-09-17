@@ -5,41 +5,22 @@ Status: `accepted`
 Primary owner: Worker Cloud Project storage, `packages/project-protocol`, and
 the editor document lifecycle
 
-Project content uses canonical schema-51 JSON. A private Cloud Project is the
+Project content uses canonical schema-56 JSON. A private Cloud Project is the
 formal saved resource; `.icproj.json` is portable import/export and backup.
 The current-only model in `packages/model` validates the normalized shape;
 `packages/project-protocol` owns parsing, compatibility diagnostics,
 and canonical serialization. Persistence validates the complete current schema
-before import or Cloud Save. The explicit schema 24→51 chain upgrades supported
-historical files; serialization always writes schema 51. The 32→33 adapter
-rejects ownerless Net equivalence instead of guessing replacement electrical
-semantics, and the 33→34 adapter removes hidden electrical name authority while
-preserving source spelling as provenance. The 34→35 adapter unifies parallel
-Instance naming fields into one authored Reference. The 35→36 adapter repairs
-styled Instance designators that schema 35 materialized as literal labels,
-while retaining descriptive attached text. The 36→37 adapter only advances
-the version stamp for the new optional Project `simulation` setup; no
-existing Project has authored one, and none is inferred. The 37→38 adapter
-adds no data: it only admits explicitly authored structured TRAN analyses. The
-38→39 adapter adds no data either: it admits raw authored files and external
-dependency declarations as the setup's mutually exclusive second input form.
-Later adapters add anchored probes, DC sweep, named setup collections, output
-expressions, terminal-current identity, scalar measurements, Noise, and
-selected MOS operating-point details. They preserve older intent and never
-select a device or analysis implicitly. Schema 51 adds optional rectangle and
-circle fill and front/background drafting planes; schema-50 content requires
-only a version-stamp advance.
-Versions outside the implemented chain are rejected.
+before import or Cloud Save. Compatibility and migration failure rules belong to the
+[file-format contract](project-file-format.md). The protocol reader upgrades
+supported historical content before current-schema validation; all writers emit
+the current schema. Persistence does not maintain a separate migration policy.
 
 Recovery state is a non-authoritative browser safety copy. It may restore a
-complete schema-51 Project or a supported historical record that validates
+complete schema-56 Project or a supported historical record that validates
 after the chained upgrade, associated with a recorded working-copy session.
 Corrupt, incompatible, or partial recovery data is discarded or retained as raw
-data without changing the live Project. User-saved Library examples are the
-same class of origin-local, non-authoritative convenience data: canonical
-serialized Project snapshots in their own IndexedDB store, re-validated
-through the ordinary protocol boundary before they may replace a live
-Project, and never a substitute for Cloud Save or an exported backup. Credentials, Agent bearer tokens,
+data without changing the live Project. User-saved Library examples and their
+browser store are retired. Credentials, Agent bearer tokens,
 selection, viewport, overlays, and pending external approvals are never
 embedded in Project JSON or recovery records.
 
@@ -93,6 +74,7 @@ PUT  /api/projects/:id             update the bound Project
 If-Match: revision-N               reject stale writers
 GET  /api/projects                 list distinct Projects
 GET  /api/projects/:id             open one Project
+DELETE /api/projects/:id           explicitly delete one Project
 ```
 
 Repeated Save updates the same id and does not consume another account slot.
@@ -134,8 +116,11 @@ then offers **Save to Cloud and continue**, **Continue without saving**, or
 defaulting to Cancel. Cloud Save failure leaves the foreground
 Project and dialog in place. Recovery failure is shown in the same dialog as
 elevated risk but never grants permission to discard.
-A successful replacement retains the outgoing Project in recent recovery and
-seeds the incoming Project's own working-copy identity.
+A successful replacement seeds the incoming Project's own working-copy
+identity. **Continue without saving** is an explicit discard: it deletes the
+outgoing working copy's recovery records before the replacement proceeds.
+Every other successful replacement retains the outgoing Project in recent
+recovery.
 
 On startup, the current tab's latest valid recovery record is offered
 non-modally only when it explicitly says `unsavedAtSnapshot: true`, the

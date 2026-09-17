@@ -22,26 +22,32 @@ export interface CanvasHit {
 // stickiness bonus keeps drags over crossing wires on the symbol.
 const KIND_PRIORITY: Record<CanvasHitKind, number> = {
   handle: 70,
+  // Visible annotation text owns a direct press over a conductor. A Net
+  // label commonly sits only 8 units off its wire, so its lower hit area and
+  // the route's non-scaling hit stroke overlap. Ranking the route first made
+  // a drag from the lower half of the text move the wire instead of the label.
+  annotation: 64,
   route: 62,
   junction: 61,
   instance: 60,
-  annotation: 45,
   "instance-label": 44,
   drafting: 40,
 };
 const SELECTED_BONUS = 25;
 
 function readHit(element: Element): CanvasHit | null {
-  const kind = element.getAttribute(
+  const hitElement =
+    element.closest?.("[data-canvas-hit-kind][data-canvas-hit-id]") ?? element;
+  const kind = hitElement.getAttribute(
     "data-canvas-hit-kind",
   ) as CanvasHitKind | null;
-  const id = element.getAttribute("data-canvas-hit-id");
+  const id = hitElement.getAttribute("data-canvas-hit-id");
   if (!kind || !id || !(kind in KIND_PRIORITY)) return null;
   return {
     kind,
     id,
-    selected: element.classList.contains("selected"),
-    element,
+    selected: hitElement.classList.contains("selected"),
+    element: hitElement,
   };
 }
 
@@ -63,11 +69,22 @@ export function rankCanvasHits(
         (candidate) => candidate.kind === hit.kind && candidate.id === hit.id,
       ) === index,
   );
+  const visibleAnnotationAtPoint = unique.some(
+    (hit) => hit.kind === "annotation",
+  );
   return unique
     .map((hit, paintIndex) => ({
       hit,
       paintIndex,
-      score: KIND_PRIORITY[hit.kind] + (hit.selected ? SELECTED_BONUS : 0),
+      // Selection stickiness must not let a broad symbol box or wire hit
+      // stroke mask visible annotation text. Handles still outrank text by
+      // their base priority; Alt continues to cycle to the geometry below.
+      score:
+        KIND_PRIORITY[hit.kind] +
+        (hit.selected &&
+        (!visibleAnnotationAtPoint || hit.kind === "annotation")
+          ? SELECTED_BONUS
+          : 0),
     }))
     .sort(
       (left, right) =>

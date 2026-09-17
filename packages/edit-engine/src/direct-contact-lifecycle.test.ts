@@ -18,7 +18,30 @@ import { planRoutingTransform } from "./routing-transform-planner.js";
 import { gateRoutingOperationPlan } from "./routing-operation-plan.js";
 import { transformMaySeparateDirectContact } from "./transaction-direct-contact.js";
 
-const resolver = new InMemorySymbolResolver(builtInSymbols);
+// These transform contracts require a pin away from the placement origin:
+// rotating/mirroring/alignment must separate initially coincident contacts.
+// The product Port now has a centered pin, so use explicit fixture geometry.
+const offsetTerminal = {
+  ...builtInSymbols.find((symbol) => symbol.id === "port")!,
+  pins: [
+    {
+      name: "P",
+      role: "port",
+      at: { x: 10, y: 0 },
+      direction: "east" as const,
+      presentation: { visibility: "visible" as const, leadLength: 10 },
+    },
+  ],
+  viewBox: { x: -5, y: -5, width: 20, height: 10 },
+  primitives: [
+    { kind: "line" as const, from: { x: 0, y: 0 }, to: { x: 10, y: 0 } },
+  ],
+};
+const resolver = new InMemorySymbolResolver(
+  builtInSymbols.map((symbol) =>
+    symbol.id === "port" ? offsetTerminal : symbol,
+  ),
+);
 const context = { symbolResolver: resolver };
 const terminal = (instanceId: string): RouteEndpoint => ({
   kind: "terminal",
@@ -60,7 +83,7 @@ function fixture(): SchematicDocument {
   document.instances.find((instance) => instance.id === "B")!.placement = {
     position: { x: 160, y: 300 },
     rotation: 0,
-    mirror: "x",
+    mirror: "horizontal",
   };
   return document;
 }
@@ -243,7 +266,7 @@ describe("direct-contact transform lifecycle", () => {
     },
     {
       label: "mirror",
-      edit: { kind: "mirror_instance", instanceId: "A", mirror: "x" },
+      edit: { kind: "mirror_instance", instanceId: "A", mirror: "horizontal" },
     },
   ])("materializes a Route after $label separates the pins", ({ edit }) => {
     const document = fixture();
@@ -387,7 +410,7 @@ describe("direct-contact transform lifecycle", () => {
     document.instances.find((instance) => instance.id === "B")!.placement = {
       position: { x: 460, y: 300 },
       rotation: 0,
-      mirror: "x",
+      mirror: "horizontal",
     };
     document.nets = [
       {
@@ -442,7 +465,7 @@ describe("direct-contact transform lifecycle", () => {
     document.instances.find((instance) => instance.id === "B")!.placement = {
       position: { x: 460, y: 300 },
       rotation: 0,
-      mirror: "x",
+      mirror: "horizontal",
     };
     document.nets = [
       {
@@ -866,7 +889,11 @@ describe("signal-flow resize direct contacts", () => {
       {
         id: "P1",
         symbolId: "port",
-        placement: { position: { x: 0, y: 0 }, rotation: 0, mirror: "x" },
+        placement: {
+          position: { x: 0, y: 0 },
+          rotation: 0,
+          mirror: "horizontal",
+        },
       },
     );
     const output = resolveEndpointConnection(document, resolver, {

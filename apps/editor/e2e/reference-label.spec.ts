@@ -119,28 +119,35 @@ test("Properties renames the electrical identity explicitly; restore is an in-pl
   await page.getByTestId("hit-R1").click();
   await page.getByTestId("selection-shelf").click();
   const properties = page.getByRole("complementary", { name: "Properties" });
-  await expectComponentCodeField(page, "reference", "R1");
+  await expectComponentCodeField(page, "displayName", "load");
+  await expectComponentCodeField(page, "netlistName", "R1");
   await expect(properties.getByLabel("Component label")).toHaveCount(0);
   await editComponentPropertyCode(page, (code) => {
-    code.reference = "R7";
+    code.displayName = "RL";
   });
-  await expectComponentCodeField(page, "reference", "R7");
-  await expect(visual(page)).toContainText("load");
+  await expectComponentCodeField(page, "displayName", "RL");
+  await expectComponentCodeField(page, "netlistName", "R1");
+  await expect(visual(page)).toContainText("RL");
+  await editComponentPropertyCode(page, (code) => {
+    code.netlistName = "R7";
+  });
+  await expectComponentCodeField(page, "netlistName", "R7");
+  await expect(visual(page)).toContainText("RL");
   // Prefix validation still applies to this explicitly electrical field.
   await editComponentPropertyCode(page, (code) => {
-    code.reference = "gm";
+    code.netlistName = "gm";
   });
   await expect(properties).toContainText("Canvas property code was rejected");
   await properties.getByRole("button", { name: "Discard draft" }).click();
-  await expectComponentCodeField(page, "reference", "R7");
+  await expectComponentCodeField(page, "netlistName", "R7");
   await editComponentPropertyCode(page, (value) => {
-    value.display.reference = false;
+    value.display.visualAnnotation = false;
   });
   await expect(visual(page)).toHaveCount(0);
   await editComponentPropertyCode(page, (value) => {
-    value.display.reference = true;
+    value.display.visualAnnotation = true;
   });
-  await expect(visual(page)).toContainText("load");
+  await expect(visual(page)).toContainText("RL");
 
   await page.getByTestId("annotation-hit-instance-label-R1").dblclick();
   const restore = page.getByRole("button", {

@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   builtInDeviceDescriptors,
+  builtInSubcircuitDescriptors,
   deviceDescriptor,
   deviceDescriptorById,
   devicePinSemanticRole,
   referencePolicyForSymbol,
+  subcircuitDescriptor,
   validateDeviceDescriptors,
 } from "./index.js";
 
@@ -72,21 +74,42 @@ describe("built-in device registry", () => {
       referencePrefix: "R",
       pinOrder: ["P1", "P2"],
       targetPolicy: "builtin",
-      parameters: [{ name: "value", required: true, displayRole: "value" }],
+      parameters: [
+        {
+          name: "value",
+          required: true,
+          displayRole: "value",
+          defaultValue: "1k",
+        },
+      ],
     });
     expect(deviceDescriptor("variable-capacitor")).toMatchObject({
       deviceClass: "capacitor",
       referencePrefix: "C",
       pinOrder: ["P1", "P2"],
       targetPolicy: "builtin",
-      parameters: [{ name: "value", required: true, displayRole: "value" }],
+      parameters: [
+        {
+          name: "value",
+          required: true,
+          displayRole: "value",
+          defaultValue: "1p",
+        },
+      ],
     });
     expect(deviceDescriptor("variable-inductor")).toMatchObject({
       deviceClass: "inductor",
       referencePrefix: "L",
       pinOrder: ["P1", "P2"],
       targetPolicy: "builtin",
-      parameters: [{ name: "value", required: true, displayRole: "value" }],
+      parameters: [
+        {
+          name: "value",
+          required: true,
+          displayRole: "value",
+          defaultValue: "1n",
+        },
+      ],
     });
   });
 
@@ -96,12 +119,23 @@ describe("built-in device registry", () => {
       referencePrefix: "X",
       pinOrder: ["1", "2", "3"],
       targetPolicy: "none",
+      parameters: [
+        { name: "l1", defaultValue: "1n" },
+        { name: "l2", defaultValue: "1n" },
+        { name: "k", defaultValue: "1" },
+        { name: "cb", defaultValue: "1p" },
+      ],
     });
     expect(deviceDescriptor("xfmr")).toMatchObject({
       deviceClass: "inductor",
       referencePrefix: "X",
       pinOrder: ["P-", "P+", "S-", "S+"],
       targetPolicy: "none",
+      parameters: [
+        { name: "lp", defaultValue: "1n" },
+        { name: "ls", defaultValue: "1n" },
+        { name: "k", defaultValue: "1" },
+      ],
     });
     expect(referencePolicyForSymbol("tcoil")).toEqual({
       kind: "required",
@@ -123,6 +157,27 @@ describe("built-in device registry", () => {
         supportsModel: true,
         supportsBulkBinding: false,
       },
+    });
+  });
+
+  it("registers Analog Blocks as semantic black-box subcircuits", () => {
+    expect(builtInSubcircuitDescriptors).toHaveLength(23);
+    expect(
+      subcircuitDescriptor("opamp-differential-crossed-inputs-swapped"),
+    ).toMatchObject({
+      target: "opamp_differential",
+      ports: [
+        { name: "VDD", supply: "VDD" },
+        { name: "VSS", supply: "VSS" },
+        { name: "VIP", pinName: "IN+" },
+        { name: "VIN", pinName: "IN-" },
+        { name: "VOP", pinName: "OUT+" },
+        { name: "VON", pinName: "OUT-" },
+      ],
+    });
+    expect(referencePolicyForSymbol("opamp-differential")).toEqual({
+      kind: "required",
+      prefix: "X",
     });
   });
 

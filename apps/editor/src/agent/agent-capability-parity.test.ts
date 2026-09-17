@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createEmptyProject } from "@icm/model";
+import { createEmptyProject, flattenRichText } from "@icm/model";
 import { createAgentCircuitService } from "@icm/agent-adapter";
 import { AgentSessionClient } from "../../../../packages/agent-client/src/session-client";
 import { FakeAgentHttp } from "../../../../packages/agent-client/src/test-support/fake-relay";
@@ -51,6 +51,267 @@ async function folder() {
 }
 
 describe("MCP → API → shared editor parity", () => {
+  it("places both Port styles with owned Cell terminals in one undoable batch", async () => {
+    const { client, controller, tool } = await folder();
+    const placed = await client.applyActions([
+      {
+        kind: "place-component",
+        symbol: "port",
+        reference: "VIN",
+        position: { x: 100, y: 100 },
+      },
+      {
+        kind: "place-component",
+        symbol: "resistor",
+        reference: "R1",
+        position: { x: 200, y: 100 },
+        rotation: 270,
+        parameters: { value: "1k" },
+      },
+      {
+        kind: "place-component",
+        symbol: "port-filled",
+        reference: "VOUT",
+        position: { x: 300, y: 100 },
+        rotation: 180,
+      },
+    ]);
+    expect(placed.ok, placed.message).toBe(true);
+    expect(controller.document.revision).toBe(1);
+    expect(controller.document.instances).toHaveLength(3);
+    const terminals = controller.document.netlist!.terminals;
+    expect(terminals.map((terminal) => terminal.name)).toEqual(["VIN", "VOUT"]);
+    for (const terminal of terminals) {
+      expect(terminal.direction).toBe("passive");
+      expect(terminal.interfaceInstanceIds).toHaveLength(1);
+      const instanceId = terminal.interfaceInstanceIds[0]!;
+      const port = controller.document.instances.find(
+        (i) => i.id === instanceId,
+      )!;
+      expect(port.reference).toBeUndefined();
+      expect(port.netlist).toBeUndefined();
+      expect(
+        controller.document.nets.find((n) => n.id === terminal.netId)
+          ?.terminals,
+      ).toEqual([{ instanceId, pinName: "P" }]);
+      expect(
+        controller.document.annotations.filter(
+          (a) => a.anchor.kind === "object" && a.anchor.objectId === instanceId,
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          binding: { kind: "cell-terminal-name", terminalId: terminal.id },
+        }),
+      ]);
+    }
+    expect((await client.applyActions([{ kind: "undo" }])).ok).toBe(true);
+    expect(controller.document.instances).toHaveLength(0);
+    expect(controller.document.netlist!.terminals).toHaveLength(0);
+    expect(controller.document.nets).toHaveLength(0);
+    expect((await client.applyActions([{ kind: "redo" }])).ok).toBe(true);
+    const snapshot = await tool("inspect", {
+      target: { kind: "document" },
+      detail: "full",
+    });
+    expect(
+      snapshot.cellInterface.terminals.map((t: { name: string }) => t.name),
+    ).toEqual(["VIN", "VOUT"]);
+    const wired = await client.applyActions([
+      {
+        kind: "connect",
+        from: {
+          kind: "pin",
+          instance: {
+            kind: "instance",
+            id: terminals[0]!.interfaceInstanceIds[0]!,
+          },
+          pin: "P",
+        },
+        to: { kind: "pin", instance: "R1", pin: "1" },
+      },
+    ]);
+    expect(wired.ok, wired.message).toBe(true);
+    expect(
+      controller.document.nets.find((n) => n.id === terminals[0]!.netId)
+        ?.terminals,
+    ).toHaveLength(2);
+  });
+
+  it("controls schema-54 magnetic labels independently and preserves authored state", async () => {
+    const { client, controller } = await folder();
+    for (const [symbol, reference, parameters] of [
+      ["xfmr", "T1", { k: "0.8", lp: "2n", ls: "4n" }],
+      ["tcoil", "T2", { k: "0.7", l1: "3n", l2: "5n", cb: "1p" }],
+    ] as const) {
+      expect(
+        (
+          await client.applyActions([
+            {
+              kind: "place-component",
+              symbol,
+              reference,
+              parameters,
+              position: { x: 100, y: 100 },
+            },
+          ])
+        ).ok,
+      ).toBe(true);
+      const id = controller.document.instances.find(
+        (i) => i.reference === reference,
+      )!.id;
+      const display = async (
+        showParameters: Record<string, boolean>,
+        showValue?: boolean,
+      ) =>
+        client.applyActions([
+          {
+            kind: "set-instance-display",
+            instanceIds: [id],
+            showParameters,
+            ...(showValue === undefined ? {} : { showValue }),
+          },
+        ]);
+      const labels = () =>
+        controller.document.annotations.filter(
+          (a) =>
+            a.binding?.kind === "instance-value" &&
+            a.binding.instanceId === id &&
+            a.binding.parameter,
+        );
+      const desired = Object.fromEntries(
+        Object.keys(parameters).map((key) => [key, true]),
+      );
+      expect((await display(desired)).ok).toBe(true);
+      expect(labels()).toHaveLength(Object.keys(parameters).length);
+      const original = structuredClone(labels());
+      expect((await display(desired)).ok).toBe(true);
+      expect(labels()).toEqual(original);
+      // Aggregate Value must not hide the first named parameter by fallback.
+      expect((await display({}, false)).ok).toBe(true);
+      expect(labels()).toEqual(original);
+      const k = labels().find(
+        (a) =>
+          a.binding?.kind === "instance-value" && a.binding.parameter === "k",
+      )!;
+      const authored = {
+        ...k,
+        anchor: { kind: "free" as const, position: { x: 321, y: 123 } },
+        textColor: "#123456",
+      };
+      expect(
+        (
+          await client.advancedTransact({
+            edits: [
+              { kind: "upsert_schematic_annotation", annotation: authored },
+            ],
+          })
+        ).ok,
+      ).toBe(true);
+      expect((await display({ k: false })).ok).toBe(true);
+      expect(labels().find((a) => a.id === k.id)).toEqual({
+        ...authored,
+        visible: false,
+      });
+      await client.snapshot("main", { refresh: true });
+      expect((await display({ k: true })).ok).toBe(true);
+      expect(labels().find((a) => a.id === k.id)).toEqual({
+        ...authored,
+        visible: true,
+      });
+      const before = structuredClone(controller.project);
+      expect((await display({ unsupported: true })).ok).toBe(false);
+      expect(
+        (await display({ [symbol === "xfmr" ? "cb" : "lp"]: true })).ok,
+      ).toBe(false);
+      expect(controller.project).toEqual(before);
+    }
+    const beforeBatch = structuredClone(controller.project);
+    const ids = controller.document.instances.map((instance) => instance.id);
+    expect(
+      (
+        await client.applyActions([
+          {
+            kind: "set-instance-display",
+            instanceIds: ids,
+            showReference: false,
+            showParameters: { lp: true },
+          },
+        ])
+      ).ok,
+    ).toBe(false);
+    expect(controller.project).toEqual(beforeBatch);
+  });
+  it("places native bound displays and electrical ground, with idempotent visibility", async () => {
+    const { client, controller } = await folder();
+    expect(
+      (
+        await client.applyActions([
+          {
+            kind: "place-component",
+            symbol: "resistor",
+            reference: "R1",
+            position: { x: 100, y: 100 },
+            parameters: { value: "100" },
+          },
+          {
+            kind: "place-component",
+            symbol: "ground",
+            position: { x: 100, y: 200 },
+          },
+        ])
+      ).ok,
+    ).toBe(true);
+    const id = controller.document.instances.find(
+      (i) => i.reference === "R1",
+    )!.id;
+    const labels = () =>
+      controller.document.annotations.filter(
+        (a) => a.anchor.kind === "object" && a.anchor.objectId === id,
+      );
+    expect(
+      labels()
+        .map((a) => a.binding?.kind)
+        .sort(),
+    ).toEqual(["instance-reference", "instance-value"]);
+    expect(
+      controller.document.connectivityEvidence.some(
+        (e) =>
+          e.kind === "name-claim" &&
+          e.powerDomain === "ground" &&
+          e.name === "0",
+      ),
+    ).toBe(true);
+    for (const visible of [false, true, true]) {
+      expect(
+        (
+          await client.applyActions([
+            {
+              kind: "set-instance-display",
+              instanceIds: [id],
+              showReference: visible,
+              showValue: visible,
+            },
+          ])
+        ).ok,
+      ).toBe(true);
+      expect(labels()).toHaveLength(2);
+      expect(labels().every((a) => (a.visible !== false) === visible)).toBe(
+        true,
+      );
+    }
+    expect(
+      (
+        await client.applyActions([
+          {
+            kind: "move",
+            target: { kind: "instance", id },
+            position: { x: 150, y: 100 },
+          },
+        ])
+      ).ok,
+    ).toBe(true);
+    expect(labels().every((a) => a.anchor.kind === "object")).toBe(true);
+  });
   it("places the original top in a new TB through public actions and retains normal history", async () => {
     const { client, controller } = await folder();
     expect(
@@ -85,6 +346,19 @@ describe("MCP → API → shared editor parity", () => {
       kind: "subcircuit",
       childDocumentId: "main",
     });
+    const testbench = controller.project.documents.find((d) => d.id === "tb")!;
+    expect(
+      testbench.annotations.some(
+        (annotation) => annotation.binding?.kind === "instance-reference",
+      ),
+    ).toBe(false);
+    expect(
+      flattenRichText(
+        testbench.annotations.find(
+          (annotation) => annotation.id === "instance-master-xdut",
+        )!.content!,
+      ),
+    ).toBe("dut");
     expect(controller.resolver.resolve(instance.symbolId)).toBeTruthy();
     expect(
       (await client.applyActions([{ kind: "undo" }], { documentId: "tb" })).ok,
@@ -163,6 +437,10 @@ describe("MCP → API → shared editor parity", () => {
       },
     ]);
     expect(label.ok, label.message).toBe(true);
+    expect(controller.document.annotations[0]!.anchor).toMatchObject({
+      kind: "route",
+      routeId: controller.document.routes[0]!.id,
+    });
     const annotationId = controller.document.annotations[0]!.id;
     expect(controller.document.connectivityEvidence).toContainEqual(
       expect.objectContaining({

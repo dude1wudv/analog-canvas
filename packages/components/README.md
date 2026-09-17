@@ -14,17 +14,19 @@ The core authoring model has two levels:
 
 Start with [NMOS](definitions/nmos.json), [PMOS](definitions/pmos.json),
 [Resistor](definitions/resistor.json), [Capacitor](definitions/capacitor.json),
-or [Inductor](definitions/inductor.json). Extended DMOS, drawing-only blocks,
-and named symbol variants with their own stable IDs follow the same rule.
+or [Inductor](definitions/inductor.json). Extended DMOS and depletion-MOS
+variants, drawing-only blocks, and named symbol variants with their own stable
+IDs follow the same rule.
 
 ## What a definition owns
 
-| Field | Responsibility |
-| --- | --- |
-| `schemaVersion` | Component authoring envelope version, independent of Project schema |
-| `symbol` | Complete Symbol DSL: primitives, arrows, pins, anchors and variants |
-| `electrical` | Complete DeviceDescriptor: parameters/defaults, pin semantics, model/netlist policy; explicit `null` when no descriptor exists |
-| `catalog` | Library, review/visual authority, category, palette eligibility and generation provenance |
+| Field           | Responsibility                                                                                                                  |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `schemaVersion` | Component authoring envelope version, independent of Project schema                                                             |
+| `symbol`        | Complete Symbol DSL: primitives, arrows, pins, anchors and variants                                                             |
+| `electrical`    | Complete DeviceDescriptor: parameters/defaults, pin semantics, model/netlist policy; explicit `null` when no descriptor exists  |
+| `subcircuit`    | Optional black-box subcircuit master for netlist export: target plus VDD/VSS and pin-mapped ports; only with `electrical: null` |
+| `catalog`       | Library, review/visual authority, category, palette eligibility and generation provenance                                       |
 
 `electrical: null` does not claim simulation support. Conversely, a non-null
 descriptor with `targetPolicy: "none"` may provide naming/authoring semantics
@@ -46,9 +48,10 @@ entry; a geometry generator cannot silently create electrical semantics.
 
 Run `pnpm components:generate`, then `pnpm components:check` and the tests
 appropriate to the change. The check is part of the static delivery gate.
-NDMOS/PDMOS are checked/regenerated against their declared base MOS through one
-shared drift-region operation, not independently maintained copies of the MOS
-construction rules. Other families keep their existing targeted generators.
+NDMOS/PDMOS and depletion NMOS/PMOS are checked/regenerated against their
+declared base MOS through one shared derivation operation, not independently
+maintained copies of the MOS construction rules. Other families keep their
+existing targeted generators.
 
 Runtime adapters in `@icm/devices` and `@icm/symbols` are generated projections,
 not additional authoring sources. Electrical consumers do not import artwork;
@@ -77,6 +80,12 @@ The product set is exactly the reviewed, Reference-calibrated entries:
 - `resistor`, `capacitor`, `inductor-compact`, their adjustable siblings
   `variable-resistor`, `variable-capacitor`, and `variable-inductor` (the base
   body plus one diagonal adjustment arrow), `port`, and `port-filled`;
+- `port` and `port-filled` keep their calibrated circular bodies, with the
+  right-hand lead and `P` terminal shortened by one 10-unit grid cell to x=0.
+  Their view boxes shrink with that endpoint; the one-cell lead allowance
+  stays an upper bound. These two directly authored definitions have no family
+  generator. Reference evidence remains unchanged, and historical routes can
+  be repaired manually if the moved terminal requires it;
 - `inductor`, the evidence-exact Large Inductor. The textbook figure is drawn
   at its own scale, so the calibrated coil spans 60 logical units against the
   40 every other reviewed passive uses. Both come from the same pinned PDF
@@ -89,14 +98,17 @@ The product set is exactly the reviewed, Reference-calibrated entries:
   plates and leads. PDF-native evidence governs winding placement, bridge
   topology, and polarity-dot clearance; neither Symbol draws a circle at an
   external pin. Both remain manual-only until compound L/K/C or subcircuit
-  lowering has an explicit contract;
+  lowering has an explicit contract. Placement still authors complete starting
+  parameters: T-coil uses `L1=1n`, `L2=1n`, `K=1`, and `CB=1p`; XFMR uses
+  `Lp=1n`, `Ls=1n`, and `K=1`;
 - `diode` and `zener-diode`. The Zener body is direct PDF-vector evidence from
   _Fundamentals of Microelectronics_, Figure 3.44(a). Both retain the SPICE D
   electrical contract, but Zener presentation is manual or PDK-mapped because
   ordinary D syntax does not identify breakdown use;
 - the behavioral block family `inverter`, `and-gate`, `or-gate`, `nand-gate`,
   `nor-gate`, `xor-gate`, `xnor-gate`, `buffer`, `delay-cell`,
-  `d-flip-flop`, `comparator`, and its polarity-unmarked sibling
+  `d-flip-flop`, its active-high asynchronous-reset sibling
+  `d-flip-flop-reset`, `comparator`, and its polarity-unmarked sibling
   `comparator-unmarked` (manual-only netlist mapping, like `opamp`). Inverter, AND,
   NAND, NOR, and XOR use hash-pinned native-vector evidence from textbook
   Figures 16.2, 16.24, and 16.25. Buffer and the generic D/CK/Q/Q-bar flip-flop
@@ -105,7 +117,34 @@ The product set is exactly the reviewed, Reference-calibrated entries:
   printed page 331, Figure 16.2(c); its timing and netlist implementation remain
   deliberately unmapped. OR is the reviewed NOR body without its output
   bubble; XNOR is the direct XOR body with the reviewed two-input NOR negation
-  bubble.
+  bubble. The eight combinational gates use the product normalization
+  `bodyNormalization: "left-grid-anchor"`: translate the reviewed artwork
+  horizontally so its leftmost outline lies at x=-20, preserving its scale,
+  curves, bubbles and vertical coordinates. Buffer, Inverter, AND and NAND
+  therefore place their vertical left edge on the grid, with exactly one-cell
+  input leads from x=-30. OR/NOR and XOR/XNOR use their leftmost curve as the
+  same baseline. Outputs extend from the body or bubble to the first 10-unit
+  grid column that leaves at least 4 units of visible lead. Path bounds follow
+  the artwork instead of the source crop's empty margin. The shared rule lives
+  in `scripts/lib/anchor-logic-body.mjs`; raw PDF evidence and the DFF/delay
+  geometry are unchanged. Pin names and order stay fixed, but changed pin
+  columns can require manual repair of historical routes;
+- triangular Analog Blocks (`opamp`, fully differential amps, voltage amps,
+  comparators, and their lettered/polarity variants) share a user-requested
+  equilateral outline with three 60-unit sides and a 60-degree apex. Its left
+  vertical edge is anchored at x=-30, with both corners on the 10-unit grid;
+  the apex is derived at x≈21.96. Input and output polarity marks use the
+  differential gm block's equal 6-unit strokes with round caps, with clearance
+  for both columns and internal text. The
+  generators record `bodyNormalization: "equilateral-triangle"`; PDF extracts
+  remain original evidence rather than being relabeled as equilateral. Pin
+  names, order, input anchors, and polarity semantics are preserved. Outputs
+  share x=30: single-ended terminals retract one 10-unit grid step from x=40,
+  while differential terminals extend one step from x=20. Input leads are
+  exactly 10 units, and the single-ended output lead extends about 8.04 units
+  past the apex. The shared construction lives in `scripts/lib/analog-triangle.mjs`,
+  and the op-amp
+  generator also projects the comparator bodies;
 - the Analog Blocks library includes the reference-calibrated single-input
   `transconductance` symbol and its user-requested house companion
   `differential-transconductance`. Both display `g_m` without a default unary
@@ -114,10 +153,12 @@ The product set is exactly the reviewed, Reference-calibrated entries:
 `nmos` and `pmos` are the only MOS asset IDs in the Reference-calibrated
 Razavi catalog. Their default visual variant is `textbook-3terminal`; explicit
 bulk-capable variants remain properties of the same canonical assets. Optional
-families such as high-voltage DMOS live in the separate Extended Devices
-catalog and do not claim Razavi visual authority. The drawn VDD rail remains
-the explicit Net/Route authoring form; `vdd-port` is its reviewed marker Symbol
-for placed-device authoring on the same global VDD Net. There is no legacy
+families such as high-voltage DMOS and Razavi-compatible depletion MOS live in
+the separate Extended Devices catalog and do not claim Razavi visual
+authority. The drawn VDD rail remains the explicit Net/Route authoring form;
+`vdd-port` is its reviewed marker Symbol for placed-device authoring. New rails
+and VDD Power default to local scope; VDD Power is a formal Cell Pin unless the
+user explicitly selects Global. There is no legacy
 symbol catalog or generic fallback. A device without a reviewed Razavi symbol
 or an explicit Extended Devices entry is an unsupported import error.
 

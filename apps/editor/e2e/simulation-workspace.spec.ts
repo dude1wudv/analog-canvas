@@ -1,7 +1,6 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type WebSocketRoute } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { strFromU8, unzipSync } from "fflate";
+import { unzipSync } from "fflate";
 import {
   createSimulationEnvironmentMetadata,
   createSimulationInputMetadata,
@@ -13,15 +12,795 @@ import {
   replaceSimulationExperimentConfig,
 } from "@icm/model";
 import { parseProject } from "@icm/project-protocol";
-import { generateCircuitSource, simulationSignals } from "@icm/netlist";
+import {
+  generateCircuitSource,
+  simulationSignals,
+  nativeSimulationDevices,
+  vacaskIdentifier,
+} from "@icm/netlist";
 
 import {
   clickNetlistWorkflowCommand,
   downloadBytes,
+  readRecoveryRecords,
 } from "./editor-fixtures.js";
 import { ota, profile, editSimulationFile } from "./simulation-e2e-fixtures.js";
 
-const loadModule = createRequire(import.meta.url);
+test("simulation Agent entry is passive and reuses the existing connection panel", async ({
+  page,
+}) => {
+  let creates = 0;
+  let socket: WebSocketRoute | null = null;
+  await page.routeWebSocket(
+    "**/api/agent/sessions/sim-guide/editor",
+    (route) => {
+      socket = route;
+    },
+  );
+  await page.route("**/api/agent/sessions", async (route) => {
+    creates += 1;
+    await route.fulfill({
+      json: {
+        ok: true,
+        session: {
+          sessionId: "sim-guide",
+          editorSecret: "sim-secret",
+          claimCode: "sim-guide.claim",
+          claimExpiresAt: Date.now() + 300_000,
+          expiresAt: Date.now() + 3_600_000,
+        },
+      },
+    });
+  });
+  const project = parseProject(JSON.stringify(ota));
+  project.simulationFolders = [];
+  await page.goto("/editor");
+  await page.getByTestId("project-file").setInputFiles({
+    name: "agent-guidance.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await page.getByTestId("open-analog-simulation").click();
+  const bar = page.locator(".simulation-taskbar");
+  const guide = page.getByRole("region", { name: "Agent simulation guide" });
+  await expect(guide.getByRole("heading")).toHaveText(
+    "Simulate with an Agent (recommended)",
+  );
+  await expect(guide.getByRole("listitem")).toHaveCount(3);
+  await expect(bar.locator(".simulation-agent-guidance")).toHaveCount(0);
+  await expect(
+    guide.getByRole("button", { name: "Set up manually", exact: true }),
+  ).toBeVisible();
+  const initialSurface = await page
+    .getByRole("region", { name: "Analog simulation" })
+    .boundingBox();
+  const connectBounds = await guide
+    .getByRole("button", { name: "Connect Agent", exact: true })
+    .boundingBox();
+  expect(connectBounds!.y + connectBounds!.height).toBeLessThanOrEqual(
+    initialSurface!.y + initialSurface!.height,
+  );
+  await page
+    .getByRole("region", { name: "Analog simulation" })
+    .screenshot({ path: test.info().outputPath("agent-start.png") });
+  await expect(page.getByTestId("connect-agent-panel")).toHaveCount(0);
+  expect(creates).toBe(0);
+  await guide
+    .getByRole("button", { name: "Connect Agent", exact: true })
+    .click();
+  const panel = page.getByTestId("connect-agent-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel.getByTestId("agent-copy-text")).toHaveValue(
+    /sim-guide.claim/,
+  );
+  await expect(
+    guide.getByRole("button", { name: "View connection info", exact: true }),
+  ).toBeVisible();
+  expect(creates).toBe(1);
+  await panel.getByRole("button", { name: "Close Agent dialog" }).click();
+  await expect.poll(() => socket !== null).toBe(true);
+  socket!.send(
+    JSON.stringify({
+      protocolVersion: "1.0",
+      sessionId: "sim-guide",
+      messageId: "ready",
+      requestId: "ready",
+      sentAt: new Date().toISOString(),
+      kind: "event",
+      payload: { type: "session.ready", sessionId: "sim-guide" },
+    }),
+  );
+  await expect(guide.getByRole("status")).toContainText("Agent connected");
+  await expect(panel).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Maximize simulation", exact: true })
+    .click();
+  await expect(guide.getByRole("status")).toContainText(
+    "Tell your Agent your simulation goal.",
+  );
+  await guide.screenshot({
+    path: test.info().outputPath("agent-connected.png"),
+  });
+  const originalViewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 480, height: 640 });
+  await expect(
+    guide.getByRole("button", { name: "Connection details", exact: true }),
+  ).toBeInViewport();
+  expect(
+    await page
+      .locator(".simulation-start-workspace")
+      .evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+  await guide.screenshot({
+    path: test.info().outputPath("agent-start-narrow.png"),
+  });
+  await page.setViewportSize(originalViewport);
+  await guide
+    .getByRole("button", { name: "Connection details", exact: true })
+    .click();
+  await expect(panel).toBeVisible();
+  expect(creates).toBe(1);
+  await panel.getByRole("button", { name: "Close Agent dialog" }).click();
+  await guide
+    .getByRole("button", { name: "Set up manually", exact: true })
+    .click();
+  await page.getByLabel("New simulation folder name").fill("Agent experiment");
+  await page.getByLabel("New simulation folder name").press("Enter");
+  await expect(guide).toHaveCount(0);
+  await expect(
+    bar.getByRole("button", { name: "Agent connected", exact: true }),
+  ).toBeVisible();
+});
+
+test("simulation examples confirm whole-Project replacement and protect existing work", async ({
+  page,
+}) => {
+  const project = parseProject(JSON.stringify(ota));
+  project.simulationFolders = [];
+  await page.goto("/editor");
+  await page.getByTestId("project-file").setInputFiles({
+    name: "my-circuit.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await page
+    .getByRole("textbox", { name: "Circuit name" })
+    .fill("My unsaved circuit");
+  await page.getByRole("textbox", { name: "Circuit name" }).press("Enter");
+  await page.getByTestId("open-analog-simulation").click();
+  const panel = page.getByRole("region", { name: "Analog simulation" });
+  const cards = panel.getByRole("group", { name: "Simulation examples" });
+  await expect(cards).not.toBeVisible();
+  await panel.getByText("Explore examples", { exact: true }).click();
+  await expect(cards.getByRole("button")).toHaveCount(4);
+  await panel.screenshot({
+    path: test.info().outputPath("simulation-starters.png"),
+  });
+  await expect(panel).not.toContainText("No DUT instance");
+  await cards
+    .getByRole("button", { name: "RC Filters Low-pass & high-pass" })
+    .click();
+  const confirmation = page.getByRole("dialog", { name: "Open RC Filters?" });
+  await expect(confirmation).toContainText("entire Project");
+  await confirmation
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+  await expect(cards).toBeVisible();
+  await expect
+    .poll(async () =>
+      (await readRecoveryRecords(page)).some(
+        (record) => JSON.parse(record.projectText).id === project.id,
+      ),
+    )
+    .toBe(true);
+  await cards
+    .getByRole("button", { name: "RC Filters Low-pass & high-pass" })
+    .click();
+  await confirmation
+    .getByRole("button", { name: "Open example", exact: true })
+    .click();
+  const guard = page.getByRole("dialog", { name: "Unsaved changes" });
+  await expect(guard).toBeVisible();
+  await guard.getByRole("button", { name: "Stay", exact: true }).click();
+  await expect(cards).toBeVisible();
+  await cards
+    .getByRole("button", { name: "RC Filters Low-pass & high-pass" })
+    .click();
+  await confirmation
+    .getByRole("button", { name: "Open example", exact: true })
+    .click();
+  await guard.getByRole("button", { name: "Continue without saving" }).click();
+  await expect(cards).toHaveCount(0);
+  await expect(
+    panel.getByRole("button", { name: "Run", exact: true }),
+  ).toBeVisible();
+  await expect(panel.locator(".simulation-source-context")).toContainText(
+    "Canvas source:",
+  );
+  await expect(
+    panel.getByRole("textbox", { name: "Simulation source editor" }),
+  ).toContainText("Click Run");
+});
+test("native metadata is hidden per folder while damaged configuration stays repairable", async ({
+  page,
+}) => {
+  const project = parseProject(JSON.stringify(ota));
+  const native = createSimulationFolder({
+    id: "native",
+    name: "Native",
+    documentId: project.topDocumentId,
+    profileId: profile.id,
+  });
+  const repair = createSimulationFolder({
+    id: "repair",
+    name: "Repair",
+    documentId: project.topDocumentId,
+    profileId: profile.id,
+  });
+  const config = repair.input.files.find(
+    (file) => file.path === repair.input.configPath,
+  )!;
+  const original = config.text;
+  config.text = "{";
+  project.simulationFolders = [native, repair];
+  await page.route("**/api/simulate", (route) =>
+    route.fulfill({
+      status: 503,
+      json: { error: "Offline authoring fixture" },
+    }),
+  );
+  await page.goto("/editor");
+  await page.getByTestId("project-file").setInputFiles({
+    name: "metadata.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await page.getByTestId("open-analog-simulation").click();
+  const panel = page.getByRole("region", { name: "Analog simulation" });
+  await expect(
+    panel.locator(
+      '[data-folder-id="native"][data-file-path="experiment.json"]',
+    ),
+  ).toHaveCount(0);
+  await panel
+    .getByRole("treeitem", { name: "Folder Repair", exact: true })
+    .click();
+  await panel
+    .getByRole("button", { name: "Toggle Repair", exact: true })
+    .click();
+  await panel
+    .getByRole("treeitem", { name: "experiment.json", exact: true })
+    .click();
+  const editor = panel.getByRole("textbox", {
+    name: "Simulation source editor",
+  });
+  await expect(editor).toHaveText("{");
+  await editor.fill(original);
+  await panel.getByRole("button", { name: "Save source", exact: true }).click();
+  await expect(
+    panel.getByRole("treeitem", { name: "experiment.json", exact: true }),
+  ).toHaveCount(0);
+  await expect(panel.getByRole("tab", { name: "Configuration" })).toHaveCount(
+    0,
+  );
+  await expect(panel.getByRole("tab", { name: /run\.cir/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const saved = parseProject(
+    (await downloadBytes(page, "File", "Export Project File…")).toString(),
+  );
+  for (const folder of saved.simulationFolders)
+    expect(
+      folder.input.files.find((file) => file.path === folder.input.configPath)!
+        .text,
+    ).toBe(original);
+});
+
+test("native Circuit source edits persist source fields and distinguish mega from milli", async ({
+  page,
+}) => {
+  const project = parseProject(JSON.stringify(ota));
+  const folder = createSimulationFolder({
+    id: "native-values",
+    name: "Native values",
+    documentId: project.topDocumentId,
+    profileId: "candidate",
+  });
+  project.simulationFolders = [folder];
+  await page.route("**/api/simulate", (route) =>
+    route.fulfill({
+      status: 503,
+      json: { error: "Offline authoring fixture" },
+    }),
+  );
+  await page.goto("/editor");
+  await page.getByTestId("project-file").setInputFiles({
+    name: "native-values.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await page.getByTestId("open-analog-simulation").click();
+  await page.getByRole("tab", { name: /circuit\.spice/ }).click();
+  const editor = page.getByRole("textbox", {
+    name: "Simulation source editor",
+  });
+  const generated = generateCircuitSource(
+    project,
+    folder.input.circuitBindings[0]!,
+    folder.input,
+  );
+  if (!generated.ok) throw Error(JSON.stringify(generated.diagnostics));
+  const body = generated.source.sourceBodies!.find(
+    (b) => b.instanceId === "VDD",
+  )!;
+  const text =
+    generated.source.text.slice(0, body.startOffset) +
+    ' type="sine" dc=1m mag=1 phase=-90 sinedc=0 ampl=1 freq=1M' +
+    generated.source.text.slice(body.endOffset);
+  await expect(editor).toContainText('type="dc"');
+  await editor.fill(text);
+  await page.getByRole("button", { name: "Save source", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Save source", exact: true }),
+  ).toHaveAttribute("data-save-state", "saved");
+  const saved = parseProject(
+    (await downloadBytes(page, "File", "Export Project File…")).toString(),
+  );
+  const params = saved.documents
+    .find((d) => d.id === body.documentId)!
+    .instances.find((i) => i.id === body.instanceId)!.netlist!.parameters;
+  expect(params).toMatchObject({
+    dc: "0.001",
+    frequency: "1000000",
+    waveform: "sin",
+    acMagnitude: "1",
+    acPhase: "-90",
+  });
+  const projected = generateCircuitSource(
+    saved,
+    folder.input.circuitBindings[0]!,
+    saved.simulationFolders[0]!.input,
+  );
+  if (!projected.ok) throw Error("Expected native projection after save");
+  expect(projected.source.text).toContain(
+    'type="sine" dc=0.001 mag=1 phase=-90',
+  );
+  expect(projected.source.text).toContain("freq=1000000");
+});
+
+test("Code edits native AC fields and routes parameter declarations to authored Code", async ({
+  page,
+}) => {
+  const project = parseProject(JSON.stringify(ota));
+  const folder = createSimulationFolder({
+    id: "source-parameters",
+    name: "Source parameters",
+    documentId: project.topDocumentId,
+    profileId: profile.id,
+  });
+  project.simulationFolders = [folder];
+  await page.route("**/api/simulate", (route) =>
+    route.fulfill({
+      status: 503,
+      json: { error: "Offline authoring fixture" },
+    }),
+  );
+  await page.goto("/editor");
+  await page.getByTestId("project-file").setInputFiles({
+    name: "source-parameters.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await page.getByTestId("open-analog-simulation").click();
+  await page.getByRole("tab", { name: /circuit\.spice/ }).click();
+  const editor = page.getByRole("textbox", {
+    name: "Simulation source editor",
+  });
+  const generated = generateCircuitSource(
+    project,
+    folder.input.circuitBindings[0]!,
+    folder.input,
+  );
+  if (!generated.ok) throw Error("Expected generated source");
+  // DOM innerText can omit the final newline and includes display-only ghosts.
+  const source = generated.source.text;
+  const body = generated.source.sourceBodies!.find(
+    (p) => p.instanceId === "VDD",
+  )!;
+  expect(body).toBeDefined();
+  const edited =
+    source.slice(0, body.startOffset) +
+    ' type="dc" dc=1.8 mag=1 phase=-90' +
+    source.slice(body.endOffset);
+  expect(edited).not.toBe(source);
+  await editor.fill(edited);
+  await page.getByRole("button", { name: "Save source", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Save source", exact: true }),
+  ).toHaveAttribute("data-save-state", "saved");
+  const saved = parseProject(
+    (await downloadBytes(page, "File", "Export Project File…")).toString(),
+  );
+  const sourceParameters = (p: typeof saved) =>
+    p.documents
+      .find((d) => d.id === project.topDocumentId)!
+      .instances.find((i) => i.id === "VDD")!.netlist!.parameters;
+  expect(sourceParameters(saved)).toMatchObject({
+    acMagnitude: "1",
+    acPhase: "-90",
+  });
+  const applied = generateCircuitSource(
+    saved,
+    folder.input.circuitBindings[0]!,
+    folder.input,
+  );
+  if (!applied.ok) throw Error("Expected applied source");
+  const appliedBody = applied.source.sourceBodies!.find(
+    (p) => p.instanceId === "VDD",
+  )!;
+  await editor.fill(
+    applied.source.text.slice(0, appliedBody.startOffset) +
+      ' type="dc" dc=(VBIAS)' +
+      applied.source.text.slice(appliedBody.endOffset),
+  );
+  await page.getByRole("button", { name: "Helper", exact: true }).click();
+  await page
+    .getByRole("option", { name: "Design variable (parameters)…", exact: true })
+    .click();
+  await expect(page.getByRole("tab", { name: /run\.cir/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const declarationLine = editor
+    .locator(".cm-line")
+    .filter({ hasText: /^parameters(?:\s|$)/ });
+  await expect(declarationLine).toHaveCount(1);
+  await expect(page.locator(".simulation-parameter-ghost")).toContainText(
+    "name=expression",
+  );
+  await editor.press("ControlOrMeta+z");
+  await expect(declarationLine).toHaveCount(0);
+  const redoShortcut = await page.evaluate(() =>
+    /Mac|iPhone|iPad/.test(navigator.platform) ? "Meta+Shift+z" : "Control+y",
+  );
+  await editor.press(redoShortcut);
+  await expect(declarationLine).toHaveCount(1);
+  await expect(page.locator(".simulation-parameter-ghost")).toContainText(
+    "name=expression",
+  );
+  await page.keyboard.type("VBIAS=1.8");
+  await page.getByRole("button", { name: "Save source", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Save source", exact: true }),
+  ).toHaveAttribute("data-save-state", "saved");
+  const final = parseProject(
+    (await downloadBytes(page, "File", "Export Project File…")).toString(),
+  );
+  expect(sourceParameters(final)).toMatchObject({ dc: "{VBIAS}" });
+  expect(sourceParameters(final)).not.toHaveProperty("acMagnitude");
+  expect(sourceParameters(final)).not.toHaveProperty("acPhase");
+  expect(
+    final.simulationFolders[0]!.input.files.find(
+      (f) => f.path === folder.input.entry,
+    )!.text,
+  ).toContain("parameters VBIAS=1.8");
+  expect(
+    JSON.parse(
+      final.simulationFolders[0]!.input.files.find(
+        (f) => f.path === "experiment.json",
+      )!.text,
+    ),
+  ).toEqual({ version: 2, environment: { profileId: profile.id } });
+});
+
+test("new experiments explicitly bind the selected Cell without requiring a Testbench", async ({
+  page,
+}) => {
+  const project = parseProject(JSON.stringify(ota));
+  project.simulationFolders = [];
+  const dut = project.documents.find((cell) => cell.name === "ota_5t")!;
+  await page.route("**/api/simulate", (route) =>
+    route.fulfill({
+      status: 503,
+      json: { error: "Offline authoring fixture" },
+    }),
+  );
+  await page.goto("/editor");
+  await page.getByTestId("project-file").setInputFiles({
+    name: "cell-selection.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await page.getByTestId("open-analog-simulation").click();
+  await page
+    .getByRole("button", { name: "Set up manually", exact: true })
+    .click();
+  const name = page.getByLabel("New simulation folder name");
+  const cell = page.getByRole("combobox", {
+    name: "Simulation Cell",
+    exact: true,
+  });
+  await expect(cell).toHaveValue(project.topDocumentId);
+  const setupCard = page.locator(
+    ".simulation-start-workspace > .workspace-inline-name",
+  );
+  const dockedCard = await setupCard.boundingBox();
+  expect(dockedCard!.width).toBeLessThanOrEqual(360);
+  // Resize via the window control without blurring the form into a commit.
+  await name.press("Escape");
+  await page
+    .getByRole("button", { name: "Maximize simulation", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Set up manually", exact: true })
+    .click();
+  expect((await setupCard.boundingBox())!.width).toBeLessThanOrEqual(360);
+  await setupCard.screenshot({
+    path: test.info().outputPath("manual-setup-card.png"),
+  });
+  await name.fill("OTA direct");
+  await page.getByRole("heading", { name: "Simulate with an Agent" }).click();
+  await expect(name).toHaveCount(0);
+  await expect(
+    page.getByRole("treeitem", { name: "Folder OTA direct", exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Set up manually", exact: true })
+    .click();
+  await name.fill("OTA direct");
+  await name.press("Tab");
+  await expect(cell).toBeFocused();
+  await cell.selectOption(dut.id);
+  await page.getByRole("heading", { name: "Simulate with an Agent" }).click();
+  await expect(cell).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Set up manually", exact: true })
+    .click();
+  await name.fill("OTA direct");
+  await cell.selectOption(dut.id);
+  // Moving between fields must not prematurely create the folder.
+  await expect(name).toBeVisible();
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Restore simulation panel", exact: true })
+    .click();
+  const folderRow = page.getByRole("treeitem", {
+    name: "Folder OTA direct",
+    exact: true,
+  });
+  await expect(folderRow).toHaveText("OTA direct");
+  await expect(folderRow).toHaveAttribute("title", "Cell: ota_5t");
+  await expect(folderRow).toHaveAttribute("aria-description", "Cell: ota_5t");
+  const editor = page.getByRole("textbox", {
+    name: "Simulation source editor",
+  });
+  await expect(editor).toContainText('include "circuit.spice"');
+  await expect(editor).toContainText("op");
+  await expect(
+    page.getByRole("treeitem", { name: "experiment.json", exact: true }),
+  ).toHaveCount(0);
+  await editor.focus();
+  const folderWidth = (await folderRow.boundingBox())!.width;
+  await folderRow.hover();
+  await expect(editor).toBeFocused();
+  expect((await folderRow.boundingBox())!.width).toBe(folderWidth);
+  await page.getByRole("tab", { name: /circuit\.spice/ }).click();
+  await expect(editor).toContainText("XM1");
+  await expect(editor).not.toContainText("XDUT");
+  const saved = parseProject(
+    (await downloadBytes(page, "File", "Export Project File…")).toString(),
+  );
+  const folder = saved.simulationFolders[0]!;
+  expect(folder.input.circuitBindings).toEqual([
+    {
+      id: "circuit",
+      path: "circuit.spice",
+      documentId: dut.id,
+      emission: "top-level",
+    },
+  ]);
+  expect(folder.input.files.map((file) => file.path)).toEqual([
+    "run.cir",
+    "experiment.json",
+  ]);
+  expect(saved.topDocumentId).toBe(project.topDocumentId);
+  expect(saved.documents).toEqual(project.documents);
+  const generated = generateCircuitSource(
+    saved,
+    folder.input.circuitBindings[0]!,
+  );
+  expect(generated.ok).toBe(true);
+  if (!generated.ok) throw new Error("Expected generated Cell source");
+  expect((await editor.innerText()).trim()).toBe(generated.source.text.trim());
+
+  // The next default follows Canvas, not the existing experiment's root.
+  await page.getByTestId("document-selector").selectOption(dut.id);
+  await page
+    .getByRole("button", { name: "+ New experiment", exact: true })
+    .click();
+  await expect(cell).toHaveValue(dut.id);
+  await cell.press("Escape");
+  await expect(name).toHaveCount(0);
+  await page
+    .getByTestId("document-selector")
+    .selectOption(project.topDocumentId);
+  await page
+    .getByRole("button", { name: "+ New experiment", exact: true })
+    .click();
+  await expect(cell).toHaveValue(project.topDocumentId);
+  await cell.press("Escape");
+  await expect(folderRow).toHaveAttribute("title", "Cell: ota_5t");
+  const unchanged = parseProject(
+    (await downloadBytes(page, "File", "Export Project File…")).toString(),
+  );
+  expect(unchanged.simulationFolders).toEqual(saved.simulationFolders);
+  // Binding and label survive reopening the saved Project.
+  await page.getByTestId("project-file").setInputFiles({
+    name: "reopen.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(unchanged)),
+  });
+  await expect(folderRow).toHaveAttribute("title", "Cell: ota_5t");
+});
+
+test("tab context menus replace workspace more actions without discarding source", async ({
+  page,
+}) => {
+  const project = parseProject(JSON.stringify(ota));
+  const folder = createSimulationFolder({
+    id: "tab-actions",
+    name: "Tab actions",
+    documentId: project.topDocumentId,
+    profileId: profile.id,
+  });
+  folder.input.files.push({ path: "notes.json", text: "{}\n" });
+  project.simulationFolders = [folder];
+  await page.route("**/api/simulate", (route) =>
+    route.fulfill({
+      status: 503,
+      json: { error: "Offline authoring fixture" },
+    }),
+  );
+  await page.goto("/editor");
+  await page.getByTestId("project-file").setInputFiles({
+    name: "tabs.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await page.getByTestId("open-analog-simulation").click();
+  const panel = page.getByRole("region", { name: "Analog simulation" });
+  await expect(
+    panel.getByRole("button", { name: "More code actions" }),
+  ).toHaveCount(0);
+  const editor = panel.getByRole("textbox", {
+    name: "Simulation source editor",
+  });
+  const runTab = panel.getByRole("tab", { name: /run\.cir/ });
+  const circuitTab = panel.getByRole("tab", { name: /circuit\.spice/ });
+  const draft = "* retained after closing tabs\n";
+  await editor.fill(draft);
+  await circuitTab.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Close", exact: true }).click();
+  await expect(circuitTab).toHaveCount(0);
+  await expect(runTab).toHaveAttribute("aria-selected", "true");
+  await panel
+    .getByRole("treeitem", { name: "circuit.spice", exact: true })
+    .click();
+  await panel
+    .getByRole("treeitem", { name: "notes.json", exact: true })
+    .click();
+  await expect(panel.getByRole("tab", { name: "notes.json" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await circuitTab.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Close others", exact: true })
+    .click();
+  await expect(
+    panel
+      .getByRole("tablist", { name: "Open simulation files" })
+      .getByRole("tab"),
+  ).toHaveCount(1);
+  await expect(circuitTab).toHaveAttribute("aria-selected", "true");
+  await panel.getByRole("treeitem", { name: "run.cir", exact: true }).click();
+  await expect(editor).toHaveText(draft);
+  await runTab.focus();
+  await runTab.press("Shift+F10");
+  await page.getByRole("menuitem", { name: "Close all", exact: true }).click();
+  await expect(
+    panel
+      .getByRole("tablist", { name: "Open simulation files" })
+      .getByRole("tab"),
+  ).toHaveCount(0);
+  await expect(
+    panel.getByText(
+      "Select a file to edit. Closing tabs does not delete files.",
+    ),
+  ).toBeVisible();
+  await panel.getByRole("treeitem", { name: "run.cir", exact: true }).click();
+  await expect(editor).toHaveText(draft);
+  await runTab.click({ button: "right" });
+  await expect(
+    page.getByRole("menuitem", { name: "Close others", exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+});
+
+test("source save applies locally while signed out and leaves File Save cloud-owned", async ({
+  page,
+}) => {
+  const project = parseProject(JSON.stringify(ota));
+  const folder = createSimulationFolder({
+    id: "local-save",
+    name: "Local save",
+    documentId: project.topDocumentId,
+    profileId: profile.id,
+  });
+  project.simulationFolders = [folder];
+  let cloudWrites = 0;
+  await page.route("**/api/projects**", (route) => {
+    if (["POST", "PUT"].includes(route.request().method())) cloudWrites++;
+    return route.fulfill({ status: 401, json: { error: "Sign in" } });
+  });
+  await page.route("**/api/simulate", (route) =>
+    route.fulfill({
+      status: 503,
+      json: { error: "Offline authoring fixture" },
+    }),
+  );
+  await page.goto("/editor");
+  await page.getByTestId("project-file").setInputFiles({
+    name: "local-save.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await page.getByTestId("open-analog-simulation").click();
+  const editor = page.getByRole("textbox", {
+    name: "Simulation source editor",
+  });
+  const save = page.getByRole("button", { name: "Save source", exact: true });
+  const source = folder.input.files.find(
+    (file) => file.path === folder.input.entry,
+  )!.text;
+  await editor.fill(`${source}\n* local button save\n`);
+  await expect(save).toHaveAttribute("data-save-state", "dirty");
+  await save.click();
+  await expect(save).toHaveAttribute("data-save-state", "saved");
+  await expect(save).toBeDisabled();
+  await expect(page.getByRole("tab", { name: /run\.cir/ })).not.toContainText(
+    "●",
+  );
+  await editor.fill(`${source}\n* local keyboard save\n`);
+  await editor.press("ControlOrMeta+s");
+  await expect(save).toHaveAttribute("data-save-state", "saved");
+  expect(cloudWrites).toBe(0);
+  await expect(page.getByTestId("status")).not.toContainText("Sign in to save");
+  await expect
+    .poll(async () =>
+      (await readRecoveryRecords(page)).some((record) =>
+        record.projectText.includes("* local keyboard save"),
+      ),
+    )
+    .toBe(true);
+  const bytes = await downloadBytes(page, "File", "Export Project File…");
+  const applied = parseProject(bytes.toString());
+  expect(
+    applied.simulationFolders[0]!.input.files.find(
+      (file) => file.path === folder.input.entry,
+    )!.text,
+  ).toContain("* local keyboard save");
+  await page
+    .locator("summary")
+    .filter({ hasText: /^File$/ })
+    .click();
+  await page.getByTestId("save-cloud-project").click();
+  await expect(page.getByTestId("status")).toContainText("Sign in to save");
+  expect(cloudWrites).toBe(1);
+  await expect(save).toHaveAttribute("data-save-state", "saved");
+});
+
 test("Helper keeps signal selection continuous and shares the file row without stealing focus", async ({
   page,
 }) => {
@@ -71,11 +850,11 @@ test("Helper keeps signal selection continuous and shares the file row without s
   const pickerBox = (await picker.boundingBox())!;
   expect(Math.abs(pickerBox.x - popupBox.x)).toBeLessThan(2);
   expect(Math.abs(pickerBox.height - popupBox.height)).toBeLessThan(2);
-  const output = picker.getByRole("button", { name: /— v\(vout\)/ });
+  const output = picker.getByRole("button", { name: /— vout(?:\s|$)/ });
   await output.click();
   await expect(search).toBeFocused();
   await expect(output).toContainText("Added");
-  await picker.getByRole("button", { name: /— v\(vinp\)/ }).click();
+  await picker.getByRole("button", { name: /— vinp(?:\s|$)/ }).click();
   await expect(search).toBeFocused();
   await expect(editor).toContainText("save v(vout) v(vinp)");
   await expect(output).toBeDisabled();
@@ -105,6 +884,140 @@ test("Helper keeps signal selection continuous and shares the file row without s
   await expect(editor).not.toBeFocused();
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await expect(canvas).not.toHaveClass(/simulation-net-pick-active/);
+  // An incomplete source must remain repairable, not falsely acknowledge an
+  // acquisition that the editor refused to insert.
+  const validSource = folder.input.files.find(
+    (file) => file.path === folder.input.entry,
+  )!.text;
+  await editor.fill(`${validSource}\nsave v(`);
+  await helper.click();
+  await page
+    .getByRole("option", { name: "Save voltage…", exact: true })
+    .click();
+  await output.click();
+  await expect(output).not.toContainText("Added");
+  await expect(output).toBeEnabled();
+  await expect(editor).not.toContainText("v(vout)");
+  await search.press("Escape");
+  await editor.fill(validSource);
+  await helper.click();
+  await page
+    .getByRole("option", { name: "Save voltage…", exact: true })
+    .click();
+  await output.click();
+  await expect(output).toContainText("Added");
+  await expect(editor).toContainText("v(vout)");
+});
+
+test("native text-only Helper discovers exact-case nodes and declared voltage-source branches", async ({
+  page,
+}) => {
+  const project = parseProject(JSON.stringify(ota));
+  const folder = createSimulationFolder({
+    id: "native-text-discovery",
+    name: "Native discovery",
+    profileId: profile.id,
+  });
+  folder.input.files.find((file) => file.path === folder.input.entry)!.text =
+    `Native discovery
+model supply vsource
+model load resistor
+feed (Out 0) supply dc=1
+Feed (out 0) supply dc=2
+VnotVoltage (Out out) load r=1k
+control
+analysis bias op
+endc
+`;
+  project.simulationFolders = [folder];
+  await page.route("**/api/simulate", (route) =>
+    route.fulfill({
+      status: 503,
+      json: { error: "Offline authoring fixture" },
+    }),
+  );
+  await page.goto("/editor");
+  await page.getByTestId("project-file").setInputFiles({
+    name: "native-text.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await page.getByTestId("open-analog-simulation").click();
+  const editor = page.getByRole("textbox", {
+    name: "Simulation source editor",
+  });
+  const helper = page.getByRole("button", { name: "Helper", exact: true });
+  const picker = page.getByRole("dialog", { name: "Save signal" });
+  await helper.click();
+  await page
+    .getByRole("option", { name: "Save terminal current…", exact: true })
+    .click();
+  await expect(
+    picker.getByRole("button", { name: "i(VnotVoltage)", exact: true }),
+  ).toHaveCount(0);
+  await picker.getByRole("button", { name: "i(feed)", exact: true }).click();
+  await picker.getByRole("button", { name: "i(Feed)", exact: true }).click();
+  await expect(editor).toContainText("save i(feed) i(Feed)");
+  await picker.getByRole("button", { name: "Done", exact: true }).click();
+  await helper.click();
+  await page
+    .getByRole("option", { name: "Save voltage…", exact: true })
+    .click();
+  await picker.getByRole("button", { name: "v(Out)", exact: true }).click();
+  await picker.getByRole("button", { name: "v(out)", exact: true }).click();
+  await expect(editor).toContainText("save i(feed) i(Feed) v(Out) v(out)");
+});
+
+test("native device OP Helper inserts inspectable model-native saves without SPICE aliases", async ({
+  page,
+}) => {
+  const project = parseProject(JSON.stringify(ota));
+  const folder = createSimulationFolder({
+    id: "native-op-helper",
+    name: "Native OP",
+    documentId: project.topDocumentId,
+    profileId: "candidate",
+  });
+  // Offline authoring proof only: no claim that these default model values
+  // replace the foundry wrapper. Numeric compiler/helper proof runs separately.
+  const device = nativeSimulationDevices(project, folder.input).find(
+    (d) => d.polarity,
+  )!;
+  folder.input.files.find((f) => f.path === folder.input.entry)!.text +=
+    `\nsubckt ${device.card.target} (D G S B)\nmodel core sp_bsim4v8 type=1\nInner (D G S B) core\nends\n`;
+  project.simulationFolders = [folder];
+  await page.route("**/api/simulate", (route) =>
+    route.fulfill({
+      status: 503,
+      json: { error: "Offline authoring fixture" },
+    }),
+  );
+  await page.goto("/editor");
+  await page.getByTestId("project-file").setInputFiles({
+    name: "native-op.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await page.getByTestId("open-analog-simulation").click();
+  const editor = page.getByRole("textbox", {
+    name: "Simulation source editor",
+  });
+  await page.getByRole("button", { name: "Helper", exact: true }).click();
+  await page
+    .getByRole("option", { name: "Save device operating point…", exact: true })
+    .click();
+  const picker = page.getByRole("dialog", { name: "Save signal" });
+  const save = `p('${device.reference}:Inner',gm)`;
+  const choice = picker.getByRole("button", {
+    name: `${device.reference}:Inner · gm (model-native) — ${save}`,
+  });
+  await choice.click();
+  await expect(choice).toContainText("Added");
+  await expect(editor).toContainText(`save ${save}`);
+  await expect(editor).not.toContainText("[gm]");
+  await expect(
+    picker.getByRole("textbox", { name: "Search signal" }),
+  ).toBeFocused();
 });
 
 test("native save completion previews its mapped Net on the real Canvas", async ({
@@ -153,14 +1066,21 @@ test("native save completion previews its mapped Net on the real Canvas", async 
   const source = folder.input.files.find(
     (file) => file.path === folder.input.entry,
   )!.text;
-  await editor.fill(`${source.slice(0, source.indexOf(".endc"))}save`);
+  await editor.fill(`${source.slice(0, source.indexOf("endc"))}save`);
   await expect(page.locator(".simulation-code-status")).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Save project", exact: true }),
+    page.getByRole("button", { name: "Save source", exact: true }),
   ).toBeEnabled();
   await expect(page.getByRole("tab", { name: /run\.cir/ })).toContainText("●");
   await page.keyboard.type(" ");
-  const option = page.getByRole("option").filter({ hasText: vector });
+  const selector = `v(${vacaskIdentifier(vector)})`;
+  const option = page.getByRole("option").filter({
+    has: page.locator(".cm-completionLabel").filter({
+      hasText: new RegExp(
+        `^${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+      ),
+    }),
+  });
   await expect(option).toBeVisible();
   await option.hover();
   await expect(page.getByTestId("net-highlight-overlay")).toHaveAttribute(
@@ -220,13 +1140,22 @@ test("incomplete circuit opens Code and saves invalid parameter drafts across re
   );
   if (!source.ok) throw Error("Expected incomplete authoring projection");
   const original = source.source.text;
-  await editor.press("Control+A");
-  await page.keyboard.insertText(original.replace("<value>", "bad-value"));
-  await expect(editor).toContainText("bad-value");
+  await editor.press("ControlOrMeta+A");
+  // `bad-value` is valid native subtraction, not an invalid numeric draft.
+  // A trailing operator is incomplete in either dialect and cannot be applied.
+  await page.keyboard.insertText(original.replace("<value>", "bad-value+"));
+  await expect(editor).toContainText("bad-value+");
+  const saveSource = panel.getByRole("button", {
+    name: "Save source",
+    exact: true,
+  });
+  await saveSource.click();
+  await expect(saveSource).toHaveAttribute("data-save-state", "failed");
+  await expect(editor).toContainText("bad-value+");
   const bytes = await downloadBytes(page, "File", "Export Project File…");
   const saved = parseProject(bytes.toString());
   expect(saved.simulationFolders[0]!.input.drafts?.[0]?.text).toContain(
-    "bad-value",
+    "bad-value+",
   );
   expect(
     saved.documents
@@ -241,7 +1170,7 @@ test("incomplete circuit opens Code and saves invalid parameter drafts across re
   });
   await page.getByTestId("open-analog-simulation").click();
   await panel.getByRole("tab", { name: "circuit.spice", exact: false }).click();
-  await expect(editor).toContainText("bad-value");
+  await expect(editor).toContainText("bad-value+");
   await panel
     .getByRole("treeitem", { name: "Folder Draft", exact: true })
     .click({ button: "right" });
@@ -253,17 +1182,6 @@ test("incomplete circuit opens Code and saves invalid parameter drafts across re
   ).toBeVisible();
 });
 
-const { PNG } = loadModule("pngjs") as {
-  PNG: {
-    sync: {
-      read(input: Buffer): {
-        readonly width: number;
-        readonly height: number;
-        readonly data: Uint8Array;
-      };
-    };
-  };
-};
 test("human simulation uses saved folder, survives minimizing, recovers a bad input and exports results", async ({
   page,
 }) => {
@@ -272,6 +1190,7 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
   let folder = createSimulationFolder({
     id: "folder-e2e",
     name: "E2E folder",
+    engine: "ngspice",
     profileId: profile.id,
     documentId: project.topDocumentId,
   });
@@ -354,7 +1273,7 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
       json: {
         outcome: { status: "completed" },
         diagnostics: [],
-        log: "ngspice OP",
+        log: "ngspice OP\nat_one_tau = 5.00000e-01\n",
         durationMs: 1,
         data: {
           ...reading.data,
@@ -388,6 +1307,14 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
               analysis: "tran",
               plotName: "Transient response",
               timeSeconds: [0, 1e-9, 10e-9],
+              scalars: [
+                {
+                  name: "at_one_tau",
+                  quantity: "voltage",
+                  unit: "V",
+                  value: 0.5,
+                },
+              ],
               probes: [
                 {
                   name: requestedVector,
@@ -486,6 +1413,8 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
     "ac dec 10 1 1e6",
     "write out.raw",
     "tran 1e-9 1e-6 0 5e-10",
+    "meas tran at_one_tau FIND v(vout) AT=1e-9",
+    "* @spec at_one_tau <= 2 unit=V",
     "write out.raw",
     "noise v(vout) VINP dec 10 1 1e6",
     "write out.raw",
@@ -505,7 +1434,7 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
     panel
       .locator(".simulation-code-output-tabs")
       .getByRole("button", { name: "Archive", exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(panel.locator(".simulation-results-header")).toHaveCount(0);
   // A completed run belongs to its folder, not whichever folder is currently visible.
   await panel.getByRole("button", { name: "+ New experiment" }).click();
@@ -553,489 +1482,120 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
   await panel.getByRole("tab", { name: "Console" }).click();
   await expect(panel.locator(".simulation-console-summary")).toHaveCount(0);
   await expect(panel.locator(".simulation-console-view > pre")).toBeVisible();
-  await panel.getByRole("tab", { name: "Plot", exact: true }).click();
-  await panel.getByRole("tab", { name: "Operating Point" }).click();
-  await expect(panel.getByRole("region", { name: "OP results" })).toContainText(
-    "0.500000",
-  );
-  await expect(panel.getByText("1 direct Net voltage")).toBeVisible();
-  const opMeasurements = panel.locator(
-    "details.simulation-measurement-results",
-  );
-  await expect(opMeasurements.locator(":scope > summary")).toContainText(
-    "1 value",
-  );
-  await expect(opMeasurements).not.toHaveAttribute("open", "");
-  await panel.getByRole("button", { name: "Show on canvas" }).click();
-  await expect(page.getByTestId("operating-point-badges")).toContainText(
-    "500 mV",
-  );
-  await panel.getByRole("button", { name: "Hide canvas values" }).click();
-  await expect(page.getByTestId("operating-point-badges")).toHaveCount(0);
-  await panel.getByRole("button", { name: "Maximize results" }).click();
-  await panel.getByRole("tab", { name: "Plot" }).click();
+  await panel.getByRole("tab", { name: "Specs", exact: true }).click();
+  const specs = panel.getByRole("region", { name: "Specification results" });
   await expect(
-    panel.getByRole("heading", { name: "AC Analysis" }),
-  ).toBeVisible();
+    specs.getByRole("row").filter({ hasText: "at_one_tau" }),
+  ).toContainText("Pass");
   await expect(
-    panel.getByRole("heading", { name: "Transient Analysis" }),
-  ).toBeVisible();
-  await expect(
-    panel.getByRole("heading", { name: "Noise Analysis" }),
-  ).toBeVisible();
-  await expect(
-    panel.getByRole("region", { name: "Integrated noise" }),
-  ).toContainText("Integrated input-referred noise");
-  const plotMeasurements = panel.locator(
-    "details.simulation-measurement-results",
-  );
-  await expect(plotMeasurements).toHaveCount(1);
-  await expect(plotMeasurements.locator(":scope > summary")).toContainText(
-    "14 values",
-  );
-  await expect(panel.locator(".spice-ac-plot svg")).toHaveCount(3);
-  await expect(panel.locator('svg[aria-label="AC magnitude"]')).toBeVisible();
-  await expect(panel.locator('svg[aria-label="AC phase"]')).toHaveCount(0);
-  const acDisplay = panel.getByRole("group", { name: "Voltage display" });
-  await acDisplay.getByRole("button", { name: "Bode" }).click();
-  await expect(panel.locator('svg[aria-label="AC db20"]')).toBeVisible();
-  await expect(panel.locator('svg[aria-label="AC phase"]')).toBeVisible();
-  await expect(panel.getByLabel("Voltage reference")).toHaveValue("");
-  await expect(panel.getByText("ref 1 V", { exact: false })).toHaveCount(0);
-  await expect(
-    panel
-      .locator('svg[aria-label="AC db20"] .ac-axis-title')
-      .filter({ hasText: "db20/dBV" }),
-  ).toBeVisible();
-  await expect
-    .poll(
-      async () =>
-        (await panel.locator('svg[aria-label="AC db20"]').boundingBox())
-          ?.height ?? 0,
-    )
-    .toBeGreaterThan(300);
-  const resultExport = panel.locator("details.simulation-result-export");
-  await resultExport.locator("summary").click();
-  const svgBundlePromise = page.waitForEvent("download");
-  await resultExport
-    .getByRole("button", { name: "Visible plots · SVG" })
-    .click();
-  const svgBundle = await svgBundlePromise;
-  expect(svgBundle.suggestedFilename()).toBe("simulation-plots-svg.zip");
-  const svgEntries = unzipSync(readFileSync((await svgBundle.path())!));
-  expect(Object.keys(svgEntries)).toHaveLength(4);
-  const exportedSvg = strFromU8(Object.values(svgEntries)[0]!);
-  expect(exportedSvg).toContain('<?xml version="1.0"');
-  expect(exportedSvg).toContain('fill="white"');
-  expect(exportedSvg).not.toContain("ac-trace-hit");
-  const pngBundlePromise = page.waitForEvent("download");
-  await resultExport
-    .getByRole("button", { name: "Visible plots · PNG" })
-    .click();
-  const pngBundle = await pngBundlePromise;
-  expect(pngBundle.suggestedFilename()).toBe("simulation-plots-png.zip");
-  const pngEntries = unzipSync(readFileSync((await pngBundle.path())!));
-  expect(Object.keys(pngEntries)).toHaveLength(4);
-  expect([...Object.values(pngEntries)[0]!.slice(0, 8)]).toEqual([
-    137, 80, 78, 71, 13, 10, 26, 10,
-  ]);
-  const phasePngEntry = Object.entries(pngEntries).find(([name]) =>
-    name.includes("ac-phase"),
-  );
-  expect(phasePngEntry).toBeDefined();
-  const phasePng = PNG.sync.read(Buffer.from(phasePngEntry![1]));
-  let darkPixels = 0;
-  for (let index = 0; index < phasePng.data.length; index += 4) {
-    if (
-      phasePng.data[index]! < 32 &&
-      phasePng.data[index + 1]! < 32 &&
-      phasePng.data[index + 2]! < 32
-    )
-      darkPixels += 1;
-  }
-  expect(darkPixels / (phasePng.width * phasePng.height)).toBeLessThan(0.25);
-  const csvDownloadPromise = page.waitForEvent("download");
-  await resultExport.getByRole("button", { name: "outputs-op-0.csv" }).click();
-  expect((await csvDownloadPromise).suggestedFilename()).toBe(
-    "outputs-op-0.csv",
-  );
-  const measurementDownloadPromise = page.waitForEvent("download");
-  await resultExport.getByRole("button", { name: "measurements.csv" }).click();
-  const measurementDownload = await measurementDownloadPromise;
-  expect(measurementDownload.suggestedFilename()).toBe("measurements.csv");
-  expect(readFileSync((await measurementDownload.path())!, "utf8")).toContain(
-    '"TRAN","Transient response","first-output","Time-weighted RMS"',
-  );
-  const noiseCsvPromise = page.waitForEvent("download");
-  await resultExport
-    .getByRole("button", { name: /outputs-noise-\d+\.csv/u })
-    .click();
-  expect((await noiseCsvPromise).suggestedFilename()).toMatch(
-    /outputs-noise-\d+\.csv/u,
-  );
-  resultExport.evaluate((element) => element.removeAttribute("open"));
-  await acDisplay.getByRole("button", { name: "Magnitude" }).click();
-  await expect(panel.locator('svg[aria-label="AC magnitude"]')).toBeVisible();
-  await expect(panel.locator('svg[aria-label="AC phase"]')).toHaveCount(0);
-  await panel.getByRole("tab", { name: "Compare" }).click();
-  await expect(
-    panel.getByRole("columnheader", { name: "Maximum" }).first(),
-  ).toBeVisible();
-  await panel.getByRole("button", { name: "Keep current" }).click();
-  await expect(
-    panel.getByRole("button", { name: "Current kept" }),
-  ).toBeDisabled();
-  await panel.getByRole("tab", { name: "Plot" }).click();
-  await expect(panel.locator(".ac-response .ac-trace").first()).toHaveCSS(
-    "stroke-width",
-    "2.4px",
-  );
-  await expect(panel.locator(".ac-response .ac-axis-label").first()).toHaveCSS(
-    "fill",
-    "rgb(52, 64, 84)",
-  );
-  await expect(
-    panel.getByRole("button", { name: "Hide first-output" }),
-  ).toHaveCount(2);
-  expect(
-    await panel
-      .locator(".waveform-trace-list")
-      .first()
-      .evaluate((list) => getComputedStyle(list).position),
-  ).toBe("static");
-  const magnitudePlot = panel
-    .locator(".ac-plot-row")
-    .filter({ hasText: "Magnitude" })
-    .locator(".spice-ac-plot")
-    .first();
-  const magnitudeToolbar = magnitudePlot.locator("..").getByLabel("Plot tools");
-  await page.mouse.move(1, 1);
-  await expect(
-    magnitudeToolbar.getByRole("button", { name: "Zoom in" }),
-  ).toBeHidden();
-  const plotLayoutBeforeToolbar = await magnitudePlot.evaluate((element) => {
-    const plot = element.getBoundingClientRect();
-    const toolbar = element
-      .parentElement!.querySelector('[aria-label="Plot tools"]')!
-      .getBoundingClientRect();
-    return { height: plot.height, toolbarGap: plot.top - toolbar.bottom };
-  });
-  await magnitudeToolbar.hover();
-  await expect(
-    magnitudeToolbar.getByRole("button", { name: "Zoom in" }),
-  ).toBeVisible();
-  const toolbarBox = await magnitudeToolbar.boundingBox();
-  const lastToolBox = await magnitudeToolbar
-    .getByRole("button", { name: "Open plot" })
-    .boundingBox();
-  expect(lastToolBox!.x + lastToolBox!.width).toBeLessThanOrEqual(
-    toolbarBox!.x + toolbarBox!.width,
-  );
-  const plotLayoutAfterToolbar = await magnitudePlot.evaluate((element) => {
-    const plot = element.getBoundingClientRect();
-    const toolbar = element
-      .parentElement!.querySelector('[aria-label="Plot tools"]')!
-      .getBoundingClientRect();
-    return { height: plot.height, toolbarGap: plot.top - toolbar.bottom };
-  });
-  expect(plotLayoutAfterToolbar).toEqual(plotLayoutBeforeToolbar);
-  const plotBeforeWheel = await magnitudePlot.innerHTML();
-  await magnitudePlot.dispatchEvent("wheel", { deltaY: -120 });
-  await expect(magnitudePlot).toHaveJSProperty("innerHTML", plotBeforeWheel);
-  const acBounds = (await magnitudePlot.boundingBox())!;
-  await page.mouse.move(
-    acBounds.x + acBounds.width * 0.3,
-    acBounds.y + acBounds.height * 0.3,
-  );
-  await page.mouse.down();
-  await page.mouse.move(
-    acBounds.x + acBounds.width * 0.7,
-    acBounds.y + acBounds.height * 0.7,
-  );
-  await page.mouse.up();
-  await expect(magnitudePlot).not.toHaveJSProperty(
-    "innerHTML",
-    plotBeforeWheel,
-  );
-  await magnitudeToolbar.hover();
-  await magnitudeToolbar.getByRole("button", { name: "Fit plot" }).click();
-  await expect(magnitudePlot).toHaveJSProperty("innerHTML", plotBeforeWheel);
-  await magnitudeToolbar.hover();
-  await expect(
-    panel.getByRole("button", { name: "Zoom in" }).first(),
-  ).toBeVisible();
-  await magnitudePlot.dblclick();
-  await expect(
-    page.getByRole("dialog", { name: "voltage magnitude plot" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Close plot" }).click();
-  const tracePoint = await magnitudePlot
-    .locator("polyline.ac-trace-hit[data-trace-id]")
-    .evaluate((element) => {
-      const line = element as SVGPolylineElement;
-      const left = line.points.getItem(0);
-      const right = line.points.getItem(1);
-      // Click between samples so a marker, tick, or grid line at a sampled
-      // coordinate cannot intercept the trace-selection regression check.
-      const screen = new DOMPoint(
-        (left.x + right.x) / 2,
-        (left.y + right.y) / 2,
-      ).matrixTransform(line.getScreenCTM()!);
-      return { x: screen.x, y: screen.y };
-    });
-  await page.mouse.click(tracePoint.x, tracePoint.y);
-  await panel.getByRole("button", { name: "Restore results" }).click();
-  await expect(page.getByTestId("net-highlight-overlay")).toBeVisible();
-  await panel.getByRole("button", { name: "Maximize results" }).click();
-  await expect(
-    panel.locator('svg[aria-label="Transient voltage"]'),
-  ).toBeVisible();
-  const transientPlot = panel
-    .locator(".transient-quantity-group")
-    .filter({ hasText: "Voltage" })
-    .locator(".spice-ac-plot")
-    .first();
-  const transientShell = transientPlot.locator("..");
-  const transientToolbar = transientShell.getByLabel("Plot tools", {
-    exact: true,
-  });
-  await expect(transientPlot.locator(".ac-trace-hit")).toHaveAttribute(
-    "fill",
-    "none",
-  );
-  await transientPlot.hover();
-  const rightTimeLabel = transientPlot.locator("svg .ac-x-axis-label").last();
-  const fullTimeLabel = await rightTimeLabel.textContent();
-  const toolbarBounds = await transientToolbar.boundingBox();
-  const transientBounds = await transientPlot.boundingBox();
-  expect(transientBounds).not.toBeNull();
-  await page.mouse.move(
-    transientBounds!.x + transientBounds!.width * 0.3,
-    transientBounds!.y + transientBounds!.height * 0.3,
-  );
-  await page.mouse.down();
-  await page.mouse.move(
-    transientBounds!.x + transientBounds!.width * 0.7,
-    transientBounds!.y + transientBounds!.height * 0.7,
-    { steps: 5 },
-  );
-  await expect(transientPlot.locator(".waveform-selection")).toBeVisible();
-  await page.mouse.up();
-  expect(toolbarBounds!.y + toolbarBounds!.height).toBeLessThanOrEqual(
-    transientBounds!.y,
-  );
-  await expect(
-    panel.locator(".transient-results-explorer .ac-cursor-readout"),
+    panel.getByRole("tab", { name: /^(Plot|Operating Point|Compare)$/ }),
   ).toHaveCount(0);
-  await expect(rightTimeLabel).not.toHaveText(fullTimeLabel ?? "");
-  const zoomTimeLabel = await rightTimeLabel.textContent();
-  await transientToolbar.hover();
-  await transientShell.getByRole("button", { name: "Previous view" }).click();
-  await expect(rightTimeLabel).toHaveText(fullTimeLabel ?? "");
-  await transientShell.getByRole("button", { name: "Next view" }).click();
-  await expect(rightTimeLabel).toHaveText(zoomTimeLabel ?? "");
-  await transientShell.getByRole("button", { name: "Fit plot" }).click();
-  await expect(rightTimeLabel).toHaveText(fullTimeLabel ?? "");
-  const yLabels = await transientPlot
-    .locator('svg .ac-axis-label:not(.ac-x-axis-label)[text-anchor="end"]')
-    .allTextContents();
-  await transientToolbar.hover();
-  await transientShell.getByRole("button", { name: "Control X axes" }).click();
-  const xDrag = (await transientPlot.boundingBox())!;
-  await page.mouse.move(
-    xDrag.x + xDrag.width * 0.3,
-    xDrag.y + xDrag.height * 0.3,
-  );
-  await page.mouse.down();
-  await page.mouse.move(
-    xDrag.x + xDrag.width * 0.7,
-    xDrag.y + xDrag.height * 0.7,
-    { steps: 5 },
-  );
-  await expect(transientPlot.locator(".waveform-selection")).toBeVisible();
-  await page.mouse.up();
-  await expect(rightTimeLabel).not.toHaveText(fullTimeLabel ?? "");
-  expect(
-    await transientPlot
-      .locator('svg .ac-axis-label:not(.ac-x-axis-label)[text-anchor="end"]')
-      .allTextContents(),
-  ).toEqual(yLabels);
-  await transientToolbar.hover();
-  await transientShell
-    .getByRole("button", { name: "Fit X", exact: true })
-    .click();
-  await expect(rightTimeLabel).toHaveText(fullTimeLabel ?? "");
-  await transientToolbar.hover();
-  await transientShell.getByRole("button", { name: "Control XY axes" }).click();
-  await transientPlot.click({
-    position: {
-      x: transientBounds!.width * 0.5,
-      y: transientBounds!.height * 0.5,
-    },
-  });
-  const fixedReadout = panel.locator(
-    ".transient-results-explorer .ac-cursor-readout",
-  );
-  await expect(fixedReadout).toBeVisible();
-  const measurement = await fixedReadout.textContent();
-  await transientPlot.hover({
-    position: {
-      x: transientBounds!.width * 0.8,
-      y: transientBounds!.height * 0.4,
-    },
-  });
-  await expect(fixedReadout).toHaveText(measurement ?? "");
-  await transientToolbar.hover();
-  await transientShell.getByRole("button", { name: "Place marker B" }).click();
-  await transientPlot.click({
-    position: {
-      x: transientBounds!.width * 0.9,
-      y: transientBounds!.height * 0.4,
-    },
-  });
-  await expect(fixedReadout).toContainText("ΔX:");
-  await expect(fixedReadout).toContainText("ΔY");
-  await expect(fixedReadout).toContainText("1/|Δt|");
-  await expect(transientPlot.locator("line.ac-cursor")).toHaveCount(4);
-  const markerA = transientPlot.locator('[data-marker="A"]').first();
-  const markerBounds = await markerA.boundingBox();
-  const markerTextBeforeDrag = await fixedReadout.textContent();
-  await page.mouse.move(
-    markerBounds!.x + markerBounds!.width / 2,
-    markerBounds!.y + markerBounds!.height / 2,
-  );
-  await page.mouse.down();
-  await page.mouse.move(
-    markerBounds!.x + transientBounds!.width * 0.6,
-    markerBounds!.y + 4,
-    {
-      steps: 4,
-    },
-  );
-  await page.mouse.up();
-  await expect(fixedReadout).not.toHaveText(markerTextBeforeDrag ?? "");
-  const markersBeforeRemount = await fixedReadout.textContent();
-  await transientToolbar.hover();
-  await transientShell
-    .getByRole("button", { name: "Ranges", exact: true })
-    .click();
-  const ranges = transientShell.getByRole("form", { name: "Axis ranges" });
-  const rangeBounds = await ranges.boundingBox();
-  const shellBounds = await transientShell.boundingBox();
-  const plotBoundsWithRanges = await transientPlot.boundingBox();
-  expect(rangeBounds!.x).toBeGreaterThanOrEqual(shellBounds!.x);
-  expect(rangeBounds!.x + rangeBounds!.width).toBeLessThanOrEqual(
-    shellBounds!.x + shellBounds!.width,
-  );
-  expect(rangeBounds!.y + rangeBounds!.height).toBeLessThanOrEqual(
-    plotBoundsWithRanges!.y,
-  );
-  await ranges.getByLabel("Auto X", { exact: true }).uncheck();
-  await ranges.getByLabel("X minimum").fill("8e-9");
-  await ranges.getByLabel("X maximum").fill("2e-9");
-  await ranges.getByRole("button", { name: "Apply ranges" }).click();
-  await expect(ranges.getByRole("alert")).toContainText("Minimum must be less");
-  await ranges.getByLabel("X minimum").fill("2e-9");
-  await ranges.getByLabel("X maximum").fill("8e-9");
-  await ranges.getByLabel("Auto Y", { exact: true }).uncheck();
-  await ranges.getByLabel("Y minimum").fill("-1");
-  await ranges.getByLabel("Y maximum").fill("2");
-  await ranges.getByRole("button", { name: "Apply ranges" }).click();
-  await expect(ranges).toHaveCount(0);
-  const savedTicks = await rightTimeLabel.textContent();
-  await panel.getByRole("tab", { name: "Console" }).click();
-  await panel.getByRole("tab", { name: "Plot" }).click();
-  await expect(rightTimeLabel).toHaveText(savedTicks ?? "");
-  await expect(fixedReadout).toHaveText(markersBeforeRemount ?? "");
-  const transientOutputs = panel.locator(".transient-results-explorer");
-  await transientOutputs
-    .getByRole("button", { name: "Hide first-output" })
-    .click();
-  await panel.getByRole("tab", { name: "Console" }).click();
-  await panel.getByRole("tab", { name: "Plot" }).click();
-  await expect(
-    transientOutputs.getByRole("button", { name: "Show first-output" }),
-  ).toBeVisible();
-  await expect(transientPlot).toHaveCount(0);
-  await transientOutputs
-    .getByRole("button", { name: "Show first-output" })
-    .click();
-  await expect(rightTimeLabel).toHaveText(savedTicks ?? "");
-  await expect(fixedReadout).toHaveText(markersBeforeRemount ?? "");
-  await transientToolbar.hover();
-  await transientShell.getByRole("button", { name: "Previous view" }).click();
-  await expect(rightTimeLabel).toHaveText(fullTimeLabel ?? "");
-  await transientShell.getByRole("button", { name: "Next view" }).click();
-  await expect(rightTimeLabel).toHaveText(savedTicks ?? "");
-  await transientShell.getByRole("button", { name: "Open plot" }).click();
-  const waveformDialog = page.getByRole("dialog", {
-    name: "Transient voltage plot",
-  });
-  await expect(waveformDialog.locator(".ac-cursor-readout")).toBeVisible();
-  const expandedViewport = await waveformDialog
-    .locator(".spice-ac-plot")
-    .boundingBox();
-  const expandedTick = await waveformDialog
-    .locator('svg text[text-anchor="middle"]')
-    .last()
-    .boundingBox();
-  expect(expandedTick!.y + expandedTick!.height).toBeLessThanOrEqual(
-    expandedViewport!.y + expandedViewport!.height,
-  );
-  await expect(waveformDialog.locator("line.ac-grid").first()).not.toHaveCSS(
-    "stroke",
-    "none",
-  );
-  await waveformDialog.screenshot({
-    path: test.info().outputPath("waveform-tools.png"),
-  });
-  await waveformDialog.getByRole("button", { name: "Close plot" }).click();
+  await panel.getByRole("button", { name: "Maximize results" }).click();
+  await expect(specs).toBeVisible();
   await panel.getByRole("button", { name: "Restore results" }).click();
   const runFiles = panel.getByLabel("Run temporary files");
+  await expect(panel.getByLabel("Prepare temporary files")).toHaveCount(0);
   await runFiles
     .getByRole("button", { name: "Toggle Run", exact: true })
     .click();
   await runFiles
     .getByRole("button", { name: "Toggle Results", exact: true })
     .click();
-  await runFiles
-    .getByRole("button", { name: "Toggle Evidence", exact: true })
-    .click();
   await expect(
-    panel.getByRole("treeitem", {
-      name: /evidence-manifest\.json/,
-    }),
+    runFiles.getByRole("treeitem", { name: "Logs", exact: true }),
   ).toBeVisible();
-  const download = page.waitForEvent("download");
-  await runFiles
+  await expect(
+    runFiles.getByRole("treeitem", {
+      name: /Evidence|Netlist|Other|prepared[.]json|[.]cir/,
+    }),
+  ).toHaveCount(0);
+  const csvFile = runFiles
     .locator('button[data-tree-row="artifact"]')
-    .filter({ hasText: /\.csv/ })
-    .first()
-    .click();
+    .filter({ hasText: /[.]csv/ })
+    .first();
+  const download = page.waitForEvent("download");
+  await csvFile.click();
   await panel
     .getByLabel("File preview")
     .getByRole("button", { name: "Download", exact: true })
     .click();
-  expect((await download).suggestedFilename()).toMatch(/\.csv$/);
-  await expect(runFiles).toBeVisible();
+  expect((await download).suggestedFilename()).toMatch(/[.]csv$/);
+  const rawFile = runFiles.getByRole("treeitem", {
+    name: "out.raw",
+    exact: true,
+  });
+  await rawFile.click({ modifiers: ["ControlOrMeta"] });
+  await rawFile.click({ button: "right" });
+  const menuZip = async (name: string) => {
+    const pending = page.waitForEvent("download");
+    await page.getByRole("menuitem", { name, exact: true }).click();
+    const stream = await (await pending).createReadStream();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
+    return unzipSync(Buffer.concat(chunks));
+  };
+  const selectedEntries = await menuZip("Download selected (2)…");
+  expect(Object.keys(selectedEntries)).toHaveLength(2);
   await runFiles
-    .getByRole("treeitem", { name: /evidence-manifest\.json/ })
-    .click({ modifiers: ["Control"] });
-  await runFiles
-    .getByRole("treeitem", { name: /evidence-manifest\.json/ })
+    .getByRole("treeitem", { name: "Run", exact: true })
     .click({ button: "right" });
-  const bundleDownload = page.waitForEvent("download");
-  await page.getByRole("menuitem", { name: "Download selected (2)…" }).click();
-  expect((await bundleDownload).suggestedFilename()).toMatch(
-    /-selected-files\.zip$/,
-  );
-  await panel.getByRole("button", { name: "More code actions" }).click();
-  await page.getByRole("menuitem", { name: "View final deck" }).click();
-  await expect(panel.getByLabel("Prepare temporary files")).toBeVisible();
-  await expect(panel.getByLabel("Run temporary files")).toBeVisible();
-  await expect(panel.getByText("Input identity", { exact: true })).toHaveCount(
-    0,
-  );
+  const visibleEntries = await menuZip("Download…");
+  expect(
+    Object.keys(visibleEntries).some((path) => path.startsWith("run/logs/")),
+  ).toBe(true);
+  expect(
+    Object.keys(visibleEntries).every((path) =>
+      /[.](raw|csv|log|txt)$/.test(path),
+    ),
+  ).toBe(true);
+  expect(
+    Object.keys(visibleEntries)
+      .filter((path) => path.endsWith(".csv"))
+      .map((path) => path.split("/").at(-1))
+      .sort(),
+  ).toEqual(["ac-1.csv", "noise-3.csv", "op-0.csv", "specs.csv", "tran-2.csv"]);
+  await runFiles
+    .getByRole("treeitem", { name: "Run", exact: true })
+    .click({ button: "right" });
+  const diagnostics = await menuZip("Export diagnostic bundle…");
+  for (const path of [
+    "netlist/prepared.cir",
+    "netlist/executed.cir",
+    "evidence/source-map.json",
+    "evidence/prepared.json",
+    "evidence/result.json",
+    "evidence/specs.json",
+    "evidence/evidence-manifest.json",
+  ])
+    expect(diagnostics[path]).toBeDefined();
+  await panel
+    .getByRole("treeitem", { name: "Run", exact: true })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "View executed netlist…" }).click();
+  await expect(
+    panel.getByRole("tab", { name: /executed[.]cir/ }),
+  ).toBeVisible();
+  const executedBeforeEdit = await panel
+    .getByLabel("File preview")
+    .locator("pre")
+    .innerText();
+  const executedTab = panel.getByRole("tab", { name: /executed[.]cir/ });
+  await executedTab.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Close others", exact: true })
+    .click();
+  await expect(
+    panel
+      .getByRole("tablist", { name: "Open simulation files" })
+      .getByRole("tab"),
+  ).toHaveCount(1);
+  await executedTab.focus();
+  await executedTab.press("ControlOrMeta+w");
+  await expect(panel.getByLabel("File preview")).toHaveCount(0);
+  await panel
+    .getByRole("treeitem", { name: folder.input.entry, exact: true })
+    .and(panel.locator(`[data-folder-id="${folder.id}"]`))
+    .click();
   expect(executions).toBe(1);
   config.outputs[0]!.label = "new-output";
   await editSimulationFile(
@@ -1052,187 +1612,39 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
   await expect(panel.locator(".simulation-code-status")).toContainText(
     "earlier Project revision",
   );
-  await panel.getByRole("tab", { name: "Plot", exact: true }).click();
-  await panel.getByRole("button", { name: "Maximize results" }).click();
-  await panel.getByRole("tab", { name: "Plot" }).click();
-  await expect(
-    panel.getByRole("button", { name: "Hide first-output" }),
-  ).toHaveCount(2);
-  await expect(
-    panel.getByRole("button", { name: "Hide new-output" }),
-  ).toHaveCount(0);
+  await panel
+    .getByRole("treeitem", { name: "Run", exact: true })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Preview input netlist…" }).click();
+  await expect(panel.getByLabel("File preview").locator("pre")).toContainText(
+    ".temp 30",
+  );
+  await panel
+    .getByRole("treeitem", { name: "Run", exact: true })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "View executed netlist…" }).click();
+  await expect(panel.getByLabel("File preview").locator("pre")).toHaveText(
+    executedBeforeEdit,
+  );
+  await runFiles
+    .getByRole("treeitem", { name: "Run", exact: true })
+    .click({ button: "right" });
+  const oldRunDiagnostics = await menuZip("Export diagnostic bundle…");
+  expect(
+    Buffer.from(oldRunDiagnostics["netlist/prepared.cir"]!).toString(),
+  ).toBe(Buffer.from(diagnostics["netlist/prepared.cir"]!).toString());
+  await panel.getByRole("tab", { name: "Specs", exact: true }).click();
+  await expect(specs).toContainText("Previous run");
   await panel.getByRole("button", { name: "Run", exact: true }).click();
   await expect.poll(() => executions).toBe(2);
   await expect(panel.getByRole("status")).toHaveText("completed");
-  await panel.getByRole("tab", { name: "Plot" }).click();
-  await expect(panel.locator(".ac-cursor-readout")).toHaveCount(0);
-  await transientToolbar.hover();
-  await expect(
-    transientShell.getByRole("button", { name: "Previous view" }),
-  ).toBeDisabled();
-  await expect(
-    panel.getByRole("button", { name: "Hide new-output" }),
-  ).toHaveCount(2);
-  await panel.getByRole("tab", { name: "Compare" }).click();
-  const comparisonRuns = panel.locator(".simulation-comparison-run");
-  await expect(comparisonRuns).toHaveCount(2);
-  await expect(comparisonRuns.first()).toContainText("Previous 1");
-  await expect(comparisonRuns.last()).toContainText("Current");
-  await expect(
-    comparisonRuns
-      .last()
-      .getByRole("columnheader", { name: "Maximum" })
-      .first(),
-  ).toBeVisible();
-  await expect(
-    comparisonRuns
-      .last()
-      .getByRole("columnheader", { name: "Minimum" })
-      .first(),
-  ).toBeVisible();
-  await expect(
-    comparisonRuns
-      .last()
-      .getByRole("columnheader", { name: "Peak to peak" })
-      .first(),
-  ).toBeVisible();
-  await expect(comparisonRuns.last()).toContainText(
-    "Transient · Transient response",
-  );
-  await expect(comparisonRuns.last()).not.toContainText("Time-weighted RMS");
-  await expect(
-    comparisonRuns.getByRole("button", {
-      name: "Remove E2E folder from comparison",
-    }),
-  ).toBeVisible();
-  await expect(
-    panel.locator(
-      ".simulation-waveform-comparison > header > .simulation-comparison-actions",
-    ),
-  ).toContainText("Keep current");
-  await expect(page.locator(".app-workspace")).toHaveClass(
-    /simulation-maximized/,
-  );
-  const previousViewport = page.viewportSize()!;
-  for (const [width, height] of [
-    [1440, 1080],
-    [1920, 1080],
-    [1440, 800],
-  ] as const) {
-    await page.setViewportSize({ width, height });
-    await panel.getByRole("tab", { name: "Compare" }).click();
-    const surfaceBox = (await panel.boundingBox())!;
-    for (const selector of [
-      ".simulation-taskbar",
-      ".simulation-code-output-tabs",
-    ]) {
-      const headerBox = (await panel.locator(selector).boundingBox())!;
-      expect(headerBox.x).toBeCloseTo(surfaceBox.x, 0);
-      expect(headerBox.width).toBeCloseTo(surfaceBox.width, 0);
-    }
-    const comparisonBox = (await panel
-      .locator(".simulation-comparison-view")
-      .boundingBox())!;
-    expect(comparisonBox.width).toBeLessThan(surfaceBox.width);
-    expect(comparisonBox.x + comparisonBox.width / 2).toBeCloseTo(
-      surfaceBox.x + surfaceBox.width / 2,
-      0,
-    );
-    const firstComparisonRunBox = (await comparisonRuns.nth(0).boundingBox())!;
-    const secondComparisonRunBox = (await comparisonRuns.nth(1).boundingBox())!;
-    expect(secondComparisonRunBox.y).toBeCloseTo(firstComparisonRunBox.y, 0);
-    expect(secondComparisonRunBox.x).toBeGreaterThan(
-      firstComparisonRunBox.x + firstComparisonRunBox.width,
-    );
-    await panel.getByRole("tab", { name: "Plot" }).click();
-    const plotCards = panel.locator(
-      ".simulation-plot-view .simulation-output-results > .simulation-analysis-card",
-    );
-    await expect(plotCards).toHaveCount(3);
-    await expect
-      .poll(async () => {
-        const [first, second] = await Promise.all([
-          plotCards.nth(0).boundingBox(),
-          plotCards.nth(1).boundingBox(),
-        ]);
-        if (!first || !second) return null;
-        return {
-          sameColumn: Math.abs(second.x - first.x) < 1,
-          sameWidth: Math.abs(second.width - first.width) < 1,
-          verticallySeparated: second.y > first.y + first.height,
-        };
-      })
-      .toEqual({
-        sameColumn: true,
-        sameWidth: true,
-        verticallySeparated: true,
-      });
-    const card = panel
-      .locator(".simulation-analysis-card")
-      .filter({
-        has: page.locator(".ac-view-toolbar"),
-      })
-      .first();
-    await expect
-      .poll(() =>
-        card
-          .locator(".simulation-analysis-card-body")
-          .evaluate(
-            (element) =>
-              getComputedStyle(element).gridTemplateColumns.split(" ").length,
-          ),
-      )
-      .toBe(2);
-    const shell = card.locator(".ac-plot-shell").first();
-    await expect
-      .poll(async () => (await shell.locator("svg").boundingBox())!.height)
-      .toBeGreaterThan(280);
-    const shellBox = (await shell.boundingBox())!;
-    const titleBox = (await card
-      .locator(".simulation-analysis-card-header h3")
-      .boundingBox())!;
-    const modeBox = (await card.locator(".ac-view-toolbar").boundingBox())!;
-    expect(titleBox.x + titleBox.width / 2).toBeCloseTo(
-      shellBox.x + shellBox.width / 2,
-      0,
-    );
-    expect(modeBox.x).toBeCloseTo(shellBox.x, 0);
-    const [resultsHeaderZIndex, plotToolbarZIndex] = await Promise.all([
-      panel
-        .locator(".simulation-code-output-tabs")
-        .evaluate((element) => Number(getComputedStyle(element).zIndex)),
-      shell
-        .locator(".ac-plot-toolbar")
-        .evaluate((element) => Number(getComputedStyle(element).zIndex)),
-    ]);
-    expect(resultsHeaderZIndex).toBeGreaterThan(plotToolbarZIndex);
-    await expect
-      .poll(() =>
-        panel
-          .locator(".simulation-results-body")
-          .evaluate((element) => element.scrollWidth <= element.clientWidth),
-      )
-      .toBe(true);
-    await panel.locator(".simulation-results-body").evaluate((element) => {
-      element.scrollTop = 0;
-    });
-    await expect
-      .poll(async () => {
-        const box = (await shell.boundingBox())!;
-        return box.y + box.height;
-      })
-      .toBeLessThan(height - 30);
-    await page.screenshot({
-      path: test.info().outputPath(`maximized-${width}-${height}.png`),
-    });
-  }
-  await page.setViewportSize(previousViewport);
-  await panel.getByRole("button", { name: "Restore results" }).click();
-  await panel.getByRole("button", { name: "Archive", exact: true }).click();
-  await panel.getByRole("tab", { name: "Compare" }).click();
-  await expect(
-    panel.getByRole("region", { name: "Saved result archives" }),
-  ).toContainText("E2E folder");
+  await expect(specs).not.toContainText("Previous run");
+  await runFiles
+    .getByRole("treeitem", { name: "Run", exact: true })
+    .click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Archive current run", exact: true })
+    .click();
   pending = new Promise<void>((r) => {
     release = r;
   });
@@ -1265,13 +1677,19 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
     panel.getByRole("textbox", { name: "Simulation source editor" }),
   ).toContainText(".temp 30");
   await expect(panel.getByRole("status")).toHaveText("No run yet");
-  await panel.getByRole("tab", { name: "Plot", exact: true }).click();
-  await panel.getByRole("tab", { name: "Compare" }).click();
+  await panel.locator(".simulation-run-history > summary").click();
   const savedArchives = panel.getByRole("region", {
-    name: "Saved result archives",
+    name: "Saved folder results",
   });
   await expect(savedArchives).toContainText("E2E folder");
-  await savedArchives.getByRole("button", { name: "Open" }).click();
+  // Every completed run is now automatically retained, not only the one
+  // explicitly archived above. Reopen a completed result, not the cancelled run.
+  await savedArchives
+    .getByRole("listitem")
+    .filter({ hasText: "finished" })
+    .first()
+    .getByRole("button", { name: "Open result", exact: true })
+    .click();
   await expect(panel.getByRole("status")).toHaveText("completed");
   expect(executions).toBe(3);
 });
@@ -1296,9 +1714,7 @@ test("Simulation creates an ordinary testbench and defaults a new experiment to 
   const saved = JSON.parse(
     (await downloadBytes(page, "File", "Export Project File…")).toString(),
   );
-  const tb = saved.documents.find(
-    (d: { name: string }) => d.name === "Main_tb",
-  );
+  const tb = saved.documents.find((d: { name: string }) => d.name === "dut_tb");
   expect(tb.instances[0].netlist.binding).toEqual({
     kind: "subcircuit",
     childDocumentId: "document-main",
@@ -1310,16 +1726,14 @@ test("Simulation creates an ordinary testbench and defaults a new experiment to 
   const taskbar = page.locator(".simulation-taskbar");
   await expect(taskbar).toHaveCount(1);
   await expect(
-    page.getByRole("button", { name: "Sim Code", exact: true }),
+    page.getByRole("complementary", { name: "Sim Code", exact: true }),
   ).toBeVisible();
   await expect(page.locator(".simulation-brand")).toHaveCount(0);
-  const setupBox = await page
-    .getByRole("button", { name: "Set up", exact: true })
-    .boundingBox();
   const initialBar = await taskbar.boundingBox();
-  expect(setupBox!.height).toBeLessThanOrEqual(24);
   expect(initialBar!.height).toBeLessThanOrEqual(36);
-  await page.getByRole("button", { name: "Set up", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Set up manually", exact: true })
+    .click();
   await page.getByLabel("New simulation folder name").fill("Main experiment");
   await expect(page.getByLabel("Folder template")).toHaveCount(0);
   await expect(page.getByLabel("Folder source")).toHaveCount(0);
@@ -1328,11 +1742,11 @@ test("Simulation creates an ordinary testbench and defaults a new experiment to 
     .getByRole("button", { name: "Run", exact: true })
     .boundingBox();
   const statusBox = await taskbar.getByRole("status").boundingBox();
-  expect(runBox!.height).toBe(setupBox!.height);
+  expect(runBox!.height).toBeLessThanOrEqual(24);
   expect(statusBox!.x).toBeGreaterThanOrEqual(runBox!.x + runBox!.width);
   expect(Math.abs(statusBox!.y - runBox!.y)).toBeLessThanOrEqual(2);
   await expect(taskbar).toHaveCount(1);
-  for (const name of ["Explorer", "Save project"]) {
+  for (const name of ["Explorer", "Save source"]) {
     const box = await taskbar
       .getByRole("button", { name, exact: true })
       .boundingBox();
@@ -1340,6 +1754,32 @@ test("Simulation creates an ordinary testbench and defaults a new experiment to 
     expect(box!.height).toBeLessThanOrEqual(24);
   }
   expect((await taskbar.boundingBox())!.height).toBeLessThanOrEqual(32);
+  const saveButton = taskbar.getByRole("button", {
+    name: "Save source",
+    exact: true,
+  });
+  const runButton = taskbar.getByRole("button", { name: "Run", exact: true });
+  expect((await saveButton.boundingBox())!.width).toBe(22);
+  expect(runBox!.width).toBeGreaterThan(22);
+  expect(runBox!.width).toBeLessThanOrEqual(160);
+  await expect(saveButton).toHaveText("");
+  await expect(runButton).toHaveText("Main experiment");
+  await expect(saveButton).toHaveAttribute(
+    "title",
+    /not a cloud save.*Ctrl\+S/,
+  );
+  await expect(saveButton).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(runButton).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await page
+    .getByRole("treeitem", { name: "Run", exact: true })
+    .click({ button: "right" });
+  await expect(
+    page.getByRole("menuitem", { name: "View executed netlist…" }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("menuitem", { name: "Export diagnostic bundle…" }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
   await page
     .getByRole("treeitem", { name: "run.cir", exact: true })
     .first()
@@ -1366,6 +1806,10 @@ test("Simulation creates an ordinary testbench and defaults a new experiment to 
     /simulation-maximized/,
   );
   await expect(page.getByTestId("schematic-canvas")).toBeHidden();
+  await expect(page.locator(".app-chrome")).toBeHidden();
+  const maximizedBounds = await page.locator(".app-workspace").boundingBox();
+  expect(maximizedBounds!.y).toBe(0);
+  expect(maximizedBounds!.width).toBe(page.viewportSize()!.width);
   await expect(page.getByTestId("simulation-resize-handle")).toHaveCount(0);
   await expect(
     page.getByRole("region", { name: "Simulation Code workspace" }),
@@ -1375,6 +1819,7 @@ test("Simulation creates an ordinary testbench and defaults a new experiment to 
     /simulation-maximized/,
   );
   await expect(page.getByTestId("schematic-canvas")).toBeVisible();
+  await expect(page.locator(".app-chrome")).toBeVisible();
   await expect(page.getByTestId("simulation-resize-handle")).toBeVisible();
   await expect(page.getByTestId("library-toggle")).toBeEnabled();
   await expect(page.getByTestId("examples-toggle")).toBeEnabled();
@@ -1404,12 +1849,16 @@ test("Simulation creates an ordinary testbench and defaults a new experiment to 
   await expect(page.getByTestId("library-toggle")).toBeEnabled();
 });
 
-async function openWorkspace(page: Page) {
+async function openWorkspace(
+  page: Page,
+  engine: "vacask" | "ngspice" = "vacask",
+) {
   const project = parseProject(JSON.stringify(ota));
   project.simulationFolders = ["Alpha", "Beta"].map((name) =>
     createSimulationFolder({
       id: name,
       name,
+      engine,
       documentId: project.topDocumentId,
       profileId: profile.id,
     }),
@@ -1423,6 +1872,177 @@ async function openWorkspace(page: Page) {
   await page.getByTestId("open-analog-simulation").click();
   return page.getByRole("region", { name: "Simulation Code workspace" });
 }
+
+test("Simulation and Properties remain independent through minimization", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const workspace = await openWorkspace(page);
+  const editor = workspace.getByRole("textbox", {
+    name: "Simulation source editor",
+  });
+  await editor.fill("* independent draft\n");
+  const shelf = page.getByTestId("selection-shelf");
+  if ((await shelf.getAttribute("aria-expanded")) !== "true")
+    await shelf.click();
+  await expect(editor).toBeVisible();
+  await expect(shelf).toHaveAttribute("aria-expanded", "true");
+  const codeBox = await page.locator(".editor-simulation-dock").boundingBox();
+  const propsBox = await page
+    .getByRole("complementary", { name: "Properties", exact: true })
+    .boundingBox();
+  expect(codeBox!.x).toBeGreaterThanOrEqual(propsBox!.x + propsBox!.width - 1);
+  await page
+    .getByRole("button", { name: "Minimize simulation", exact: true })
+    .click();
+  await expect(shelf).toHaveAttribute("aria-expanded", "true");
+  await page.getByRole("button", { name: "Sim Code", exact: true }).click();
+  await expect(editor).toContainText("independent draft");
+});
+
+test("maximized simulation reclaims chrome at narrow width and minimizes without losing source", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 700 });
+  const workspace = await openWorkspace(page);
+  const editor = workspace.getByRole("textbox", {
+    name: "Simulation source editor",
+  });
+  await editor.fill("* retained maximized draft\n");
+  const docked = await workspace.boundingBox();
+  await page
+    .getByRole("button", { name: "Maximize simulation", exact: true })
+    .click();
+  await expect(page.locator(".app-chrome")).toBeHidden();
+  await expect(page.getByTestId("library-toggle")).toBeHidden();
+  await expect(page.getByTestId("examples-toggle")).toBeHidden();
+  const agentEntry = workspace.getByRole("button", {
+    name: "Connect Agent",
+    exact: true,
+  });
+  await expect(agentEntry).toBeVisible();
+  await expect(workspace.locator(".simulation-agent-hint")).toBeHidden();
+  const agentBox = await agentEntry.boundingBox();
+  const toolbarBox = await workspace
+    .locator(".simulation-taskbar")
+    .boundingBox();
+  expect(agentBox!.x + agentBox!.width).toBeLessThanOrEqual(
+    toolbarBox!.x + toolbarBox!.width,
+  );
+  const bounds = await page.locator(".app-workspace").boundingBox();
+  expect(bounds!.y).toBe(0);
+  expect(bounds!.width).toBe(900);
+  expect(
+    (await page.locator(".app-statusbar").boundingBox())!.y,
+  ).toBeGreaterThanOrEqual(bounds!.height);
+  expect((await workspace.boundingBox())!.height).toBeGreaterThan(
+    docked!.height,
+  );
+  await expect(
+    page.getByRole("button", { name: "Restore simulation panel", exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: test.info().outputPath("full-window-simulation.png"),
+  });
+  await page
+    .getByRole("button", { name: "Minimize simulation", exact: true })
+    .click();
+  await expect(page.locator(".app-chrome")).toBeVisible();
+  await expect(page.getByTestId("library-toggle")).toBeEnabled();
+  await page.getByTestId("open-analog-simulation").click();
+  await expect(editor).toContainText("retained maximized draft");
+  await expect(page.locator(".app-chrome")).toBeVisible();
+});
+
+test("folder activation exposes the run target independently of expansion and selection", async ({
+  page,
+}) => {
+  let executedDeck = "";
+  await page.route("**/api/simulate", async (route) => {
+    const body = route.request().postDataJSON();
+    if (body.operation === "capabilities")
+      return route.fulfill({
+        json: {
+          configured: true,
+          modelLibrary: {
+            path: profile.models.library.runtimePath,
+            section: "tt",
+          },
+          rawfileCollection: "declared-single-ascii",
+          maxOutputBytes: 1048576,
+          inputs: ["source", "raw"],
+          analyses: ["op", "ac", "tran", "noise"],
+          parsedAnalyses: ["op", "ac", "tran", "noise"],
+          profiles: [
+            {
+              id: profile.id,
+              corners: ["tt"],
+              dependencies: [
+                { id: profile.models.id, sha256: profile.models.contentSha256 },
+              ],
+            },
+          ],
+          maxTimeoutMs: 120000,
+          maxInputBytes: 1048576,
+          cancel: true,
+        },
+      });
+    executedDeck = body.preparedDeck;
+    await route.fulfill({
+      status: 503,
+      json: { error: "Captured run target" },
+    });
+  });
+  const workspace = await openWorkspace(page, "ngspice");
+  const run = page.getByRole("button", { name: "Run", exact: true });
+  const alpha = workspace.getByRole("treeitem", {
+    name: "Folder Alpha",
+    exact: true,
+  });
+  const beta = workspace.getByRole("treeitem", {
+    name: "Folder Beta",
+    exact: true,
+  });
+  await expect(run).toHaveText("Alpha");
+  const expanded = await beta.getAttribute("aria-expanded");
+  await beta.click();
+  await expect(run).toHaveText("Beta");
+  await expect(run).toHaveAttribute("title", "Run Beta / run.cir");
+  await expect(beta).toHaveAttribute("aria-current", "page");
+  await expect(beta).toHaveAttribute("aria-expanded", expanded!);
+  await workspace
+    .getByRole("button", { name: "Toggle Alpha", exact: true })
+    .click();
+  await expect(run).toHaveText("Beta");
+  await alpha.click({ button: "right" });
+  await expect(run).toHaveText("Beta");
+  await page.keyboard.press("Escape");
+  await alpha.click({ modifiers: ["ControlOrMeta"] });
+  await expect(run).toHaveText("Beta");
+  await alpha.focus();
+  await alpha.press("Enter");
+  await expect(run).toHaveText("Alpha");
+  await beta.click();
+  await expect(run).toHaveText("Beta");
+  await expect(run.locator("svg")).toBeVisible();
+  await run.click();
+  await expect.poll(() => executedDeck.split(/\r?\n/)[0]).toBe("Beta");
+  await beta.focus();
+  await beta.press("F2");
+  const longName = "Beta with a deliberately long simulation folder name";
+  const naming = workspace.getByRole("textbox", {
+    name: "Folder name",
+    exact: true,
+  });
+  await naming.fill(longName);
+  await naming.press("Enter");
+  await expect(run).toHaveText(longName);
+  expect((await run.boundingBox())!.width).toBeLessThanOrEqual(160);
+  await expect(run).toHaveAttribute("title", `Run ${longName} / run.cir`);
+  await workspace.screenshot({
+    path: test.info().outputPath("explicit-run-target.png"),
+  });
+});
 
 test("workspace menus, selection, empty editors and resizing share non-destructive semantics", async ({
   page,
@@ -1460,14 +2080,14 @@ test("workspace menus, selection, empty editors and resizing share non-destructi
   await expect(beta).toHaveAttribute("aria-selected", "true");
   await expect(
     page.getByRole("button", { name: "Run", exact: true }),
-  ).toHaveAttribute("title", "Run Alpha");
+  ).toHaveAttribute("title", "Run Beta / run.cir");
   await files
     .getByRole("button", { name: "Toggle Alpha", exact: true })
     .click();
   await expect(alpha).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Run", exact: true }),
-  ).toHaveAttribute("title", "Run Alpha");
+  ).toHaveAttribute("title", "Run Beta / run.cir");
   await workspace
     .getByRole("button", { name: "Close run.cir", exact: true })
     .click();
@@ -1511,7 +2131,10 @@ test("workspace menus, selection, empty editors and resizing share non-destructi
   await expect(
     workspace.getByRole("tab", { name: /circuit\.spice/ }),
   ).toHaveAttribute("aria-selected", "true");
-  await files.getByRole("button", { name: "Toggle Beta", exact: true }).click();
+  if ((await beta.getAttribute("aria-expanded")) !== "true")
+    await files
+      .getByRole("button", { name: "Toggle Beta", exact: true })
+      .click();
   await beta
     .locator("..")
     .locator("..")
@@ -1522,7 +2145,7 @@ test("workspace menus, selection, empty editors and resizing share non-destructi
   ).toHaveAttribute("aria-selected", "true");
   await expect(
     page.getByRole("button", { name: "Run", exact: true }),
-  ).toHaveAttribute("title", "Run Beta");
+  ).toHaveAttribute("title", "Run Beta / run.cir");
 });
 
 test("Explorer context downloads preserve multi-selection and directory contents without resizing rename rows", async ({
@@ -1552,9 +2175,16 @@ test("Explorer context downloads preserve multi-selection and directory contents
   ).toHaveCount(0);
   await expect(
     alphaFiles.getByRole("treeitem", { name: "Source", exact: true }),
-  ).toHaveAttribute("aria-expanded", "true");
+  ).toHaveCount(0);
+  await expect(alpha).toHaveAttribute("aria-expanded", "true");
+  await expect(beta).toHaveAttribute("aria-expanded", "false");
+  await expect(run).toHaveAttribute("aria-level", "2");
+  await expect(circuit).toHaveAttribute("aria-level", "2");
+  await expect(
+    alphaFiles.getByRole("treeitem", { name: "Run", exact: true }),
+  ).toHaveAttribute("aria-expanded", "false");
   await run.click();
-  await circuit.click({ modifiers: ["Control"] });
+  await circuit.click({ modifiers: ["ControlOrMeta"] });
   await expect(
     workspace.getByRole("tab", { name: "run.cir", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
@@ -1572,7 +2202,7 @@ test("Explorer context downloads preserve multi-selection and directory contents
   await run.click({ modifiers: ["Shift"] });
   await expect(
     alphaFiles.getByRole("treeitem", { selected: true }),
-  ).toHaveCount(3);
+  ).toHaveCount(2);
   await expect(
     workspace.getByRole("tab", { name: /circuit\.spice/ }),
   ).toHaveAttribute("aria-selected", "true");
@@ -1611,7 +2241,7 @@ test("Explorer context downloads preserve multi-selection and directory contents
   await page.getByRole("menuitem", { name: "Download…", exact: true }).click();
   expect((await nestedDownload).suggestedFilename()).toMatch(/\.zip$/);
   // Selecting the parent and one descendant must not duplicate ZIP entries.
-  await alpha.click({ modifiers: ["Control"] });
+  await alpha.click({ modifiers: ["ControlOrMeta"] });
   await alpha.click({ button: "right" });
   const folderDownload = page.waitForEvent("download");
   await page.getByRole("menuitem", { name: "Download selected (2)…" }).click();
@@ -1623,7 +2253,7 @@ test("Explorer context downloads preserve multi-selection and directory contents
   expect(
     names.filter((path) => path.endsWith("models/bias/local.cir")),
   ).toHaveLength(1);
-  expect(names).toContain("Alpha/source/experiment.json");
+  expect(names).not.toContain("Alpha/source/experiment.json");
   await workspace.screenshot({
     path: test.info().outputPath("compact-explorer.png"),
   });
@@ -1658,10 +2288,19 @@ test("inline naming commits once on blur, cancels on Escape, and deletion uses a
     name: "New simulation folder name",
   });
   await input.fill("Gamma");
-  // The destination click is not eaten by the naming transaction.
+  // Switching selection must not implicitly create an experiment.
   await workspace
     .getByRole("treeitem", { name: "Folder Beta", exact: true })
     .click();
+  await expect(
+    workspace.getByRole("treeitem", { name: "Folder Gamma", exact: true }),
+  ).toHaveCount(0);
+  await expect(input).toHaveCount(0);
+  await workspace
+    .getByRole("button", { name: "+ New experiment", exact: true })
+    .click();
+  await input.fill("Gamma");
+  await workspace.getByRole("button", { name: "Create", exact: true }).click();
   await expect(
     workspace.getByRole("treeitem", { name: "Folder Gamma", exact: true }),
   ).toHaveCount(1);
@@ -1687,7 +2326,10 @@ test("inline naming commits once on blur, cancels on Escape, and deletion uses a
   await workspace
     .getByRole("textbox", { name: "Folder name", exact: true })
     .fill("Renamed");
-  await page.keyboard.press("Enter");
+  // Renaming existing folders still commits on blur.
+  await workspace
+    .getByRole("treeitem", { name: "Folder Beta", exact: true })
+    .click();
   const renamed = workspace.getByRole("treeitem", {
     name: "Folder Renamed",
     exact: true,

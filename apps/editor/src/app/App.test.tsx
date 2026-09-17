@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { createEmptyProject } from "@icm/model";
+import { createEmptyProject, createSimulationFolder } from "@icm/model";
 import { serializeProject } from "@icm/project-protocol";
 import { EditTransactionSchema } from "@icm/edit-engine";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -21,6 +21,12 @@ describe("editor shell", () => {
   it("uses one canonical Razavi presentation for manually placed MOS", () => {
     expect(defaultRazaviSymbolVariantId("nmos")).toBe("textbook-3terminal");
     expect(defaultRazaviSymbolVariantId("pmos")).toBe("textbook-3terminal");
+    expect(defaultRazaviSymbolVariantId("depletion-nmos")).toBe(
+      "textbook-3terminal",
+    );
+    expect(defaultRazaviSymbolVariantId("depletion-pmos")).toBe(
+      "textbook-3terminal",
+    );
     expect(defaultRazaviSymbolVariantId("ndmos")).toBe("standard-3terminal");
     expect(defaultRazaviSymbolVariantId("pdmos")).toBe("standard-3terminal");
     expect(defaultRazaviSymbolVariantId("resistor")).toBeUndefined();
@@ -92,9 +98,7 @@ describe("editor shell", () => {
     const project = createEmptyProject("project-smoke", "Smoke Project");
     const markup = renderToStaticMarkup(<App project={project} />);
     expect(markup).toContain("Smoke Project");
-    expect(markup).toContain("原理图画布");
-    expect(markup).toContain("导出 SPICE 网表");
-    expect(markup).toContain("导出 Spectre 网表");
+    expect(markup).toContain("Schematic canvas");
     expect(markup).not.toContain("Cell netlist interface");
     expect(markup).not.toContain("网表位号");
     expect(markup).not.toContain("Component model");
@@ -104,20 +108,25 @@ describe("editor shell", () => {
     expect(markup).not.toContain('data-testid="cell-navigation"');
     expect(markup).toContain('data-testid="edit-manage-cells"');
     expect(markup).not.toContain('data-testid="cell-command-menu"');
-    expect(markup).toContain("管理 Cell…");
-    expect(markup).toContain("实例表…");
-    const netlistStart = markup.indexOf("<summary>网表</summary>");
+    expect(markup).toContain("Manage Cells…");
+    expect(markup).toContain("New Testbench Cell…");
+    expect(markup).toContain("Instances…");
+    const netlistStart = markup.indexOf('aria-label="Netlist"');
     const netlistEnd = markup.indexOf("</details>", netlistStart);
     const netlistMenu = markup.slice(netlistStart, netlistEnd);
     expect(netlistStart).toBeGreaterThan(-1);
-    expect(markup).toContain("检查报告…");
+    expect(netlistMenu).not.toContain("Copy SPICE netlist");
+    expect(netlistMenu).not.toContain("Copy Spectre netlist");
+    expect(markup).toContain('data-testid="netlist-panel-toggle"');
+    expect(markup).toContain('data-testid="project-code-toggle"');
+    expect(markup).toContain("Check Report…");
     expect(netlistMenu).not.toContain('data-testid="open-analog-simulation"');
     expect(markup).toContain('data-testid="open-analog-simulation"');
     expect(netlistMenu).toContain('data-testid="check-and-save"');
     expect(markup).not.toContain("<summary>运行</summary>");
     const agentEnd =
-      markup.indexOf("</details>", markup.indexOf("<summary>Agent</summary>")) +
-      "</details>".length;
+      markup.indexOf("</button>", markup.indexOf('data-testid="open-agent"')) +
+      "</button>".length;
     expect(markup.slice(agentEnd)).toMatch(
       /^<button[^>]*data-testid="publish-gallery-button"/u,
     );
@@ -168,7 +177,7 @@ describe("editor shell", () => {
     const markup = renderToStaticMarkup(<App project={project} />);
     expect(markup).toContain('data-testid="cell-navigation"');
     expect(markup).toContain("Enter Cell");
-    expect(markup).toContain("Main (top)");
+    expect(markup).toContain("dut (top)");
   });
 
   it("provides one Help entry without rendering its dialog by default", () => {
@@ -191,9 +200,11 @@ describe("editor shell", () => {
     expect(helpButton).toBeGreaterThan(navigationEnd);
     expect(ownerLink).toBeGreaterThan(helpButton);
     expect(markup).not.toContain('role="dialog"');
-    // The Connect Agent command is available (WP-WA5), but the authorization
-    // panel itself must not render until the user opens it.
-    expect(markup).toContain("连接 Agent");
+    // Agent connects directly from the command row; no one-item menu or
+    // connection panel appears before the user clicks it.
+    expect(markup).toContain('data-testid="open-agent" title="Connect Agent"');
+    expect(markup).toContain(">Agent</button>");
+    expect(markup).not.toContain("<summary>Agent</summary>");
     expect(markup).not.toContain('data-testid="connect-agent-panel"');
   });
 
@@ -204,11 +215,31 @@ describe("editor shell", () => {
     );
 
     expect(markup).not.toContain("<summary>Agent</summary>");
-    expect(markup).not.toContain("连接 Agent");
+    expect(markup).not.toContain('data-testid="open-agent"');
+    expect(markup).not.toContain("Connect Agent");
     expect(markup).not.toContain("Manage Agent");
     expect(markup).not.toContain("agent-shelf-indicator");
     expect(markup).not.toContain("Agent:");
     expect(markup).not.toContain("批准 Agent 文件导入");
+  });
+
+  it("keeps analog Simulation authoring out of a production editor without changing project data", () => {
+    const project = createEmptyProject("simulation-ui-dormant", "Dormant");
+    project.simulationFolders.push(
+      createSimulationFolder({
+        id: "saved-simulation",
+        name: "Saved Simulation",
+        profileId: "hosted-sky130-v1",
+      }),
+    );
+    const persistedSimulation = structuredClone(project.simulationFolders);
+    const markup = renderToStaticMarkup(
+      <App project={project} publicSimulationUiEnabled={false} />,
+    );
+
+    expect(markup).not.toContain('data-testid="open-analog-simulation"');
+    expect(markup).not.toContain("New Testbench Cell…");
+    expect(project.simulationFolders).toEqual(persistedSimulation);
   });
 
   it("keeps the timing surface behind its deployment flag", () => {
@@ -255,7 +286,7 @@ describe("editor shell", () => {
     expect(markup).not.toContain('aria-label="Tool rail"');
     expect(markup).toContain('aria-label="图形"');
     expect(markup).toContain('data-testid="shapes-chip-resistor"');
-    expect(markup).toContain('data-testid="shapes-insert"');
+    expect(markup).not.toContain('data-testid="shapes-insert"');
     expect(markup).toContain('data-testid="library-toggle"');
     expect(markup).toContain('data-testid="shapes-library-panel"');
     expect(markup).toContain('data-testid="examples-toggle"');
@@ -265,7 +296,12 @@ describe("editor shell", () => {
     expect(markup).toContain('data-open="true"');
     expect(markup).toContain(">元件库</span>");
     expect(markup).toContain('class="app-statusbar"');
-    expect(markup).toContain("插入元件（I）");
+    expect(markup).toContain("Insert component… (I)");
+    expect(markup).not.toContain('data-testid="draw-tool-insert"');
+    expect(markup).not.toContain('data-testid="draw-tool-arrow"');
+    expect(markup).not.toContain('data-testid="draw-tool-line"');
+    expect(markup).not.toContain('data-testid="draw-tool-rectangle"');
+    expect(markup).not.toContain('data-testid="draw-tool-circle"');
     expect(markup).toContain("Selection filter");
     expect(markup).not.toContain("Symbols &amp; Tools");
     expect(markup).not.toContain("Search components");

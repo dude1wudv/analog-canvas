@@ -5,6 +5,91 @@
     "version": "3.0"
   },
   "paths": {
+    "/api/agent/sessions/{sessionId}/status": {
+      "get": {
+        "operationId": "agentSessionStatus",
+        "description": "Read authenticated relay observations without contacting the editor or renewing the idle deadline. Attachment is not execution readiness. Paused sessions remain readable.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session observation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/agentSessionStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Typed Agent session transport error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/agentTransportErrorResponse"
+                },
+                "example": {
+                  "ok": false,
+                  "error": {
+                    "code": "TOKEN_INVALID",
+                    "message": "Bearer token is missing or unknown"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Typed Agent session transport error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/agentTransportErrorResponse"
+                },
+                "example": {
+                  "ok": false,
+                  "error": {
+                    "code": "SESSION_NOT_FOUND",
+                    "message": "Session is unknown or expired"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Typed Agent session transport error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/agentTransportErrorResponse"
+                },
+                "example": {
+                  "ok": false,
+                  "error": {
+                    "code": "REQUEST_ID_REUSED",
+                    "message": "requestId was already used with a different payload"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/agent/claims": {
       "post": {
         "operationId": "agentClaimRedeem",
@@ -1073,6 +1158,65 @@
       }
     },
     "schemas": {
+      "agentSessionStatus": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "sessionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "projectId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "documentIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "authorization": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused"
+            ]
+          },
+          "editor": {
+            "type": "string",
+            "enum": [
+              "attached",
+              "detached"
+            ]
+          },
+          "observedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "expiresAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "ok",
+          "sessionId",
+          "projectId",
+          "documentIds",
+          "authorization",
+          "editor",
+          "observedAt",
+          "expiresAt"
+        ],
+        "additionalProperties": false
+      },
       "agentClaimRequest": {
         "type": "object",
         "properties": {
@@ -1273,16 +1417,16 @@
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema7"
               },
               "wireIntent": {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema353"
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema354"
               },
               "semanticIntent": {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema355"
-              },
-              "command": {
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema356"
               },
+              "command": {
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema357"
+              },
               "structureEdits": {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema358"
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema359"
               }
             },
             "required": [
@@ -1417,7 +1561,7 @@
             }
           },
           "__schema8": {
-            "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema352"
+            "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema353"
           },
           "__schema9": {
             "type": "object",
@@ -1740,7 +1884,15 @@
               },
               {
                 "type": "number",
+                "const": 45
+              },
+              {
+                "type": "number",
                 "const": 90
+              },
+              {
+                "type": "number",
+                "const": 135
               },
               {
                 "type": "number",
@@ -1748,7 +1900,15 @@
               },
               {
                 "type": "number",
+                "const": 225
+              },
+              {
+                "type": "number",
                 "const": 270
+              },
+              {
+                "type": "number",
+                "const": 315
               }
             ]
           },
@@ -1756,7 +1916,9 @@
             "type": "string",
             "enum": [
               "none",
-              "x"
+              "horizontal",
+              "vertical",
+              "both"
             ]
           },
           "__schema27": {
@@ -2737,6 +2899,14 @@
             "properties": {
               "color": {
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema36"
+              },
+              "lineStyle": {
+                "type": "string",
+                "enum": [
+                  "solid",
+                  "dashed",
+                  "dotted"
+                ]
               },
               "arrow": {
                 "type": "string",
@@ -13852,6 +14022,9 @@
                   },
                   "instanceId": {
                     "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema1"
+                  },
+                  "parameter": {
+                    "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema28"
                   }
                 },
                 "required": [
@@ -14067,10 +14240,7 @@
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema327"
               },
               {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema331"
-              },
-              {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema336"
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema332"
               },
               {
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema337"
@@ -14086,6 +14256,9 @@
               },
               {
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema341"
+              },
+              {
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema342"
               }
             ]
           },
@@ -14203,6 +14376,12 @@
                   "both"
                 ]
               },
+              "arrowStart": {
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema331"
+              },
+              "arrowEnd": {
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema331"
+              },
               "strokeScale": {
                 "type": "number",
                 "minimum": 0.25,
@@ -14240,6 +14419,17 @@
             "additionalProperties": false
           },
           "__schema331": {
+            "type": "string",
+            "enum": [
+              "small-arrow",
+              "medium-arrow",
+              "large-arrow",
+              "dot",
+              "none",
+              "open-arrow"
+            ]
+          },
+          "__schema332": {
             "type": "object",
             "properties": {
               "id": {
@@ -14258,7 +14448,7 @@
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema330"
               },
               "kind": {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema332"
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema333"
               },
               "from": {
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema316"
@@ -14267,13 +14457,13 @@
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema316"
               },
               "waypoints": {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema333"
-              },
-              "curveControls": {
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema334"
               },
-              "outline": {
+              "curveControls": {
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema335"
+              },
+              "outline": {
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema336"
               }
             },
             "required": [
@@ -14287,17 +14477,17 @@
             ],
             "additionalProperties": false
           },
-          "__schema332": {
+          "__schema333": {
             "type": "string",
             "const": "arrow"
           },
-          "__schema333": {
+          "__schema334": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema24"
             }
           },
-          "__schema334": {
+          "__schema335": {
             "type": "array",
             "items": {
               "anyOf": [
@@ -14310,7 +14500,7 @@
               ]
             }
           },
-          "__schema335": {
+          "__schema336": {
             "type": "object",
             "properties": {
               "width": {
@@ -14323,7 +14513,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema336": {
+          "__schema337": {
             "type": "object",
             "properties": {
               "id": {
@@ -14359,7 +14549,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema337": {
+          "__schema338": {
             "type": "object",
             "properties": {
               "id": {
@@ -14420,7 +14610,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema338": {
+          "__schema339": {
             "type": "object",
             "properties": {
               "id": {
@@ -14482,7 +14672,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema339": {
+          "__schema340": {
             "type": "object",
             "properties": {
               "id": {
@@ -14552,7 +14742,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema340": {
+          "__schema341": {
             "type": "object",
             "properties": {
               "id": {
@@ -14610,7 +14800,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema341": {
+          "__schema342": {
             "type": "object",
             "properties": {
               "id": {
@@ -14663,7 +14853,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema342": {
+          "__schema343": {
             "type": "object",
             "properties": {
               "kind": {
@@ -14680,7 +14870,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema343": {
+          "__schema344": {
             "type": "object",
             "properties": {
               "kind": {
@@ -14688,7 +14878,7 @@
                 "const": "set_layout_group"
               },
               "group": {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema344"
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema345"
               }
             },
             "required": [
@@ -14697,7 +14887,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema344": {
+          "__schema345": {
             "type": "object",
             "properties": {
               "id": {
@@ -14731,7 +14921,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema345": {
+          "__schema346": {
             "type": "object",
             "properties": {
               "kind": {
@@ -14748,7 +14938,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema346": {
+          "__schema347": {
             "type": "object",
             "properties": {
               "kind": {
@@ -14756,7 +14946,7 @@
                 "const": "set_layout_constraint"
               },
               "constraint": {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema347"
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema348"
               }
             },
             "required": [
@@ -14765,7 +14955,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema347": {
+          "__schema348": {
             "type": "object",
             "properties": {
               "id": {
@@ -14800,7 +14990,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema348": {
+          "__schema349": {
             "type": "object",
             "properties": {
               "kind": {
@@ -14817,7 +15007,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema349": {
+          "__schema350": {
             "type": "object",
             "properties": {
               "kind": {
@@ -14852,7 +15042,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema350": {
+          "__schema351": {
             "type": "object",
             "properties": {
               "kind": {
@@ -14865,7 +15055,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema351": {
+          "__schema352": {
             "type": "object",
             "properties": {
               "kind": {
@@ -14878,7 +15068,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema352": {
+          "__schema353": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema9"
@@ -15037,19 +15227,16 @@
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema325"
               },
               {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema342"
-              },
-              {
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema343"
               },
               {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema345"
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema344"
               },
               {
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema346"
               },
               {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema348"
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema347"
               },
               {
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema349"
@@ -15059,20 +15246,23 @@
               },
               {
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema351"
+              },
+              {
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema352"
               }
             ]
           },
-          "__schema353": {
+          "__schema354": {
             "type": "object",
             "properties": {
               "id": {
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema1"
               },
               "from": {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema354"
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema355"
               },
               "to": {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema354"
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema355"
               },
               "waypoints": {
                 "maxItems": 256,
@@ -15105,7 +15295,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema354": {
+          "__schema355": {
             "oneOf": [
               {
                 "type": "object",
@@ -15168,7 +15358,7 @@
               }
             ]
           },
-          "__schema355": {
+          "__schema356": {
             "oneOf": [
               {
                 "type": "object",
@@ -15285,8 +15475,82 @@
               }
             ]
           },
-          "__schema356": {
+          "__schema357": {
             "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "place-components"
+                  },
+                  "instances": {
+                    "minItems": 1,
+                    "maxItems": 64,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema14"
+                    }
+                  }
+                },
+                "required": [
+                  "kind",
+                  "instances"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "set-instance-display"
+                  },
+                  "instanceIds": {
+                    "minItems": 1,
+                    "maxItems": 64,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema1"
+                    }
+                  },
+                  "showReference": {
+                    "type": "boolean"
+                  },
+                  "showValue": {
+                    "type": "boolean"
+                  },
+                  "showParameters": {
+                    "type": "object",
+                    "properties": {
+                      "k": {
+                        "type": "boolean"
+                      },
+                      "lp": {
+                        "type": "boolean"
+                      },
+                      "ls": {
+                        "type": "boolean"
+                      },
+                      "l1": {
+                        "type": "boolean"
+                      },
+                      "l2": {
+                        "type": "boolean"
+                      },
+                      "cb": {
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "kind",
+                  "instanceIds"
+                ],
+                "additionalProperties": false
+              },
               {
                 "type": "object",
                 "properties": {
@@ -15396,7 +15660,7 @@
                     "const": "transform"
                   },
                   "selection": {
-                    "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema357"
+                    "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema358"
                   },
                   "transform": {
                     "oneOf": [
@@ -15428,7 +15692,15 @@
                             "anyOf": [
                               {
                                 "type": "number",
+                                "const": 45
+                              },
+                              {
+                                "type": "number",
                                 "const": 90
+                              },
+                              {
+                                "type": "number",
+                                "const": 135
                               },
                               {
                                 "type": "number",
@@ -15436,7 +15708,15 @@
                               },
                               {
                                 "type": "number",
+                                "const": 225
+                              },
+                              {
+                                "type": "number",
                                 "const": 270
+                              },
+                              {
+                                "type": "number",
+                                "const": 315
                               }
                             ]
                           },
@@ -15492,7 +15772,7 @@
                     "const": "copy"
                   },
                   "selection": {
-                    "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema357"
+                    "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema358"
                   },
                   "offset": {
                     "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema24"
@@ -15513,7 +15793,7 @@
                     "const": "align"
                   },
                   "selection": {
-                    "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema357"
+                    "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema358"
                   },
                   "mode": {
                     "type": "string",
@@ -15669,7 +15949,7 @@
               }
             ]
           },
-          "__schema357": {
+          "__schema358": {
             "type": "object",
             "properties": {
               "instanceIds": {
@@ -15722,15 +16002,15 @@
             ],
             "additionalProperties": false
           },
-          "__schema358": {
+          "__schema359": {
             "minItems": 1,
             "maxItems": 256,
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema359"
+              "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema360"
             }
           },
-          "__schema359": {
+          "__schema360": {
             "oneOf": [
               {
                 "type": "object",
@@ -15782,55 +16062,55 @@
                         "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema1"
                       },
                       "name": {
-                        "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema360"
-                      },
-                      "revision": {
                         "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema361"
                       },
-                      "sourceBinding": {
+                      "revision": {
                         "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema362"
                       },
-                      "sourceStatus": {
+                      "sourceBinding": {
                         "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema363"
                       },
-                      "netlist": {
+                      "sourceStatus": {
                         "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema364"
                       },
-                      "instances": {
-                        "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema366"
+                      "netlist": {
+                        "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema365"
                       },
-                      "nets": {
+                      "instances": {
                         "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema367"
                       },
-                      "connectivityEvidence": {
+                      "nets": {
                         "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema368"
                       },
-                      "routes": {
+                      "connectivityEvidence": {
                         "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema369"
                       },
-                      "junctions": {
+                      "routes": {
                         "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema370"
                       },
-                      "annotations": {
+                      "junctions": {
                         "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema371"
                       },
-                      "presentation": {
+                      "annotations": {
                         "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema372"
                       },
-                      "mosBulkDefaults": {
+                      "presentation": {
                         "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema373"
                       },
-                      "layoutGroups": {
+                      "mosBulkDefaults": {
                         "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema374"
                       },
-                      "constraints": {
+                      "layoutGroups": {
                         "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema375"
                       },
-                      "noConnects": {
+                      "constraints": {
                         "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema376"
                       },
-                      "drafting": {
+                      "noConnects": {
                         "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema377"
+                      },
+                      "drafting": {
+                        "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema378"
                       }
                     },
                     "required": [
@@ -15941,14 +16221,14 @@
                         "maxItems": 128,
                         "type": "array",
                         "items": {
-                          "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema378"
+                          "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema379"
                         }
                       },
                       "formalParameters": {
                         "maxItems": 128,
                         "type": "array",
                         "items": {
-                          "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema379"
+                          "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema380"
                         }
                       },
                       "interfaceStatus": {
@@ -16014,25 +16294,25 @@
                         "type": "object",
                         "properties": {
                           "kind": {
-                            "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema380"
+                            "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema381"
                           },
                           "entry": {
-                            "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema381"
-                          },
-                          "configPath": {
-                            "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema381"
-                          },
-                          "files": {
                             "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema382"
                           },
+                          "configPath": {
+                            "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema382"
+                          },
+                          "files": {
+                            "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema383"
+                          },
                           "circuitBindings": {
-                            "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema384"
+                            "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema385"
                           },
                           "dependencies": {
-                            "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema386"
+                            "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema387"
                           },
                           "drafts": {
-                            "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema388"
+                            "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema389"
                           }
                         },
                         "required": [
@@ -16108,7 +16388,7 @@
                     "maxItems": 1024,
                     "type": "array",
                     "items": {
-                      "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema352"
+                      "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema353"
                     }
                   }
                 },
@@ -16122,16 +16402,16 @@
               }
             ]
           },
-          "__schema360": {
+          "__schema361": {
             "type": "string",
             "minLength": 1
           },
-          "__schema361": {
+          "__schema362": {
             "type": "integer",
             "minimum": 0,
             "maximum": 9007199254740991
           },
-          "__schema362": {
+          "__schema363": {
             "type": "object",
             "properties": {
               "cellName": {
@@ -16148,7 +16428,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema363": {
+          "__schema364": {
             "type": "string",
             "enum": [
               "in-sync",
@@ -16156,7 +16436,7 @@
               "connectivity-modified"
             ]
           },
-          "__schema364": {
+          "__schema365": {
             "type": "object",
             "properties": {
               "name": {
@@ -16173,7 +16453,7 @@
                 "maxItems": 128,
                 "type": "array",
                 "items": {
-                  "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema365"
+                  "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema366"
                 }
               }
             },
@@ -16184,7 +16464,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema365": {
+          "__schema366": {
             "type": "object",
             "properties": {
               "name": {
@@ -16199,13 +16479,13 @@
             ],
             "additionalProperties": false
           },
-          "__schema366": {
+          "__schema367": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema14"
             }
           },
-          "__schema367": {
+          "__schema368": {
             "type": "array",
             "items": {
               "type": "object",
@@ -16241,19 +16521,19 @@
               "additionalProperties": false
             }
           },
-          "__schema368": {
+          "__schema369": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema91"
             }
           },
-          "__schema369": {
+          "__schema370": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema69"
             }
           },
-          "__schema370": {
+          "__schema371": {
             "type": "array",
             "items": {
               "type": "object",
@@ -16279,13 +16559,13 @@
               "additionalProperties": false
             }
           },
-          "__schema371": {
+          "__schema372": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema108"
             }
           },
-          "__schema372": {
+          "__schema373": {
             "type": "object",
             "properties": {
               "styleProfileId": {
@@ -16340,7 +16620,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema373": {
+          "__schema374": {
             "type": "object",
             "properties": {
               "nmosNetId": {
@@ -16352,26 +16632,26 @@
             },
             "additionalProperties": false
           },
-          "__schema374": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema344"
-            }
-          },
           "__schema375": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema347"
+              "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema345"
             }
           },
           "__schema376": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema348"
+            }
+          },
+          "__schema377": {
             "default": [],
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema99"
             }
           },
-          "__schema377": {
+          "__schema378": {
             "type": "object",
             "properties": {
               "objects": {
@@ -16386,7 +16666,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema378": {
+          "__schema379": {
             "type": "object",
             "properties": {
               "id": {
@@ -16414,7 +16694,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema379": {
+          "__schema380": {
             "type": "object",
             "properties": {
               "name": {
@@ -16433,25 +16713,25 @@
             ],
             "additionalProperties": false
           },
-          "__schema380": {
+          "__schema381": {
             "type": "string",
             "const": "source"
           },
-          "__schema381": {
+          "__schema382": {
             "type": "string"
           },
-          "__schema382": {
+          "__schema383": {
             "maxItems": 4096,
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema383"
+              "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema384"
             }
           },
-          "__schema383": {
+          "__schema384": {
             "type": "object",
             "properties": {
               "path": {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema381"
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema382"
               },
               "text": {
                 "type": "string"
@@ -16463,21 +16743,21 @@
             ],
             "additionalProperties": false
           },
-          "__schema384": {
+          "__schema385": {
             "maxItems": 1024,
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema385"
+              "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema386"
             }
           },
-          "__schema385": {
+          "__schema386": {
             "type": "object",
             "properties": {
               "id": {
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema1"
               },
               "path": {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema381"
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema382"
               },
               "documentId": {
                 "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema1"
@@ -16498,14 +16778,14 @@
             ],
             "additionalProperties": false
           },
-          "__schema386": {
+          "__schema387": {
             "maxItems": 1024,
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema387"
+              "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema388"
             }
           },
-          "__schema387": {
+          "__schema388": {
             "type": "object",
             "properties": {
               "id": {
@@ -16514,7 +16794,7 @@
                 "maxLength": 256
               },
               "mountPath": {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema381"
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema382"
               },
               "sha256": {
                 "type": "string",
@@ -16528,18 +16808,18 @@
             ],
             "additionalProperties": false
           },
-          "__schema388": {
+          "__schema389": {
             "maxItems": 4096,
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema389"
+              "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema390"
             }
           },
-          "__schema389": {
+          "__schema390": {
             "type": "object",
             "properties": {
               "path": {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema381"
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema382"
               },
               "base": {
                 "type": "string"
@@ -16548,7 +16828,7 @@
                 "type": "string"
               },
               "binding": {
-                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema385"
+                "$ref": "#/components/schemas/agentCircuitRequest/$defs/__schema386"
               }
             },
             "required": [
@@ -17923,6 +18203,30 @@
                                 "power-rail"
                               ]
                             },
+                            "styleOverride": {
+                              "type": "object",
+                              "properties": {
+                                "color": {
+                                  "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema23"
+                                },
+                                "lineStyle": {
+                                  "type": "string",
+                                  "enum": [
+                                    "solid",
+                                    "dashed",
+                                    "dotted"
+                                  ]
+                                },
+                                "arrow": {
+                                  "type": "string",
+                                  "enum": [
+                                    "middle",
+                                    "end"
+                                  ]
+                                }
+                              },
+                              "additionalProperties": false
+                            },
                             "polyline": {
                               "anyOf": [
                                 {
@@ -18093,10 +18397,7 @@
                                       "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema246"
                                     },
                                     {
-                                      "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema250"
-                                    },
-                                    {
-                                      "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema255"
+                                      "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema251"
                                     },
                                     {
                                       "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema256"
@@ -18112,6 +18413,9 @@
                                     },
                                     {
                                       "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema260"
+                                    },
+                                    {
+                                      "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema261"
                                     }
                                   ]
                                 },
@@ -18167,7 +18471,7 @@
                                         "diagnostics": {
                                           "type": "array",
                                           "items": {
-                                            "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema261"
+                                            "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema262"
                                           }
                                         }
                                       },
@@ -18229,7 +18533,7 @@
                                         "diagnostics": {
                                           "type": "array",
                                           "items": {
-                                            "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema261"
+                                            "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema262"
                                           }
                                         }
                                       },
@@ -18265,7 +18569,7 @@
                                         "diagnostics": {
                                           "type": "array",
                                           "items": {
-                                            "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema261"
+                                            "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema262"
                                           }
                                         }
                                       },
@@ -18303,7 +18607,7 @@
                                         "diagnostics": {
                                           "type": "array",
                                           "items": {
-                                            "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema261"
+                                            "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema262"
                                           }
                                         }
                                       },
@@ -18356,7 +18660,7 @@
                                         "diagnostics": {
                                           "type": "array",
                                           "items": {
-                                            "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema261"
+                                            "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema262"
                                           }
                                         }
                                       },
@@ -18405,7 +18709,7 @@
                                         "diagnostics": {
                                           "type": "array",
                                           "items": {
-                                            "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema261"
+                                            "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema262"
                                           }
                                         }
                                       },
@@ -18441,7 +18745,7 @@
                                         "diagnostics": {
                                           "type": "array",
                                           "items": {
-                                            "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema261"
+                                            "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema262"
                                           }
                                         }
                                       },
@@ -18473,7 +18777,7 @@
                                         "diagnostics": {
                                           "type": "array",
                                           "items": {
-                                            "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema261"
+                                            "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema262"
                                           }
                                         }
                                       },
@@ -18491,7 +18795,7 @@
                                 "diagnostics": {
                                   "type": "array",
                                   "items": {
-                                    "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema261"
+                                    "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema262"
                                   }
                                 }
                               },
@@ -18587,7 +18891,7 @@
                       "diagnostics": {
                         "type": "array",
                         "items": {
-                          "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema262"
+                          "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema263"
                         }
                       }
                     },
@@ -18625,7 +18929,7 @@
               "diagnostics": {
                 "type": "array",
                 "items": {
-                  "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema262"
+                  "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema263"
                 }
               },
               "trace": {
@@ -18645,7 +18949,7 @@
                               "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema1"
                             },
                             "hierarchyPath": {
-                              "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema267"
+                              "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema268"
                             },
                             "routes": {
                               "type": "array",
@@ -18692,10 +18996,10 @@
                                   ]
                                 },
                                 "from": {
-                                  "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema268"
+                                  "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema269"
                                 },
                                 "to": {
-                                  "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema268"
+                                  "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema269"
                                 },
                                 "frame": {
                                   "type": "object",
@@ -18746,10 +19050,10 @@
                                   "const": "global"
                                 },
                                 "from": {
-                                  "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema268"
+                                  "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema269"
                                 },
                                 "to": {
-                                  "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema268"
+                                  "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema269"
                                 },
                                 "foldedName": {
                                   "type": "string"
@@ -18862,7 +19166,7 @@
               "diagnostics": {
                 "type": "array",
                 "items": {
-                  "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema262"
+                  "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema263"
                 }
               },
               "diagnosticDelta": {
@@ -18871,13 +19175,13 @@
                   "added": {
                     "type": "array",
                     "items": {
-                      "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema262"
+                      "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema263"
                     }
                   },
                   "removed": {
                     "type": "array",
                     "items": {
-                      "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema262"
+                      "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema263"
                     }
                   }
                 },
@@ -19059,7 +19363,7 @@
               "diagnostics": {
                 "type": "array",
                 "items": {
-                  "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema262"
+                  "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema263"
                 }
               }
             },
@@ -19121,7 +19425,7 @@
               "diagnostics": {
                 "type": "array",
                 "items": {
-                  "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema262"
+                  "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema263"
                 }
               }
             },
@@ -19571,7 +19875,15 @@
               },
               {
                 "type": "number",
+                "const": 45
+              },
+              {
+                "type": "number",
                 "const": 90
+              },
+              {
+                "type": "number",
+                "const": 135
               },
               {
                 "type": "number",
@@ -19579,7 +19891,15 @@
               },
               {
                 "type": "number",
+                "const": 225
+              },
+              {
+                "type": "number",
                 "const": 270
+              },
+              {
+                "type": "number",
+                "const": 315
               }
             ]
           },
@@ -19587,7 +19907,9 @@
             "type": "string",
             "enum": [
               "none",
-              "x"
+              "horizontal",
+              "vertical",
+              "both"
             ]
           },
           "__schema27": {
@@ -29843,6 +30165,9 @@
                   },
                   "instanceId": {
                     "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema1"
+                  },
+                  "parameter": {
+                    "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema17"
                   }
                 },
                 "required": [
@@ -30132,6 +30457,12 @@
                   "both"
                 ]
               },
+              "arrowStart": {
+                "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema250"
+              },
+              "arrowEnd": {
+                "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema250"
+              },
               "strokeScale": {
                 "type": "number",
                 "minimum": 0.25,
@@ -30169,6 +30500,17 @@
             "additionalProperties": false
           },
           "__schema250": {
+            "type": "string",
+            "enum": [
+              "small-arrow",
+              "medium-arrow",
+              "large-arrow",
+              "dot",
+              "none",
+              "open-arrow"
+            ]
+          },
+          "__schema251": {
             "type": "object",
             "properties": {
               "id": {
@@ -30187,7 +30529,7 @@
                 "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema249"
               },
               "kind": {
-                "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema251"
+                "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema252"
               },
               "from": {
                 "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema238"
@@ -30196,13 +30538,13 @@
                 "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema238"
               },
               "waypoints": {
-                "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema252"
-              },
-              "curveControls": {
                 "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema253"
               },
-              "outline": {
+              "curveControls": {
                 "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema254"
+              },
+              "outline": {
+                "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema255"
               }
             },
             "required": [
@@ -30216,17 +30558,17 @@
             ],
             "additionalProperties": false
           },
-          "__schema251": {
+          "__schema252": {
             "type": "string",
             "const": "arrow"
           },
-          "__schema252": {
+          "__schema253": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema24"
             }
           },
-          "__schema253": {
+          "__schema254": {
             "type": "array",
             "items": {
               "anyOf": [
@@ -30239,7 +30581,7 @@
               ]
             }
           },
-          "__schema254": {
+          "__schema255": {
             "type": "object",
             "properties": {
               "width": {
@@ -30252,7 +30594,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema255": {
+          "__schema256": {
             "type": "object",
             "properties": {
               "id": {
@@ -30288,7 +30630,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema256": {
+          "__schema257": {
             "type": "object",
             "properties": {
               "id": {
@@ -30349,7 +30691,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema257": {
+          "__schema258": {
             "type": "object",
             "properties": {
               "id": {
@@ -30411,7 +30753,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema258": {
+          "__schema259": {
             "type": "object",
             "properties": {
               "id": {
@@ -30481,7 +30823,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema259": {
+          "__schema260": {
             "type": "object",
             "properties": {
               "id": {
@@ -30539,7 +30881,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema260": {
+          "__schema261": {
             "type": "object",
             "properties": {
               "id": {
@@ -30592,7 +30934,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema261": {
+          "__schema262": {
             "type": "object",
             "properties": {
               "code": {
@@ -30642,7 +30984,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema262": {
+          "__schema263": {
             "type": "object",
             "properties": {
               "primary": {
@@ -30652,16 +30994,16 @@
                     "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema1"
                   },
                   "hierarchyPath": {
-                    "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema263"
+                    "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema264"
                   },
                   "kind": {
-                    "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema265"
+                    "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema266"
                   },
                   "objectId": {
                     "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema1"
                   },
                   "endpoint": {
-                    "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema266"
+                    "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema267"
                   }
                 },
                 "required": [
@@ -30681,16 +31023,16 @@
                       "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema1"
                     },
                     "hierarchyPath": {
-                      "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema263"
+                      "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema264"
                     },
                     "kind": {
-                      "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema265"
+                      "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema266"
                     },
                     "objectId": {
                       "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema1"
                     },
                     "endpoint": {
-                      "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema266"
+                      "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema267"
                     }
                   },
                   "required": [
@@ -30830,14 +31172,14 @@
             ],
             "additionalProperties": false
           },
-          "__schema263": {
+          "__schema264": {
             "maxItems": 32,
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema264"
+              "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema265"
             }
           },
-          "__schema264": {
+          "__schema265": {
             "type": "object",
             "properties": {
               "parentDocumentId": {
@@ -30857,7 +31199,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema265": {
+          "__schema266": {
             "type": "string",
             "enum": [
               "document",
@@ -30870,16 +31212,16 @@
               "no-connect"
             ]
           },
-          "__schema266": {
+          "__schema267": {
             "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema29"
           },
-          "__schema267": {
+          "__schema268": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema264"
+              "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema265"
             }
           },
-          "__schema268": {
+          "__schema269": {
             "type": "object",
             "properties": {
               "documentId": {
@@ -30889,7 +31231,7 @@
                 "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema1"
               },
               "hierarchyPath": {
-                "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema267"
+                "$ref": "#/components/schemas/agentCircuitResponse/$defs/__schema268"
               }
             },
             "required": [
@@ -31118,7 +31460,8 @@
                   "png",
                   "pdf",
                   "simulation-plot"
-                ]
+                ],
+                "description": "Project and Canvas exports. simulation-plot is a retired compatibility request and returns SIMULATION_PLOT_RETIRED; use simulation-input artifact access for raw/CSV/Spec results."
               },
               "documentId": {
                 "$ref": "#/components/schemas/agentFileResourceRequest/$defs/__schema1"
@@ -33914,6 +34257,9 @@
                                       "type": "string",
                                       "const": "op"
                                     },
+                                    "scalars": {
+                                      "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema18"
+                                    },
                                     "plotName": {
                                       "type": "string"
                                     },
@@ -33923,13 +34269,13 @@
                                         "type": "object",
                                         "properties": {
                                           "name": {
-                                            "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema18"
-                                          },
-                                          "quantity": {
                                             "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema19"
                                           },
-                                          "unit": {
+                                          "quantity": {
                                             "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema20"
+                                          },
+                                          "unit": {
+                                            "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema21"
                                           },
                                           "value": {
                                             "type": "number"
@@ -33959,6 +34305,9 @@
                                       "type": "string",
                                       "const": "ac"
                                     },
+                                    "scalars": {
+                                      "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema18"
+                                    },
                                     "rawPlotOrdinals": {
                                       "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema16"
                                     },
@@ -33977,13 +34326,13 @@
                                         "type": "object",
                                         "properties": {
                                           "name": {
-                                            "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema18"
-                                          },
-                                          "quantity": {
                                             "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema19"
                                           },
-                                          "unit": {
+                                          "quantity": {
                                             "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema20"
+                                          },
+                                          "unit": {
+                                            "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema21"
                                           },
                                           "real": {
                                             "type": "array",
@@ -34024,6 +34373,9 @@
                                       "type": "string",
                                       "const": "dc"
                                     },
+                                    "scalars": {
+                                      "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema18"
+                                    },
                                     "rawPlotOrdinals": {
                                       "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema16"
                                     },
@@ -34034,13 +34386,13 @@
                                       "type": "object",
                                       "properties": {
                                         "name": {
-                                          "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema18"
-                                        },
-                                        "quantity": {
                                           "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema19"
                                         },
-                                        "unit": {
+                                        "quantity": {
                                           "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema20"
+                                        },
+                                        "unit": {
+                                          "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema21"
                                         },
                                         "values": {
                                           "type": "array",
@@ -34063,13 +34415,13 @@
                                         "type": "object",
                                         "properties": {
                                           "name": {
-                                            "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema18"
-                                          },
-                                          "quantity": {
                                             "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema19"
                                           },
-                                          "unit": {
+                                          "quantity": {
                                             "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema20"
+                                          },
+                                          "unit": {
+                                            "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema21"
                                           },
                                           "value": {
                                             "type": "array",
@@ -34103,6 +34455,9 @@
                                       "type": "string",
                                       "const": "tran"
                                     },
+                                    "scalars": {
+                                      "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema18"
+                                    },
                                     "rawPlotOrdinals": {
                                       "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema16"
                                     },
@@ -34121,13 +34476,13 @@
                                         "type": "object",
                                         "properties": {
                                           "name": {
-                                            "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema18"
-                                          },
-                                          "quantity": {
                                             "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema19"
                                           },
-                                          "unit": {
+                                          "quantity": {
                                             "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema20"
+                                          },
+                                          "unit": {
+                                            "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema21"
                                           },
                                           "value": {
                                             "type": "array",
@@ -34160,6 +34515,9 @@
                                     "analysis": {
                                       "type": "string",
                                       "const": "noise"
+                                    },
+                                    "scalars": {
+                                      "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema18"
                                     },
                                     "rawPlotOrdinals": {
                                       "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema16"
@@ -34321,6 +34679,288 @@
                         "type": "number",
                         "const": 1
                       },
+                      "specs": {
+                        "type": "object",
+                        "properties": {
+                          "schemaVersion": {
+                            "type": "number",
+                            "const": 1
+                          },
+                          "runId": {
+                            "type": "string"
+                          },
+                          "preparedId": {
+                            "type": "string"
+                          },
+                          "inputDigest": {
+                            "type": "string"
+                          },
+                          "results": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "occurrence": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "source": {
+                                  "type": "object",
+                                  "properties": {
+                                    "path": {
+                                      "type": "string"
+                                    },
+                                    "line": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "text": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "path",
+                                    "line",
+                                    "text"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "unit": {
+                                  "type": "string"
+                                },
+                                "expected": {
+                                  "anyOf": [
+                                    {
+                                      "oneOf": [
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "const": "limit"
+                                            },
+                                            "operator": {
+                                              "type": "string",
+                                              "enum": [
+                                                "<",
+                                                "<=",
+                                                ">",
+                                                ">="
+                                              ]
+                                            },
+                                            "value": {
+                                              "type": "number"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "operator",
+                                            "value"
+                                          ],
+                                          "additionalProperties": false
+                                        },
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "const": "range"
+                                            },
+                                            "minimum": {
+                                              "type": "number"
+                                            },
+                                            "maximum": {
+                                              "type": "number"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "minimum",
+                                            "maximum"
+                                          ],
+                                          "additionalProperties": false
+                                        },
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "const": "target"
+                                            },
+                                            "value": {
+                                              "type": "number"
+                                            },
+                                            "tolerance": {
+                                              "type": "number",
+                                              "minimum": 0
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "value",
+                                            "tolerance"
+                                          ],
+                                          "additionalProperties": false
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "value": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "judgment": {
+                                  "type": "string",
+                                  "enum": [
+                                    "pass",
+                                    "failed",
+                                    "not-evaluated",
+                                    "unconstrained"
+                                  ]
+                                },
+                                "reason": {
+                                  "type": "string",
+                                  "enum": [
+                                    "satisfied",
+                                    "outside-spec",
+                                    "no-spec",
+                                    "invalid-spec",
+                                    "duplicate-spec",
+                                    "ambiguous-measurement",
+                                    "measurement-missing",
+                                    "run-incomplete"
+                                  ]
+                                },
+                                "detail": {
+                                  "type": "string"
+                                },
+                                "logLine": {
+                                  "anyOf": [
+                                    {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "name",
+                                "occurrence",
+                                "source",
+                                "unit",
+                                "expected",
+                                "value",
+                                "judgment",
+                                "reason",
+                                "detail",
+                                "logLine"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "schemaVersion",
+                          "runId",
+                          "preparedId",
+                          "inputDigest",
+                          "results"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "nativeMeasurements": {
+                        "type": "array",
+                        "items": {
+                          "oneOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string"
+                                },
+                                "occurrence": {
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "const": "available"
+                                },
+                                "value": {
+                                  "type": "number"
+                                },
+                                "logLine": {
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "detail": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "name",
+                                "occurrence",
+                                "status",
+                                "value",
+                                "logLine",
+                                "detail"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string"
+                                },
+                                "occurrence": {
+                                  "type": "number",
+                                  "const": 0
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "const": "unavailable"
+                                },
+                                "detail": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "name",
+                                "occurrence",
+                                "status",
+                                "detail"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        }
+                      },
                       "analyses": {
                         "type": "array",
                         "items": {
@@ -34382,14 +35022,17 @@
                                   "values": {
                                     "type": "array",
                                     "items": {
-                                      "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema21"
+                                      "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema22"
                                     }
                                   },
                                   "imaginary": {
                                     "type": "array",
                                     "items": {
-                                      "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema21"
+                                      "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema22"
                                     }
+                                  },
+                                  "semantics": {
+                                    "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema23"
                                   }
                                 },
                                 "required": [
@@ -34401,31 +35044,16 @@
                                 "additionalProperties": false
                               }
                             },
+                            "scalars": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema24"
+                              }
+                            },
                             "integrated": {
                               "type": "array",
                               "items": {
-                                "type": "object",
-                                "properties": {
-                                  "id": {
-                                    "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema1"
-                                  },
-                                  "label": {
-                                    "type": "string"
-                                  },
-                                  "unit": {
-                                    "type": "string"
-                                  },
-                                  "value": {
-                                    "type": "number"
-                                  }
-                                },
-                                "required": [
-                                  "id",
-                                  "label",
-                                  "unit",
-                                  "value"
-                                ],
-                                "additionalProperties": false
+                                "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema24"
                               }
                             }
                           },
@@ -34924,7 +35552,7 @@
                     "maxItems": 16,
                     "type": "array",
                     "items": {
-                      "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema22"
+                      "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema25"
                     }
                   }
                 },
@@ -35486,23 +36114,23 @@
                               "vgs",
                               "vds",
                               "vbs",
-                              "id"
+                              "id",
+                              "gm",
+                              "gds",
+                              "gmbs",
+                              "vth",
+                              "vdsat"
                             ]
                           },
                           "label": {
-                            "type": "string",
-                            "enum": [
-                              "VGS",
-                              "VDS",
-                              "VBS",
-                              "ID"
-                            ]
+                            "type": "string"
                           },
                           "unit": {
                             "type": "string",
                             "enum": [
                               "V",
-                              "A"
+                              "A",
+                              "S"
                             ]
                           },
                           "expression": {
@@ -36035,12 +36663,42 @@
             "maximum": 9007199254740991
           },
           "__schema18": {
-            "type": "string"
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema19"
+                },
+                "quantity": {
+                  "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema20"
+                },
+                "unit": {
+                  "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema21"
+                },
+                "value": {
+                  "type": "number"
+                },
+                "imaginary": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "name",
+                "quantity",
+                "unit",
+                "value"
+              ],
+              "additionalProperties": false
+            }
           },
           "__schema19": {
             "type": "string"
           },
           "__schema20": {
+            "type": "string"
+          },
+          "__schema21": {
             "anyOf": [
               {
                 "type": "string"
@@ -36050,7 +36708,7 @@
               }
             ]
           },
-          "__schema21": {
+          "__schema22": {
             "anyOf": [
               {
                 "type": "number"
@@ -36060,7 +36718,69 @@
               }
             ]
           },
-          "__schema22": {
+          "__schema23": {
+            "type": "object",
+            "properties": {
+              "valueKind": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "complex",
+                  "unknown"
+                ]
+              },
+              "quantity": {
+                "type": "string"
+              },
+              "origin": {
+                "type": "string",
+                "enum": [
+                  "raw",
+                  "expression"
+                ]
+              },
+              "expression": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "valueKind",
+              "quantity",
+              "origin"
+            ],
+            "additionalProperties": false
+          },
+          "__schema24": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema1"
+              },
+              "label": {
+                "type": "string"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "value": {
+                "type": "number"
+              },
+              "imaginary": {
+                "type": "number"
+              },
+              "semantics": {
+                "$ref": "#/components/schemas/agentSimulationResourceResponse/$defs/__schema23"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "unit",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          "__schema25": {
             "type": "object",
             "properties": {
               "id": {

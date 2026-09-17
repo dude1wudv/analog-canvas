@@ -3,11 +3,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { BrowserSimulationSession } from "./browser-simulation-session";
 import { SpiceSimulationSurface } from "./spice-simulation-surface";
+import type { SimulationAgentGuidanceProps } from "./simulation-agent-guidance";
 
 function render(
   saved: boolean,
   broken = false,
-  projectSaveState?: "saving" | "clean" | "failed",
+  agentGuidance?: SimulationAgentGuidanceProps,
 ) {
   const project = createEmptyProject("code", "Code");
   if (saved) {
@@ -25,6 +26,7 @@ function render(
   return renderToStaticMarkup(
     <SpiceSimulationSurface
       open
+      agentGuidance={agentGuidance}
       maximized={false}
       project={project}
       activeDocumentId={project.topDocumentId}
@@ -42,21 +44,42 @@ function render(
       onSaveFolder={() => ({ status: "applied" })}
       onDeleteFolder={() => true}
       onHistoryBoundary={() => {}}
-      projectSaveState={projectSaveState}
     />,
   );
 }
 describe("source workspace default cutover", () => {
-  it("projects the Project save lifecycle instead of claiming a buffer flush saved to cloud", () => {
-    expect(render(true, false, "saving")).toContain("Saving…");
-    expect(render(true, false, "saving")).toContain('aria-busy="true"');
-    expect(render(true, false, "clean")).toContain(">✓ Saved</button>");
-    expect(render(true, false, "clean")).toContain('data-save-state="saved"');
-    expect(render(true, false, "failed")).toContain("Retry save");
+  it.each([false, true])(
+    "keeps Agent guidance with saved folder=%s without side effects",
+    (saved) => {
+      let opened = false;
+      const markup = render(saved, false, {
+        status: "connected",
+        onOpen: () => {
+          opened = true;
+        },
+      });
+      expect(markup).toContain("Agent connected");
+      expect(markup).toContain("Tell your Agent your simulation goal");
+      expect(opened).toBe(false);
+      expect(markup.includes('aria-label="Agent simulation guide"')).toBe(
+        !saved,
+      );
+      expect(markup.includes('class="simulation-agent-guidance"')).toBe(saved);
+      expect(render(saved)).not.toContain("simulation-agent-guidance");
+    },
+  );
+  it("describes source application without claiming a cloud save", () => {
+    const markup = render(true);
+    expect(markup).toContain('aria-label="Save source"');
+    expect(markup).toContain(
+      'aria-description="Source applied to current project; not a cloud save"',
+    );
+    expect(markup).toContain('data-save-state="saved"');
+    expect(markup).not.toContain('aria-label="Save project"');
   });
   it("offers creation without restoring the retired Settings form", () => {
     const markup = render(false);
-    expect(markup).toContain("Set up");
+    expect(markup).toContain("Manual setup");
     expect(markup).not.toContain("Create experiment");
     expect(markup).not.toContain('aria-label="Analyses settings"');
     expect(markup).not.toContain('aria-label="Setup settings"');
@@ -68,7 +91,7 @@ describe("source workspace default cutover", () => {
     expect(markup).toContain("circuit.spice");
     expect(markup).toContain("run.cir");
     expect(markup).not.toContain("experiment.json");
-    expect(markup).toContain('aria-label="仿真文件夹"');
+    expect(markup).toContain('aria-label="Simulation folders"');
     expect(markup).not.toContain('aria-label="Simulation setup"');
     expect(markup).not.toContain("Prepare deck");
     expect(markup.indexOf('aria-label="代码输出"')).toBeGreaterThan(
@@ -78,7 +101,8 @@ describe("source workspace default cutover", () => {
   });
   it("retains the editor for invalid authored configuration rather than crashing or restoring a second form", () => {
     const markup = render(true, true);
-    expect(markup).toContain('aria-label="仿真代码工作区"');
+    expect(markup).toContain("experiment.json");
+    expect(markup).toContain('aria-label="Simulation Code workspace"');
     expect(markup).toContain("run.cir");
     expect(markup).not.toContain('aria-label="Measurements settings"');
   });

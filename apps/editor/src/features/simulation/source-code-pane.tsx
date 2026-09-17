@@ -14,6 +14,7 @@ import {
   type SimulationSourceExpression,
 } from "@icm/model";
 import type { SpiceSimulationSurfaceProps } from "./simulation-surface-types";
+import { SourceCircuitContext } from "./source-circuit-context-view";
 import {
   deriveSimulationProbeOptions,
   matchSimulationVoltageProbeOptions,
@@ -23,14 +24,28 @@ import {
 import {
   generateCircuitSource,
   planCircuitSourceEdit,
-  compileSourceSimulation,
+  nativeVoltageAcquisition,
+  nativeAcquisitionEdit,
   simulationSignals,
+  nativeSimulationDevices,
+  nativeTerminalCurrent,
+  migrateSimulationConfigToNative,
+  vacaskIdentifier,
+  nativeVoltageSelectorNode,
+  ngspiceSignals,
+  ngspiceAcquisitionEdit,
+  ngspiceSimulationDevices,
+  ngspiceTerminalCurrent,
 } from "@icm/netlist";
+import { ngspiceProbeChoices } from "./source-ngspice-probe-choices";
 import type { SimulationFiles } from "@icm/simulation-service/files";
+import { resolveSimulationEngine } from "@icm/simulation-service";
+import { authoringEngine } from "./authoring-engine";
 import { sha256 } from "@icm/simulation-service/files";
 import type {
   Problem,
   SimulationSourceLocation,
+  Capabilities,
 } from "@icm/simulation-service/contract";
 import SimulationCodeEditor from "./code-editor";
 import { downloadTextArtifact } from "../../document/project-file-service";
@@ -45,15 +60,23 @@ import {
 import {
   buildSimulationWorkspaceArchive,
   simulationArtifactCategory,
+  simulationExplorerArtifactCategory,
 } from "./simulation-artifact-files";
-import { sourceProbeChoices } from "./source-probe-choices";
+import {
+  sourceProbeChoices,
+  sourceProbeEnvironment,
+} from "./source-probe-choices";
 import { SourceProbePicker } from "./source-probe-picker";
+import { SimulationActionIcon } from "./simulation-action-icon";
+import { flushSelectedFolders } from "./flush-selected-folders";
+import { isVisibleSimulationSource } from "./simulation-source-visibility";
 
 export type SourceFlush =
   | { ok: true; folder: ProjectSimulationFolder; revision: number }
   | { ok: false };
 export interface SourceCodeHandle {
   flush(): Promise<SourceFlush>;
+  flushFolders(ids: readonly string[]): ReturnType<typeof flushSelectedFolders>;
   save(): Promise<boolean>;
   discard(): void;
   reveal(location: SimulationSourceLocation): Promise<void>;
@@ -69,17 +92,19 @@ interface Props extends Pick<
   | "onPreviewSignal"
 > {
   project: CircuitProject;
+  activeDocumentId?: string | undefined;
   selectedCircuitObject?:
     { documentId: string; instanceId: string } | undefined;
   folder: ProjectSimulationFolder;
+  capabilities?: Capabilities | undefined;
   files: SimulationFiles;
   actions: ReactNode;
   toolbarEnd?: ReactNode;
   folders?: SimulationCodeWorkspaceProps["folders"];
-  onPrepare?(): void;
+  additionalActions?: SimulationCodeWorkspaceProps["additionalActions"];
   console: ReactNode;
   results: ReactNode;
-  outputActions?: ReactNode;
+  history?: ReactNode;
   artifactGroups?: SimulationCodeWorkspaceProps["artifactGroups"];
   artifactPreview?: SimulationCodeWorkspaceProps["artifactPreview"];
   artifactBusy?: string | undefined;
@@ -96,8 +121,6 @@ interface Props extends Pick<
   onProblem(problem: Problem | undefined): void;
   diagnostics?: Problem["diagnostics"];
   onRun(): void;
-  onSaveProject?: (() => void | Promise<unknown>) | undefined;
-  projectSaveState?: SpiceSimulationSurfaceProps["projectSaveState"];
   onHistoryBoundary(direction: "undo" | "redo"): void;
 }
 const inputProblem = (code: string, message: string): Problem => ({
@@ -110,6 +133,15 @@ const inputProblem = (code: string, message: string): Problem => ({
 /** Local dirty buffers only; Project files, circuit parameters and runs keep their existing owners. */
 export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
   function SourceCodePane(props, ref) {
+    const folderEngine = (folder: ProjectSimulationFolder) => {
+      const selected = props.capabilities
+        ? resolveSimulationEngine(folder, props.capabilities)
+        : undefined;
+      return selected?.ok
+        ? selected.engine
+        : (authoringEngine(folder) ?? "vacask");
+    };
+    const engine = folderEngine(props.folder);
     const ui = useWorkspaceInteractions();
     const current = useRef(props);
     current.current = props;
@@ -146,26 +178,46 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
       setRecoveryAvailable(cache.write(drafts.current));
     }, [cache, draftRevision]);
     const [paths, setPaths] = useState<Record<string, string>>({});
-    const path = paths[props.folder.id] ?? props.folder.input.entry;
+    const visibleSource = (folder: ProjectSimulationFolder, path: string) => {
+      const draft = drafts.current.get(`${folder.id}\u0000${path}`);
+      return isVisibleSimulationSource(
+        folder,
+        path,
+        !!draft && draft.text !== draft.base,
+      );
+    };
+    const requestedPath = paths[props.folder.id] ?? props.folder.input.entry;
+    const path = visibleSource(props.folder, requestedPath)
+      ? requestedPath
+      : props.folder.input.entry;
     const setPath = (value: string, folderId = props.folder.id) => {
       setPaths((current) => ({ ...current, [folderId]: value }));
       if (folderId !== props.folder.id) props.folders?.onSelect(folderId);
     };
     const [saving, setSaving] = useState(false);
     const [saveRequested, setSaveRequested] = useState(false);
-    const projectSaveRequest = useRef(false);
+    const [saveFailed, setSaveFailed] = useState(false);
+    const sourceSaveRequest = useRef(false);
     const [reveal, setReveal] = useState<{
       sourceOffset: number;
       requestId: string;
       focus?: boolean;
     }>();
     const [sourceDigest, setSourceDigest] = useState("");
+    const [declarationRequest, setDeclarationRequest] = useState<string>();
+    const addParameterDeclaration = () => {
+      setPath(props.folder.input.entry);
+      setDeclarationRequest(crypto.randomUUID());
+      props.onProblem(undefined);
+    };
     const [saveRequest, setSaveRequest] = useState<{
       id: string;
       session: string;
       vectors: string[];
+      directives?: string[];
     }>();
     const saveSession = useRef(crypto.randomUUID());
+    const sourceCursor = useRef(0);
     const beginSignalSelection = () => {
       saveSession.current = crypto.randomUUID();
       if (props.pickNetsActive) props.onPickNetsChange?.(false);
@@ -178,9 +230,32 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
       terminal: props.pickedTerminal?.sequence,
     });
     const input = props.folder.input;
+    const configState = readSimulationExperimentConfig(props.folder);
+    const legacyConfig =
+      configState.ok && configState.authority === "legacy-config";
     const signals = useMemo(
       () =>
-        simulationSignals(props.project, {
+        (engine === "ngspice" ? ngspiceSignals : simulationSignals)(
+          props.project,
+          {
+            ...input,
+            files: input.files.map((file) => ({
+              ...file,
+              text:
+                drafts.current.get(`${props.folder.id}\u0000${file.path}`)
+                  ?.text ?? file.text,
+            })),
+          },
+        ),
+      [props.project, input, draftRevision, engine],
+    );
+    const [probePicker, setProbePicker] = useState<
+      "voltage" | "current" | "device-op"
+    >();
+    const probeEnvironment = useMemo(() => {
+      const folder = {
+        ...props.folder,
+        input: {
           ...input,
           files: input.files.map((file) => ({
             ...file,
@@ -188,24 +263,36 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
               drafts.current.get(`${props.folder.id}\u0000${file.path}`)
                 ?.text ?? file.text,
           })),
-        }),
-      [props.project, input, draftRevision],
-    );
-    const [probePicker, setProbePicker] = useState<"voltage" | "current">();
+        },
+      };
+      return probePicker && engine !== "ngspice"
+        ? sourceProbeEnvironment(
+            props.project,
+            folder,
+            props.capabilities?.profiles,
+          )
+        : { input: folder.input, libraries: [] };
+    }, [
+      props.project,
+      input,
+      draftRevision,
+      probePicker,
+      props.capabilities,
+      props.folder,
+      engine,
+    ]);
     const probeChoices = useMemo(
       () =>
         probePicker
-          ? sourceProbeChoices(props.project, {
-              ...input,
-              files: input.files.map((file) => ({
-                ...file,
-                text:
-                  drafts.current.get(`${props.folder.id}\u0000${file.path}`)
-                    ?.text ?? file.text,
-              })),
-            })
+          ? engine === "ngspice"
+            ? ngspiceProbeChoices(props.project, probeEnvironment.input)
+            : sourceProbeChoices(
+                props.project,
+                probeEnvironment.input,
+                probeEnvironment.libraries,
+              )
           : [],
-      [props.project, input, draftRevision, probePicker],
+      [props.project, probePicker, probeEnvironment, engine],
     );
     const binding = input.circuitBindings.find(
       (b) => b.emission === "top-level",
@@ -218,20 +305,45 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
       [props.project, binding],
     );
     const saveSignal = (
-      label: string,
+      _label: string,
       expression: SimulationSourceExpression,
     ): boolean => {
-      const insert = (vectors: string[]) => {
-        if (
+      const insert = (vectors: string[], directives?: string[]) => {
+        const targetPath =
           input.circuitBindings.some((b) => b.path === path) ||
           path.endsWith(".json")
-        )
-          setPath(input.entry);
+            ? input.entry
+            : path;
+        const source =
+          drafts.current.get(`${props.folder.id}\u0000${targetPath}`)?.text ??
+          input.files.find((file) => file.path === targetPath)?.text ??
+          "";
+        // Validate before acknowledging the picker. A rejected helper must not
+        // mark the signal Added or switch away from the user's current file.
+        const proposed = (
+          engine === "ngspice" ? ngspiceAcquisitionEdit : nativeAcquisitionEdit
+        )(
+          source,
+          targetPath === path ? sourceCursor.current : 0,
+          vectors,
+          targetPath === input.entry,
+          directives,
+        );
+        if (!proposed.ok) {
+          props.onProblem(
+            inputProblem(proposed.error.code, proposed.error.message),
+          );
+          return false;
+        }
+        if (targetPath !== path) setPath(targetPath);
+        props.onProblem(undefined);
         setSaveRequest({
           id: crypto.randomUUID(),
           session: saveSession.current,
           vectors,
+          ...(directives ? { directives } : {}),
         });
+        return true;
       };
       if (expression.kind === "vector") {
         if (/[\r\n;]/u.test(expression.vector)) {
@@ -243,100 +355,96 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
           );
           return false;
         }
-        insert([expression.vector]);
-        return true;
+        return insert([expression.vector]);
       }
-      const file = props.folder.input.files.find(
-          (f) => f.path === input.configPath,
-        ),
-        draft = drafts.current.get(
-          `${props.folder.id}\u0000${input.configPath}`,
-        );
-      const parsed = readSimulationExperimentConfig({
-        ...props.folder,
-        input: {
+      if (expression.kind === "current") {
+        const sourceInput = {
           ...input,
-          files: [
-            ...input.files.filter((f) => f.path !== input.configPath),
-            { path: input.configPath, text: draft?.text ?? file?.text ?? "" },
-          ],
-        },
-      });
-      if (!parsed.ok) {
+          files: input.files.map((f) => ({
+            ...f,
+            text:
+              drafts.current.get(`${props.folder.id}\u0000${f.path}`)?.text ??
+              f.text,
+          })),
+        };
+        const context =
+          engine === "ngspice"
+            ? { input: sourceInput, libraries: [] }
+            : sourceProbeEnvironment(
+                props.project,
+                { ...props.folder, input: sourceInput },
+                props.capabilities?.profiles,
+              );
+        const device = (
+          engine === "ngspice"
+            ? ngspiceSimulationDevices
+            : nativeSimulationDevices
+        )(props.project, context.input, context.libraries).find(
+          (item) =>
+            item.documentId === expression.documentId &&
+            item.instanceId === expression.instanceId &&
+            JSON.stringify(item.occurrence) ===
+              JSON.stringify(expression.occurrence) &&
+            item.circuit.bindingId === expression.circuit.bindingId &&
+            JSON.stringify(item.circuit.callPath) ===
+              JSON.stringify(expression.circuit.callPath),
+        );
+        const result = device
+          ? engine === "ngspice"
+            ? ngspiceTerminalCurrent(
+                device as Parameters<typeof ngspiceTerminalCurrent>[0],
+                expression.pinName,
+              )
+            : nativeTerminalCurrent(
+                device as Parameters<typeof nativeTerminalCurrent>[0],
+                expression.pinName,
+              )
+          : {
+              ok: false as const,
+              message:
+                "The selected device no longer has a reachable native occurrence",
+            };
+        if (!result.ok) {
+          props.onProblem(
+            inputProblem(
+              "SIMULATION_NATIVE_CURRENT_UNAVAILABLE",
+              result.message,
+            ),
+          );
+          return false;
+        }
+        return insert(result.vectors, result.directives);
+      }
+      if (expression.kind !== "voltage") {
         props.onProblem(
           inputProblem(
-            "SIMULATION_CONFIG_INVALID",
-            `${parsed.path}: ${parsed.message}`,
+            "SIMULATION_NATIVE_EXPRESSION_REQUIRED",
+            "Author derived output expressions in native Code; selecting an acquisition does not create a parallel JSON output.",
           ),
         );
         return false;
       }
-      const previousOutputs = [...parsed.config.outputs];
-      parsed.config.outputs.push({
-        id: `output-${crypto.randomUUID()}`,
-        label,
-        expression,
-      });
-      const projected = {
-        ...props.folder,
-        input: {
+      const resolved = nativeVoltageAcquisition(
+        props.project,
+        {
           ...input,
-          drafts: [],
           files: input.files.map((source) => ({
             ...source,
             text:
-              source.path === input.configPath
-                ? JSON.stringify(parsed.config)
-                : (drafts.current.get(`${props.folder.id}\u0000${source.path}`)
-                    ?.text ?? source.text),
+              drafts.current.get(`${props.folder.id}\u0000${source.path}`)
+                ?.text ?? source.text,
           })),
         },
-      };
-      const resolved = compileSourceSimulation(props.project, projected);
+        expression,
+        engine,
+      );
       if (!resolved.ok) {
         props.onProblem(
-          inputProblem(
-            "SIMULATION_SIGNAL_UNRESOLVED",
-            resolved.diagnostics.map((d) => d.message).join("; "),
-          ),
+          inputProblem("SIMULATION_SIGNAL_UNRESOLVED", resolved.message),
         );
         return false;
       }
-      const output = resolved.outputs.at(-1)!;
-      const acquisitionIds = new Set<string>();
-      const visit = (value: typeof output.expression) => {
-        if (value.kind === "acquisition")
-          acquisitionIds.add(value.acquisitionId);
-        if ("operand" in value) visit(value.operand);
-        if ("left" in value) {
-          visit(value.left);
-          visit(value.right);
-        }
-      };
-      visit(output.expression);
-      const nativeVectors = resolved.vectors
-        .filter((v) => acquisitionIds.has(v.probeId))
-        .map((v) => v.vector);
-      // Only terminal-current targets require a durable instrumentation owner.
-      // Ordinary voltage picks are native save text, not a second output setup.
-      if (expression.kind !== "current")
-        parsed.config.outputs = previousOutputs;
-      else if (
-        previousOutputs.some(
-          (o) => JSON.stringify(o.expression) === JSON.stringify(expression),
-        )
-      )
-        parsed.config.outputs = previousOutputs;
-      if (expression.kind === "current") {
-        drafts.current.set(`${props.folder.id}\u0000${input.configPath}`, {
-          base: draft?.base ?? file?.text ?? "",
-          text: JSON.stringify(parsed.config, null, 2) + "\n",
-          committed: draft?.committed ?? props.project.structureRevision,
-        });
-      }
-      insert(nativeVectors.length ? nativeVectors : ["v(0)"]);
-      render((v) => v + 1);
-      return true;
+      return insert([resolved.save]);
     };
     const addPicked = (matches: readonly SimulationProbeOption[]) => {
       if (!binding) return;
@@ -387,9 +495,9 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
       () =>
         input.circuitBindings.map((binding) => ({
           binding,
-          result: generateCircuitSource(props.project, binding),
+          result: generateCircuitSource(props.project, binding, input, engine),
         })),
-      [props.project, input.circuitBindings],
+      [props.project, input, engine],
     );
     useEffect(() => {
       setReveal(undefined);
@@ -486,6 +594,13 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
       );
     });
     const dirty = unsaved.length > 0;
+    // Persisted repair drafts still need applying; cloud/recovery state is not
+    // evidence that the current folder's source has been applied.
+    const pendingSource = [...drafts.current].some(
+      ([key, draft]) =>
+        key.startsWith(`${props.folder.id}\u0000`) && draft.text !== draft.base,
+    );
+    useEffect(() => setSaveFailed(false), [text, props.folder.id]);
     const activeDirty = unsaved.some(([key]) =>
       key.startsWith(`${props.folder.id}\u0000`),
     );
@@ -502,18 +617,38 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
           drafts.current.delete(key(file.path));
       }
     }, [props.project]);
-    const flush = async (onlyPath?: string): Promise<SourceFlush> => {
+    const flush = async (
+      onlyPath?: string,
+      folderId?: string,
+      expectedRevision?: number,
+    ): Promise<SourceFlush> => {
       if (savingRef.current) return { ok: false };
       savingRef.current = true;
       setSaving(true);
       try {
-        let revision = current.current.project.structureRevision;
-        let folder = current.current.folder;
+        let revision =
+          expectedRevision ?? current.current.project.structureRevision;
+        let folder = folderId
+          ? current.current.project.simulationFolders.find(
+              (item) => item.id === folderId,
+            )
+          : current.current.folder;
+        if (!folder) {
+          props.onProblem(
+            inputProblem(
+              "SIMULATION_FOLDER_MISSING",
+              `Selected folder ${folderId} no longer exists`,
+            ),
+          );
+          return { ok: false };
+        }
+        const selectedFolderId = folder.id;
         const pending = [...drafts.current].filter(
           ([key, value]) =>
-            key.startsWith(`${folder.id}\u0000`) &&
+            key.startsWith(`${selectedFolderId}\u0000`) &&
             value.text !== value.base &&
-            (onlyPath === undefined || key === `${folder.id}\u0000${onlyPath}`),
+            (onlyPath === undefined ||
+              key === `${selectedFolderId}\u0000${onlyPath}`),
         );
         const authored: Array<{ path: string; text: string }> = [];
         const circuitEdits: Array<{
@@ -527,6 +662,8 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
             const regenerated = generateCircuitSource(
               current.current.project,
               draft.binding,
+              folder.input,
+              folderEngine(folder),
             );
             if (!regenerated.ok || regenerated.source.text !== draft.base) {
               props.onProblem(
@@ -617,6 +754,12 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
     };
     useImperativeHandle(ref, () => ({
       flush,
+      flushFolders: (ids) =>
+        flushSelectedFolders(
+          ids,
+          current.current.project.structureRevision,
+          (id, revision) => flush(undefined, id, revision),
+        ),
       save: async () => {
         const applied = await flush();
         // Preserve every folder's remaining buffer, including invalid values and
@@ -753,29 +896,35 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
         (item) => item.path === filePath,
       );
       if (!binding) return "";
-      const generated = generateCircuitSource(props.project, binding);
+      const generated = generateCircuitSource(
+        props.project,
+        binding,
+        folder?.input,
+        folder ? folderEngine(folder) : engine,
+      );
       return generated.ok
         ? generated.source.text
-        : generated.diagnostics.map((d) => `* ${d.message}`).join("\n");
+        : generated.diagnostics.map((d) => `// ${d.message}`).join("\n");
     };
     const requestSave = async () => {
-      if (projectSaveRequest.current) return;
-      projectSaveRequest.current = true;
+      if (sourceSaveRequest.current) return;
+      sourceSaveRequest.current = true;
       setSaveRequested(true);
       try {
-        if (props.onSaveProject) await props.onSaveProject();
-        else await flush();
+        const result = await flush();
+        setSaveFailed(!result.ok);
       } catch (error) {
+        setSaveFailed(true);
         props.onProblem(
           inputProblem(
-            "PROJECT_SAVE_FAILED",
+            "SOURCE_APPLY_FAILED",
             error instanceof Error
               ? error.message
               : "Save failed; drafts retained.",
           ),
         );
       } finally {
-        projectSaveRequest.current = false;
+        sourceSaveRequest.current = false;
         setSaveRequested(false);
       }
     };
@@ -803,7 +952,7 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
           if (item.kind === "artifact")
             return {
               kind: "artifact" as const,
-              path: `${item.groupKey}/${simulationArtifactCategory(item.artifact).toLowerCase()}/${item.artifact.name}`,
+              path: `${item.groupKey}/${(simulationExplorerArtifactCategory(item.artifact) ?? simulationArtifactCategory(item.artifact)).toLowerCase()}/${item.artifact.name}`,
               artifact: item.artifact,
             };
           const folder = props.project.simulationFolders.find(
@@ -829,6 +978,22 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
       anchor.click();
       setTimeout(() => URL.revokeObjectURL(url), 0);
     };
+    const saveState =
+      saveRequested || saving
+        ? "saving"
+        : saveFailed
+          ? "failed"
+          : !pendingSource
+            ? "saved"
+            : "dirty";
+    const saveFeedback =
+      saveState === "saving"
+        ? "Applying source…"
+        : saveState === "saved"
+          ? "Source applied to current project; not a cloud save"
+          : saveState === "failed"
+            ? "Apply failed; drafts retained. Retry save."
+            : "Save source to current project";
     return (
       <SimulationCodeWorkspace
         workspaceKey={props.folder.id}
@@ -848,37 +1013,37 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
                   ]);
                   return {
                     ...node,
-                    files: [...names].map((path) => {
-                      const draft = drafts.current.get(
-                        `${node.id}\u0000${path}`,
-                      );
-                      const modified = !!draft && draft.text !== draft.base;
-                      return {
-                        path,
-                        kind: folder.input.circuitBindings.some(
-                          (b) => b.path === path,
-                        )
-                          ? ("generated" as const)
-                          : ("authored" as const),
-                        draft: modified,
-                        dirty:
-                          modified &&
-                          !folder.input.drafts?.some(
-                            (saved) =>
-                              saved.path === path &&
-                              saved.base === draft.base &&
-                              saved.text === draft.text,
-                          ),
-                      };
-                    }),
+                    files: [...names]
+                      .filter((path) => visibleSource(folder, path))
+                      .map((path) => {
+                        const draft = drafts.current.get(
+                          `${node.id}\u0000${path}`,
+                        );
+                        const modified = !!draft && draft.text !== draft.base;
+                        return {
+                          path,
+                          kind: folder.input.circuitBindings.some(
+                            (b) => b.path === path,
+                          )
+                            ? ("generated" as const)
+                            : ("authored" as const),
+                          draft: modified,
+                          dirty:
+                            modified &&
+                            !folder.input.drafts?.some(
+                              (saved) =>
+                                saved.path === path &&
+                                saved.base === draft.base &&
+                                saved.text === draft.text,
+                            ),
+                        };
+                      }),
                   };
                 }),
               }
             : undefined
         }
-        additionalActions={[
-          { label: "View final deck", run: () => props.onPrepare?.() },
-        ]}
+        additionalActions={props.additionalActions ?? []}
         {...(props.artifactGroups
           ? { artifactGroups: props.artifactGroups }
           : {})}
@@ -898,27 +1063,46 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
         onDownloadSelection={(selection, archive) =>
           void downloadSelection(selection, archive)
         }
-        files={ownFiles.map((filePath) => ({
-          path: filePath,
-          kind: input.circuitBindings.some((b) => b.path === filePath)
-            ? "generated"
-            : "authored",
-          dirty:
-            !!drafts.current.get(key(filePath)) &&
-            drafts.current.get(key(filePath))!.text !==
-              drafts.current.get(key(filePath))!.base &&
-            !input.drafts?.some(
-              (saved) =>
-                saved.path === filePath &&
-                saved.text === drafts.current.get(key(filePath))!.text &&
-                saved.base === drafts.current.get(key(filePath))!.base,
-            ),
-          draft:
-            !!drafts.current.get(key(filePath)) &&
-            drafts.current.get(key(filePath))!.text !==
-              drafts.current.get(key(filePath))!.base,
-        }))}
+        files={ownFiles
+          .filter((filePath) => visibleSource(props.folder, filePath))
+          .map((filePath) => ({
+            path: filePath,
+            kind: input.circuitBindings.some((b) => b.path === filePath)
+              ? "generated"
+              : "authored",
+            dirty:
+              !!drafts.current.get(key(filePath)) &&
+              drafts.current.get(key(filePath))!.text !==
+                drafts.current.get(key(filePath))!.base &&
+              !input.drafts?.some(
+                (saved) =>
+                  saved.path === filePath &&
+                  saved.text === drafts.current.get(key(filePath))!.text &&
+                  saved.base === drafts.current.get(key(filePath))!.base,
+              ),
+            draft:
+              !!drafts.current.get(key(filePath)) &&
+              drafts.current.get(key(filePath))!.text !==
+                drafts.current.get(key(filePath))!.base,
+          }))}
         activePath={path}
+        sourceContext={
+          <SourceCircuitContext
+            engine={engine}
+            project={props.project}
+            activeDocumentId={props.activeDocumentId}
+            input={{
+              ...input,
+              files: input.files.map((file) => ({
+                ...file,
+                text:
+                  drafts.current.get(`${props.folder.id}\u0000${file.path}`)
+                    ?.text ?? file.text,
+              })),
+            }}
+            onSelectFile={setPath}
+          />
+        }
         onSelectFile={setPath}
         onFileAction={async (
           action,
@@ -965,15 +1149,17 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
             return;
           const nextPath =
             action === "rename"
-              ? await ui.name({
-                  kind: "file",
-                  folderId: targetFolderId,
-                  path: filePath,
-                  label: "Relative file path",
-                  initial: filePath,
-                  validate: (name) =>
-                    validateFileName(name, targetFolderId, filePath),
-                })
+              ? (
+                  await ui.name({
+                    kind: "file",
+                    folderId: targetFolderId,
+                    path: filePath,
+                    label: "Relative file path",
+                    initial: filePath,
+                    validate: (name) =>
+                      validateFileName(name, targetFolderId, filePath),
+                  })
+                )?.name
               : filePath;
           if (!nextPath || (action === "rename" && nextPath === filePath))
             return;
@@ -1055,24 +1241,16 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
               ),
             );
         }}
-        onExportFile={(filePath, folderId = props.folder.id) => {
-          const result = downloadTextArtifact(
-            fileText(folderId, filePath),
-            filePath.split("/").at(-1)!,
-          );
-          if (result.status === "failed")
-            props.onProblem(
-              inputProblem("SOURCE_EXPORT_FAILED", result.message),
-            );
-        }}
         onNewFile={async (folderId = props.folder.id) => {
-          const path = await ui.name({
-            kind: "file",
-            folderId,
-            label: "Relative file path",
-            initial: "stimulus.cir",
-            validate: (name) => validateFileName(name, folderId),
-          });
+          const path = (
+            await ui.name({
+              kind: "file",
+              folderId,
+              label: "Relative file path",
+              initial: "stimulus.cir",
+              validate: (name) => validateFileName(name, folderId),
+            })
+          )?.name;
           if (!path) return;
           drafts.current.set(`${folderId}\u0000${path}`, {
             base: "",
@@ -1085,43 +1263,19 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
         actions={
           <>
             <button
+              className="simulation-action-button"
               data-workspace-save="true"
-              data-save-state={
-                saveRequested || saving || props.projectSaveState === "saving"
-                  ? "saving"
-                  : props.projectSaveState === "failed" ||
-                      props.projectSaveState === "offline"
-                    ? "failed"
-                    : props.projectSaveState === "clean" && !dirty
-                      ? "saved"
-                      : "dirty"
-              }
-              aria-label="保存项目"
-              title={
-                props.projectSaveState === "failed" ||
-                props.projectSaveState === "offline"
-                  ? "Save failed; drafts remain local. Retry save."
-                  : "Save Project · Ctrl+S"
-              }
-              disabled={
-                saveRequested ||
-                saving ||
-                props.projectSaveState === "saving" ||
-                (props.projectSaveState === "clean" && !dirty)
-              }
-              aria-busy={
-                saveRequested || saving || props.projectSaveState === "saving"
-              }
+              data-save-state={saveState}
+              aria-label="Save source"
+              aria-description={saveFeedback}
+              title={`${saveFeedback} · Ctrl+S`}
+              disabled={saveState === "saving" || saveState === "saved"}
+              aria-busy={saveState === "saving"}
               onClick={() => void requestSave()}
             >
-              {saveRequested || saving || props.projectSaveState === "saving"
-                ? "Saving…"
-                : props.projectSaveState === "clean" && !dirty
-                  ? "✓ Saved"
-                  : props.projectSaveState === "failed" ||
-                      props.projectSaveState === "offline"
-                    ? "Retry save"
-                    : "Save"}
+              <SimulationActionIcon
+                kind={saveState === "dirty" ? "save" : saveState}
+              />
             </button>
             {props.actions}
           </>
@@ -1129,46 +1283,59 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
         toolbarEnd={props.toolbarEnd}
         console={props.console}
         results={props.results}
-        outputActions={props.outputActions}
+        history={props.history}
         outputPane={props.outputPane}
         onSelectOutputPane={props.onSelectOutputPane}
         maximized={props.maximized}
         onToggleMaximize={props.onToggleMaximize}
         status={
-          <>
-            {!recoveryAvailable ? (
-              <span role="alert">
-                Draft recovery unavailable — save or export before leaving.
-              </span>
-            ) : null}
-            {conflict ? (
-              <>
-                <span role="alert">其他位置已有更改——草稿已保留。</span>
-                <button
-                  onClick={() => {
-                    drafts.current.delete(key(path));
-                    render((value) => value + 1);
-                  }}
-                >
-                  Discard local draft
-                </button>
-              </>
-            ) : activeDirty ? (
-              "Unsaved source"
-            ) : buffer && buffer.text !== buffer.base ? (
-              "Draft saved · finish or discard before Run"
-            ) : (
-              props.status
-            )}
-          </>
+          !recoveryAvailable || conflict || props.status || legacyConfig ? (
+            <>
+              {legacyConfig ? (
+                <span title="This existing experiment still uses version-1 JSON bindings and measurements. Convert through Helper after moving its electrical intent into Code.">
+                  Legacy configuration · migration required for Code-only
+                  execution
+                </span>
+              ) : null}
+              {!recoveryAvailable ? (
+                <span role="alert">
+                  Draft recovery unavailable — save or export before leaving.
+                </span>
+              ) : null}
+              {conflict ? (
+                <>
+                  <span role="alert">Changed elsewhere — draft retained.</span>
+                  <button
+                    onClick={() => {
+                      drafts.current.delete(key(path));
+                      render((value) => value + 1);
+                    }}
+                  >
+                    Discard local draft
+                  </button>
+                </>
+              ) : (
+                props.status
+              )}
+            </>
+          ) : null
         }
       >
         <SimulationCodeEditor
+          onCursor={(offset) => {
+            sourceCursor.current = offset;
+          }}
+          onHelperError={(message) =>
+            props.onProblem(
+              inputProblem("SIMULATION_SAVE_EDIT_INVALID", message),
+            )
+          }
           helperContent={
             probePicker ? (
               <SourceProbePicker
                 key={`${props.folder.id}:${probePicker}`}
                 choices={probeChoices}
+                notice={probeEnvironment.notice}
                 kind={probePicker}
                 onAdd={saveSignal}
                 onClose={() => setProbePicker(undefined)}
@@ -1192,25 +1359,86 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
           signalNames={() =>
             Object.fromEntries(
               Object.entries(signals).map(([vector, signal]) => [
-                vector,
+                engine === "ngspice"
+                  ? vector
+                  : `v(${vacaskIdentifier(vector)})`,
                 signal.label,
               ]),
             )
           }
           onFocusSignal={(vector) => {
+            const node = vector
+              ? engine === "ngspice"
+                ? vector.toLowerCase()
+                : nativeVoltageSelectorNode(vector)
+              : undefined;
             props.onPreviewSignal?.(
-              vector
-                ? (signals[vector.toLowerCase()]?.targets[0] ?? null)
-                : null,
+              node ? (signals[node]?.targets[0] ?? null) : null,
             );
           }}
           saveRequest={saveRequest}
+          declarationRequest={declarationRequest}
+          onParameterDeclaration={addParameterDeclaration}
           relatedSources={sourceFiles.map(
             (file) =>
               drafts.current.get(`${props.folder.id}\u0000${file.path}`)
                 ?.text ?? file.text,
           )}
           helperActions={[
+            {
+              id: "design-variable",
+              label: "Design variable (parameters)…",
+              keywords: "parameter declaration 参数 变量",
+              run: addParameterDeclaration,
+            },
+            ...(legacyConfig
+              ? [
+                  {
+                    id: "convert-native",
+                    label: "Convert legacy experiment to native Code…",
+                    keywords: "migrate configuration experiment.json 迁移",
+                    run: async () => {
+                      const applied = await flush();
+                      if (!applied.ok) return;
+                      const converted = migrateSimulationConfigToNative(
+                        current.current.project,
+                        applied.folder,
+                      );
+                      if (!converted.ok) {
+                        props.onProblem(
+                          inputProblem(
+                            "SIMULATION_NATIVE_MIGRATION_REQUIRED",
+                            converted.message,
+                          ),
+                        );
+                        return;
+                      }
+                      const result = await props.files.handle({
+                        action: "update",
+                        owner: {
+                          kind: "project-folder",
+                          folderId: applied.folder.id,
+                        },
+                        expectedRevision: applied.revision,
+                        writes: converted.folder.input.files.filter(
+                          (file) =>
+                            file.path === converted.folder.input.configPath,
+                        ),
+                      });
+                      if (!result.ok) props.onProblem(result.error);
+                    },
+                  },
+                ]
+              : []),
+            {
+              id: "save-device-op",
+              label: "Save device operating point…",
+              keywords: "MOS gm gds vth id 工作点",
+              run: () => {
+                beginSignalSelection();
+                setProbePicker("device-op");
+              },
+            },
             {
               id: "save-voltage",
               label: "Save voltage…",
@@ -1259,7 +1487,13 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
           path={path}
           text={text}
           historyKey={`${props.folder.id}:${buffer?.committed ?? props.project.structureRevision}`}
-          mode={path.endsWith(".json") ? "json" : "spice"}
+          mode={
+            path.endsWith(".json")
+              ? "json"
+              : engine === "ngspice"
+                ? "ngspice"
+                : "native"
+          }
           entry={path === input.entry}
           generated={Boolean(originalGenerated)}
           validateText={(text) => {
@@ -1309,7 +1543,7 @@ export const SourceCodePane = forwardRef<SourceCodeHandle, Props>(
             props.onProblem(
               inputProblem(
                 "SIMULATION_CIRCUIT_STRUCTURE_LOCKED",
-                "Circuit topology is Canvas-owned; only mapped numeric parameter values are editable here.",
+                `Circuit topology, references and model identity are Canvas-owned. Edit mapped values/expressions and native source parameters here. Use Helper → Design variable (parameters) to add declarations in ${input.entry}; those declarations belong to this Folder, while Circuit parameter edits affect every Folder using this Cell.`,
               ),
             )
           }

@@ -8,12 +8,14 @@ import {
   planInstanceUnplacement,
   planCellReset,
   planCreateCell,
+  planCreateCellPin,
   createHierarchyInstance,
   planPlaceCellInstance,
   planRenameCell,
   planDeleteCell,
   planEnsureNamedNet,
   planElectricalMarkerRename,
+  proposedStandalonePowerConnection,
   type SchematicEdit,
   type TransformOperation,
 } from "@icm/edit-engine";
@@ -27,6 +29,7 @@ import {
   resolveDocumentStyleProfile,
   resolveRouteGeometry,
   resolveDocumentLogicalNets,
+  magneticDisplayParameters,
 } from "@icm/derived";
 import type { SymbolResolver } from "@icm/symbols";
 import { copySelection, proposePaste } from "../features/clipboard/clipboard";
@@ -36,7 +39,13 @@ import {
   type EdgeAlignmentMode,
 } from "../features/selection/align-selection";
 import { createSelectionTransformController } from "../features/selection/selection-transform-controller";
-import { missingDefaultInstanceDisplayAnnotations } from "../features/instance-display/default-instance-display";
+import {
+  defaultInstanceDisplayAnnotations,
+  missingDefaultInstanceDisplayAnnotations,
+} from "../features/instance-display/default-instance-display";
+import { instanceDisplayEdits } from "../features/instance-display/instance-display-edits";
+import { instanceParameterVisibilityEdits } from "../features/instance-display/instance-parameter-display";
+import { dragNetLabelAttachmentAtPoint } from "../features/wiring/route-interaction-geometry";
 
 /** No second geometry/model/clipboard implementation: plan exactly as the GUI does. */
 export function planBrowserAgentCommand(
@@ -49,6 +58,131 @@ export function planBrowserAgentCommand(
   if (!document) throw new Error("Document not found");
   const sequence = document.revision + 1;
   switch (command.kind) {
+    case "place-components": {
+      const edits: SchematicEdit[] = [];
+      let changesInterface = false;
+      for (const instance of command.instances) {
+        if (!instance.placement)
+          throw new Error("New component requires placement");
+        if (
+          instance.symbolId === "port" ||
+          instance.symbolId === "port-filled"
+        ) {
+          // The compact action's reference names a Cell terminal, not a
+          // device. Use the GUI's interface planner and bound name display.
+          const { reference, netlist: _netlist, ...port } = instance;
+          if (!reference?.trim()) throw new Error("A Cell Pin requires a name");
+          const terminalId = deriveStableId("terminal", instance.id);
+          const netId = deriveStableId("net-cell-pin", instance.id);
+          const endpoint = {
+            kind: "terminal" as const,
+            instanceId: instance.id,
+            pinName: "P",
+          };
+          const annotation = defaultInstanceDisplayAnnotations(
+            document,
+            port,
+            resolver,
+            resolveDocumentStyleProfile(document.presentation),
+            { formalTerminalId: terminalId },
+          )[0];
+          const plan = planCreateCellPin(project, documentId, {
+            instance: port,
+            terminal: {
+              id: terminalId,
+              name: reference.trim(),
+              netId,
+              direction: "passive",
+              interfaceInstanceIds: [instance.id],
+            },
+            connectionEdits: [
+              {
+                kind: "connect_endpoints",
+                from: endpoint,
+                to: endpoint,
+                newNetId: netId,
+              },
+            ],
+            ...(annotation ? { annotation } : {}),
+          });
+          for (const entry of plan) {
+            if (
+              entry.kind !== "transact_document" ||
+              entry.documentId !== documentId
+            )
+              throw new Error(
+                "Cell Pin placement must target its owning Document",
+              );
+            edits.push(...entry.edits);
+          }
+          changesInterface = true;
+          continue;
+        }
+        const power = proposedStandalonePowerConnection(document, instance);
+        if (power.rejected) throw new Error(power.rejected);
+        edits.push({ kind: "add_instance", instance }, ...power.edits);
+        edits.push(
+          ...defaultInstanceDisplayAnnotations(
+            document,
+            instance,
+            resolver,
+            resolveDocumentStyleProfile(document.presentation),
+            { showValue: true },
+          ).map((annotation): SchematicEdit => ({
+            kind: "upsert_schematic_annotation",
+            annotation,
+          })),
+        );
+      }
+      // Keep mixed device/Port batches atomic, including the interface facts.
+      return changesInterface
+        ? {
+            structureEdits: [
+              {
+                kind: "transact_document",
+                documentId,
+                expectedRevision: document.revision,
+                edits,
+              },
+            ],
+          }
+        : { edits };
+    }
+    case "set-instance-display": {
+      const edits = instanceDisplayEdits(
+        document,
+        resolver,
+        command.instanceIds,
+        command,
+      );
+      if (command.showParameters) {
+        const desired = Object.fromEntries(
+          Object.entries(command.showParameters).filter(
+            (entry): entry is [string, boolean] => entry[1] !== undefined,
+          ),
+        );
+        for (const id of new Set(command.instanceIds)) {
+          const instance = document.instances.find((item) => item.id === id);
+          if (!instance) throw new Error(`Instance not found: ${id}`);
+          const supported = magneticDisplayParameters(instance.symbolId);
+          for (const parameter of Object.keys(desired)) {
+            if (!supported.some((item) => item.name === parameter))
+              throw new Error(
+                `Parameter display ${parameter} is not supported by ${instance.symbolId}`,
+              );
+          }
+          edits.push(
+            ...instanceParameterVisibilityEdits(
+              document,
+              instance,
+              resolver,
+              desired,
+            ),
+          );
+        }
+      }
+      return { edits };
+    }
     case "place-cell": {
       const child = project.documents.find(
         (item) => item.id === command.childDocumentId,
@@ -61,11 +195,12 @@ export function planBrowserAgentCommand(
         command.placement,
         command.reference,
       );
-      const annotations = missingDefaultInstanceDisplayAnnotations(
+      const annotations = defaultInstanceDisplayAnnotations(
         document,
         instance,
         resolver,
         resolveDocumentStyleProfile(document.presentation),
+        { showDesignator: false, masterName: child.netlist.name },
       );
       return {
         structureEdits: planPlaceCellInstance(
@@ -182,6 +317,55 @@ export function planBrowserAgentCommand(
       if (!plan.ok) throw new Error(plan.message);
       if (!existing && !command.position)
         throw new Error("New Net Label requires position");
+      const position =
+        command.position ??
+        (existing?.anchor.kind === "free"
+          ? existing.anchor.position
+          : undefined);
+      const records = document.routes
+        .filter((route) => net.baseNetIds.includes(route.netId))
+        .flatMap((route) => {
+          const geometry = resolveRouteGeometry(document, resolver, route);
+          return geometry ? [{ route, geometry }] : [];
+        });
+      const attached = position
+        ? records
+            .flatMap((record) => {
+              const attachment = dragNetLabelAttachmentAtPoint(
+                [record],
+                position,
+                record.route.id,
+              );
+              return attachment
+                ? [{ ...attachment, routeId: record.route.id }]
+                : [];
+            })
+            .sort(
+              (a, b) =>
+                Math.hypot(
+                  a.labelPosition.x - position.x,
+                  a.labelPosition.y - position.y,
+                ) -
+                Math.hypot(
+                  b.labelPosition.x - position.x,
+                  b.labelPosition.y - position.y,
+                ),
+            )[0]
+        : undefined;
+      const anchor = attached
+        ? {
+            kind: "route" as const,
+            routeId: attached.routeId,
+            legId: attached.legId,
+            t: attached.t,
+            normalOffset: attached.normalOffset,
+            direction: "forward" as const,
+            orientation: "horizontal" as const,
+            fallbackPosition: attached.labelPosition,
+          }
+        : position
+          ? { kind: "free" as const, position }
+          : existing!.anchor;
       return {
         edits: [
           ...plan.edits,
@@ -203,14 +387,7 @@ export function planBrowserAgentCommand(
               netId,
               binding: { kind: "net-name", netId },
               formatOverride: command.text,
-              ...(command.position
-                ? {
-                    anchor: {
-                      kind: "free",
-                      position: command.position,
-                    } as const,
-                  }
-                : {}),
+              anchor,
             },
           },
         ],
@@ -330,10 +507,10 @@ export function planBrowserAgentCommand(
       const input = command.transform;
       if (
         command.selection.draftingIds.length &&
-        !(input.kind === "rotate" && !input.center && input.degrees !== 180)
+        !(input.kind === "rotate" && !input.center)
       ) {
         throw new Error(
-          "Drafting objects support in-place quarter turns here. For other drafting transforms, submit upsert_drafting_object with the desired geometry.",
+          "Drafting objects support in-place 45-degree rotation here. For other drafting transforms, submit upsert_drafting_object with the desired geometry.",
         );
       }
       const transform: TransformOperation =
@@ -368,20 +545,12 @@ export function planBrowserAgentCommand(
           controller.mirror(
             transform.axis === "y" ? "left-right" : "top-bottom",
           );
-        else if (transform.degrees === 180) {
-          // A 180-degree group turn is one shared planner operation.
-          const plan = planRoutingTransform(
-            document,
-            resolver,
-            command.selection,
-            transform,
+        else
+          controller.rotate(
+            (transform.degrees > 180
+              ? transform.degrees - 360
+              : transform.degrees) as 45 | -45 | 90 | -90 | 135 | -135 | 180,
           );
-          const error = plan.diagnostics.find(
-            (item) => item.severity === "error",
-          );
-          if (error) throw new Error(error.message);
-          edits = [...plan.edits];
-        } else controller.rotate(transform.degrees === 270 ? -90 : 90);
         if (!edits.length && message) throw new Error(message);
         return { edits };
       }

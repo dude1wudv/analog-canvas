@@ -9,14 +9,25 @@ Analog Canvas 是一款本地优先、感知电气连接关系的 Web 原理图�
 
 ## 主要特性
 
-- **图片识别建图：** 在「文件 → AI 接口设置」配置多个视觉模型和 Key、测试连通性，再从电路图图片生成可编辑结构 SPICE；核对引脚网络后，复用 Import SPICE 建立工程。器件进入 Placement Tray，第一版不还原版图。
-- **完整自托管：** HK 运行原生 workerd、持久化 SQLite Durable Objects、本地账号密码、云项目、画廊及隔离 ngspice；参见[自托管说明](docs/self-hosting.md)。
-- **感知连接关系的编辑：** 放置器件、布线、区分交叉点与连接点、标记网络，并执行可撤销的多对象编辑，不会把绘图几何关系错误地当成电气连接关系。
-- **可复用的层次结构：** 将每张原理图编写为一个 Cell，定义独立的 Cell Pin，放置可复用的层次化模块，并在父级与子 Cell 之间导航。
-- **项目与数据交换：** 保存私有云项目，导入或导出标准 `.icproj.json`，导入结构化 `.cir`、`.sp` 和 `.spi` 文件，并导出确定性的结构化 SPICE 或 Spectre 网表。预览版编辑器还提供已保存的仿真源文件夹，以及固定的 ngspice/SKY130 环境，可运行符合要求的 OP、DC、AC、TRAN 和 Noise 分析；正式环境是否可用仍由版本发布策略控制。
-- **可直接用于发布的输出：** Web 编辑器导出的 SVG 和 PDF 保持为矢量图形；PNG 以 3 倍光栅分辨率渲染。
-- **社区发布：** 登录用户可以把选定电路发布到社区画廊，支持服务端预览图、标签、点赞、内容审核以及有界版本历史。发布是主动操作，不能代替备份。
-- **Agent 集成：** 强类型 Snapshot 与事务 API 可通过固定版本的 stdio MCP 适配器、HTTP Agent Kit 及已发布的 OpenAPI 契约使用。参见 [Agent 集成指南](docs/agent/README.md)。
+- **Connectivity-aware editing:** place devices, route wires, distinguish
+  Crossings from Junctions, label Nets, and make undoable multi-object edits
+  without treating drawing geometry as electrical truth.
+- **Reusable hierarchy:** author each schematic as a Cell, define independent
+  Cell Pins, place reusable hierarchical blocks, and navigate between callers
+  and child Cells.
+- **Projects and interchange:** save a private Cloud Project, import/export
+  canonical `.icproj.json`, import structural `.cir`, `.sp`, `.spi`, and `.scs` files, and export
+  deterministic structural SPICE or Spectre. The hosted editor also provides
+  saved simulation source folders and a fixed ngspice/SKY130 environment for qualified
+  OP, DC, AC, TRAN, and Noise runs.
+- **Publication-ready output:** the web editor's SVG and PDF exports remain
+  vector graphics; PNG is rendered at 3× raster scale.
+- **Community publishing:** signed-in users can publish selected circuits with
+  server-rendered previews, tags, likes, moderation, and bounded version
+  history. Publishing is deliberate and is not a backup mechanism.
+- **Agent integration:** the typed Snapshot and transaction API is available
+  through a version-pinned stdio MCP adapter, an HTTP Agent Kit, and the
+  published OpenAPI contract. See the [Agent integration guide](docs/agent/README.md).
 
 ## 项目归属与隐私
 
@@ -37,27 +48,101 @@ Analog Canvas 是一款本地优先、感知电气连接关系的 Web 原理图�
 
 ```powershell
 pnpm install --frozen-lockfile
+pnpm build
 pnpm dev
 ```
 
-打开命令行显示的本地地址并选择**新建电路**，也可以直接访问其 `/editor` 路径。通过元件库创建电路，或导入一个 `.cir`、`.sp`、`.spi` 入口文件及其本地 include 文件。
+Run `pnpm build` once after installing, and again after pulling package
+changes: the development server's Vite configuration loads some workspace
+packages from their built `dist/` output.
 
-## 仓库内容
+Open the displayed loopback URL and choose **New Circuit**, or open its
+`/editor` route directly. Create a circuit from the component palette, or
+import one `.cir`, `.sp`, `.spi`, or `.scs` entry together with its local include
+files.
 
-- `apps/editor/`：React/SVG 编辑器，以及画廊、账户、审核和统计页面。
-- `apps/local-host/`：仅允许本机回环访问的可安装 PWA 正式版宿主。
-- `apps/mcp-server/`：供已授权 Agent 会话使用的 stdio MCP 适配器软件包。
-- `packages/model/`、`packages/project-protocol/` 和 `packages/edit-engine/`：当前持久化电路模型、有界文件兼容层和原子变更边界。
-- [`packages/components/`](packages/components/README.md)：每个内置元件对应一个标准 JSON 文件，包含符号、电气规则和目录元数据；运行时软件包使用由其生成的投影数据。
-- `packages/spice/`、`packages/devices/`、`packages/symbols/` 和 `packages/netlist/`：结构化 SPICE 导入、内置器件信息、符号语义及确定性的设计网表导出。
-- `packages/exporters/` 和 `packages/render-svg/`：正式的 SVG、PNG 和 PDF 输出。
-- `packages/agent-adapter/`、`packages/agent-client/` 和 `packages/agent-routing/`：共享的 Agent 契约、客户端和路由逻辑。
-- `worker/`：用于静态托管、画廊、账户、第一方统计及 Agent 中继会话的 Cloudflare Worker 和 Durable Objects。
-- `docs/`：当前架构、用户指南、规范性契约、ADR 和交付计划。
+Click **Agent** to open a connection message, then copy it into your Agent
+chat. The development server starts the local Agent relay on first use;
+no separate Worker command or cloud account is needed. Keep the editor open
+while the Agent works. Sessions expire after 30 minutes without Agent operations
+or manual edits; continued activity renews them. Stopping the development server
+also ends local sessions;
+after restarting it, create a new connection. Cloud account, Gallery, and
+hosted simulation services are not started by this local relay.
 
-[Razavi 参考清单](fixtures/visual-reference/razavi-reference-v1/)是唯一的视觉标准。合并到 `main` 会部署预览版；只有在预览验收通过后，才能通过发布标签或明确指定提交的手动调度来提升为正式版。参见[部署说明](docs/deployment.md)了解发布与恢复契约。
+Development follows three stages: iterate locally on a batch branch with
+focused checks and local commits; accumulate at least 10 completed features,
+fixes, or improvements into one Preview delivery; then promote an accepted
+candidate to Production when that release is authorized. Each local edit ends
+at the local stage by default. See the
+[working rules](AGENTS.md#three-stage-development-and-delivery)
+and [delivery cadence](docs/deployment.md#development-and-publication-cadence).
 
-## 许可证
+## What the repository contains
+
+- `apps/editor/`: React/SVG editor plus the Gallery, account, moderation, and
+  project surfaces.
+- `apps/editor/analytics/`: the complete first-party analytics module: page,
+  styles, browser reporting, HTTP routes, map data, and Durable Object backend.
+- `apps/local-host/`: loopback-only production host for the installable PWA.
+- `apps/mcp-server/`: packaged stdio MCP adapter for authorized Agent sessions.
+- `packages/model/`, `packages/project-protocol/`, and `packages/edit-engine/`:
+  current persisted circuit model, bounded file compatibility, and atomic
+  mutation boundary.
+- `packages/derived/`: read-only connectivity, diagnostic, and geometry
+  projections over the persisted model.
+- [`packages/components/`](packages/components/README.md): one canonical JSON
+  file per built-in component, containing its symbol, electrical rules and
+  catalog metadata; runtime packages consume generated projections.
+- `packages/spice/`, `packages/devices/`, `packages/symbols/`, and
+  `packages/netlist/`: structural SPICE import, built-in device facts, symbol
+  semantics, and deterministic design-netlist export.
+- `packages/exporters/` and `packages/render-svg/`: formal SVG, PNG, and PDF
+  output.
+- `packages/math-typesetting/`: bounded LaTeX formula typesetting for rich-text
+  annotations.
+- `packages/simulation-service/` and `packages/spice-run/`: shared simulation
+  preparation, run lifecycle, and artifacts, plus simulator request and result
+  contracts.
+- `packages/timing-simulation/`: deterministic digital timing simulation; its
+  experimental editor UI is hidden in production builds.
+- `packages/platform-node/`: Node filesystem storage and recovery adapters with
+  no current in-repository consumer.
+- `packages/agent-adapter/`, `packages/agent-client/`, and
+  `packages/agent-routing/`: shared Agent contract, client, and routing logic.
+- `worker/`: Cloudflare Worker host and Durable Objects for static hosting,
+  Gallery, accounts, Cloud Projects, simulation, and Agent relay sessions.
+- `containers/`: simulator images, gateways, and operator-host topologies for
+  ngspice and the Preview VACASK candidate.
+- `netlists/`: one circuit per directory for the SPICE import corpus,
+  simulation examples and qualification, and Agent layout evaluation.
+- `fixtures/`: Project, SPICE, rawfile, export, Agent API, and visual-reference
+  test inputs and goldens.
+- `scripts/` and `config/`: build, generation, validation-gate, release, and
+  deployment tooling, with the gate catalog and pinned MCP and VACASK Preview
+  declarations.
+- `tools/`, `skills/`, and `references/`: manual Razavi calibration and PDF
+  extraction tools, the repository-local `circuit-layout` Agent Skill, and the
+  pinned external research-source manifest.
+- `docs/`: current architecture, user guides, normative contracts, ADRs, and
+  delivery plans.
+
+The [Razavi reference manifest](fixtures/visual-reference/razavi-reference-v1/)
+is the sole visual authority. Merges to `main` deploy Preview; Production is
+promoted from a release tag or explicit dispatch after Preview acceptance.
+See [deployment](docs/deployment.md) for the release and recovery contract.
+
+## Netlist conversion
+
+`POST /api/netlist/convert` accepts `{ "text": "...", "source": "spice", "target": "spectre" }`
+and returns translated text or line-specific diagnostics. The Worker and local
+Vite server expose the same pure converter; SCS import uses it locally too.
+No Python daemon, simulator or account is required. The structural subset adapts
+[netlist-crawler](https://github.com/Arcadia-1/netlist-crawler) under its MIT license.
+See the [conversion contract](docs/specs/netlist-conversion.md) for supported
+syntax and the [attribution](packages/spice/third-party/netlist-crawler/README.md).
+
+## License
 
 版权所有 © 2026 Zengchun Chen、Zhishuai Zhang。
 

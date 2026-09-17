@@ -1,3 +1,7 @@
+import { InstanceCodePanel } from "../features/properties/instance-code-panel";
+import { NetlistCodePanel } from "../features/netlist-export/netlist-code-panel";
+import { NetlistProfileCode } from "../features/netlist-export/netlist-profile-code";
+import { useNetlistExportPreferences } from "../features/netlist-export/netlist-export-preferences";
 import {
   DEFAULT_ARROW_PRESET,
   type ArrowPreset,
@@ -22,7 +26,10 @@ import {
   planProjectCellImport,
   planSetCellSymbolPresentation,
   planSetDeviceModelTarget,
+  planSetVddConnectionMode,
   planInstanceUnplacement,
+  planAngledWireRepairs,
+  gateRoutingOperationPlan,
   type ProjectStructureEdit,
   type CellResetPlan,
   type SchematicEdit,
@@ -44,9 +51,15 @@ import {
   resolveDocumentStyleProfile,
   summarizeProjectCells,
   resolveRouteAttachment,
+  resolveAnnotationText,
 } from "@icm/derived";
 import type { HierarchyFrame } from "@icm/derived";
-import { createEmptyProject, createEmptyDocument, createId } from "@icm/model";
+import {
+  createEmptyProject,
+  createEmptyDocument,
+  createId,
+  flattenRichText,
+} from "@icm/model";
 import {
   resolveReviewedExternalBinding,
   reviewedExternalModelSuggestions,
@@ -59,6 +72,7 @@ import type {
   LayoutGroup,
   Point,
   Rect,
+  Rotation,
   SchematicDocument,
 } from "@icm/model";
 import { buildSvgScene } from "@icm/render-svg";
@@ -66,6 +80,10 @@ import { renderCrashRequested, sceneCrashRequested } from "./crash-test-hooks";
 import { buildSceneSafely } from "./scene-safety";
 import { externalSubcircuitSymbolId, hierarchicalSymbolId } from "@icm/symbols";
 import { clipboardPreviewDocument } from "../features/clipboard/clipboard";
+import {
+  copyPlacementAnchors,
+  snapPendingCopyPlacement,
+} from "../features/clipboard/copy-placement-snap";
 import type { SchematicClipboard } from "../features/clipboard/clipboard";
 import {
   canvasInsetsFromOverlays,
@@ -87,6 +105,7 @@ import {
   projectStoreCopy,
   type ReleaseChannel,
 } from "../document/release-channel";
+import { resolveSimulationTransport } from "../features/simulation/deployment-transport";
 import { createCanvasHitController } from "../canvas/canvas-hit-controller";
 import { screenScaleHitRadius } from "../canvas/canvas-hit-resolver";
 import { buildDiagnosticMarkers } from "../canvas/diagnostic-markers";
@@ -113,11 +132,10 @@ import {
   type SpiceImportReport,
 } from "../features/editor-shell/editor-file-commands";
 import { EditorStatusbar } from "../features/editor-shell/editor-statusbar";
-import { operatingPointLabels } from "../features/simulation/operating-point-labels";
-import type { OperatingPointCanvasProjection } from "../features/simulation/operating-point-projection";
+import { documentSettingsCodeValue } from "../features/editor-shell/document-settings-code";
+import { normalizedStyleOverrides } from "../features/editor-shell/style-knobs";
 import {
   deriveSimulationProbeOptions,
-  resolveSimulationVoltageProbeNetId,
   simulationProbeHierarchyPath,
 } from "../features/simulation/simulation-probe-options";
 import {
@@ -126,7 +144,7 @@ import {
 } from "../features/simulation/terminal-current-pick";
 import { TimingSimulationPanel } from "../features/simulation/timing-simulation-panel";
 import { TIMING_UI_ENABLED } from "../features/simulation/timing-ui";
-import { updateComponentParameterValues } from "../features/component-insert/component-parameters";
+import { PUBLIC_SIMULATION_UI_ENABLED } from "../features/simulation/public-simulation-ui";
 import {
   waveformDraftingObjects,
   type TimingWaveformLayout,
@@ -138,23 +156,18 @@ import {
 } from "../features/component-insert/insert-launch";
 import { useComponentPlacement } from "../features/component-insert/use-component-placement";
 import { snapPendingComponentPlacement } from "../features/component-insert/placement-snap";
-import {
-  componentCatalog,
-  findPaletteSymbol,
-  symbolCategory,
-} from "../features/component-insert/symbol-catalog";
-import { SymbolArtwork } from "../features/component-insert/symbol-artwork";
+import { findPaletteSymbol } from "../features/component-insert/symbol-catalog";
 import { CanvasContextMenu } from "../features/selection/canvas-context-menu";
 import { useVisualClipboard } from "../features/clipboard/visual-clipboard";
 import { deriveWireUnderSymbolWarnings } from "../canvas/wire-under-symbol";
 import { createPlacementTrayCommands } from "../features/component-insert/placement-tray-commands";
 import { componentTargetDescription } from "../features/properties/component-identity-properties";
 import { componentSourceCode } from "../features/properties/component-source-code";
+import { planElectricalMarkerName } from "../features/properties/electrical-marker-name";
 import {
   endpointTestId,
   instanceLabelAnnotationFor,
   maxRoutingCounter,
-  previewInstanceValueSource,
 } from "./editor-document-helpers";
 import {
   compactLayoutMatches,
@@ -165,7 +178,16 @@ import {
 import { EditorDialogLayer } from "./editor-dialog-layer";
 import { EditorAppChrome } from "./editor-app-chrome";
 import { EditorRightDock } from "./editor-right-dock";
+import {
+  EditorProjectDock,
+  type EditorProjectPanelMode,
+} from "./editor-project-dock";
 import { EditorPropertiesDock } from "./editor-properties-dock";
+import { ProjectCodePanel } from "../features/project-code/project-code-panel";
+import {
+  formatProjectCode,
+  planProjectCodeCommit,
+} from "../features/project-code/project-code";
 import { LazySpiceSimulationSurface } from "./lazy-editor-dialogs";
 import { recoverSourceDrafts } from "../features/simulation/source-draft-cache";
 import type { NewTestbenchRequest } from "../features/simulation/new-testbench-dialog";
@@ -180,19 +202,6 @@ import {
   quickPlaceRequest,
   ShapesPanel,
 } from "../features/editor-shell/shapes-panel";
-import {
-  drawsContactCircles,
-  planSwitchContactStyleSwap,
-  switchContactStyleSibling,
-} from "../features/editor-shell/switch-contact-style";
-import {
-  differentialOutputSibling,
-  planDifferentialOutputSwap,
-} from "../features/editor-shell/differential-output-swap";
-import {
-  differentialInputSibling,
-  planDifferentialInputSwap,
-} from "../features/editor-shell/differential-input-swap";
 import { ExamplesPanel } from "../features/editor-shell/examples-panel";
 import { createGalleryExampleCommands } from "../features/editor-shell/gallery-example-commands";
 import { createEditorNavigationController } from "../features/hierarchy/editor-navigation-controller";
@@ -247,17 +256,23 @@ import { BrowserAgentFileHost } from "../agent/browser-agent-file-host";
 import { BrowserAgentSimulationHost } from "../agent/browser-agent-simulation-host";
 import { BrowserAgentProjectHost } from "../agent/browser-agent-project-host";
 import { BrowserSimulationSession } from "../features/simulation/browser-simulation-session";
+import { ProjectRunHistory } from "../features/simulation/project-run-history";
 import { createAgentSemanticIntentHandler } from "../agent/agent-semantic-intent-handler";
 import { PUBLIC_AGENT_UI_ENABLED } from "../agent/public-agent-ui";
 import { useAgentSession } from "../agent/use-agent-session";
+import { peekAgentSessionRecovery } from "../agent/session-recovery";
 import type { AgentFileCandidateSummary } from "@icm/agent-adapter";
 import { referencedDocumentId } from "../document/editor-session";
 import { useInteractionState } from "../interaction/interaction-state";
-import type { EditorTool } from "../interaction/interaction-state";
+import type {
+  EditorTool,
+  PendingComponentPlacement,
+} from "../interaction/interaction-state";
 import { resolveTextEditingTarget } from "../features/text-editing/text-editing";
 import { planMosBulkDefaultUpdate } from "../features/component-insert/mos-bulk-defaults";
 import { logicalNetChoices } from "../features/logical-net-choices";
 import {
+  CLOUD_PROJECT_LIMIT,
   deleteCloudProject,
   listCloudProjects,
   type CloudProjectSummary,
@@ -278,10 +293,22 @@ import {
 } from "../features/selection/selection-filter";
 import { deriveSelectionInspectionModel } from "../features/selection/selection-inspection-model";
 import { usePropertiesEditor } from "../features/properties/use-properties-editor";
+import { deferFocus } from "../interaction/deferred-focus";
 import { createPropertyEditPlanner } from "../features/properties/property-edit-planner";
+import {
+  instanceParameterVisibility,
+  instanceParameterVisibilityEdits,
+} from "../features/instance-display/instance-parameter-display";
 import { createSelectionPropertyCommands } from "../features/properties/selection-property-commands";
 import { planComponentPropertyCodeEdits } from "../features/properties/component-property-code-edits";
+import { planGroupPropertyCodeEdits } from "../features/properties/group-property-code-edits";
 import type { ComponentPropertyCodeValue } from "../features/properties/component-property-code";
+import {
+  commonGroupValue,
+  groupForeground,
+  groupParameterContext,
+  type GroupPropertyCodeValue,
+} from "../features/properties/group-property-code";
 import {
   LIBRARY_WIDTH_MAX,
   LIBRARY_WIDTH_MIN,
@@ -301,10 +328,12 @@ import { planSelectionMove } from "../features/selection/selection-move-plan";
 import {
   annotationAnchor,
   annotationHitBox,
-  effectiveRouteAttachment,
+  closestNetConductorPoint,
   instanceValueAnnotation,
   isRoutedMarker,
+  netLabelPlacementTargetAtPoint,
 } from "../features/wiring/route-interaction-geometry";
+import type { NetLabelPlacementTarget } from "../features/wiring/route-interaction-geometry";
 import { useWireCanvasController } from "../features/wiring/use-wire-canvas-controller";
 import {
   EMPTY_WIRE_DRAFT_PREVIEW,
@@ -354,6 +383,7 @@ function defaultPropertiesWidth(viewportWidth: number): number {
 const COMPACT_LAYOUT_MEDIA_QUERY = "(max-width: 860px)";
 const DRAG_START_DISTANCE_PX = 4;
 const SNAP_CAPTURE_RADIUS_PX = 4;
+const NET_LABEL_SNAP_CAPTURE_RADIUS_PX = 12;
 
 /** Persisted Junctions are grid points, including on ±45° Route segments. */
 
@@ -363,8 +393,10 @@ const SNAP_CAPTURE_RADIUS_PX = 4;
 export interface AppProps {
   project?: CircuitProject;
   visitStats?: { pv: number; uv: number } | null;
-  /** Test/staging seam; production defaults to a human-only editor. */
+  /** Override the deployment's Agent UI capability in tests. */
   publicAgentUiEnabled?: boolean;
+  /** Override the deployment's analog Simulation UI capability in tests. */
+  publicSimulationUiEnabled?: boolean;
   /** Test/staging seam; production Cloudflare builds keep timing tools hidden. */
   timingUiEnabled?: boolean;
   /** `/g/<id>` deep link: load this gallery entry after boot. */
@@ -375,6 +407,7 @@ export function App({
   project: initialProject,
   visitStats,
   publicAgentUiEnabled = PUBLIC_AGENT_UI_ENABLED,
+  publicSimulationUiEnabled = PUBLIC_SIMULATION_UI_ENABLED,
   timingUiEnabled = TIMING_UI_ENABLED,
   initialGalleryEntryId = null,
 }: AppProps) {
@@ -513,6 +546,19 @@ export function App({
     readSessionProject: readRecoveryProject,
     deleteSession: deleteRecoverySession,
   } = useRecoveryCoordinator(setStatus);
+  const [agentStartupRecovery] = useState(() => {
+    if (typeof window === "undefined") return null;
+    const search = new URLSearchParams(window.location.search);
+    if (
+      initialGalleryEntryId !== null ||
+      search.has("example") ||
+      search.has("project") ||
+      search.get("new") === "1"
+    )
+      return null;
+    const saved = peekAgentSessionRecovery(window.sessionStorage);
+    return saved?.projectSessionId === recoveryWorkingCopyId ? saved : null;
+  });
   const {
     project,
     document,
@@ -521,6 +567,7 @@ export function App({
     canRedo,
     openDocument,
     replaceProject,
+    commitProjectStructure,
     dispatchProjectTransaction,
     transact: transactDocument,
     controller: editorDocumentController,
@@ -533,7 +580,7 @@ export function App({
     // (audit #8). The session's own commit runs after its cleanup, so this
     // is a no-op for ordinary drags.
     canvasDragSessionRef.current?.cancel();
-    stageRecovery(project);
+    stageRecovery(project, { cloudBinding });
   });
   const projectConnectivityIndex = useMemo(
     () => buildProjectConnectivityIndex(project, resolver),
@@ -605,6 +652,10 @@ export function App({
     };
   }, []);
   const projectStore = projectStoreCopy(releaseChannel);
+  const simulationTransport = resolveSimulationTransport(
+    releaseChannel,
+    import.meta.env.VITE_ICM_SIMULATION_TRANSPORT,
+  );
   // Annotations and drafting place on their own pitch; the Document grid
   // stays the electrical contract for devices, wires, and junctions.
   const [annotationGrid, setAnnotationGridState] = useState<1 | 5 | 10>(() => {
@@ -622,8 +673,7 @@ export function App({
       // Storage may be unavailable; the choice still applies to this session.
     }
   };
-  const [arrowPreset, setArrowPresetState] =
-    useState<ArrowPreset>(DEFAULT_ARROW_PRESET);
+  const arrowPreset: ArrowPreset = DEFAULT_ARROW_PRESET;
   const [drawAngleMode, setDrawAngleModeState] = useState<DrawAngleMode>(() => {
     if (typeof window === "undefined") return "free";
     const stored = window.localStorage.getItem("icm.draw-angle.v1");
@@ -697,6 +747,13 @@ export function App({
     command: string;
   } | null>(null);
   const [netlistPreflightOpen, setNetlistPreflightOpen] = useState(false);
+  const [projectPanel, setProjectPanel] =
+    useState<EditorProjectPanelMode | null>(null);
+  const propertiesOpenBeforeProjectPanelRef = useRef(false);
+  const [netlistNamingProfile, setNetlistNamingProfile] = useState<
+    "native" | "cadence-bang"
+  >("native");
+  const netlistPreferences = useNetlistExportPreferences();
   const [documentSettingsOpen, setDocumentSettingsOpen] = useState(false);
   const [projectNameDraft, setProjectNameDraft] = useState<string | null>(null);
   const [publishGalleryOpen, setPublishGalleryOpen] = useState(false);
@@ -786,12 +843,8 @@ export function App({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- evaluated once per dialog open
   }, [publishGalleryOpen]);
-  const [instanceTableOpen, setInstanceTableOpen] = useState(false);
   const [agentFileCandidate, setAgentFileCandidate] =
     useState<AgentFileCandidateSummary | null>(null);
-  const agentSimulationHostForFiles = useRef<BrowserAgentSimulationHost | null>(
-    null,
-  );
   const browserAgentFileHost = useMemo(
     () =>
       new BrowserAgentFileHost({
@@ -803,46 +856,37 @@ export function App({
           ) ?? null,
         getResolver: () => editorDocumentController.resolver,
         onApprovalRequested: setAgentFileCandidate,
-        readSimulationRun: async (runId) => {
-          const host = agentSimulationHostForFiles.current;
-          if (!host)
-            return {
-              ok: false,
-              error: {
-                code: "SIMULATION_HOST_UNAVAILABLE",
-                message: "Simulation host is not available",
-                stage: "read",
-                recovery: "retry-after",
-              },
-            };
-          return host.handle({
-            apiVersion: "3.0",
-            requestId: crypto.randomUUID(),
-            operation: "read",
-            runId,
-          });
-        },
         dispatchProjectTransaction: (request) =>
           browserAgentHost.dispatchProjectTransaction(request),
       }),
     [editorDocumentController, projectSessionId],
   );
+  const projectRunHistory = useMemo(
+    () => new ProjectRunHistory(editorDocumentController.project.id),
+    [editorDocumentController, projectSessionId],
+  );
+  useEffect(() => {
+    projectRunHistory.activate();
+    return () => projectRunHistory.dispose();
+  }, [projectRunHistory]);
   const browserAgentSimulationHost = useMemo(
     () =>
       new BrowserAgentSimulationHost({
+        runHistory: projectRunHistory,
+        owner: "agent",
         files: browserAgentFileHost.simulationFiles,
         getProjectSessionId: () => editorDocumentController.projectSessionId,
         getProject: () => editorDocumentController.project,
-        transport: releaseChannel === "preview" ? "managed" : "direct",
+        transport: simulationTransport,
       }),
     [
       browserAgentFileHost.simulationFiles,
+      projectRunHistory,
       editorDocumentController,
       projectSessionId,
-      releaseChannel,
+      simulationTransport,
     ],
   );
-  agentSimulationHostForFiles.current = browserAgentSimulationHost;
   const browserAgentProjectHost = useMemo(
     () =>
       new BrowserAgentProjectHost({
@@ -856,7 +900,6 @@ export function App({
   const [analogSimulationState, setAnalogSimulationState] = useState<
     "closed" | "open" | "maximized" | "minimized"
   >("closed");
-  const simulationPropertiesOpenBeforeRef = useRef(false);
   const simulationSourceBuffer = useRef<{
     dirty: boolean;
     flush(): Promise<boolean>;
@@ -867,34 +910,44 @@ export function App({
   const analogSimulationMaximized = analogSimulationState === "maximized";
   const humanSimulationSession = useMemo(
     () =>
-      new BrowserSimulationSession({
-        getProjectSessionId: () => editorDocumentController.projectSessionId,
-        getProject: () => editorDocumentController.project,
-        projectFiles: createSimulationProjectFileHost({
-          getProject: () => editorDocumentController.project,
-          getProjectSessionId: () => editorDocumentController.projectSessionId,
-          dispatch: (request) => dispatchProjectTransaction(request),
-          actor: { kind: "human", id: "human-local" },
-        }),
-        transport: releaseChannel === "preview" ? "managed" : "direct",
-      }),
-    [editorDocumentController, projectSessionId, releaseChannel],
+      analogSimulationOpened
+        ? new BrowserSimulationSession({
+            runHistory: projectRunHistory,
+            owner: "human",
+            getProjectSessionId: () =>
+              editorDocumentController.projectSessionId,
+            getProject: () => editorDocumentController.project,
+            projectFiles: createSimulationProjectFileHost({
+              getProject: () => editorDocumentController.project,
+              getProjectSessionId: () =>
+                editorDocumentController.projectSessionId,
+              dispatch: (request) => dispatchProjectTransaction(request),
+              actor: { kind: "human", id: "human-local" },
+            }),
+            transport: simulationTransport,
+          })
+        : null,
+    [
+      analogSimulationOpened,
+      projectRunHistory,
+      editorDocumentController,
+      projectSessionId,
+      simulationTransport,
+    ],
   );
   useEffect(
     () => () => {
-      void humanSimulationSession.clear();
+      void humanSimulationSession?.clear();
     },
     [humanSimulationSession],
   );
   const openAnalogSimulation = (): void => {
-    simulationPropertiesOpenBeforeRef.current = selectionOpen;
-    setSelectionOpen(false);
+    if (!publicSimulationUiEnabled) return;
     setAnalogSimulationState("open");
   };
   const minimizeAnalogSimulation = (): void => {
     setSimulationPickModeState(null);
     setAnalogSimulationState("minimized");
-    setSelectionOpen(simulationPropertiesOpenBeforeRef.current);
   };
   const toggleAnalogSimulationMaximized = (): void => {
     setAnalogSimulationState((current) =>
@@ -903,10 +956,9 @@ export function App({
   };
   const exitAnalogSimulation = (): void => {
     setSimulationPickModeState(null);
-    void humanSimulationSession.clear();
+    void humanSimulationSession?.clear();
     setAnalogSimulationState("closed");
     setSimulationDraftContext(null);
-    setSelectionOpen(simulationPropertiesOpenBeforeRef.current);
   };
   const captureAuthoredProject = async () => {
     if (
@@ -930,6 +982,7 @@ export function App({
     startupCloudProjectId,
     canRestoreStartupCloudProject,
     restoreAfterRefresh,
+    startupRestoreReady,
     setRecoveryDialogOpen,
     isDirtyWork,
     hasUnsafeWork,
@@ -938,7 +991,6 @@ export function App({
     saveProjectToCloud,
     isSaveInFlight,
     saveBusy,
-    persistenceState,
     exportProjectFile,
     downloadCurrentProjectBackup,
     guardDirtyReplacement,
@@ -956,6 +1008,7 @@ export function App({
     openProjectFile,
     openCloudProjectById,
   } = useProjectFileLifecycle({
+    restoreWorkingSession: agentStartupRecovery !== null,
     hasPendingEdits: () => simulationSourceBuffer.current?.dirty === true,
     beforeSnapshot: captureAuthoredProject,
     onRecoverBuffers: recoverSourceDrafts,
@@ -1035,9 +1088,23 @@ export function App({
     startupCloudProjectId,
   ]);
   const agentSession = useAgentSession({
-    enabled: publicAgentUiEnabled,
+    recover: !hasExplicitBootTarget,
+    beforeConnect: async () => {
+      const snapshot = await captureAuthoredProject();
+      if (snapshot) {
+        stageRecovery(snapshot, {
+          unsavedAtSnapshot: isDirtyWork() || snapshot !== project,
+          cloudBinding,
+        });
+        await flushRecovery();
+      }
+    },
+    enabled:
+      publicAgentUiEnabled &&
+      (startupRestoreReady ||
+        recoveryWorkingCopyId !== agentStartupRecovery?.projectSessionId),
     project,
-    projectSessionId,
+    projectSessionId: recoveryWorkingCopyId,
     host: browserAgentHost,
     fileHost: browserAgentFileHost,
     simulationHost: browserAgentSimulationHost,
@@ -1063,10 +1130,8 @@ export function App({
     pendingSymbolId,
     pendingComponentPlacement,
     wireSource,
-    wireSourceRevision,
     wirePreviewPoint,
     wirePreviewTarget,
-    wireWaypoints,
     wireDraftSteps,
     wireRoutingMode,
     wireCornerOrder,
@@ -1109,6 +1174,24 @@ export function App({
     beginSelectionMove: beginSelectionMoveInteraction,
     cancelInteraction,
   } = useInteractionState<SchematicClipboard>();
+  const readCurrentWireSession = () => {
+    const current = getCurrentInteractionState();
+    return current.kind === "wire"
+      ? {
+          source: current.source,
+          sourceRevision: current.sourceRevision,
+          steps: current.steps,
+          routingMode: current.routingMode,
+          cornerOrder: current.cornerOrder,
+        }
+      : {
+          source: null,
+          sourceRevision: null,
+          steps: [],
+          routingMode: "orthogonal" as const,
+          cornerOrder: "auto" as const,
+        };
+  };
   const { commitStructure, transact, transactConnectivity } =
     createEditorTransactionCommands({
       project,
@@ -1159,14 +1242,6 @@ export function App({
   const [draftingInspectorSegment, setDraftingInspectorSegment] = useState<{
     objectId: string;
     index: number;
-  } | null>(null);
-  const [draftingTangentInput, setDraftingTangentInput] = useState<{
-    key: string;
-    value: string;
-  } | null>(null);
-  const [draftingBearingInput, setDraftingBearingInput] = useState<{
-    objectId: string;
-    value: string;
   } | null>(null);
   const [selectedRouteSegmentIndex, setSelectedRouteSegmentIndex] = useState<
     number | null
@@ -1265,13 +1340,13 @@ export function App({
   const lastCanvasPointRef = useRef<Point | null>(null);
 
   /** Show a placement ghost under the cursor without waiting for a move. */
-  function seedComponentPreviewFromPointer(): void {
+  function seedComponentPreviewFromPointer(
+    kind: PendingComponentPlacement["kind"],
+  ): void {
     const point = lastCanvasPointRef.current;
     if (!point) return;
     const pitch =
-      pendingComponentPlacement?.kind === "drafting-text"
-        ? annotationGrid
-        : document.presentation.grid;
+      kind === "drafting-text" ? annotationGrid : document.presentation.grid;
     setComponentPreviewPoint({
       x: snapCoordinate(point.x, pitch),
       y: snapCoordinate(point.y, pitch),
@@ -1289,9 +1364,6 @@ export function App({
   const suppressInstanceClick = useRef(false);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const selectionShelfRef = useRef<HTMLButtonElement>(null);
-  const instanceValueInputRef = useRef<HTMLInputElement>(null);
-  const [propertyCodeFocusRequest, setPropertyCodeFocusRequest] = useState(0);
-  const netLabelPropertyInputRef = useRef<HTMLInputElement>(null);
   const netLabelEditorInputRef = useRef<HTMLInputElement>(null);
   const documentViewBoxes = useRef(new Map<string, GridRect>());
   const [projectedMovePreviewDocument, setProjectedMovePreviewDocument] =
@@ -1417,26 +1489,26 @@ export function App({
   const sceneInnerHtml = useMemo(() => ({ __html: scene.formalBody }), [scene]);
   const copyPreviewState = useMemo(() => {
     if (!copyPlacement) {
-      return { scene: null, error: null };
+      return { scene: null, anchors: [], error: null };
     }
     try {
+      const previewDocument = clipboardPreviewDocument(
+        document,
+        copyPlacement.clipboard,
+        { x: 0, y: 0 },
+        copyPlacement.orientationOperations,
+        resolver,
+        copyPlacement.sequence,
+      );
       return {
-        scene: buildSvgScene(
-          clipboardPreviewDocument(
-            document,
-            copyPlacement.clipboard,
-            { x: 0, y: 0 },
-            copyPlacement.orientationOperations,
-            resolver,
-            copyPlacement.sequence,
-          ),
-          resolver,
-        ),
+        scene: buildSvgScene(previewDocument, resolver),
+        anchors: copyPlacementAnchors(previewDocument, resolver),
         error: null,
       };
     } catch (error) {
       return {
         scene: null,
+        anchors: [],
         error:
           error instanceof Error
             ? error.message
@@ -1481,7 +1553,6 @@ export function App({
     selectedAnnotationId,
     selectedDraftingId,
     selectedInstance,
-    selectedInstanceHasDifferentialInputs,
     selectedHierarchyCell,
     selectedDevice,
     selectedCapacitorPlateRows,
@@ -1489,6 +1560,7 @@ export function App({
     selectedReviewedExternalBinding,
     selectedPropertyDevice,
     selectedRoute,
+    selectedMosBulkOwnerLabel,
     selectedRouteNetLabels,
     selectedRouteNetLabel,
     selectedAnnotation,
@@ -1538,7 +1610,6 @@ export function App({
     routeGeometryRecords,
     highlightedTrace,
     highlightedNet,
-    highlightedNetId,
     selectedHighlightIsActive,
     searchResults,
     flightlines,
@@ -1619,53 +1690,6 @@ export function App({
   );
   const [issuesFocusToken, setIssuesFocusToken] = useState(0);
   const [issuesSectionOpen, setIssuesSectionOpen] = useState(false);
-  /** Run results stay in session view state and never enter Project history. */
-  const [operatingPointProjection, setOperatingPointProjection] =
-    useState<OperatingPointCanvasProjection | null>(null);
-  const currentOccurrence = documentStack.map((frame) => frame.instanceId);
-  const operatingPointVoltages = useMemo(() => {
-    const values = new Map<string, number>();
-    for (const value of operatingPointProjection?.values ?? []) {
-      if (
-        value.documentId !== document.id ||
-        value.occurrence.length !== currentOccurrence.length ||
-        !value.occurrence.every(
-          (instanceId, index) => instanceId === currentOccurrence[index],
-        )
-      )
-        continue;
-      values.set(value.netId, value.volts);
-    }
-    return values;
-  }, [currentOccurrence, document.id, operatingPointProjection]);
-  const operatingPointBadges = useMemo(
-    () =>
-      operatingPointVoltages.size === 0
-        ? []
-        : operatingPointLabels({
-            document,
-            resolver,
-            voltages: operatingPointVoltages,
-            display: operatingPointProjection?.display ?? "named",
-            // "Pointed at" is whichever net the selected wire carries; the
-            // highlight already tracks hover for the net-highlight overlay.
-            selectedNetIds: selectedRouteId
-              ? document.routes
-                  .filter((route) => route.id === selectedRouteId)
-                  .map((route) => route.netId)
-              : [],
-            hoveredNetId: highlightedNetId ?? null,
-          }),
-    [
-      document,
-      resolver,
-      operatingPointVoltages,
-      operatingPointProjection?.display,
-      selectedRouteId,
-      highlightedNetId,
-    ],
-  );
-
   const projectCheck = useProjectCheck({
     project,
     sessionId: projectSessionId,
@@ -1693,6 +1717,15 @@ export function App({
         projectCheck.status === "current" ? visualDiagnostics : [],
       ),
     [visualDiagnostics, projectCheck.status],
+  );
+  const angledWireRepairPlan = useMemo(
+    () =>
+      planAngledWireRepairs(
+        document,
+        resolver,
+        projectConnectivityIndex.documents.get(document.id)?.routingGeometry,
+      ),
+    [document, resolver, projectConnectivityIndex],
   );
   // Independent Netlist adapter: creating the callback is free; only a report
   // or export executes ERC, once per immutable Project/resolver/index tuple.
@@ -2011,7 +2044,6 @@ export function App({
     updateSelectedModelTarget,
     updateSelectedReference,
     deleteSelectedAnnotation,
-    reverseSelectedCurrentArrow,
   } = createSelectionPropertyCommands({
     project,
     document,
@@ -2032,40 +2064,23 @@ export function App({
   });
   const {
     restoreTextReference,
-    addAdditionalParameter,
-    additionalParameterDraft,
-    additionalParameterDraftChanges,
-    applyAdditionalParameters,
+    applyRouteProperties,
     beginAnnotationTextEditing,
     beginDraftingTextEditing,
     beginInstanceFormulaEditing,
     beginNetLabelEditing,
     cancelNetLabelEditing,
     commitInstancePropertyDraft,
-    commitElectricalMarkerName,
     commitNetLabelScope,
     commitNetLabelEditing,
     commitPendingNetLabelDraft,
     commitTextEditing,
     clearTextEditing,
-    cancelAdditionalParameters,
-    deleteSelectedRouteNetLabel,
     deleteTextEditing,
-    discardInstancePropertyDraft,
-    hasInstancePropertyDraftChanges,
-    instancePropertyDraft,
-    netLabelDraft,
     netLabelPlacement,
     placeNetLabel,
-    removeAdditionalParameter,
-    setReferenceLabelsVisible,
-    setValueLabelsVisible,
-    showSelectedInstanceValue,
     textEditing,
-    updateInstancePropertyDraft,
-    updateAdditionalParameter,
     updateTextEditing,
-    updateNetLabelDraft,
     updateNetLabelPlacementDraft,
     updateNetLabelPlacementPosition,
   } = usePropertiesEditor({
@@ -2140,78 +2155,6 @@ export function App({
     setCanvasContextMenu({ x: clientX, y: clientY });
   }
 
-  const selectedVisualObjectCount = Object.values(visualSelection).reduce(
-    (count, ids) => count + ids.length,
-    0,
-  );
-  const deviceVariantCandidates = useMemo(() => {
-    if (
-      !canvasContextMenu ||
-      selectedVisualObjectCount !== 1 ||
-      selectedIds.length !== 1 ||
-      !selectedInstance
-    ) {
-      return [];
-    }
-    const resolved = resolver.resolve(
-      selectedInstance.symbolId,
-      selectedInstance.symbolVariantId,
-    );
-    if (!resolved) return [];
-    const pinCount = resolved.definition.pins.length;
-    const category = symbolCategory(selectedInstance.symbolId);
-    return componentCatalog(document.presentation.styleProfileId, "")
-      .flatMap((group) => group.symbols)
-      .filter(
-        (symbol) =>
-          symbol.id !== selectedInstance.symbolId &&
-          symbol.pins.length === pinCount &&
-          symbolCategory(symbol.id) === category,
-      )
-      .slice(0, 8)
-      .map((symbol) => ({ symbolId: symbol.id, name: symbol.name }));
-  }, [
-    canvasContextMenu,
-    selectedVisualObjectCount,
-    selectedIds,
-    selectedInstance,
-    resolver,
-    document.presentation.styleProfileId,
-  ]);
-  const swapSelectedInstanceSymbol = (symbolId: string): void => {
-    if (!selectedInstance) return;
-    const resolved = resolver.resolve(
-      selectedInstance.symbolId,
-      selectedInstance.symbolVariantId,
-    );
-    const target = findPaletteSymbol(
-      document.presentation.styleProfileId,
-      symbolId,
-    );
-    if (!resolved || !target) return;
-    // Map pins positionally so nets follow the swap even when the
-    // replacement names its pins differently (A/Y vs 1/2).
-    const oldPins = resolved.definition.pins.map((pin) => pin.name);
-    const newPins = target.pins.map((pin) => pin.name);
-    const pinMap = Object.fromEntries(
-      oldPins.flatMap((name, index) => {
-        const next = newPins[index];
-        return next && next !== name ? [[name, next] as const] : [];
-      }),
-    );
-    const result = transactDocument([
-      {
-        kind: "set_instance_symbol",
-        instanceId: selectedInstance.id,
-        symbolId,
-        symbolVariantId: null,
-        ...(Object.keys(pinMap).length > 0 ? { pinMap } : {}),
-      },
-    ]);
-    setStatus(
-      result.ok ? `Swapped to ${target.name}` : "Could not swap the device",
-    );
-  };
   // Formula capability is owned by the resolved SymbolDefinition, never by a
   // symbol-id allowlist or any electrical/netlist descriptor.
   // A Symbol that hides its label never draws a reference: the label field
@@ -2231,35 +2174,50 @@ export function App({
   const selectedInstanceLabel = selectedInstance
     ? instanceLabelAnnotationFor(document, selectedInstance.id)
     : undefined;
+  const selectedDisplayName =
+    selectedInstanceLabel?.kind === "instance-label"
+      ? flattenRichText(
+          resolveAnnotationText(document, selectedInstanceLabel),
+        ).trim() || null
+      : null;
   const selectedInstanceValue = selectedInstance
     ? instanceValueAnnotation(document, selectedInstance.id)
     : null;
-  // Availability follows the live property draft, not only committed state:
-  // typing a value must enable the Value toggle immediately. Geometry edits
-  // in the draft are irrelevant to the projection.
-  const selectedInstanceValueAvailable = selectedInstance
-    ? displayableInstanceValue(
-        previewInstanceValueSource(selectedInstance, instancePropertyDraft),
-      ).kind === "displayable"
-    : false;
-  const selectedGroupLabelsAllVisible =
-    selectedIds.length > 1 &&
-    selectedIds.every((id) => {
+  const selectedGroupInstances = selectedIds.flatMap((id) => {
+    const instance = document.instances.find((item) => item.id === id);
+    return instance ? [instance] : [];
+  });
+  const selectedGroupReferenceVisibility = commonGroupValue(
+    selectedIds.map((id) => {
       const label = instanceLabelAnnotationFor(document, id);
       return label !== undefined && label.visible !== false;
-    });
-  const selectedGroupValuesAllVisible =
-    selectedIds.length > 1 &&
-    selectedIds.every((id) => {
-      const value = instanceValueAnnotation(document, id);
-      return value !== null && value.visible !== false;
-    });
-  const selectedGroupValueAvailable = selectedIds.some((id) => {
-    const instance = document.instances.find((item) => item.id === id);
-    return instance
-      ? displayableInstanceValue(instance).kind === "displayable"
-      : false;
-  });
+    }),
+  );
+  const selectedGroupValueInstances = selectedGroupInstances.filter(
+    (instance) => symbolSupportsValueAnnotation(instance.symbolId),
+  );
+  const selectedGroupValueVisibility =
+    selectedGroupValueInstances.length === 0
+      ? null
+      : commonGroupValue(
+          selectedGroupValueInstances.map((instance) => {
+            const value = instanceValueAnnotation(document, instance.id);
+            return value !== null && value.visible !== false;
+          }),
+        );
+  const selectedGroupForeground = groupForeground(
+    selectedGroupInstances,
+    styleProfile.foreground,
+  );
+  const selectedGroupContext = {
+    ...groupParameterContext(
+      selectedGroupInstances,
+      propertyParametersForInstance,
+    ),
+    reference: selectedGroupReferenceVisibility,
+    value: selectedGroupValueVisibility,
+    foreground: selectedGroupForeground,
+  };
   const wireUnderSymbolWarnings = useMemo(
     () =>
       deriveWireUnderSymbolWarnings(document, resolver, routeGeometryRecords),
@@ -2286,24 +2244,37 @@ export function App({
     );
     if (!annotation || annotation.kind !== "net-label") return null;
     const anchor = annotation.anchor;
-    if (anchor.kind !== "route") return null;
-    const record = routeGeometryRecords.find(
-      (candidate) => candidate.route.id === anchor.routeId,
+    const record =
+      anchor.kind === "route"
+        ? routeGeometryRecords.find(
+            (candidate) => candidate.route.id === anchor.routeId,
+          )
+        : undefined;
+    const attachment =
+      record && anchor.kind === "route"
+        ? resolveRouteAttachment(record.geometry, anchor)
+        : null;
+    const label = annotationAnchor(
+      document,
+      resolver,
+      annotation,
+      routeGeometryRecords,
+      styleProfile,
     );
-    const attachment = record
-      ? resolveRouteAttachment(record.geometry, anchor)
-      : null;
-    if (!attachment) return null;
+    const conductor =
+      attachment?.conductorPoint ??
+      (annotation.netId
+        ? closestNetConductorPoint(
+            routeGeometryRecords,
+            annotation.netId,
+            label,
+          )
+        : null);
+    if (!conductor) return null;
     return {
-      label: annotationAnchor(
-        document,
-        resolver,
-        annotation,
-        routeGeometryRecords,
-        styleProfile,
-      ),
-      conductor: attachment.conductorPoint,
-      netName: record?.route.netId ?? null,
+      label,
+      conductor,
+      netName: annotation.netId ?? record?.route.netId ?? null,
     };
   }, [
     document,
@@ -2344,12 +2315,7 @@ export function App({
       setSelectedEndpoint,
     },
     session: {
-      wireSource,
-      wireSourceRevision,
-      wireWaypoints,
-      wireDraftSteps,
-      wireRoutingMode,
-      wireCornerOrder,
+      readCurrentWireSession,
       setTool,
       setWireSource,
       setWirePreview,
@@ -2446,7 +2412,7 @@ export function App({
     activateDrawingTool: setTool,
     beginComponentPlacement: (request) => {
       beginComponentPlacement(request);
-      seedComponentPreviewFromPointer();
+      seedComponentPreviewFromPointer(request.kind);
     },
     beginDraftingTextEditing,
     nextId: (prefix) => {
@@ -2542,7 +2508,7 @@ export function App({
         {
           kind: "rotate_instance",
           instanceId,
-          rotation: next as 0 | 90 | 180 | 270,
+          rotation: next as Rotation,
         },
       ]);
       if (applied.ok) {
@@ -2766,6 +2732,7 @@ export function App({
     wireSource && wirePreviewTarget
       ? resolveWireDraftPreview({
           document,
+          resolver,
           source: wireSource,
           target: wirePreviewTarget,
           steps: wireDraftSteps,
@@ -2796,33 +2763,30 @@ export function App({
     insertArrowWaypoint,
     deleteConstructionVertex,
     setDraftingStyle,
-    setDraftingGeometry,
     setDraftingStacking,
-    setArrowPreset,
-    setDraftingTangentAngle,
-    setDraftingBearing,
     toggleDraftingLock,
     addPlainText,
-    addCurrentArrow,
   } = createDraftingCommands({
     document,
     annotationGrid,
     resolver,
-    viewBox,
     selection: visualSelection,
     selectedDrafting,
     inspectorSegment: draftingInspectorSegment,
-    selectedRoute,
-    selectedRouteSegmentIndex,
-    routeGeometryRecords,
     transact,
     setStatus,
-    nextId: (prefix) => {
-      uniqueSuffixCounter.current += 1;
-      return `${prefix}-${uniqueSuffixCounter.current}`;
-    },
-    beginTextEditing: beginDraftingTextEditing,
-    selectAnnotation: (id) => selectOnly("annotation", [id]),
+    beginTextPlacement: () =>
+      startInsertFromHook({
+        kind: "quick",
+        request: {
+          kind: "drafting-text",
+          symbolId: "text",
+          symbolName: "Text",
+          text: "Design note",
+          initialRotation: 0,
+          editAfterPlacement: true,
+        },
+      }),
   });
   const {
     snapPoint: snapDraftingPoint,
@@ -2893,7 +2857,6 @@ export function App({
     },
     selectDraftingObject,
     setInspectorSegment: setDraftingInspectorSegment,
-    clearTangentInput: () => setDraftingTangentInput(null),
     setHandlePreview: setDraftingHandlePreview,
     transact,
     setStatus,
@@ -2944,7 +2907,6 @@ export function App({
     },
     session: {
       wireSource,
-      wireWaypoints,
       wireDraftSteps,
       wireRoutingMode,
       wireCornerOrder,
@@ -2960,6 +2922,7 @@ export function App({
       setWireDraftSteps,
       setWireRoutingMode,
       setWireCornerOrder,
+      readCurrentWireSession,
     },
     selection: {
       selectedInstanceIds: selectedIds,
@@ -3109,9 +3072,17 @@ export function App({
       setPanPreview,
       getInteractionKind: () => getCurrentInteractionState().kind,
       paintSnapGuides,
-      noteCanvasPoint: (point) => {
-        lastCanvasPointRef.current = point;
-        updateNetLabelPlacementPosition(point);
+      noteCanvasPoint: (_point, rawPoint, svg) => {
+        // Preserve precision until the chosen tool applies its own grid.
+        lastCanvasPointRef.current = rawPoint;
+        if (netLabelPlacement?.phase === "placing") {
+          const target = resolveNetLabelPlacementTarget(rawPoint, svg);
+          updateNetLabelPlacementPosition(
+            target?.labelPosition ?? rawPoint,
+            target,
+          );
+          paintSnapGuides(netLabelSnapGuides(target));
+        }
       },
       setStatus,
       measureCanvasView,
@@ -3126,7 +3097,7 @@ export function App({
         pendingSymbolId && pendingComponentPlacement,
       ),
       componentSymbolPending: pendingSymbolId !== null,
-      snapComponentPlacementPoint: resolvePendingPlacementPoint,
+      snapPlacementPoint: resolvePendingPlacementPoint,
       setComponentPreviewPoint,
       vddRailMode,
       vddRailStart,
@@ -3213,7 +3184,6 @@ export function App({
   const {
     switchDocument,
     selectDocumentFromHierarchy,
-    openInstanceFromTable,
     jumpToCaller,
     navigateToLocator,
     navigateToNetlistDiagnostic,
@@ -3250,7 +3220,6 @@ export function App({
     selectedHighlightIsActive,
     closeSearch,
     setSelectionOpen,
-    setInstanceTableOpen,
     setCellManagerOpen,
     selectedInstance,
     setStatus,
@@ -3281,19 +3250,42 @@ export function App({
   }, [document, visualSelection]);
 
   function openProperties(): void {
+    setProjectPanel(null);
     setImportReviewOpen(false);
     setSelectionOpen(true);
     // Focus the header, not the first field: Q stays a pure toggle and
     // editing starts only when the user clicks an input.
-    requestAnimationFrame(() => {
-      selectionShelfRef.current?.focus();
-    });
+    deferFocus(() => selectionShelfRef.current);
   }
 
   function closeProperties(): void {
     exitCellSymbolLayout();
     setSelectionOpen(false);
     setImportReviewOpen(false);
+  }
+
+  function showProjectPanel(mode: EditorProjectPanelMode): void {
+    exitCellSymbolLayout();
+    if (projectPanel === null) {
+      propertiesOpenBeforeProjectPanelRef.current = selectionOpen;
+    }
+    setProjectPanel(mode);
+    setSelectionOpen(false);
+    setImportReviewOpen(false);
+    if (compactLayout) setCompactLibraryPanelOpen(false);
+  }
+
+  function closeProjectPanel(): void {
+    setProjectPanel(null);
+    setSelectionOpen(propertiesOpenBeforeProjectPanelRef.current);
+  }
+
+  function toggleProjectPanel(mode: "netlist" | "project-code"): void {
+    if (projectPanel === mode) {
+      closeProjectPanel();
+      return;
+    }
+    showProjectPanel(mode);
   }
 
   function selectAllObjects(): void {
@@ -3329,7 +3321,6 @@ export function App({
     setImportReviewOpen(false);
     setSelectionOpen(true);
     setStatus(`Properties for ${instanceId}`);
-    setPropertyCodeFocusRequest((current) => current + 1);
   }
 
   function toggleExamplesPanel(): void {
@@ -3429,6 +3420,7 @@ export function App({
   }
 
   function openNewTestbenchDialog(dutDocumentId = document.id): void {
+    if (!publicSimulationUiEnabled) return;
     cancelAllTransientInteraction();
     setCanvasContextMenu(null);
     setNewTestbenchDutId(dutDocumentId);
@@ -3442,8 +3434,7 @@ export function App({
       setStatus("The selected DUT Cell no longer exists");
       return;
     }
-    const cellName =
-      child.sourceBinding?.cellName ?? child.netlist.name ?? child.name;
+    const cellName = child.netlist.name;
     beginComponentPlacement({
       kind: "cell",
       symbolId: hierarchicalSymbolId(cellName),
@@ -3451,7 +3442,7 @@ export function App({
       cellName,
       parameters: {},
       initialRotation: 0,
-      showReference: true,
+      showReference: false,
       referenceText: null,
       showValue: true,
     });
@@ -3514,8 +3505,8 @@ export function App({
         terminal.interfaceInstanceIds.includes(selectedInstance.id),
       )
     : undefined;
-  // A design routinely carries VDDH and VDDL, or VDD1 and VDD2, at once, so a
-  // supply marker keeps its explicit Global-Net name.
+  // A design routinely carries VDDH and VDDL, or VDD1 and VDD2, at once, so
+  // VDD artwork keeps its authored supply name in either Cell Pin or Global mode.
   const selectedSupplyMarker =
     selectedInstance?.symbolId === "vdd-port" ? selectedInstance : undefined;
   const selectedPortNet =
@@ -3547,18 +3538,6 @@ export function App({
   function commitProjectName(): void {
     setProjectNameDraft(null);
     renameProject(projectNameDraft);
-  }
-
-  function renameSelectedFormalPort(name: string): void {
-    if (!selectedFormalTerminal) return;
-    name = name.trim();
-    if (!name || name === selectedFormalTerminal.name) return;
-    renameCellTerminal(
-      selectedFormalTerminal.id,
-      name,
-      document.id,
-      "rename-cell-pin",
-    );
   }
 
   function approveAgentFileCandidate(): void {
@@ -3621,21 +3600,6 @@ export function App({
     setStatus(command + " cancelled");
   }
 
-  function updateMosBulkDefault(
-    kind: "nmos" | "pmos",
-    netId: string | null,
-  ): void {
-    const result = transact([
-      ...planMosBulkDefaultUpdate(document, kind, netId),
-    ]);
-    if (!result.ok) return;
-    setStatus(
-      `${kind === "nmos" ? "NMOS" : "PMOS"} bulk default ${
-        netId ? "updated" : "cleared"
-      }`,
-    );
-  }
-
   function nextRoutingSuffix(): number {
     routeCounter.current =
       Math.max(routeCounter.current, maxRoutingCounter(document)) + 1;
@@ -3680,7 +3644,7 @@ export function App({
     );
   }
 
-  function rotatePendingCopy(delta: 90 | -90): void {
+  function rotatePendingCopy(delta: 45 | -45 | 90 | -90): void {
     if (!copyPlacement) return;
     rotateCopyPlacement(delta);
     setStatus("Place rotated copy · R rotates · Esc cancels");
@@ -3730,6 +3694,16 @@ export function App({
     point: Point,
     svg: SVGSVGElement,
   ): { point: Point; guides: readonly SnapGuideLine[] } {
+    if (copyPlacement) {
+      return snapPendingCopyPlacement({
+        movingAnchors: copyPreviewState.anchors,
+        sceneSnapTargetIndex,
+        anchor: copyPlacement.anchor,
+        position: point,
+        grid: document.presentation.grid,
+        tolerance: logicalRadiusForPixels(svg, SNAP_CAPTURE_RADIUS_PX),
+      });
+    }
     const pitch =
       pendingComponentPlacement?.kind === "drafting-text"
         ? annotationGrid
@@ -3766,8 +3740,58 @@ export function App({
     return { point: snapped.position, guides: snapped.snap.guides };
   }
 
+  useEffect(() => {
+    const svg = snapGuideLayerRef.current?.ownerSVGElement;
+    const point = lastCanvasPointRef.current;
+    if (!copyPlacement?.previewPoint || !svg || !point) return;
+    // Rotation, reflection and repeated stamping change the geometry under a
+    // stationary pointer too. Keep the ghost and its guides in agreement.
+    const snapped = resolvePendingPlacementPoint(point, svg);
+    setCopyPreviewPoint(snapped.point);
+    paintSnapGuides(snapped.guides);
+  }, [copyPreviewState, sceneSnapTargetIndex]);
+
   function paintSnapGuides(guides: readonly SnapGuideLine[]): void {
     replaceCanvasSnapGuides(snapGuideLayerRef.current, guides);
+  }
+
+  function resolveNetLabelPlacementTarget(
+    point: Point,
+    svg?: SVGSVGElement,
+    preferredRouteId?: string,
+  ): NetLabelPlacementTarget | null {
+    return netLabelPlacementTargetAtPoint(
+      routeGeometryRecords,
+      point,
+      svg ? logicalRadiusForPixels(svg, NET_LABEL_SNAP_CAPTURE_RADIUS_PX) : 0,
+      preferredRouteId,
+    );
+  }
+
+  function netLabelSnapGuides(
+    target: NetLabelPlacementTarget | null,
+  ): readonly SnapGuideLine[] {
+    if (!target) return [];
+    const horizontalOffset =
+      Math.abs(target.labelPosition.x - target.conductorPoint.x) >=
+      Math.abs(target.labelPosition.y - target.conductorPoint.y);
+    return [
+      horizontalOffset
+        ? {
+            axis: "y",
+            coordinate: target.conductorPoint.y,
+            from: Math.min(target.labelPosition.x, target.conductorPoint.x),
+            to: Math.max(target.labelPosition.x, target.conductorPoint.x),
+            kind: "route",
+          }
+        : {
+            axis: "x",
+            coordinate: target.conductorPoint.x,
+            from: Math.min(target.labelPosition.y, target.conductorPoint.y),
+            to: Math.max(target.labelPosition.y, target.conductorPoint.y),
+            kind: "route",
+          },
+    ];
   }
 
   /**
@@ -3947,9 +3971,16 @@ export function App({
       // electrical verdict belongs to.
       electricalWarningsPresent: () =>
         requestElectricalDiagnostics().length > 0,
+      netlistProfile: netlistPreferences.profile,
+      netlistPortCase: netlistPreferences.portCase,
+      netlistConfigurationError: netlistPreferences.error,
       guardDirtyReplacement,
       replaceActiveProject,
-      setNetlistPreflightOpen,
+      showNetlist: (format, namingProfile) => {
+        netlistPreferences.selectFormat(format);
+        setNetlistNamingProfile(namingProfile);
+        showProjectPanel("netlist");
+      },
       setImportReport,
       setImportReviewOpen,
       setSelectionOpen,
@@ -3974,8 +4005,6 @@ export function App({
   function selectDraftingObject(id: string, additive = false): void {
     selectVisualObjects("drafting", draftingSelectionIds(id), additive);
     setDraftingInspectorSegment(null);
-    setDraftingTangentInput(null);
-    setDraftingBearingInput(null);
   }
 
   useEffect(() => {
@@ -4037,6 +4066,7 @@ export function App({
       if (event.key === "Escape" && netLabelPlacement) {
         event.preventDefault();
         cancelNetLabelEditing();
+        paintSnapGuides([]);
         return;
       }
       if (event.key === "Escape" && simulationPickActive) {
@@ -4103,9 +4133,6 @@ export function App({
         isTyping: isTypingTarget(event.target),
         hasUnsavedWork: hasUnsafeWork(),
         interactionMode: currentInteraction.kind,
-        hasRoutedMarkerSelection: Boolean(
-          selectedAnnotation && isRoutedMarker(selectedAnnotation),
-        ),
         canRotate: editorCommands.state({ id: "transform.rotate" }).enabled,
         canMirror: editorCommands.state({
           id: "transform.mirror",
@@ -4152,17 +4179,30 @@ export function App({
         case "open":
           projectInputRef.current?.click();
           return;
-        case "reverse-current-marker":
-          reverseSelectedCurrentArrow();
-          return;
         case "edit-net-label":
           activateTool("pointer");
-          beginNetLabelEditing(
-            lastCanvasPointRef.current ?? {
-              x: viewBox.x + viewBox.width / 2,
-              y: viewBox.y + viewBox.height / 2,
-            },
-          );
+          {
+            const pointer = lastCanvasPointRef.current;
+            const position = pointer
+              ? {
+                  x: snapCoordinate(pointer.x, document.presentation.grid),
+                  y: snapCoordinate(pointer.y, document.presentation.grid),
+                }
+              : {
+                  x: viewBox.x + viewBox.width / 2,
+                  y: viewBox.y + viewBox.height / 2,
+                };
+            beginNetLabelEditing(
+              position,
+              selectedRoute
+                ? resolveNetLabelPlacementTarget(
+                    position,
+                    undefined,
+                    selectedRoute.id,
+                  )
+                : null,
+            );
+          }
           return;
         case "toggle-display-settings":
           activateTool("pointer");
@@ -4409,7 +4449,9 @@ export function App({
             kind === "annotation") &&
           !selectionPolicy.allowsCanvasHit({ kind, id }, "context-menu")
         ) {
-          setCanvasContextMenu({ x: clientX, y: clientY });
+          if (hasVisualSelection(visualSelection)) {
+            setCanvasContextMenu({ x: clientX, y: clientY });
+          }
           return;
         }
         if (
@@ -4421,7 +4463,7 @@ export function App({
             kind === "annotation")
         ) {
           openVisualContextMenu(kind, id, clientX, clientY);
-        } else {
+        } else if (hasVisualSelection(visualSelection)) {
           setCanvasContextMenu({ x: clientX, y: clientY });
         }
       },
@@ -4438,7 +4480,10 @@ export function App({
       commitWaveformPlacement,
       clearComponentPreview: () => setComponentPreviewPoint(null),
       clearVddRailPreview: () => setVddRailPreviewPoint(null),
-      clearCopyPreview: () => setCopyPreviewPoint(null),
+      clearCopyPreview: () => {
+        setCopyPreviewPoint(null);
+        paintSnapGuides([]);
+      },
       clearWaveformPreview: () => setWaveformPlacementPoint(null),
     },
     gesture: {
@@ -4481,7 +4526,17 @@ export function App({
     },
     netLabelPlacement: {
       active: netLabelPlacement?.phase === "placing",
-      place: placeNetLabel,
+      placeAt: (position, svg) => {
+        const target = resolveNetLabelPlacementTarget(position, svg);
+        placeNetLabel(target);
+        if (target) paintSnapGuides([]);
+      },
+      clearHover: () => {
+        if (netLabelPlacement?.phase === "placing") {
+          updateNetLabelPlacementPosition(netLabelPlacement.position, null);
+        }
+        paintSnapGuides([]);
+      },
     },
     report: setStatus,
     consumePickupClick: () => {
@@ -4491,11 +4546,30 @@ export function App({
     },
   });
 
+  const openAgentConnection = () => {
+    setAgentPanelOpen(true);
+    if (
+      agentSession.status === "idle" ||
+      agentSession.status === "revoked" ||
+      agentSession.status === "expired" ||
+      (agentSession.status === "waiting-for-agent" &&
+        agentSession.claimExpiresAt !== null &&
+        agentSession.claimExpiresAt <= Date.now())
+    ) {
+      void agentSession.newConnection();
+    }
+  };
+
   return (
     <main className="app-shell">
       {renderCrashRequested() ? <RenderCrashProbe /> : null}
       <EditorAppChrome
-        simulationAction={openAnalogSimulation}
+        {...(publicSimulationUiEnabled
+          ? {
+              simulationAction: openAnalogSimulation,
+              onNewTestbench: () => openNewTestbenchDialog(),
+            }
+          : {})}
         simulationState={analogSimulationState}
         releaseChannel={releaseChannel}
         projectName={project.name}
@@ -4507,7 +4581,14 @@ export function App({
         onProjectNameCommit={commitProjectName}
         onProjectNameCancel={() => setProjectNameDraft(null)}
         onOpenGallery={() => {
-          void guardDirtyReplacement("Go to Gallery", () => {
+          void guardDirtyReplacement("Go to Gallery", async () => {
+            const snapshot = await captureAuthoredProject();
+            if (!snapshot) return;
+            stageRecovery(snapshot, {
+              unsavedAtSnapshot: isDirtyWork() || snapshot !== project,
+              cloudBinding,
+            });
+            await flushRecovery();
             allowNextBrowserUnload();
             window.location.assign("/");
           });
@@ -4559,14 +4640,18 @@ export function App({
           onExportProject: exportProjectFile,
           onExportSvg: exportSvg,
           onExportRaster: (format) => void exportRaster(format),
-          onExportNetlist: exportDesignNetlist,
           onRevert: revertToSavedProjectBaseline,
           onOpenRecovery: openRecoveryDialog,
         }}
         searchOpen={searchOpen}
         selectionFilterOpen={selectionFilterOpen}
         onManageCells={() => setCellManagerOpen(true)}
-        onNewTestbench={() => openNewTestbenchDialog()}
+        onInsertComponent={() =>
+          editorCommands.execute({
+            id: "insert.start",
+            launch: fullInsertLaunch(),
+          })
+        }
         placeProjectCell={{
           enabled: cellInsertCandidates.length > 0,
           execute: placeCellInstance,
@@ -4588,6 +4673,18 @@ export function App({
             hasVisualSelection(visualSelection) || selectedEndpoint !== null,
           execute: () => editorCommands.execute({ id: "selection.delete" }),
         }}
+        copySelectionImages={(["png", "svg"] as const).map((format) => ({
+          label: `Copy selection as ${format.toUpperCase()}`,
+          enabled: editorCommands.state({
+            id: "selection.copy-image",
+            format,
+          }).enabled,
+          execute: () =>
+            editorCommands.execute({
+              id: "selection.copy-image",
+              format,
+            }),
+        }))}
         resets={[
           {
             label: "清除图形",
@@ -4649,27 +4746,30 @@ export function App({
               })
             : []
         }
-        instanceTableOpen={instanceTableOpen}
+        instanceCodeOpen={projectPanel === "instances"}
         netlistPreflightOpen={netlistPreflightOpen}
         checkAndSave={{
           enabled: !saveBusy && !projectCheck.busy,
           execute: () => void projectCheck.checkAndSave(),
         }}
-        onOpenInstanceTable={() => setInstanceTableOpen(true)}
+        onOpenInstanceCode={() => {
+          showProjectPanel("instances");
+        }}
+        netlistProfileId={netlistPreferences.profile.id}
+        netlistFormat={netlistPreferences.format}
+        onOpenNetlistConfiguration={() => {
+          showProjectPanel("netlist-configuration");
+        }}
         onOpenNetlistPreflight={() => setNetlistPreflightOpen(true)}
+        onExportNetlist={exportDesignNetlist}
         agentAction={
           publicAgentUiEnabled
             ? {
                 label:
-                  agentSession.status === "idle" ? "连接 Agent" : "管理 Agent",
-                execute: () => {
-                  if (agentSession.status === "idle") {
-                    setAgentPanelOpen(true);
-                    return;
-                  }
-                  setSelectionOpen(true);
-                  setAgentDetailsOpen(true);
-                },
+                  agentSession.status === "idle"
+                    ? "Connect Agent"
+                    : "Manage Agent",
+                execute: openAgentConnection,
               }
             : null
         }
@@ -4689,18 +4789,14 @@ export function App({
         helpOpen={helpOpen}
         onOpenHelp={() => setHelpOpen(true)}
         drawingToolbar={{
-          arrowPreset,
-          onArrowPresetChange: (preset) => {
-            clearDraftingCreate();
-            setArrowPresetState(preset);
-            setStatus(
-              preset.family === "outline"
-                ? "Outline arrow: click to place, or drag to size (Esc cancels)"
-                : "Arrow: click the start point",
-            );
-          },
           leftPanelMode,
           libraryPanelOpen: visibleLibraryPanelOpen,
+          projectPanel:
+            projectPanel === "project-code"
+              ? "project-code"
+              : projectPanel
+                ? "netlist"
+                : null,
           leftPanelsDisabled: false,
           tool,
           documentSettingsOpen,
@@ -4714,11 +4810,8 @@ export function App({
           },
           onToggleExamples: toggleExamplesPanel,
           onToggleLibrary: toggleLibraryPanel,
-          onInsert: () =>
-            editorCommands.execute({
-              id: "insert.start",
-              launch: fullInsertLaunch(),
-            }),
+          onToggleNetlist: () => toggleProjectPanel("netlist"),
+          onToggleProjectCode: () => toggleProjectPanel("project-code"),
           onActivateTool: (nextTool) =>
             editorCommands.execute({
               id: "tool.activate",
@@ -4727,6 +4820,7 @@ export function App({
           onAddText: () => editorCommands.execute({ id: "drafting.add-text" }),
           onOpenDocumentSettings: () => {
             setDocumentSettingsOpen((open) => !open);
+            setProjectPanel(null);
             setSelectionOpen(true);
           },
           ...(timingUiEnabled
@@ -4841,6 +4935,7 @@ export function App({
           replaceGuard !== null
             ? {
                 intent: replaceGuard.intent,
+                cloudProjectLimit: CLOUD_PROJECT_LIMIT,
                 saving: replaceGuardSaving,
                 onCancel: cancelReplaceGuard,
                 onSaveAndContinue: saveAndContinueReplaceGuard,
@@ -4857,27 +4952,6 @@ export function App({
                 onQueryChange: setSearchQuery,
                 onSelect: selectSearchResult,
                 onClose: closeSearch,
-              }
-            : null
-        }
-        instanceTable={
-          instanceTableOpen
-            ? {
-                open: instanceTableOpen,
-                project,
-                connectivityIndex: projectConnectivityIndex,
-                activeDocumentId: document.id,
-                onClose: () => setInstanceTableOpen(false),
-                onOpenInstance: openInstanceFromTable,
-                onApply: (transactionId, edits) => {
-                  const committed = commitStructure(transactionId, edits);
-                  if (committed) {
-                    setStatus(
-                      `Updated ${edits.length} Cell${edits.length === 1 ? "" : "s"}`,
-                    );
-                  }
-                  return committed;
-                },
               }
             : null
         }
@@ -5000,7 +5074,7 @@ export function App({
             : null
         }
         newTestbench={
-          newTestbenchDutId
+          publicSimulationUiEnabled && newTestbenchDutId
             ? {
                 documents: project.documents,
                 initialDutDocumentId: newTestbenchDutId,
@@ -5014,14 +5088,17 @@ export function App({
             ? {
                 open: netlistPreflightOpen,
                 project,
+                profile: netlistPreferences.profile,
+                format: netlistPreferences.format,
+                portCase: netlistPreferences.portCase,
                 // The dialog only renders while open, so this IS the
                 // explicit check the author asked for.
                 electricalDiagnostics: requestElectricalDiagnostics(),
                 onClose: () => setNetlistPreflightOpen(false),
                 onNavigate: navigateToNetlistDiagnostic,
                 onNavigateElectrical: jumpToProjectDiagnostic,
-                onExport: (format, namingProfile) =>
-                  exportDesignNetlist(format, true, namingProfile),
+                onExport: (namingProfile) =>
+                  exportDesignNetlist(netlistPreferences.format, namingProfile),
               }
             : null
         }
@@ -5153,7 +5230,6 @@ export function App({
                 expiresAt: agentSession.expiresAt,
                 error: agentSession.error,
                 now: Date.now(),
-                onGrant: agentSession.grant,
                 onPause: agentSession.pause,
                 onResume: agentSession.resume,
                 onReconnect: agentSession.reconnect,
@@ -5189,7 +5265,8 @@ export function App({
           } as CSSProperties
         }
       >
-        {selectionOpen && !analogSimulationMaximized ? (
+        {(selectionOpen || projectPanel !== null) &&
+        !analogSimulationMaximized ? (
           <div
             className="properties-resize-handle"
             role="separator"
@@ -5231,9 +5308,7 @@ export function App({
             }}
           />
         ) : null}
-        {analogSimulationOpen &&
-        !selectionOpen &&
-        !analogSimulationMaximized ? (
+        {analogSimulationOpen && !analogSimulationMaximized ? (
           <div
             className="simulation-resize-handle"
             role="separator"
@@ -5332,22 +5407,16 @@ export function App({
         ) : null}
         <EditorRightDock
           simulationOpen={analogSimulationOpen}
-          propertiesOpen={selectionOpen}
+          simulationOpened={analogSimulationOpened}
           maximized={analogSimulationMaximized}
-          onSelectProperties={(open) => {
-            if (open && compactLayout) setCompactLibraryPanelOpen(false);
-            if (!open) {
-              exitCellSymbolLayout();
-              setImportReviewOpen(false);
-            }
-            setSelectionOpen(open);
-          }}
+          onRestoreSimulation={openAnalogSimulation}
           code={
-            analogSimulationOpened ? (
+            analogSimulationOpened && humanSimulationSession ? (
               <Suspense fallback={null}>
                 <LazySpiceSimulationSurface
                   key={projectSessionId}
                   session={humanSimulationSession}
+                  runHistory={projectRunHistory}
                   project={project}
                   activeDocumentId={document.id}
                   selectedCircuitObject={
@@ -5365,6 +5434,30 @@ export function App({
                       : (activeSimulationFolder?.id ?? null)
                   }
                   onSelectFolderId={setActiveSimulationFolderId}
+                  agentGuidance={
+                    publicAgentUiEnabled
+                      ? {
+                          status: agentSession.status,
+                          onOpen: openAgentConnection,
+                        }
+                      : undefined
+                  }
+                  onOpenExample={async (exampleProject) => {
+                    await guardDirtyReplacement(
+                      `Open ${exampleProject.name} example`,
+                      () => {
+                        replaceActiveProject(exampleProject, DEFAULT_VIEWBOX);
+                        setSimulationDraftContext(null);
+                        setActiveSimulationFolderId(
+                          exampleProject.simulationFolders[0]?.id ?? null,
+                        );
+                        setAnalogSimulationState("open");
+                        setStatus(
+                          `Opened simulation example: ${exampleProject.name}`,
+                        );
+                      },
+                    );
+                  }}
                   {...(simulationDraftContext
                     ? { draftContext: simulationDraftContext }
                     : {})}
@@ -5379,8 +5472,6 @@ export function App({
                   onSourceBuffer={(buffer) => {
                     simulationSourceBuffer.current = buffer;
                   }}
-                  onSaveProject={() => saveProjectToCloud()}
-                  projectSaveState={persistenceState}
                   onSaveFolder={(
                     folder,
                     expectedRevision = project.structureRevision,
@@ -5463,7 +5554,6 @@ export function App({
                   onFocusDiagnostic={(locator) =>
                     navigateToLocator(locator, `Located ${locator.kind}`)
                   }
-                  onOperatingPointProjection={setOperatingPointProjection}
                   onPreviewSignal={(target) => {
                     const hierarchyPath =
                       target &&
@@ -5482,81 +5572,103 @@ export function App({
                         : null,
                     );
                   }}
-                  onFocusProbe={(probe, preparedRootDocumentId) => {
-                    setCodeNetPreview(null);
-                    const targetDocument = project.documents.find(
-                      (candidate) => candidate.id === probe.documentId,
-                    );
-                    const voltageNetId =
-                      probe.kind === "voltage"
-                        ? resolveSimulationVoltageProbeNetId(project, probe)
-                        : undefined;
-                    const targetExists =
-                      probe.kind === "voltage"
-                        ? voltageNetId !== undefined
-                        : targetDocument?.nets.some((net) =>
-                            net.terminals.some(
-                              (terminal) =>
-                                terminal.instanceId === probe.instanceId &&
-                                terminal.pinName === probe.pinName,
-                            ),
-                          ) === true;
-                    if (!targetExists) {
-                      setStatus(
-                        "This Output no longer matches the current Project; update the Setup and run again",
-                      );
-                      return;
-                    }
-                    const input = activeSimulationFolder?.input;
-                    const rootDocumentId =
-                      preparedRootDocumentId ??
-                      ("circuit" in probe
-                        ? input?.circuitBindings.find(
-                            (binding) => binding.id === probe.circuit.bindingId,
-                          )?.documentId
-                        : undefined) ??
-                      input?.circuitBindings.find(
-                        (binding) => binding.emission === "top-level",
-                      )?.documentId ??
-                      probe.documentId;
-                    const hierarchyPath = simulationProbeHierarchyPath(
-                      project,
-                      rootDocumentId,
-                      probe.occurrence,
-                    );
-                    if (hierarchyPath === null) {
-                      setStatus("The Output occurrence no longer exists");
-                      return;
-                    }
-                    navigateToLocator(
-                      probe.kind === "voltage"
-                        ? {
-                            documentId: probe.documentId,
-                            hierarchyPath,
-                            kind: "net",
-                            objectId: voltageNetId!,
-                          }
-                        : {
-                            documentId: probe.documentId,
-                            hierarchyPath,
-                            kind: "instance",
-                            objectId: probe.instanceId,
-                            endpoint: {
-                              kind: "terminal",
-                              instanceId: probe.instanceId,
-                              pinName: probe.pinName,
-                            },
-                          },
-                      probe.kind === "voltage"
-                        ? `Located simulation Net ${voltageNetId}`
-                        : `Located simulation terminal ${probe.instanceId}.${probe.pinName}`,
-                    );
-                    // Back-annotation should not unexpectedly open the ordinary
-                    // Properties dock over the simulation workspace.
-                    setSelectionOpen(false);
-                  }}
                 />
               </Suspense>
+            ) : null
+          }
+          project={
+            projectPanel ? (
+              <EditorProjectDock onClose={closeProjectPanel}>
+                {projectPanel === "netlist-configuration" ? (
+                  <NetlistProfileCode
+                    text={netlistPreferences.text}
+                    error={netlistPreferences.error}
+                    onChange={netlistPreferences.changeText}
+                  />
+                ) : projectPanel === "netlist" ? (
+                  <NetlistCodePanel
+                    project={project}
+                    format={netlistPreferences.format}
+                    namingProfile={netlistNamingProfile}
+                    portCase={netlistPreferences.portCase}
+                    profile={netlistPreferences.profile}
+                    onProfileChange={netlistPreferences.selectProfile}
+                    onFormatChange={netlistPreferences.selectFormat}
+                    onPortCaseChange={netlistPreferences.selectPortCase}
+                    onDeviceTargetChange={netlistPreferences.setDeviceTarget}
+                    onReset={netlistPreferences.reset}
+                    onCopy={() =>
+                      exportDesignNetlist(
+                        netlistPreferences.format,
+                        netlistNamingProfile,
+                      )
+                    }
+                    configurationError={netlistPreferences.error}
+                  />
+                ) : projectPanel === "instances" ? (
+                  <InstanceCodePanel
+                    key={projectSessionId}
+                    project={project}
+                    onApply={(edits) => {
+                      const committed = commitStructure(
+                        "edit-instance-code",
+                        edits,
+                      );
+                      if (committed)
+                        setStatus(
+                          `Updated instance code in ${edits.length} Cell${edits.length === 1 ? "" : "s"}`,
+                        );
+                      return committed;
+                    }}
+                  />
+                ) : (
+                  <ProjectCodePanel
+                    project={project}
+                    onApply={(source, baseline) => {
+                      if (formatProjectCode(project) !== baseline) {
+                        return {
+                          ok: false,
+                          message:
+                            "The canvas or Agent changed this Project while you were editing. Reload the live code before applying.",
+                        };
+                      }
+                      const plan = planProjectCodeCommit(
+                        project,
+                        source,
+                        document.id,
+                      );
+                      if (!plan.ok) return plan;
+                      if (!plan.changed) {
+                        setStatus("Project Code is already up to date");
+                        return { ok: true };
+                      }
+                      try {
+                        resetInteractionState();
+                        const nextDocument = commitProjectStructure(
+                          plan.project,
+                          plan.activeDocumentId,
+                        );
+                        documentViewBoxes.current = new Map();
+                        setDocumentStack([]);
+                        setViewBox(
+                          DEFAULT_VIEWBOX,
+                          nextDocument.presentation.grid,
+                        );
+                        setStatus("Applied complete Project Code");
+                        return { ok: true };
+                      } catch (error) {
+                        return {
+                          ok: false,
+                          message:
+                            error instanceof Error
+                              ? error.message
+                              : "Could not apply Project Code",
+                        };
+                      }
+                    }}
+                  />
+                )}
+              </EditorProjectDock>
             ) : null
           }
           properties={
@@ -5564,7 +5676,9 @@ export function App({
               open={selectionOpen}
               shelfRef={selectionShelfRef}
               onToggle={() => {
-                if (selectionOpen) exitCellSymbolLayout();
+                if (selectionOpen) {
+                  exitCellSymbolLayout();
+                }
                 // Narrow layouts have room for one side panel. Whichever the user
                 // just asked for wins.
                 else if (compactLayout) setCompactLibraryPanelOpen(false);
@@ -5589,24 +5703,72 @@ export function App({
                 documentSettingsOpen
                   ? {
                       document,
-                      onApplyStyle: (styleOverrides) => {
-                        const result = transact([
-                          {
+                      canvas: {
+                        showGrid: gridDotsVisible,
+                        annotationGrid,
+                        drawAngle: drawAngleMode,
+                        scrollBehavior: wheelBehavior,
+                      },
+                      onApply: (value) => {
+                        const current = documentSettingsCodeValue(document, {
+                          showGrid: gridDotsVisible,
+                          annotationGrid,
+                          drawAngle: drawAngleMode,
+                          scrollBehavior: wheelBehavior,
+                        });
+                        const edits: SchematicEdit[] = [];
+                        if (
+                          JSON.stringify(value.appearance) !==
+                          JSON.stringify(current.appearance)
+                        ) {
+                          edits.push({
                             kind: "set_presentation_style",
                             styleProfileId:
                               document.presentation.styleProfileId,
-                            styleOverrides,
-                          },
-                        ]);
-                        if (result.ok) {
-                          setStatus(
-                            styleOverrides
-                              ? "Updated document style"
-                              : "Reset document style to profile defaults",
-                          );
+                            styleOverrides: normalizedStyleOverrides(
+                              value.appearance,
+                            ),
+                          });
                         }
+                        if (
+                          value.bulkDefaults.nmosNet !==
+                          current.bulkDefaults.nmosNet
+                        )
+                          edits.push(
+                            ...planMosBulkDefaultUpdate(
+                              document,
+                              "nmos",
+                              value.bulkDefaults.nmosNet,
+                            ),
+                          );
+                        if (
+                          value.bulkDefaults.pmosNet !==
+                          current.bulkDefaults.pmosNet
+                        )
+                          edits.push(
+                            ...planMosBulkDefaultUpdate(
+                              document,
+                              "pmos",
+                              value.bulkDefaults.pmosNet,
+                            ),
+                          );
+                        if (edits.length > 0 && !transact(edits).ok) {
+                          return {
+                            ok: false as const,
+                            message: "Style code was rejected",
+                          };
+                        }
+                        if (value.canvas.showGrid !== gridDotsVisible)
+                          setGridDotsVisible(value.canvas.showGrid);
+                        if (value.canvas.annotationGrid !== annotationGrid)
+                          setAnnotationGrid(value.canvas.annotationGrid);
+                        if (value.canvas.drawAngle !== drawAngleMode)
+                          setDrawAngleMode(value.canvas.drawAngle);
+                        if (value.canvas.scrollBehavior !== wheelBehavior)
+                          setWheelBehavior(value.canvas.scrollBehavior);
+                        setStatus("Updated Style code");
+                        return { ok: true as const };
                       },
-                      onChangeBulkDefault: updateMosBulkDefault,
                     }
                   : null
               }
@@ -5633,22 +5795,107 @@ export function App({
                 view: routingGuidanceView,
                 onViewChange: setRoutingGuidanceView,
               }}
-              groupDisplay={{
+              groupProperties={{
                 active: selectedIds.length > 1,
-                referencesVisible: selectedGroupLabelsAllVisible,
-                valuesVisible: selectedGroupValuesAllVisible,
-                valuesAvailable: selectedGroupValueAvailable,
-                onReferencesVisibleChange: (visible) =>
-                  setReferenceLabelsVisible(selectedIds, visible),
-                onValuesVisibleChange: (visible) =>
-                  setValueLabelsVisible(selectedIds, visible),
+                count: selectedIds.length,
+                selectionKey: JSON.stringify([
+                  document.id,
+                  [...selectedIds].sort(),
+                ]),
+                revision: document.revision,
+                defaultForeground: styleProfile.foreground,
+                context: selectedGroupContext,
+                onApply: (value: GroupPropertyCodeValue) => {
+                  const edits = planGroupPropertyCodeEdits(
+                    selectedGroupInstances,
+                    value,
+                    selectedGroupContext,
+                  );
+                  if (
+                    value.display.visualAnnotation !== "" &&
+                    value.display.visualAnnotation !==
+                      selectedGroupReferenceVisibility
+                  )
+                    edits.push(
+                      ...referenceLabelVisibilityEdits(
+                        selectedIds,
+                        value.display.visualAnnotation,
+                      ),
+                    );
+                  if (
+                    value.display.value !== undefined &&
+                    value.display.value !== "" &&
+                    value.display.value !== selectedGroupValueVisibility
+                  ) {
+                    // Display creation must see parameter changes in this same
+                    // transaction, including components that had no value yet.
+                    const patches = new Map(
+                      edits.flatMap((edit) =>
+                        edit.kind === "patch_instance_netlist_parameters"
+                          ? [[edit.instanceId, edit.set ?? {}] as const]
+                          : [],
+                      ),
+                    );
+                    const candidateDocument = {
+                      ...document,
+                      instances: document.instances.map((instance) => {
+                        const set = patches.get(instance.id);
+                        return set && instance.netlist
+                          ? {
+                              ...instance,
+                              netlist: {
+                                ...instance.netlist,
+                                parameters: {
+                                  ...instance.netlist.parameters,
+                                  ...set,
+                                },
+                              },
+                            }
+                          : instance;
+                      }),
+                    };
+                    if (
+                      value.display.value &&
+                      candidateDocument.instances.some(
+                        (instance) =>
+                          selectedIds.includes(instance.id) &&
+                          symbolSupportsValueAnnotation(instance.symbolId) &&
+                          displayableInstanceValue(instance).kind !==
+                            "displayable",
+                      )
+                    )
+                      return {
+                        ok: false,
+                        message:
+                          "Set valid component values before enabling their display",
+                      };
+                    edits.push(
+                      ...valueVisibilityEdits(
+                        candidateDocument,
+                        selectedIds,
+                        value.display.value,
+                      ),
+                    );
+                  }
+                  if (edits.length === 0) return { ok: true };
+                  if (transact(edits).ok) {
+                    setStatus(
+                      `Updated shared properties on ${selectedIds.length} components`,
+                    );
+                    return { ok: true };
+                  }
+                  return {
+                    ok: false,
+                    message: "Could not update the selected components",
+                  };
+                },
               }}
               component={
                 selectedInstance
                   ? {
                       code: {
-                        focusRequest: propertyCodeFocusRequest,
                         instance: selectedInstance,
+                        displayName: selectedDisplayName,
                         defaultForeground: styleProfile.foreground,
                         revision: document.revision,
                         referenceVisible:
@@ -5663,6 +5910,19 @@ export function App({
                           ? selectedInstanceValue !== null &&
                             selectedInstanceValue.visible !== false
                           : null,
+                        parameterVisibility: instanceParameterVisibility(
+                          document,
+                          selectedInstance,
+                        ),
+                        connection: selectedSupplyMarker
+                          ? selectedFormalTerminal
+                            ? "cell-pin"
+                            : "global"
+                          : null,
+                        netName:
+                          selectedSupplyMarker && !selectedFormalTerminal
+                            ? (selectedPortLogicalName ?? "")
+                            : null,
                         onApply: (value: ComponentPropertyCodeValue) => {
                           try {
                             const edits: SchematicEdit[] =
@@ -5693,11 +5953,11 @@ export function App({
                                 placement: {
                                   position: {
                                     x: snapCoordinate(
-                                      value.placement.at[0],
+                                      value.placement.coordinate[0],
                                       document.presentation.grid,
                                     ),
                                     y: snapCoordinate(
-                                      value.placement.at[1],
+                                      value.placement.coordinate[1],
                                       document.presentation.grid,
                                     ),
                                   },
@@ -5729,7 +5989,20 @@ export function App({
                                   : instance,
                               ),
                             };
-                            const desiredReference = value.display?.reference;
+                            if (value.display?.parameters) {
+                              // Apply visibility before movement so the transaction transforms
+                              // new and retained parameter anchors exactly once.
+                              edits.unshift(
+                                ...instanceParameterVisibilityEdits(
+                                  candidateDocument,
+                                  candidateInstance,
+                                  resolver,
+                                  value.display.parameters,
+                                ),
+                              );
+                            }
+                            const desiredReference =
+                              value.display?.visualAnnotation;
                             const currentReference =
                               selectedInstanceLabel !== undefined &&
                               selectedInstanceLabel.visible !== false;
@@ -5771,6 +6044,36 @@ export function App({
                                 ),
                               );
                             }
+                            if (
+                              value.netName !== undefined &&
+                              value.netName !== selectedPortLogicalName
+                            ) {
+                              const markerPlan = planElectricalMarkerName(
+                                document,
+                                selectedInstance.id,
+                                value.netName,
+                              );
+                              if (markerPlan.status === "rejected") {
+                                return {
+                                  ok: false as const,
+                                  message: markerPlan.message,
+                                };
+                              }
+                              if (markerPlan.status === "ready") {
+                                const gate = gateRoutingOperationPlan(
+                                  document,
+                                  markerPlan.operationPlan,
+                                  { symbolResolver: resolver },
+                                );
+                                if (!gate.ok) {
+                                  return {
+                                    ok: false as const,
+                                    message: gate.message,
+                                  };
+                                }
+                                edits.push(...gate.edits);
+                              }
+                            }
                             const currentTarget =
                               selectedInstance.netlist?.binding?.kind ===
                               "model"
@@ -5788,9 +6091,29 @@ export function App({
                                     value.netlistTarget,
                                   )
                                 : [];
+                            const currentConnection = selectedSupplyMarker
+                              ? selectedFormalTerminal
+                                ? "cell-pin"
+                                : "global"
+                              : undefined;
+                            const connectionEdits: ProjectStructureEdit[] =
+                              selectedSupplyMarker &&
+                              value.connection !== undefined &&
+                              value.connection !== currentConnection
+                                ? planSetVddConnectionMode(
+                                    project,
+                                    document.id,
+                                    selectedSupplyMarker.id,
+                                    value.connection,
+                                  )
+                                : [];
+                            const structureEdits = [
+                              ...targetEdits,
+                              ...connectionEdits,
+                            ];
                             if (
                               edits.length === 0 &&
-                              targetEdits.length === 0
+                              structureEdits.length === 0
                             ) {
                               setStatus(
                                 `Canvas properties for ${selectedInstance.id} are already up to date`,
@@ -5798,10 +6121,10 @@ export function App({
                               return { ok: true as const };
                             }
                             let applied: boolean;
-                            if (targetEdits.length > 0) {
-                              // Merge the target planner's document edits with the draft into
+                            if (structureEdits.length > 0) {
+                              // Merge structural document edits with the draft into
                               // one project transaction and one undo boundary.
-                              const documentEdit = targetEdits.find(
+                              const documentEdit = structureEdits.find(
                                 (edit) =>
                                   edit.kind === "transact_document" &&
                                   edit.documentId === document.id,
@@ -5809,7 +6132,7 @@ export function App({
                               if (documentEdit?.kind === "transact_document")
                                 documentEdit.edits.push(...edits);
                               else if (edits.length)
-                                targetEdits.push({
+                                structureEdits.push({
                                   kind: "transact_document",
                                   documentId: document.id,
                                   expectedRevision: document.revision,
@@ -5817,7 +6140,7 @@ export function App({
                                 });
                               applied = commitStructure(
                                 "apply-component-property-code",
-                                targetEdits,
+                                structureEdits,
                               );
                             } else applied = transact(edits).ok;
                             if (!applied) {
@@ -5842,14 +6165,6 @@ export function App({
                           }
                         },
                       },
-                      formalPort: selectedFormalTerminal
-                        ? {
-                            terminal: selectedFormalTerminal,
-                            revision: document.revision,
-                            onRename: renameSelectedFormalPort,
-                            onDirectionChange: updateCellPinDirection,
-                          }
-                        : null,
                       cellSymbolLayout: selectedHierarchyCell
                         ? {
                             cell: selectedHierarchyCell,
@@ -5874,14 +6189,6 @@ export function App({
                         instance: selectedInstance,
                         sourceCode: selectedComponentSourceCode!,
                         revision: document.revision,
-                        formalTerminalSelected: Boolean(selectedFormalTerminal),
-                        portNet: selectedPortNet
-                          ? {
-                              id: selectedPortNet.id,
-                              logicalName: selectedPortLogicalName ?? "",
-                              supply: Boolean(selectedSupplyMarker),
-                            }
-                          : null,
                         targetDescription:
                           selectedInstance.netlist &&
                           !(
@@ -5956,11 +6263,6 @@ export function App({
                                 ),
                               }
                             : null,
-                        onMarkerNameChange: (value) =>
-                          commitElectricalMarkerName(
-                            selectedInstance.id,
-                            value,
-                          ),
                         onReferenceChange: updateSelectedReference,
                         ...(selectedInstanceLabel && selectedInstance.placement
                           ? {
@@ -5972,150 +6274,9 @@ export function App({
                           : {}),
                         onModelTargetChange: updateSelectedModelTarget,
                       },
-                      signalFlow: selectedSignalFlowPresentation
-                        ? {
-                            instance: selectedInstance,
-                            presentation: selectedSignalFlowPresentation,
-                            revision: document.revision,
-                            onChange: (parameters) => {
-                              const result = transact([
-                                {
-                                  kind: "set_instance_signal_flow_parameters",
-                                  instanceId: selectedInstance.id,
-                                  parameters,
-                                },
-                              ]);
-                              if (result.ok) {
-                                setStatus(
-                                  parameters
-                                    ? `Updated Signal Flow presentation for ${selectedInstance.id}`
-                                    : `Reset Signal Flow presentation for ${selectedInstance.id}`,
-                                );
-                              }
-                              return result.ok;
-                            },
-                          }
-                        : null,
-                      electrical: {
-                        instance: selectedInstance,
-                        parameters:
-                          propertyParametersForInstance(selectedInstance),
-                        parameterValues: instancePropertyDraft.parameters,
-                        firstInputRef: instanceValueInputRef,
-                        referenceVisible:
-                          selectedInstanceLabel !== undefined &&
-                          selectedInstanceLabel.visible !== false,
-                        valueVisible:
-                          selectedInstanceValue !== null &&
-                          selectedInstanceValue.visible !== false,
-                        valueAvailable: selectedInstanceValueAvailable,
-                        valueSupported: selectedInstance
-                          ? symbolSupportsValueAnnotation(
-                              selectedInstance.symbolId,
-                            )
-                          : false,
-                        referenceAvailable: selectedInstance
-                          ? symbolCarriesReference(selectedInstance.symbolId)
-                          : false,
-                        referenceLabelRenderable: selectedLabelRenderable,
-                        additionalParameters: additionalParameterDraft,
-                        additionalParametersChanged:
-                          additionalParameterDraftChanges,
-                        onParameterChange: (key, value) =>
-                          updateInstancePropertyDraft((current) => ({
-                            ...current,
-                            parameters: updateComponentParameterValues(
-                              selectedInstance.symbolId,
-                              current.parameters,
-                              key,
-                              value,
-                            ),
-                          })),
-                        onReferenceVisibilityChange: (checked) =>
-                          setReferenceLabelsVisible(
-                            [selectedInstance.id],
-                            checked,
-                          ),
-                        onValueVisibilityChange: (checked) => {
-                          if (checked) showSelectedInstanceValue();
-                          else
-                            setValueLabelsVisible([selectedInstance.id], false);
-                        },
-                        onAdditionalParameterChange: updateAdditionalParameter,
-                        onAdditionalParameterRemove: removeAdditionalParameter,
-                        onAdditionalParameterAdd: addAdditionalParameter,
-                        onAdditionalParametersApply: applyAdditionalParameters,
-                        onAdditionalParametersCancel:
-                          cancelAdditionalParameters,
-                      },
-                      placement: {
-                        instance: selectedInstance,
-                        x: instancePropertyDraft.x,
-                        y: instancePropertyDraft.y,
-                        rotation: instancePropertyDraft.rotation,
-                        draftChanged: hasInstancePropertyDraftChanges,
-                        onXChange: (x) =>
-                          updateInstancePropertyDraft((current) => ({
-                            ...current,
-                            x,
-                          })),
-                        onYChange: (y) =>
-                          updateInstancePropertyDraft((current) => ({
-                            ...current,
-                            y,
-                          })),
-                        onRotate: () =>
-                          editorCommands.execute({ id: "transform.rotate" }),
-                        onMirror: (direction) =>
-                          editorCommands.execute({
-                            id: "transform.mirror",
-                            direction,
-                          }),
-                        onReturnToTray: () =>
-                          returnInstancesToTray([selectedInstance.id]),
-                        ...(switchContactStyleSibling(selectedInstance.symbolId)
-                          ? {
-                              onSwapContactStyle: {
-                                label: drawsContactCircles(
-                                  selectedInstance.symbolId,
-                                )
-                                  ? "Draw without contact circles"
-                                  : "Draw with contact circles",
-                                run: () =>
-                                  transact(
-                                    planSwitchContactStyleSwap(
-                                      selectedInstance.id,
-                                      selectedInstance.symbolId,
-                                    ),
-                                  ),
-                              },
-                            }
-                          : {}),
-                        ...(differentialOutputSibling(selectedInstance.symbolId)
-                          ? {
-                              onSwapOutputs: () =>
-                                transact(
-                                  planDifferentialOutputSwap(
-                                    selectedInstance.id,
-                                    selectedInstance.symbolId,
-                                  ),
-                                ),
-                            }
-                          : {}),
-                        ...(selectedInstanceHasDifferentialInputs &&
-                        differentialInputSibling(selectedInstance.symbolId)
-                          ? {
-                              onSwapInputs: () =>
-                                transact(
-                                  planDifferentialInputSwap(
-                                    selectedInstance.id,
-                                    selectedInstance.symbolId,
-                                  ),
-                                ),
-                            }
-                          : {}),
-                        onDiscard: discardInstancePropertyDraft,
-                      },
+                      signalFlow: Boolean(selectedSignalFlowPresentation),
+                      parameters:
+                        propertyParametersForInstance(selectedInstance),
                     }
                   : null
               }
@@ -6124,35 +6285,19 @@ export function App({
                   ? {
                       annotation: selectedAnnotation,
                       inheritedColor: selectedAnnotationInheritedTextColor,
-                      onChange: (textColor) => {
-                        if (selectedAnnotation.locked) {
-                          setStatus(
-                            "Unlock this annotation before changing its text color",
-                          );
-                          return;
-                        }
-                        const annotation = { ...selectedAnnotation };
-                        if (textColor === undefined)
-                          delete annotation.textColor;
-                        else annotation.textColor = textColor;
+                      onApply: (annotation) => {
                         const result = transact([
-                          {
-                            kind: "upsert_schematic_annotation",
-                            annotation,
-                          },
+                          { kind: "upsert_schematic_annotation", annotation },
                         ]);
-                        if (result.ok) {
-                          setStatus(
-                            textColor === undefined
-                              ? "Annotation text color set to Auto"
-                              : "Updated annotation text color",
-                          );
-                        }
+                        if (result.ok)
+                          setStatus("Updated annotation properties");
+                        return result;
                       },
                     }
                   : null
               }
               netName={
+                selectedRouteId === null &&
                 selectedNetNameAnnotation &&
                 selectedNetNameClaim?.kind === "name-claim"
                   ? {
@@ -6183,17 +6328,14 @@ export function App({
                       resolver,
                       object: selectedDrafting,
                       defaultColor: styleProfile.foreground,
-                      inspectorSegment: draftingInspectorSegment,
-                      tangentInput: draftingTangentInput,
-                      bearingInput: draftingBearingInput,
-                      onInspectorSegmentChange: setDraftingInspectorSegment,
-                      onTangentInputChange: setDraftingTangentInput,
-                      onBearingInputChange: setDraftingBearingInput,
-                      onStyleChange: setDraftingStyle,
-                      onGeometryChange: setDraftingGeometry,
-                      onTangentAngleChange: setDraftingTangentAngle,
-                      onBearingChange: setDraftingBearing,
-                      onArrowPresetChange: setArrowPreset,
+                      grid: annotationGrid,
+                      onApply: (object) => {
+                        const result = transact([
+                          { kind: "upsert_drafting_object", object },
+                        ]);
+                        if (result.ok) setStatus("Updated drawing properties");
+                        return result;
+                      },
                       onStackingChange: setDraftingStacking,
                       onToggleLock: () => toggleDraftingLock(selectedDrafting),
                     }
@@ -6213,65 +6355,13 @@ export function App({
               }}
               routeActions={{
                 active: selectedRouteId !== null,
-                netLabelInputRef: netLabelPropertyInputRef,
-                netLabel: netLabelDraft,
-                color: selectedRoute?.styleOverride?.color,
-                arrow: selectedRoute?.styleOverride?.arrow,
+                document,
+                route: selectedRoute ?? null,
+                netLabel: selectedRouteNetLabel ?? null,
+                bulkOwnerLabel: selectedMosBulkOwnerLabel,
                 defaultColor: styleProfile.foreground,
                 highlightActive: selectedHighlightIsActive,
-                onNetLabelChange: updateNetLabelDraft,
-                onColorChange: (color) => {
-                  if (!selectedRoute) return;
-                  const styleOverride = {
-                    ...(selectedRoute.styleOverride ?? {}),
-                  };
-                  if (color) styleOverride.color = color;
-                  else delete styleOverride.color;
-                  const result = transact([
-                    {
-                      kind: "set_route_style_override",
-                      routeId: selectedRoute.id,
-                      styleOverride:
-                        Object.keys(styleOverride).length > 0
-                          ? styleOverride
-                          : null,
-                    },
-                  ]);
-                  if (result.ok) {
-                    setStatus(
-                      color
-                        ? `Updated wire color for ${selectedRoute.id}`
-                        : `Reset wire color for ${selectedRoute.id}`,
-                    );
-                  }
-                },
-                onArrowChange: (arrow) => {
-                  if (!selectedRoute) return;
-                  const styleOverride = {
-                    ...(selectedRoute.styleOverride ?? {}),
-                  };
-                  if (arrow) styleOverride.arrow = arrow;
-                  else delete styleOverride.arrow;
-                  const result = transact([
-                    {
-                      kind: "set_route_style_override",
-                      routeId: selectedRoute.id,
-                      styleOverride:
-                        Object.keys(styleOverride).length > 0
-                          ? styleOverride
-                          : null,
-                    },
-                  ]);
-                  if (result.ok) {
-                    setStatus(
-                      arrow
-                        ? `Placed wire arrow at ${arrow} for ${selectedRoute.id}`
-                        : `Removed wire arrow from ${selectedRoute.id}`,
-                    );
-                  }
-                },
-                onDeleteNetLabel: deleteSelectedRouteNetLabel,
-                onAddCurrentArrow: addCurrentArrow,
+                onApply: applyRouteProperties,
                 onToggleHighlight: toggleHighlightedNet,
                 onDeleteWire: deleteSelectedRouteConnection,
               }}
@@ -6296,7 +6386,6 @@ export function App({
                       ? "net-label"
                       : null,
                 highlightActive: selectedHighlightIsActive,
-                onReverseCurrentArrow: reverseSelectedCurrentArrow,
                 onDeleteCurrentArrow: deleteSelectedAnnotation,
                 onToggleHighlight: toggleHighlightedNet,
               }}
@@ -6311,6 +6400,22 @@ export function App({
                 onSelectDiagnostic: jumpToProjectDiagnostic,
                 focusRequestToken: issuesFocusToken,
                 onOpenStateChange: setIssuesSectionOpen,
+                angledWireRepair: {
+                  angledSegmentCount: angledWireRepairPlan.angledSegmentCount,
+                  repairableSegmentCount:
+                    angledWireRepairPlan.repairableSegmentCount,
+                  repairableRouteCount:
+                    angledWireRepairPlan.repairableRouteCount,
+                  protectedRouteCount: angledWireRepairPlan.protectedRouteCount,
+                  onRepair: () => {
+                    if (angledWireRepairPlan.edits.length === 0) return;
+                    const result = transact([...angledWireRepairPlan.edits]);
+                    if (!result.ok) return;
+                    setStatus(
+                      `Straightened ${angledWireRepairPlan.repairableSegmentCount} non-standard angled wire segment${angledWireRepairPlan.repairableSegmentCount === 1 ? "" : "s"} in one undoable edit`,
+                    );
+                  },
+                },
               }}
               netTrace={
                 highlightedTrace && highlightedTrace.hops.length > 0
@@ -6384,7 +6489,10 @@ export function App({
         />
         <EditorCanvasSurface
           empty={canvasIsEmpty}
-          showQuickStart={!analogSimulationOpen}
+          showQuickStart={
+            !analogSimulationOpen &&
+            !pendingComponentPlacement?.editAfterPlacement
+          }
           cameraRuntime={cameraRuntime}
           onWheel={handleWheel}
           onPinch={zoomAtClientPoint}
@@ -6457,7 +6565,6 @@ export function App({
             markers: diagnosticMarkers,
             onSelectMarker: jumpToProjectDiagnostic,
           }}
-          operatingPoint={{ badges: operatingPointBadges }}
           netLabelTether={netLabelTether}
           copyPreviewInnerHtml={copyPreviewInnerHtml}
           copyPreviewTransform={copyPreviewTransform}
@@ -6470,6 +6577,17 @@ export function App({
             copyPlacementActive: copyPlacement !== null,
           }}
           placementPreview={{
+            styleProfile,
+            ...(pendingComponentPlacement?.kind === "drafting-text"
+              ? {
+                  ...(pendingComponentPlacement.text !== undefined
+                    ? { draftingText: pendingComponentPlacement.text }
+                    : {}),
+                  ...(pendingComponentPlacement.polarity
+                    ? { draftingPolarity: pendingComponentPlacement.polarity }
+                    : {}),
+                }
+              : {}),
             vddRailMode,
             vddRailStart,
             previewPoint: componentPreviewPoint,
@@ -6483,11 +6601,15 @@ export function App({
             mirror: componentPlacementMirror,
           }}
           wiring={{
+            viewBox,
             netLabelPlacement,
             netLabelEditorInputRef,
             onNetLabelDraftChange: updateNetLabelPlacementDraft,
             onNetLabelSubmit: commitNetLabelEditing,
-            onNetLabelEscape: cancelNetLabelEditing,
+            onNetLabelEscape: () => {
+              cancelNetLabelEditing();
+              paintSnapGuides([]);
+            },
             flightlines: displayedFlightlines,
             onFlightlineClick: handleFlightline,
             wireDraftPreview,
@@ -6812,59 +6934,32 @@ export function App({
             },
             onTextDelete: deleteTextEditing,
             onRestoreReference: restoreTextReference,
-            ...(editingAnnotation &&
-            isRoutedMarker(editingAnnotation) &&
-            effectiveRouteAttachment(editingAnnotation)
-              ? { onReverseCurrentArrow: reverseSelectedCurrentArrow }
-              : {}),
           }}
         />
         {canvasContextMenu ? (
           <CanvasContextMenu
             position={canvasContextMenu}
-            variants={deviceVariantCandidates}
-            renderVariantArtwork={(symbolId) => {
-              const symbol = findPaletteSymbol(
-                document.presentation.styleProfileId,
-                symbolId,
-              );
-              return symbol ? (
-                <SymbolArtwork
-                  symbol={symbol}
-                  className="context-variant-art"
-                />
-              ) : null;
-            }}
-            onSwapVariant={swapSelectedInstanceSymbol}
             alignmentEnabled={alignmentParticipantCount >= 2}
             onAlign={(mode) =>
               editorCommands.execute({ id: "selection.align", mode })
             }
             actions={[
               {
-                label: "New Testbench Cell…",
-                enabled: true,
-                execute: () => openNewTestbenchDialog(),
-              },
-              {
-                label: "Place Cell from this Project…",
-                enabled: cellInsertCandidates.length > 0,
-                execute: placeCellInstance,
-              },
-              ...(["png", "svg"] as const).map((format) => ({
-                label: `Copy as ${format.toUpperCase()}`,
-                enabled: editorCommands.state({
-                  id: "selection.copy-image",
-                  format,
-                }).enabled,
+                label: "Properties (Q)",
+                enabled: editorCommands.state({ id: "properties.open" })
+                  .enabled,
                 execute: () =>
-                  editorCommands.execute({
-                    id: "selection.copy-image",
-                    format,
-                  }),
-              })),
+                  editorCommands.execute({ id: "properties.open" }),
+              },
               {
-                label: "Rotate (R)",
+                label: "Duplicate (C)",
+                enabled:
+                  hasVisualSelection(visualSelection) &&
+                  editorCommands.state({ id: "selection.copy" }).enabled,
+                execute: () => editorCommands.execute({ id: "selection.copy" }),
+              },
+              {
+                label: "Rotate 90° (R)",
                 enabled: editorCommands.state({ id: "transform.rotate" })
                   .enabled,
                 execute: () =>
@@ -6883,7 +6978,19 @@ export function App({
                   }),
               },
               {
-                label: "删除",
+                label: "Mirror top/bottom (Ctrl+R)",
+                enabled: editorCommands.state({
+                  id: "transform.mirror",
+                  direction: "top-bottom",
+                }).enabled,
+                execute: () =>
+                  editorCommands.execute({
+                    id: "transform.mirror",
+                    direction: "top-bottom",
+                  }),
+              },
+              {
+                label: "Delete",
                 enabled: hasVisualSelection(visualSelection),
                 execute: () =>
                   editorCommands.execute({ id: "selection.delete" }),
@@ -6927,13 +7034,6 @@ export function App({
         wireRoutingMode={wireRoutingMode}
         wireCornerOrder={wireCornerOrder}
         recoveryLabel={isDirtyWork() ? recoveryStateLabel(recoveryState) : null}
-        gridDotsVisible={gridDotsVisible}
-        annotationGrid={annotationGrid}
-        onAnnotationGridChange={setAnnotationGrid}
-        drawAngleMode={drawAngleMode}
-        onDrawAngleModeChange={setDrawAngleMode}
-        wheelBehavior={wheelBehavior}
-        onWheelBehaviorChange={setWheelBehavior}
         zoomPercent={zoomPercent}
         selectionFilterSummary={selectionFilterSummary(selectionFilter)}
         onOpenSelectionFilter={() =>
@@ -6948,14 +7048,6 @@ export function App({
         onToggleWireOptions={() => setWireOptionsOpen((open) => !open)}
         onWireRoutingModeChange={setWireRoutingMode}
         onWireCornerOrderChange={setWireCornerOrder}
-        onToggleGridDots={() =>
-          setGridDotsVisible((visible) => {
-            setStatus(
-              visible ? "Background dots hidden" : "Background dots shown",
-            );
-            return !visible;
-          })
-        }
         onOpenAnalytics={() => {
           void guardDirtyReplacement("Open Analytics", () => {
             allowNextBrowserUnload();

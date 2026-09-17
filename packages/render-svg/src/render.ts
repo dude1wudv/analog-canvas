@@ -1,8 +1,10 @@
+import { renderFractionText } from "./fraction-text.js";
 import { arrowArtwork, arrowPathData } from "@icm/derived";
 import {
   RectSchema,
   SchematicDocumentSchema,
   inverseTransformPoint,
+  mirrorScale,
   semanticTextDocument,
   transformPoint,
 } from "@icm/model";
@@ -11,7 +13,7 @@ import {
   deriveDocumentContactEvidence,
   fractionGeometry,
   fractionPartScale,
-  isMosBulkRoute,
+  deriveMosBulkRouteFamily,
   resolvePrimitiveStrokeWidth,
   resolveDraftingObjectGeometry,
   resolveEndpointPoint,
@@ -47,6 +49,7 @@ import type {
   Point,
   RichTextDocument,
   RichTextRun,
+  Rotation,
   RouteEndpoint,
   SchematicDocument,
 } from "@icm/model";
@@ -149,6 +152,16 @@ function renderStackedFractionAnnotation(
   const denominatorY =
     options.position.y +
     fontSize * partScale * fractionGeometry.denominatorBaselineDropEm;
+  const partLength = (content: RichTextDocument): string => {
+    const width = measureRichTextDocument(content, {
+      ...richTextMetrics(profile),
+      fontSize: partFont,
+      fractionText: true,
+    }).width;
+    return width > 0
+      ? ` textLength="${width}" lengthAdjust="spacingAndGlyphs"`
+      : "";
+  };
   const partStyle = `font-style:normal;font-weight:${profile.typography.mathWeight}`;
   // `fill` paints glyphs; `color` supplies currentColor for nested RichText
   // decorations such as CSS overbars inside a fraction part.
@@ -156,7 +169,7 @@ function renderStackedFractionAnnotation(
     ? ` fill="${options.color}" color="${options.color}"`
     : "";
   const attributes = options.attributes ? ` ${options.attributes}` : "";
-  return `<g${attributes}><text data-role="fraction-numerator" x="${centerX}" y="${numeratorY}" text-anchor="middle" font-size="${partFont}"${textColor} style="${partStyle}">${renderRichTextDocument(fraction.numerator, profile, { defaultBold: true, fontSize: partFont })}</text><line data-role="fraction-bar" x1="${centerX - halfWidth}" y1="${barY}" x2="${centerX + halfWidth}" y2="${barY}" stroke="${options.color ?? profile.foreground}" stroke-width="${profile.strokes.annotation}"/><text data-role="fraction-denominator" x="${centerX}" y="${denominatorY}" text-anchor="middle" font-size="${partFont}"${textColor} style="${partStyle}">${renderRichTextDocument(fraction.denominator, profile, { defaultBold: true, fontSize: partFont })}</text></g>`;
+  return `<g${attributes}><text data-role="fraction-numerator" x="${centerX}" y="${numeratorY}" text-anchor="middle" font-size="${partFont}"${partLength(fraction.numerator)}${textColor} style="${partStyle}">${renderRichTextDocument(fraction.numerator, profile, { defaultBold: true, fontSize: partFont })}</text><line data-role="fraction-bar" x1="${centerX - halfWidth}" y1="${barY}" x2="${centerX + halfWidth}" y2="${barY}" stroke="${options.color ?? profile.foreground}" stroke-width="${profile.strokes.annotation}"/><text data-role="fraction-denominator" x="${centerX}" y="${denominatorY}" text-anchor="middle" font-size="${partFont}"${partLength(fraction.denominator)}${textColor} style="${partStyle}">${renderRichTextDocument(fraction.denominator, profile, { defaultBold: true, fontSize: partFont })}</text></g>`;
 }
 
 function isPositionableFractionCompanion(run: RichTextRun): boolean {
@@ -204,6 +217,7 @@ function renderPositionedFractionAnnotation(
   const metrics = {
     ...richTextMetrics(options.profile),
     fontSize: options.fontSize,
+    fractionText: true,
   };
   const widthOf = (document: RichTextDocument): number =>
     document.runs.length === 0
@@ -225,7 +239,7 @@ function renderPositionedFractionAnnotation(
   const renderCompanion = (document: RichTextDocument, x: number): string =>
     document.runs.length === 0
       ? ""
-      : `<text x="${x}" y="${options.position.y}" text-anchor="start" font-size="${options.fontSize}" xml:space="preserve"${textColor}>${renderRichTextDocument(document, options.profile, { lineOriginX: x, fontSize: options.fontSize })}</text>`;
+      : `<text x="${x}" y="${options.position.y}" text-anchor="start" font-size="${options.fontSize}" textLength="${widthOf(document)}" lengthAdjust="spacingAndGlyphs" xml:space="preserve"${textColor}>${renderRichTextDocument(document, options.profile, { lineOriginX: x, fontSize: options.fontSize })}</text>`;
   const fractionX = startX + prefixWidth;
   const fractionMarkup = renderStackedFractionAnnotation(fraction, {
     position: { x: fractionX, y: options.position.y },
@@ -574,8 +588,10 @@ function instanceTransform(
   if (!placement) {
     throw new Error(`Cannot render unplaced instance: ${instance.id}`);
   }
-  const mirror = placement.mirror === "x" ? " scale(-1 1)" : "";
-  return `translate(${placement.position.x} ${placement.position.y}) rotate(${placement.rotation})${mirror}`;
+  const scale = mirrorScale(placement.mirror);
+  const mirror =
+    scale.x === 1 && scale.y === 1 ? "" : ` scale(${scale.x} ${scale.y})`;
+  return `translate(${placement.position.x} ${placement.position.y})${mirror} rotate(${placement.rotation})`;
 }
 
 /**
@@ -631,21 +647,7 @@ function transformedDirection(
     south: { x: 0, y: 1 },
     west: { x: -1, y: 0 },
   } as const;
-  const source = vectors[direction];
-  const mirrored = {
-    x: placement.mirror === "x" ? -source.x : source.x,
-    y: source.y,
-  };
-  switch (placement.rotation) {
-    case 0:
-      return mirrored;
-    case 90:
-      return { x: -mirrored.y, y: mirrored.x };
-    case 180:
-      return { x: -mirrored.x, y: -mirrored.y };
-    case 270:
-      return { x: mirrored.y, y: -mirrored.x };
-  }
+  return transformPoint(vectors[direction], { x: 0, y: 0 }, placement);
 }
 
 function rotateOffset(
@@ -661,6 +663,15 @@ function rotateOffset(
       return { x: -offset.x, y: -offset.y };
     case 270:
       return { x: offset.y, y: -offset.x };
+    default: {
+      const radians = (rotation * Math.PI) / 180;
+      const cosine = Math.cos(radians);
+      const sine = Math.sin(radians);
+      return {
+        x: offset.x * cosine - offset.y * sine,
+        y: offset.x * sine + offset.y * cosine,
+      };
+    }
   }
 }
 
@@ -1028,9 +1039,35 @@ export function buildSvgScene(
       join.kind === "junction-miter" ? [join.junctionId] : [],
     ),
   );
+  const bulkRouteIds = new Set<string>();
+  const bulkRouteColors = new Map<string, string>();
+  for (const route of document.routes) {
+    if (bulkRouteIds.has(route.id)) continue;
+    const family = deriveMosBulkRouteFamily(document, route);
+    if (!family) continue;
+    const ownerColors = new Set(
+      family.instanceIds.map(
+        (instanceId) =>
+          document.instances.find((instance) => instance.id === instanceId)
+            ?.styleOverride?.foreground ?? profile.foreground,
+      ),
+    );
+    const color =
+      ownerColors.size === 1 ? [...ownerColors][0]! : profile.foreground;
+    for (const routeId of family.routeIds) {
+      bulkRouteIds.add(routeId);
+      bulkRouteColors.set(routeId, color);
+    }
+  }
+  const routeStrokeColor = (
+    route: SchematicDocument["routes"][number],
+  ): string =>
+    bulkRouteColors.get(route.id) ??
+    route.styleOverride?.color ??
+    profile.foreground;
   const junctionColorSets = new Map<string, Set<string>>();
   for (const route of document.routes) {
-    const color = route.styleOverride?.color ?? profile.foreground;
+    const color = routeStrokeColor(route);
     const end = route.legs.at(-1)?.to;
     const endpointJunctionIds = [
       ...(route.start.kind === "junction" ? [route.start.junctionId] : []),
@@ -1059,13 +1096,13 @@ export function buildSvgScene(
       if (!geometry) {
         throw new Error(`Cannot render unresolved route: ${route.id}`);
       }
-      const strokeColor = route.styleOverride?.color ?? profile.foreground;
+      const strokeColor = routeStrokeColor(route);
       const terminalBridges = renderTerminalMiterBridges(
         geometry.endpointJoins,
         profile,
         strokeColor,
       );
-      const presentation = isMosBulkRoute(document, route)
+      const presentation = bulkRouteIds.has(route.id)
         ? "bulk-dashed"
         : route.presentation === "bulk-dashed"
           ? "wire"
@@ -1073,7 +1110,13 @@ export function buildSvgScene(
       const isPowerRail =
         presentation === "power-rail" && powerRailNetIds.has(route.netId);
       const dash =
-        presentation === "bulk-dashed" ? ' stroke-dasharray="3 3"' : "";
+        presentation === "bulk-dashed"
+          ? ' stroke-dasharray="3 3"'
+          : route.styleOverride?.lineStyle === "dashed"
+            ? ' stroke-dasharray="6 4"'
+            : route.styleOverride?.lineStyle === "dotted"
+              ? ' stroke-dasharray="2 3"'
+              : "";
       const presentationAttribute =
         presentation !== "wire"
           ? ` data-route-presentation="${presentation}"`
@@ -1367,7 +1410,7 @@ export function buildSvgScene(
       }
       const emphasis = "";
       const positionedFraction =
-        annotation.rotation === 0
+        annotation.kind === "instance-value" && annotation.rotation === 0
           ? renderPositionedFractionAnnotation(content, {
               attributes,
               position,
@@ -1380,6 +1423,15 @@ export function buildSvgScene(
       if (positionedFraction) {
         return `<g>${positionedFraction}${globalBadge}</g>`;
       }
+      const mixedFractions = renderFractionText(content, profile, {
+        x: position.x,
+        y: position.y,
+        fontSize: annotationFontSize,
+        alignment: annotation.alignment,
+        color: colorOverride ?? profile.foreground,
+      });
+      if (mixedFractions)
+        return `<g ${attributes}><g transform="${transform}">${mixedFractions}</g>${globalBadge}</g>`;
       const formula = renderFormulaDocument(content, profile, {
         x: position.x,
         baselineY: position.y,
@@ -1424,7 +1476,7 @@ function resolveRouteMarkerPlacement(
 ): {
   position: Point;
   labelPosition: Point;
-  rotation: 0 | 90 | 180 | 270;
+  rotation: Rotation;
 } | null {
   const route = routingGeometry.routes.get(anchor.routeId);
   if (!route)
@@ -1563,7 +1615,7 @@ function renderDraftText(
   profile: SchematicStyleProfile,
   unresolved: string,
 ): string {
-  const { position, textPosition, rotation } = geometry;
+  const { textPosition } = geometry;
   const color = object.styleOverride?.color ?? profile.foreground;
   const fontSize =
     typographyFontSize(object.typographyToken ?? "body", profile) *
@@ -1587,7 +1639,7 @@ function renderDraftText(
     object.anchor.kind === "object" || object.polarity
       ? centeredFirstBaselineY(content, textPosition.y, fontSize, profile)
       : textPosition.y;
-  const weight = object.styleOverride?.weight === "bold" ? "bold" : "normal";
+  const weight = object.styleOverride?.weight ?? "bold";
   const italic = object.styleOverride?.italic === true ? "italic" : "normal";
   const positioned = renderPositionedOverbarScriptDocument(content, profile, {
     x: textPosition.x,
@@ -1599,6 +1651,15 @@ function renderDraftText(
       : {}),
     defaultBold: weight === "bold",
     defaultItalic: italic === "italic",
+  });
+  const fractions = renderFractionText(content, profile, {
+    x: textPosition.x,
+    y: baselineY,
+    fontSize,
+    alignment: object.alignment,
+    color,
+    bold: weight === "bold",
+    italic: italic === "italic",
   });
   const formula = renderFormulaDocument(content, profile, {
     x: textPosition.x,
@@ -1613,35 +1674,39 @@ function renderDraftText(
     const strokeWidth =
       profile.strokes.annotation * (object.styleOverride?.strokeScale ?? 1);
     const markers = geometry.polarityLines
-      .map((line) => {
-        const rendered =
-          line.role === "negative"
-            ? screenUprightLine(line, { rotation, mirror: "none" })
-            : line;
-        return `<line data-role="polarity-${line.role}" x1="${rendered.from.x}" y1="${rendered.from.y}" x2="${rendered.to.x}" y2="${rendered.to.y}" stroke="${color}" stroke-width="${strokeWidth}" stroke-linecap="${profile.lineCap}"/>`;
-      })
+      .map(
+        (line) =>
+          `<line data-role="polarity-${line.role}" x1="${line.from.x}" y1="${line.from.y}" x2="${line.to.x}" y2="${line.to.y}" stroke="${color}" stroke-width="${strokeWidth}" stroke-linecap="${profile.lineCap}"/>`,
+      )
       .join("");
-    const text = formula
-      ? formula
-      : positioned
-        ? `<text x="${textPosition.x}" y="${baselineY}" text-anchor="start" font-size="${fontSize}" font-weight="${weight}" font-style="${italic}" fill="${color}">${positioned.tspans}</text>${positioned.decorations}`
-        : `<text x="${textPosition.x}" y="${baselineY}" text-anchor="${object.alignment}" font-size="${fontSize}" font-weight="${weight}" font-style="${italic}" fill="${color}">${renderRichTextDocument(content, profile, { lineOriginX: textPosition.x, fontSize })}</text>`;
-    return `<g data-object-id="${object.id}" data-kind="draft-text" data-polarity="${object.polarity}"${unresolved} transform="rotate(${rotation} ${position.x} ${position.y})">${markers}${text}</g>`;
+    const text =
+      fractions ??
+      (formula
+        ? formula
+        : positioned
+          ? `<text x="${textPosition.x}" y="${baselineY}" text-anchor="start" font-size="${fontSize}" font-weight="${weight}" font-style="${italic}" fill="${color}">${positioned.tspans}</text>${positioned.decorations}`
+          : `<text x="${textPosition.x}" y="${baselineY}" text-anchor="${object.alignment}" font-size="${fontSize}" font-weight="${weight}" font-style="${italic}" fill="${color}">${renderRichTextDocument(content, profile, { lineOriginX: textPosition.x, fontSize, defaultBold: weight === "bold", defaultItalic: italic === "italic" })}</text>`);
+    return `<g data-object-id="${object.id}" data-kind="draft-text" data-polarity="${object.polarity}"${unresolved}>${markers}${text}</g>`;
   }
-  // P1: the renderer consumes geometry.rotation (the single rotation truth),
-  // not the raw persisted object rotation. The rotation pivot stays on the
-  // resolved anchor so centered labels rotate about their center.
+  // Drafting text is notation: its glyphs stay upright at every persisted or
+  // route-follow rotation. Multipart polarity layout is already resolved into
+  // screen coordinates by the shared derived geometry.
+  if (fractions) {
+    return `<g data-object-id="${object.id}" data-kind="draft-text"${unresolved}>${fractions}</g>`;
+  }
   if (formula) {
-    return `<g data-object-id="${object.id}" data-kind="draft-text"${unresolved} transform="rotate(${rotation} ${position.x} ${position.y})">${formula}</g>`;
+    return `<g data-object-id="${object.id}" data-kind="draft-text"${unresolved}>${formula}</g>`;
   }
   if (positioned) {
-    return `<g transform="rotate(${rotation} ${position.x} ${position.y})"><text data-object-id="${object.id}" data-kind="draft-text"${unresolved} x="${textPosition.x}" y="${baselineY}" text-anchor="start" font-size="${fontSize}" font-weight="${weight}" font-style="${italic}" fill="${color}">${positioned.tspans}</text>${positioned.decorations}</g>`;
+    return `<g><text data-object-id="${object.id}" data-kind="draft-text"${unresolved} x="${textPosition.x}" y="${baselineY}" text-anchor="start" font-size="${fontSize}" font-weight="${weight}" font-style="${italic}" fill="${color}">${positioned.tspans}</text>${positioned.decorations}</g>`;
   }
   const markup = renderRichTextDocument(content, profile, {
     lineOriginX: textPosition.x,
     fontSize,
+    defaultBold: weight === "bold",
+    defaultItalic: italic === "italic",
   });
-  return `<text data-object-id="${object.id}" data-kind="draft-text"${unresolved} x="${textPosition.x}" y="${baselineY}" text-anchor="${object.alignment}" transform="rotate(${rotation} ${position.x} ${position.y})" font-size="${fontSize}" font-weight="${weight}" font-style="${italic}" fill="${color}">${markup}</text>`;
+  return `<text data-object-id="${object.id}" data-kind="draft-text"${unresolved} x="${textPosition.x}" y="${baselineY}" text-anchor="${object.alignment}" font-size="${fontSize}" font-weight="${weight}" font-style="${italic}" fill="${color}">${markup}</text>`;
 }
 
 /** Glyph cap height is ~0.7 em; dropping the baseline by 0.35 em sits the
@@ -1779,8 +1844,14 @@ function renderDraftArrow(
   const serialize = (points: readonly Point[]) =>
     points.map((point) => `${point.x},${point.y}`).join(" ");
   const paint = `stroke="${stroke}" stroke-width="${artwork.strokeWidth}" stroke-linecap="${profile.lineCap}" stroke-linejoin="${profile.lineJoin}" stroke-miterlimit="${profile.miterLimit}"`;
+  const dots = artwork.dots
+    .map(
+      ({ center, radius }) =>
+        `<circle cx="${center.x}" cy="${center.y}" r="${radius}" fill="${stroke}"/>`,
+    )
+    .join("");
   if (artwork.outline) {
-    return `<g data-object-id="${object.id}" data-kind="draft-arrow"${unresolved}><polygon data-arrow-family="outline" points="${serialize(artwork.outline)}" fill="none" ${paint}${dash}/></g>`;
+    return `<g data-object-id="${object.id}" data-kind="draft-arrow"${unresolved}><polygon data-arrow-family="outline" points="${serialize(artwork.outline)}" fill="none" ${paint}${dash}/>${dots}</g>`;
   }
   const shaft = geometry.curveControls.some(Boolean)
     ? `<path d="${arrowPathData(artwork.shaft, artwork.controls)}" fill="none"`
@@ -1788,10 +1859,10 @@ function renderDraftArrow(
   const heads = artwork.heads
     .map(
       (head) =>
-        `<polygon points="${serialize(head)}" ${artwork.headStyle === "open" ? `fill="none" stroke="${stroke}" stroke-width="${artwork.strokeWidth}"` : `fill="${stroke}"`}/>`,
+        `<polygon points="${serialize(head.points)}" ${head.style === "open" ? `fill="none" stroke="${stroke}" stroke-width="${artwork.strokeWidth}"` : `fill="${stroke}"`}/>`,
     )
     .join("");
-  return `<g data-object-id="${object.id}" data-kind="draft-arrow"${unresolved}>${shaft} ${paint}${dash}/>${heads}</g>`;
+  return `<g data-object-id="${object.id}" data-kind="draft-arrow"${unresolved}>${shaft} ${paint}${dash}/>${heads}${dots}</g>`;
 }
 
 function renderDraftLeader(
@@ -1815,7 +1886,7 @@ function renderDraftCallout(
   const fontSize =
     typographyFontSize(object.typographyToken ?? "body", profile) *
     (object.styleOverride?.sizeScale ?? 1);
-  const weight = object.styleOverride?.weight === "bold" ? "bold" : "normal";
+  const weight = object.styleOverride?.weight ?? "bold";
   const italic = object.styleOverride?.italic === true ? "italic" : "normal";
   const formula = renderFormulaDocument(object.content, profile, {
     x: textPosition.x,
@@ -1829,7 +1900,7 @@ function renderDraftCallout(
   // P1: renderer consumes geometry.rotation (the single rotation truth).
   const text = formula
     ? `<g transform="rotate(${rotation} ${textPosition.x} ${textPosition.y})">${formula}</g>`
-    : `<text x="${textPosition.x}" y="${textPosition.y}" text-anchor="${object.alignment}" transform="rotate(${rotation} ${textPosition.x} ${textPosition.y})" font-size="${fontSize}" font-weight="${weight}" font-style="${italic}">${renderRichTextDocument(object.content, profile, { lineOriginX: textPosition.x, fontSize })}</text>`;
+    : `<text x="${textPosition.x}" y="${textPosition.y}" text-anchor="${object.alignment}" transform="rotate(${rotation} ${textPosition.x} ${textPosition.y})" font-size="${fontSize}" font-weight="${weight}" font-style="${italic}">${renderRichTextDocument(object.content, profile, { lineOriginX: textPosition.x, fontSize, defaultBold: weight === "bold", defaultItalic: italic === "italic" })}</text>`;
   return `<g data-object-id="${object.id}" data-kind="draft-callout"${unresolved}>${leader}${text}</g>`;
 }
 
@@ -1844,7 +1915,9 @@ function renderFloatingSymbol(
   if (!resolved) return "";
   const position = geometry.position;
   const rotation = object.transform.rotation;
-  const mirror = object.transform.mirror === "x" ? " scale(-1 1)" : "";
+  const scale = mirrorScale(object.transform.mirror);
+  const mirror =
+    scale.x === 1 && scale.y === 1 ? "" : ` scale(${scale.x} ${scale.y})`;
   const hidden = resolved.variant?.hiddenPinNames ?? [];
   const additional = resolved.variant?.additionalPrimitives ?? [];
   const body = renderSymbolDefinitionBody(
@@ -1856,7 +1929,7 @@ function renderFloatingSymbol(
     undefined,
     object.transform,
   );
-  return `<g data-object-id="${object.id}" data-kind="draft-floating-symbol"${unresolved} data-symbol-id="${escapeXml(object.symbolId)}"><g transform="translate(${position.x} ${position.y}) rotate(${rotation})${mirror}">${body}</g></g>`;
+  return `<g data-object-id="${object.id}" data-kind="draft-floating-symbol"${unresolved} data-symbol-id="${escapeXml(object.symbolId)}"><g transform="translate(${position.x} ${position.y})${mirror} rotate(${rotation})">${body}</g></g>`;
 }
 
 function typographyFontSize(

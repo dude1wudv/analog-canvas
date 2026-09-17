@@ -41,23 +41,56 @@ async function placeCellPin(
     position: { x: number; y: number };
   },
 ): Promise<void> {
+  const labels = page.locator(
+    '[data-testid^="annotation-hit-instance-label-"]',
+  );
+  const existingLabelCount = await labels.count();
   await page.getByTestId("shapes-chip-port").click();
   await page
     .getByTestId("schematic-canvas")
     .click({ position: options.position });
   await page.keyboard.press("Escape");
-  const shelf = page.getByTestId("selection-shelf");
-  const wasExpanded = (await shelf.getAttribute("aria-expanded")) === "true";
-  if (!wasExpanded) await shelf.click();
-  const nameField = page.getByLabel("Cell Pin name");
-  await nameField.fill(options.name);
-  await nameField.blur();
+  await labels.nth(existingLabelCount).dblclick();
+  await page
+    .getByRole("textbox", { name: "Canvas text editor" })
+    .fill(options.name);
+  await page.getByRole("button", { name: "Apply text changes" }).click();
   if (options.direction) {
-    await page.getByLabel("Cell Pin direction").selectOption(options.direction);
+    await runCellCommand(page, "Manage Cells…");
+    const manager = page.getByRole("dialog", { name: "Cell Manager" });
+    await manager
+      .getByRole("table", { name: "Formal terminal order" })
+      .getByRole("row")
+      .last()
+      .getByRole("combobox")
+      .selectOption(options.direction);
+    await manager.getByLabel("Close Cell Manager").click();
   }
-  // Leave the shelf as the caller found it so its own assertions still drive
-  // the panel state.
-  if (!wasExpanded) await shelf.click();
+}
+
+async function renameCellPinOnCanvas(
+  page: import("@playwright/test").Page,
+  instanceId: string,
+  name: string,
+): Promise<void> {
+  await page
+    .getByTestId(`annotation-hit-instance-label-${instanceId}`)
+    .dblclick();
+  await page.getByRole("textbox", { name: "Canvas text editor" }).fill(name);
+  await page.getByRole("button", { name: "Apply text changes" }).click();
+}
+
+async function setCellTerminalDirection(
+  page: import("@playwright/test").Page,
+  name: string,
+  direction: "input" | "output" | "inout" | "passive",
+): Promise<void> {
+  await runCellCommand(page, "Manage Cells…");
+  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  await manager
+    .getByLabel(`Formal terminal ${name} direction`)
+    .selectOption(direction);
+  await manager.getByLabel("Close Cell Manager").click();
 }
 
 test("reviews an unreferenced top Symbol and places that DUT in an ordinary new TB", async ({
@@ -77,7 +110,7 @@ test("reviews an unreferenced top Symbol and places that DUT in an ordinary new 
   await runCellCommand(page, "Place Cell");
   await page
     .getByRole("dialog", { name: "Place Hierarchical Cell" })
-    .getByRole("option", { name: /Main/u })
+    .getByRole("option", { name: /dut/u })
     .click();
   await page
     .getByTestId("schematic-canvas")
@@ -106,33 +139,25 @@ test("reviews an unreferenced top Symbol and places that DUT in an ordinary new 
   await expect(page.getByTestId("active-instance-count")).toHaveText("1");
 });
 
-test("creates a Testbench and places a same-Project Cell from the canvas menu", async ({
+test("creates a Testbench and places a same-Project Cell from Edit", async ({
   page,
 }) => {
   await page.goto("/editor");
   const canvas = page.getByTestId("schematic-canvas");
-  await canvas.click({ button: "right", position: { x: 360, y: 220 } });
-  await page
-    .getByTestId("canvas-context-menu")
-    .getByRole("menuitem", { name: "New Testbench Cell…" })
-    .click();
+  await clickCommand(page, "Edit", "New Testbench Cell…");
 
   const dialog = page.getByRole("dialog", { name: "New Testbench Cell" });
   await dialog
     .getByLabel("Place the DUT Symbol View after creating the testbench")
     .uncheck();
   await dialog.getByRole("button", { name: "Create Testbench" }).click();
-  await expect(page.getByTestId("active-document-name")).toHaveText("Main_tb");
+  await expect(page.getByTestId("active-document-name")).toHaveText("dut_tb");
   await expect(page.getByTestId("active-instance-count")).toHaveText("0");
 
-  await canvas.click({ button: "right", position: { x: 360, y: 220 } });
-  await page
-    .getByTestId("canvas-context-menu")
-    .getByRole("menuitem", { name: "Place Cell from this Project…" })
-    .click();
+  await clickCommand(page, "Edit", "Place Cell from this Project…");
   await page
     .getByRole("dialog", { name: "Place Hierarchical Cell" })
-    .getByRole("option", { name: /Main/u })
+    .getByRole("option", { name: /dut/u })
     .click();
   await canvas.click({ position: { x: 360, y: 220 } });
   await page.keyboard.press("Escape");
@@ -144,7 +169,7 @@ test("creates a Testbench and places a same-Project Cell from the canvas menu", 
   );
   expect(project.topDocumentId).toBe("document-main");
   const testbench = project.documents.find(
-    (candidate: { name: string }) => candidate.name === "Main_tb",
+    (candidate: { name: string }) => candidate.name === "dut_tb",
   );
   expect(testbench.instances).toHaveLength(1);
   expect(testbench.instances[0].netlist.binding).toEqual({
@@ -242,6 +267,14 @@ test("manages Cell rename and lists callers", async ({ page }) => {
   await expect(page.getByTestId("active-document-id")).toHaveText(
     "document-main",
   );
+  const canvas = page.getByTestId("schematic-canvas");
+  await expect(canvas.locator('[data-kind="instance-value"]')).toContainText(
+    "Stage",
+  );
+  await expect(
+    canvas.locator('[data-kind="instance-value"]'),
+  ).not.toContainText("ReusableStage");
+  await expect(canvas.locator('[data-kind="instance-label"]')).toHaveCount(0);
 });
 
 test("declares and places a Cell Pin on a new local Net", async ({ page }) => {
@@ -257,10 +290,9 @@ test("declares and places a Cell Pin on a new local Net", async ({ page }) => {
   await expect(page.getByTestId("active-instance-count")).toHaveText("1");
 
   await page.getByTestId("selection-shelf").click();
-  const portProperties = page.getByLabel("Cell Pin properties");
-  await expect(portProperties).toBeVisible();
-  const terminalName = portProperties.getByLabel("Cell Pin name");
-  await expect(terminalName).toHaveValue("Vout");
+  await expect(page.getByLabel("Cell Pin properties")).toHaveCount(0);
+  await expect(page.getByLabel("Cell Pin name")).toHaveCount(0);
+  await expect(page.getByLabel("Cell Pin direction")).toHaveCount(0);
   await page.getByTestId("annotation-hit-instance-label-P1").dblclick();
   const nameEditor = page.getByRole("textbox", { name: "Canvas text editor" });
   await expect(
@@ -269,7 +301,9 @@ test("declares and places a Cell Pin on a new local Net", async ({ page }) => {
   await page.getByRole("button", { name: "Bold" }).click();
   await page.getByRole("button", { name: "Apply text changes" }).click();
   await page.getByTestId("hit-P1").click();
-  await expect(terminalName).toHaveValue("Vout");
+  await expect(
+    page.locator('[data-object-id="instance-label-P1"]'),
+  ).toContainText("Vout");
   await page.getByTestId("annotation-hit-instance-label-P1").dblclick();
   await nameEditor.fill("OUT");
   await page.getByRole("button", { name: "Apply text changes" }).click();
@@ -277,15 +311,10 @@ test("declares and places a Cell Pin on a new local Net", async ({ page }) => {
     "Renamed Cell Pin to OUT",
   );
   await page.getByTestId("hit-P1").click();
-  await expect(terminalName).toHaveValue("OUT");
-  const shelf = page.getByTestId("selection-shelf");
-  if ((await shelf.getAttribute("aria-expanded")) === "false") {
-    await shelf.click();
-  }
-  const renamedPortProperties = page.getByLabel("Cell Pin properties");
-  await renamedPortProperties
-    .getByLabel("Cell Pin direction")
-    .selectOption("input");
+  await expect(
+    page.locator('[data-object-id="instance-label-P1"]'),
+  ).toContainText("OUT");
+  await setCellTerminalDirection(page, "OUT", "input");
   await expect(page.getByTestId("status")).toContainText(
     "Updated Cell port direction",
   );
@@ -415,12 +444,12 @@ test("declares a top Formal Cell Pin and exports the top interface", async ({
   if ((await shelf.getAttribute("aria-expanded")) === "false") {
     await shelf.click();
   }
-  await expect(page.getByLabel("Cell Pin properties")).toBeVisible();
+  await expect(page.getByLabel("Cell Pin properties")).toHaveCount(0);
 
   await clickCommand(page, "Netlist", "Check Report…");
   const preflight = page.getByRole("dialog", { name: "Check Report" });
   await expect(preflight.getByTestId("netlist-preview")).toContainText(
-    ".subckt Main VIN",
+    ".subckt dut VIN",
   );
   await expect(preflight).not.toContainText("GENERATED_NET_NAME");
   await expect(preflight).not.toContainText("MISSING_DEVICE_DEFINITION");
@@ -444,7 +473,7 @@ test("copies and independently deletes Formal Cell Pins", async ({ page }) => {
   if ((await shelf.getAttribute("aria-expanded")) === "false") {
     await shelf.click();
   }
-  await expect(page.getByLabel("Cell Pin properties")).toBeVisible();
+  await expect(page.getByLabel("Cell Pin properties")).toHaveCount(0);
   const canvasBox = await canvas.boundingBox();
   expect(canvasBox).not.toBeNull();
   await page.keyboard.press("c");
@@ -455,7 +484,7 @@ test("copies and independently deletes Formal Cell Pins", async ({ page }) => {
   if ((await shelf.getAttribute("aria-expanded")) === "false") {
     await shelf.click();
   }
-  await expect(page.getByLabel("Cell Pin properties")).toBeVisible();
+  await expect(page.getByLabel("Cell Pin properties")).toHaveCount(0);
   await page.keyboard.press("Escape");
 
   await expect(page.getByTestId("hit-P1-copy-1")).toBeVisible();
@@ -469,14 +498,14 @@ test("copies and independently deletes Formal Cell Pins", async ({ page }) => {
     await shelf.click();
   }
   await expect(
-    page.getByLabel("Cell Pin properties").getByLabel("Cell Pin name"),
-  ).toHaveValue("VIN");
+    page.locator('[data-object-id="instance-label-P1-copy-1"]'),
+  ).toContainText("VIN");
   await clickCommand(page, "Netlist", "Check Report…");
   await expect(
     page
       .getByRole("dialog", { name: "Check Report" })
       .getByTestId("netlist-preview"),
-  ).toContainText(".subckt Main VIN");
+  ).toContainText(".subckt dut VIN");
 });
 
 test("edits a Cell Pin name and RichText presentation in place", async ({
@@ -495,27 +524,32 @@ test("edits a Cell Pin name and RichText presentation in place", async ({
   if ((await shelf.getAttribute("aria-expanded")) === "false") {
     await shelf.click();
   }
-  const netName = page.getByLabel("Cell Pin name");
-  await expect(netName).toHaveValue("VBIAS");
-  await expect(page.getByLabel("Cell Pin properties")).toBeVisible();
+  await expect(page.getByLabel("Cell Pin properties")).toHaveCount(0);
+  await expect(
+    page.locator('[data-object-id="instance-label-P1"]'),
+  ).toContainText("VBIAS");
 
   await page.getByTestId("annotation-hit-instance-label-P1").dblclick();
   await page.getByRole("button", { name: "Bold" }).click();
   await page.getByRole("button", { name: "Apply text changes" }).click();
   await page.getByTestId("hit-P1").click();
-  await expect(netName).toHaveValue("VBIAS");
+  await expect(
+    page.locator('[data-object-id="instance-label-P1"]'),
+  ).toContainText("VBIAS");
 
   await page.getByTestId("annotation-hit-instance-label-P1").dblclick();
   await page.getByRole("textbox", { name: "Canvas text editor" }).fill("VINP");
   await page.getByRole("button", { name: "Apply text changes" }).click();
   await page.getByTestId("hit-P1").click();
-  await expect(netName).toHaveValue("VINP");
+  await expect(
+    page.locator('[data-object-id="instance-label-P1"]'),
+  ).toContainText("VINP");
 
   await clickCommand(page, "Netlist", "Check Report…");
   const preflight = page.getByRole("dialog", { name: "Check Report" });
   await expect(preflight).not.toContainText("MISSING_DEVICE_DEFINITION");
   await expect(preflight.getByTestId("netlist-preview")).toContainText(
-    ".subckt Main VINP",
+    ".subckt dut VINP",
   );
 });
 
@@ -546,7 +580,7 @@ test("keeps the Placement Tray out of the manually authored Cell Pin workflow", 
     page.getByRole("region", { name: "Placement Tray" }),
   ).toHaveCount(0);
   await expect(page.getByTestId("hit-P1")).toBeVisible();
-  await expect(page.getByLabel("Cell Pin properties")).toBeVisible();
+  await expect(page.getByLabel("Cell Pin properties")).toHaveCount(0);
 });
 
 test("authors formal Cell parameters without entering Cell Symbol Layout", async ({
@@ -640,9 +674,7 @@ test("places an existing Cell and blocks deleting its shared definition", async 
   await expect(canvas.locator('[data-kind="instance-value"]')).toContainText(
     "ReusableStage",
   );
-  await expect(canvas.locator('[data-kind="instance-label"]')).toContainText(
-    "X1",
-  );
+  await expect(canvas.locator('[data-kind="instance-label"]')).toHaveCount(0);
   await page.keyboard.press("Escape");
 
   await runCellCommand(page, "Manage Cells…");
@@ -693,12 +725,7 @@ test("renaming one Cell Pin leaves another interface Pin alone", async ({
   await expect(labels).toHaveCount(2);
 
   await page.getByTestId("hit-P2").click();
-  const shelf = page.getByTestId("selection-shelf");
-  if ((await shelf.getAttribute("aria-expanded")) === "false")
-    await shelf.click();
-  const nameField = page.getByLabel("Cell Pin name");
-  await nameField.fill("Vbias");
-  await nameField.blur();
+  await renameCellPinOnCanvas(page, "P2", "Vbias");
 
   await expect(page.getByTestId("status")).toContainText("Renamed Cell Pin");
   const texts = await page
@@ -724,13 +751,7 @@ test("same-name Cell Pins stay independent while the final interface groups them
   });
 
   await page.getByTestId("hit-P2").click();
-  const shelf = page.getByTestId("selection-shelf");
-  if ((await shelf.getAttribute("aria-expanded")) === "false") {
-    await shelf.click();
-  }
-  const nameField = page.getByLabel("Cell Pin name");
-  await nameField.fill("vin");
-  await nameField.blur();
+  await renameCellPinOnCanvas(page, "P2", "vin");
 
   await expect(page.getByTestId("status")).toContainText("Renamed Cell Pin");
   const saved = JSON.parse(
@@ -772,7 +793,7 @@ test("same-name Cell Pins stay independent while the final interface groups them
     .getByRole("dialog", { name: "Check Report" })
     .getByTestId("netlist-preview")
     .innerText();
-  expect(preview).toContain(".subckt Main VIN");
+  expect(preview).toContain(".subckt dut VIN");
   expect(preview).not.toContain("ALIAS");
   await page.getByTestId("check-report-close").click();
 

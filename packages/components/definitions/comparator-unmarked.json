@@ -5,17 +5,17 @@
     "id": "comparator-unmarked",
     "name": "Comparator (unmarked)",
     "viewBox": {
-      "x": -34,
-      "y": -28,
-      "width": 68,
-      "height": 56
+      "x": -44,
+      "y": -34,
+      "width": 88,
+      "height": 68
     },
     "pins": [
       {
         "name": "IN+",
         "role": "non-inverting-input",
         "at": {
-          "x": -30,
+          "x": -40,
           "y": 10
         },
         "direction": "west",
@@ -28,7 +28,7 @@
         "name": "IN-",
         "role": "inverting-input",
         "at": {
-          "x": -30,
+          "x": -40,
           "y": -10
         },
         "direction": "west",
@@ -55,11 +55,11 @@
       {
         "kind": "line",
         "from": {
-          "x": -30,
+          "x": -40,
           "y": -10
         },
         "to": {
-          "x": -26.952962,
+          "x": -30,
           "y": -10
         },
         "style": {
@@ -71,11 +71,11 @@
       {
         "kind": "line",
         "from": {
-          "x": -30,
+          "x": -40,
           "y": 10
         },
         "to": {
-          "x": -26.797909,
+          "x": -30,
           "y": 10
         },
         "style": {
@@ -87,7 +87,7 @@
       {
         "kind": "line",
         "from": {
-          "x": 23.202091,
+          "x": 21.961524,
           "y": 0
         },
         "to": {
@@ -102,7 +102,13 @@
       },
       {
         "kind": "path",
-        "data": "M -26.7979 -24.9983 L -26.7979 25 L 23.2021 0 Z",
+        "data": "M -30 -30 L -30 30 L 21.961524 0 Z",
+        "bounds": {
+          "x": -30,
+          "y": -30,
+          "width": 51.961524,
+          "height": 60
+        },
         "style": {
           "strokeRole": "emphasis",
           "lineCap": "butt",
@@ -112,18 +118,56 @@
       },
       {
         "kind": "path",
-        "data": "M -18 7 L -10 7 L -10 -7 L -2 -7",
+        "data": "M -20.679492 7 L -12.679492 7 L -12.679492 -7 L -4.679492 -7",
         "style": {
           "strokeRole": "normal",
           "lineCap": "butt",
           "lineJoin": "miter"
         },
-        "part": "hysteresis-step"
+        "part": "hysteresis-step",
+        "bounds": {
+          "x": -20.679492,
+          "y": -7,
+          "width": 16,
+          "height": 14
+        }
       }
     ],
     "variants": []
   },
   "electrical": null,
+  "subcircuit": {
+    "id": "comparator-unmarked",
+    "symbolId": "comparator-unmarked",
+    "target": "comparator",
+    "ports": [
+      {
+        "name": "VDD",
+        "direction": "inout",
+        "supply": "VDD"
+      },
+      {
+        "name": "VSS",
+        "direction": "inout",
+        "supply": "VSS"
+      },
+      {
+        "name": "VIP",
+        "direction": "input",
+        "pinName": "IN+"
+      },
+      {
+        "name": "VIN",
+        "direction": "input",
+        "pinName": "IN-"
+      },
+      {
+        "name": "VOUT",
+        "direction": "output",
+        "pinName": "OUT"
+      }
+    ]
+  },
   "catalog": {
     "library": "razavi",
     "symbolId": "comparator-unmarked",
@@ -131,7 +175,7 @@
     "category": "analog-block",
     "reviewStatus": "reviewed",
     "pinOrder": ["IN+", "IN-", "OUT"],
-    "palette": true,
+    "palette": false,
     "automaticMappings": [],
     "manualOnlyReason": "Unmarked comparator block; SPICE subcircuit pin polarity and supply contracts require an explicit PDK mapping.",
     "assetPath": "comparator-unmarked.json",
@@ -143,6 +187,14 @@
         "fixtures/visual-reference/razavi-reference-v1/opamp-reference.png"
       ],
       "calibrationPath": "fixtures/visual-reference/razavi-reference-v1/opamp-geometry.json"
+    },
+    "generation": {
+      "kind": "razavi-pdf-vector-reference",
+      "referenceManifestPath": "fixtures/visual-reference/razavi-reference-v1/manifest.json",
+      "referencePath": "fixtures/visual-reference/razavi-reference-v1/opamp-vector-source.json",
+      "converterPath": "scripts/generate-razavi-opamp-asset.mjs",
+      "converterVersion": 6,
+      "bodyNormalization": "equilateral-triangle"
     }
   }
 }

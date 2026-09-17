@@ -35,7 +35,6 @@ describe("FileCommandMenu", () => {
         onExportProject={vi.fn()}
         onExportSvg={vi.fn()}
         onExportRaster={vi.fn()}
-        onExportNetlist={vi.fn()}
         onRevert={vi.fn()}
         onOpenRecovery={vi.fn()}
       />,
@@ -46,12 +45,13 @@ describe("FileCommandMenu", () => {
     expect(markup).toContain("Saved Circuit");
     expect(markup).toContain('class="cloud-project-time"');
     expect(markup).toContain("cloud-project-cloud-1");
-    expect(markup).toContain("导入项目文件…");
-    expect(markup).toContain("导入 SPICE…");
-    expect(markup).toContain("从电路图识别 SPICE…");
-    expect(markup).toContain("导入 Cadence SPICE（`!` 全局网络）…");
+    expect(markup).toContain("Import Project File…");
+    expect(markup).toContain("Import SPICE / SCS…");
+    expect(markup).toContain("Import Cadence SPICE (`!` globals)…");
     expect(markup).toContain('data-testid="cadence-spice-files"');
-    expect(markup).toContain("导出项目文件…");
+    expect(markup).toContain("Export Project File…");
+    expect(markup).not.toContain("Copy SPICE netlist");
+    expect(markup).not.toContain("Copy Spectre netlist");
     expect(markup).not.toContain("Download Backup");
     expect(markup).not.toContain("Previous Project");
     expect(markup).not.toContain("cloud snapshot");
@@ -78,7 +78,6 @@ describe("FileCommandMenu", () => {
         onExportProject={vi.fn()}
         onExportSvg={vi.fn()}
         onExportRaster={vi.fn()}
-        onExportNetlist={vi.fn()}
         onRevert={vi.fn()}
         onOpenRecovery={vi.fn()}
       />,

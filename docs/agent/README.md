@@ -12,13 +12,19 @@ engine.
    connect a host such as Codex, Claude Code, or Cursor to it. The adapter
    owns claim redemption, persistent connector resume, process-local bearers,
    revisions, idempotent retries, and compact tools; the model never sees
-   tokens or the raw OpenAPI. The copied handoff points the Agent to the
-   versioned bootstrap manifest, so first-time setup can start from the same
-   text. See [mcp-install.md](mcp-install.md).
+   tokens or the raw OpenAPI. The copied handoff names the exact server;
+   use an existing adapter only when it targets that server and supports the
+   editor's schema. See [mcp-install.md](mcp-install.md).
 2. **Fallback: Kit + HTTP API.** For hosts without the packaged
    MCP entry point, fetch the public
    `GET /api/agent/kit` JSON, write its listed files to a private scratch
-   directory, redeem the claim, and call the four operations directly.
+   directory, redeem the claim, and call the four operations directly. The
+   handoff first recommends installing/updating MCP from the current manifest.
+   If declined, blocked or unavailable in the current conversation, report the
+   failed stage; use HTTP only when the user explicitly chooses it. That path
+   needs no Agent host restart. Configuration success alone is not tool
+   availability. Notify the user once if a restart or new conversation is
+   needed, but do not perform it automatically.
 3. **Advanced: direct OpenAPI.** `GET /api/agent/openapi.json` is the
    wire-contract authority for direct API integrations. An MCP-based Agent
    does not need it; `advanced_transact` reuses existing transaction forms.
@@ -33,14 +39,20 @@ manifest projects the shared sources into the HTTP Kit.
 
 ## Browser-host availability
 
-The public production editor is human-only by default and does not expose a
-claim UI or reconnect a prior browser session. Trusted development or staging
-builds can enable that browser surface with `VITE_ICM_AGENT_UI=enabled`; the
-API and MCP contracts themselves are unchanged.
+For run visibility, automatic browser archives and source/result exports, see
+[simulation result handoff](simulation-result-handoff.md).
 
-The retired Cloudflare Preview channel is no longer an active deployment
-target. Use the self-hosted editor URL and the operator-host deployment
-procedure for active Agent/simulation work.
+7: - `@icm/agent-routing` — Agent-local transient RouteGraph → typed-edit expander. ADR 0008: these types never enter the API schema or persisted model; Agent-side scaffolding with no in-repo importers.
+- `@icm/platform-node` — Node filesystem storage/recovery adapters; no in-repo importers.
+- `apps/editor` — the React/SVG editor and installable PWA, plus the Gallery, account, and moderation surfaces. `analytics/` is the self-contained first-party analytics module; `dev/` holds the Vite dev-server plugins (local Agent relay, netlist conversion, local simulation).
+- `apps/local-host` — loopback-only static host for `apps/editor/dist` with a local simulation transport seam (`bin: interactive-circuit-maker`; its only dependency is `@icm/spice-run`).
+- `apps/mcp-server` — stdio MCP server (`bin: analog-canvas-mcp`) over `agent-client`, with generated doc resources. Release packaging (`scripts/package-mcp.mjs`) bundles it with Vite and takes the version from `config/agent-mcp-distribution.json`, not from its `package.json`.
+- `worker/` — self-hosted workerd Worker and the Cloudflare production Worker. Production deploys from a `v*` tag or an explicit commit via `.github/workflows/cloudflare.yml`; the former Cloudflare Preview channel has been retired.
+8: The retired Cloudflare Preview channel is no longer an active deployment target. Use the self-hosted editor URL and the operator-host deployment procedure for active Agent/simulation work.
+
+For local development, `pnpm dev` starts the real Agent relay on first use through the editor's own `/api/agent/` routes, including its WebSocket. No separate Worker process needs to be launched manually. Use the loopback origin in the copied message from an Agent on the same computer. The local relay does not start cloud account, Gallery, or hosted simulation services, and restarting the development server ends its in-memory sessions.
+
+An unconfigured production build still keeps the Agent UI dormant. Explicit deployment flags control availability without changing the API or MCP contract.
 
 ## External Agent bootstrap (no MCP)
 
@@ -63,7 +75,7 @@ wire-contract authority.
 4. [`tool-behavior.md`](tool-behavior.md) — runtime behavior and transaction
    boundaries.
 5. [`response-semantics.md`](response-semantics.md) — conflicts, diagnostics,
-   generated artifacts, and completion decisions.
+   and completion decisions.
 6. [`api-usage.md`](api-usage.md) — loopback and browser-session requests.
 7. [`circuit-style-knowledge.md`](circuit-style-knowledge.md) and
    [`knowledge/`](knowledge/README.md) — evidence-first circuit reading and

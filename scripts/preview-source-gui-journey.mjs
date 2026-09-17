@@ -4,6 +4,7 @@ import { basename, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { chromium, expect } from "@playwright/test";
+import { previewBrowserLaunchOptions } from "./lib/preview-browser.mjs";
 import { parseProject } from "../packages/project-protocol/dist/index.js";
 import {
   readSimulationExperimentConfig,
@@ -11,7 +12,7 @@ import {
 } from "../packages/model/dist/index.js";
 import {
   generateCircuitSource,
-  compileSourceSimulation,
+  compileNgspiceSourceSimulation as compileSourceSimulation,
 } from "../packages/netlist/dist/index.js";
 import { verifyPreviewCandidate } from "./lib/preview-candidate.mjs";
 import {
@@ -34,7 +35,7 @@ const outputDirectory = resolve(
 );
 const fixtureText = await readFile(
   new URL(
-    "../apps/editor/src/examples/five-transistor-ota-sky130.icproj.json",
+    "../netlists/ngspice-ota-qualification/source.icproj.json",
     import.meta.url,
   ),
   "utf8",
@@ -48,7 +49,12 @@ const binding = folder.input.circuitBindings.find(
   (item) => item.emission === "top-level",
 );
 assert(binding);
-const generated = generateCircuitSource(project, binding);
+const generated = generateCircuitSource(
+  project,
+  binding,
+  folder.input,
+  "ngspice",
+);
 assert(generated.ok);
 const parameter = generated.source.parameters.find(
   (item) => item.descriptor.displayRole === "width",
@@ -59,7 +65,7 @@ const program =
     .find((file) => file.path === folder.input.entry)
     .text.replace(
       ".endc",
-      "noise v(vout) VINP dec 20 1 1000000000\nwrite out.raw noise1.all noise2.all\n.endc",
+      "meas tran vout_peak MAX v(vout)\n* @spec vout_peak range 0 1.8 unit=V\nnoise v(vout) VINP dec 20 1 1000000000\nwrite out.raw noise1.all noise2.all\n.endc",
     ) + "\n* Source workspace GUI acceptance\n";
 config.deviceOperatingPoints = ["M1", "M3"].map((instanceId) => ({
   id: `gui-op-${instanceId}`,
@@ -90,14 +96,26 @@ let panel;
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 async function edit(path, text) {
   if (path === folder.input.configPath) {
-    await panel.getByRole("button", { name: "More code actions" }).click();
-    await page
-      .getByRole("menuitem", { name: "Advanced configuration" })
+    if (
+      (await panel
+        .getByRole("button", { name: "Explorer", exact: true })
+        .getAttribute("aria-expanded")) !== "true"
+    )
+      await panel
+        .getByRole("button", { name: "Explorer", exact: true })
+        .click();
+    await panel
+      .getByRole("treeitem", { name: path, exact: true })
+      .first()
       .click();
   } else await panel.getByRole("tab", { name: path, exact: false }).click();
   const editor = panel.getByRole("textbox", {
     name: "Simulation source editor",
   });
+  if (path === binding.path) {
+    // Profile discovery is asynchronous; do not edit an unresolved first frame.
+    await expect(editor).toContainText(".subckt", { timeout: 30000 });
+  }
   await editor.click();
   await editor.press("ControlOrMeta+A");
   await page.keyboard.insertText(text);
@@ -137,7 +155,7 @@ function entryFromZip(entries, name) {
   assert(value, `Missing exported ${name}`);
   return Buffer.from(value).toString();
 }
-async function downloadArtifactGroup(label, name) {
+async function downloadArtifactGroup(label, name, action = "Download…") {
   const explorer = panel.getByRole("complementary", {
     name: "Simulation files",
   });
@@ -151,14 +169,14 @@ async function downloadArtifactGroup(label, name) {
     .click({ button: "right" });
   return unzipSync(
     await download(
-      page.getByRole("menuitem", { name: "Download…", exact: true }),
+      page.getByRole("menuitem", { name: action, exact: true }),
       name,
     ),
   );
 }
 try {
   report.candidate = await verifyPreviewCandidate(baseUrl);
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch(previewBrowserLaunchOptions());
   const context = await browser.newContext({
     viewport: { width: 1600, height: 1050 },
     acceptDownloads: true,
@@ -171,10 +189,7 @@ try {
     mimeType: "application/json",
     buffer: Buffer.from(fixtureText),
   });
-  await page
-    .locator("summary")
-    .filter({ hasText: /^Netlist$/u })
-    .click();
+  await page.locator('summary[aria-label="Netlist"]').click();
   await page.getByTestId("open-analog-simulation").click();
   panel = page.getByRole("region", { name: "Analog simulation" });
   await expect(
@@ -187,6 +202,13 @@ try {
     String(Number(parameter.rawValue) * 1.1) +
     source.slice(parameter.endOffset);
   await edit(binding.path, changed);
+  await panel.getByRole("button", { name: "Save source", exact: true }).click();
+  await expect(
+    panel.getByRole("button", { name: "Save source", exact: true }),
+  ).toHaveAttribute(
+    "aria-description",
+    "Source applied to current project; not a cloud save",
+  );
   const changedProject = await exportProject("resized.icproj.json");
   const changedValue = changedProject.documents
     .find((d) => d.id === parameter.documentId)
@@ -199,13 +221,25 @@ try {
     "Generated parameter text did not reach Canvas",
   );
   await edit(binding.path, source);
+  await panel.getByRole("button", { name: "Save source", exact: true }).click();
+  await expect(
+    panel.getByRole("button", { name: "Save source", exact: true }),
+  ).toHaveAttribute(
+    "aria-description",
+    "Source applied to current project; not a cloud save",
+  );
   const restoredProject = await exportProject("restored.icproj.json");
   const restoredValue = restoredProject.documents
     .find((d) => d.id === parameter.documentId)
     .instances.find((i) => i.id === parameter.instanceId).netlist.parameters[
     parameter.parameter
   ];
-  const restoredSource = generateCircuitSource(restoredProject, binding);
+  const restoredSource = generateCircuitSource(
+    restoredProject,
+    binding,
+    folder.input,
+    "ngspice",
+  );
   assert(restoredSource.ok);
   assert.equal(restoredSource.source.text, source);
   report.mappedEdit = {
@@ -224,8 +258,10 @@ try {
       '.include "missing-gui-acceptance.spice"\n.control',
     ),
   );
-  await panel.getByRole("button", { name: "More code actions" }).click();
-  await page.getByRole("menuitem", { name: "View final deck" }).click();
+  await panel
+    .getByRole("treeitem", { name: "Run", exact: true })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Preview input netlist…" }).click();
   await expect(panel).toContainText("missing-gui-acceptance.spice", {
     timeout: 30_000,
   });
@@ -240,12 +276,54 @@ try {
   await expect(
     panel.getByRole("tab", { name: "Results", exact: true }),
   ).toHaveCount(0);
-  const preparedEntries = await downloadArtifactGroup("Prepare", "prepare.zip");
+  await expect(panel.getByLabel("Prepare temporary files")).toHaveCount(0);
+  const diagnosticEntries = await downloadArtifactGroup(
+    "Run",
+    "diagnostics.zip",
+    "Export diagnostic bundle…",
+  );
   const runEntries = await downloadArtifactGroup("Run", "run.zip");
+  assert(
+    Object.keys(runEntries).every((path) => /\.(raw|csv|log|txt)$/.test(path)),
+  );
   await panel.getByRole("button", { name: "Maximize results" }).click();
-  const input = JSON.parse(entryFromZip(preparedEntries, "prepared.json"));
-  const result = JSON.parse(entryFromZip(runEntries, "result.json"));
-  const outputs = JSON.parse(entryFromZip(runEntries, "outputs.json"));
+  const input = JSON.parse(entryFromZip(diagnosticEntries, "prepared.json"));
+  const result = JSON.parse(entryFromZip(diagnosticEntries, "result.json"));
+  const specs = JSON.parse(entryFromZip(diagnosticEntries, "specs.json"));
+  assert(
+    !Object.keys(runEntries).some((path) => basename(path) === "specs.json"),
+  );
+  assert(
+    !Object.keys(diagnosticEntries).some(
+      (path) =>
+        basename(path).startsWith("outputs-") ||
+        [
+          "outputs.json",
+          "measurements.csv",
+          "device-operating-points.csv",
+        ].includes(basename(path)),
+    ),
+  );
+  assert.deepEqual(
+    Object.keys(runEntries)
+      .map((path) => basename(path))
+      .filter((name) => name.endsWith(".csv"))
+      .sort(),
+    [
+      "op-0.csv",
+      "dc-1.csv",
+      "ac-2.csv",
+      "tran-3.csv",
+      "noise-4.csv",
+      "specs.csv",
+    ].sort(),
+  );
+  assert(specs.inputDigest);
+  assert.equal(specs.results.length, 1);
+  assert.equal(specs.results[0].name, "vout_peak");
+  assert.equal(specs.results[0].judgment, "pass", JSON.stringify(specs));
+  assert(Number.isFinite(specs.results[0].value));
+  report.specs = specs;
   assert.equal(
     result.outcome.status,
     "completed",
@@ -265,15 +343,8 @@ try {
     compiled.vectors,
     input,
   );
-  assert(outputs.measurements.length > 0);
-  assert.equal(outputs.deviceOperatingPoints.length, 2);
   assert(
-    outputs.analyses.some((record) =>
-      record.outputs.some((output) => output.label),
-    ),
-  );
-  assert(
-    entryFromZip(preparedEntries, "prepared.cir").includes("noise v(vout)"),
+    entryFromZip(diagnosticEntries, "prepared.cir").includes("noise v(vout)"),
   );
   assert(entryFromZip(runEntries, "out.raw").includes("Plotname:"));
   assert(Object.keys(runEntries).some((path) => path.endsWith(".csv")));
@@ -281,21 +352,14 @@ try {
   report.environment = result.metadata.environment;
   report.recoveredInputError = true;
 
-  await panel.getByRole("tab", { name: "Plot", exact: true }).click();
+  await panel.getByRole("tab", { name: "Specs", exact: true }).click();
   await expect(
-    panel.getByRole("heading", { name: "AC Analysis" }),
+    panel.getByRole("region", { name: "Specification results" }),
   ).toBeVisible();
-  const plotExport = panel.locator("details.simulation-result-export");
-  await plotExport.locator("summary").click();
-  await download(
-    plotExport.getByRole("button", { name: "Visible plots · SVG" }),
-    "plots-svg.zip",
-  );
-  await download(
-    plotExport.getByRole("button", { name: "Visible plots · PNG" }),
-    "plots-png.zip",
-  );
-  await plotExport.locator("summary").click();
+  assert(entryFromZip(runEntries, "specs.csv").includes("judgment"));
+  await expect(
+    panel.getByRole("row").filter({ hasText: "vout_peak" }),
+  ).toContainText("Pass");
   await page.screenshot({ path: join(outputDirectory, "results.png") });
   await panel.getByRole("button", { name: "Restore results" }).click();
 
@@ -304,8 +368,10 @@ try {
     axes: [{ kind: "temperature", values: [27, 28] }],
   };
   await edit(folder.input.configPath, JSON.stringify(config, null, 2));
-  await panel.getByRole("button", { name: "More code actions" }).click();
-  await page.getByRole("menuitem", { name: "View final deck" }).click();
+  await panel
+    .getByRole("treeitem", { name: "Run", exact: true })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Preview input netlist…" }).click();
   await panel.getByTitle("Batch queue", { exact: true }).click();
   await expect(panel.locator(".simulation-batch-menu-popover")).toContainText(
     "Batch · prepared",
@@ -331,10 +397,7 @@ try {
     .getByTestId("startup-recovery-banner")
     .getByRole("button", { name: "Restore", exact: true })
     .click();
-  await page
-    .locator("summary")
-    .filter({ hasText: /^Netlist$/u })
-    .click();
+  await page.locator('summary[aria-label="Netlist"]').click();
   await page.getByTestId("open-analog-simulation").click();
   await expect(
     panel.getByRole("textbox", { name: "Simulation source editor" }),

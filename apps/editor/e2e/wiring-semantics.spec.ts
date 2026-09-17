@@ -1,4 +1,4 @@
-import { createEmptyProject } from "@icm/model";
+import { createEmptyProject, createRoutePath } from "@icm/model";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import {
@@ -149,6 +149,84 @@ test("clicking a junction dot selects it and Delete disconnects the tap", async 
   );
 });
 
+for (const fixedVerticalLeg of [false, true]) {
+  test(`middle clicks reach 45 degrees after one corner flip${fixedVerticalLeg ? " after a fixed vertical leg" : ""}`, async ({
+    page,
+  }) => {
+    await page.goto("/editor");
+    await clickDrawTool(page, "wire");
+    const canvas = page.getByTestId("schematic-canvas");
+    await awaitCanvasSettled(canvas);
+    const [start, bend, end] = await onScreen(canvas, [
+      { x: 100, y: 100 },
+      { x: 100, y: 140 },
+      { x: 260, y: 200 },
+    ]);
+    await page.mouse.click(start!.x, start!.y);
+    if (fixedVerticalLeg) await page.mouse.click(bend!.x, bend!.y);
+    await page.mouse.move(end!.x, end!.y);
+    const preview = page.getByTestId("wire-preview");
+    const points = () =>
+      preview.evaluate((element) =>
+        Array.from((element as SVGPolylineElement).points).map(({ x, y }) => ({
+          x,
+          y,
+        })),
+      );
+    await expect(preview).toBeVisible();
+    const original = await points();
+    const middle = () => page.mouse.click(end!.x, end!.y, { button: "middle" });
+
+    await middle();
+    await expect(page.getByTestId("status")).toContainText(
+      fixedVerticalLeg ? "horizontal first" : "vertical first",
+    );
+    const flipped = await points();
+    expect(flipped).not.toEqual(original);
+    expect(
+      flipped.every(
+        (point, index) =>
+          index === 0 ||
+          point.x === flipped[index - 1]!.x ||
+          point.y === flipped[index - 1]!.y,
+      ),
+    ).toBe(true);
+
+    await middle();
+    await expect(page.getByTestId("status")).toContainText("45° diagonal");
+    const diagonal = await points();
+    expect(
+      diagonal.some((point, index) => {
+        if (!index) return false;
+        const dx = Math.abs(point.x - diagonal[index - 1]!.x);
+        const dy = Math.abs(point.y - diagonal[index - 1]!.y);
+        return dx > 0 && dx === dy;
+      }),
+    ).toBe(true);
+    await middle();
+    await expect(page.getByTestId("status")).toContainText("any angle");
+    await middle();
+    await expect(page.getByTestId("status")).toContainText("auto");
+    expect(await points()).toEqual(original);
+    await expect(page.getByTestId("revision")).toHaveText("0");
+    await expect(page.locator('[data-canvas-hit-kind="route"]')).toHaveCount(0);
+
+    await middle();
+    await middle();
+    await page.mouse.dblclick(end!.x, end!.y);
+    await expect(page.locator('[data-layer="routes"] polyline')).toHaveCount(1);
+    const committed = await page
+      .locator('[data-layer="routes"] polyline')
+      .evaluate((element) =>
+        Array.from((element as SVGPolylineElement).points).map(({ x, y }) => ({
+          x,
+          y,
+        })),
+      );
+    expect(committed).toEqual(diagonal);
+  });
+}
+
 test("middle click cycles the wire corner and never commits the wire", async ({
   page,
 }) => {
@@ -266,6 +344,180 @@ test("dragging a wire's end onto another wire joins them into one net", async ({
   await expect(page.getByTestId("statusbar-issues")).toHaveText(
     "No issues found",
   );
+});
+
+test("dragging a wire segment onto a capacitor pin connects and dots it", async ({
+  page,
+}) => {
+  const project = createEmptyProject("segment-pin", "Segment pin contact");
+  const document = project.documents[0]!;
+  document.instances.push(
+    {
+      id: "R1",
+      symbolId: "resistor",
+      placement: {
+        position: { x: 200, y: 180 },
+        rotation: 0,
+        mirror: "none",
+      },
+    },
+    {
+      id: "R2",
+      symbolId: "resistor",
+      placement: {
+        position: { x: 400, y: 180 },
+        rotation: 0,
+        mirror: "none",
+      },
+    },
+    {
+      id: "C1",
+      symbolId: "capacitor",
+      placement: {
+        position: { x: 300, y: 320 },
+        rotation: 0,
+        mirror: "none",
+      },
+    },
+  );
+  document.nets.push(
+    {
+      id: "wire-net",
+      terminals: [
+        { instanceId: "R1", pinName: "2" },
+        { instanceId: "R2", pinName: "2" },
+      ],
+    },
+    {
+      id: "capacitor-top",
+      terminals: [{ instanceId: "C1", pinName: "1" }],
+    },
+  );
+  document.routes.push(
+    createRoutePath({
+      id: "dragged-wire",
+      netId: "wire-net",
+      start: { kind: "terminal", instanceId: "R1", pinName: "2" },
+      end: { kind: "terminal", instanceId: "R2", pinName: "2" },
+      bends: [],
+      modes: ["manual"],
+    }),
+  );
+
+  await page.goto("/editor");
+  await page.getByTestId("project-file").setInputFiles({
+    name: "segment-pin.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  const canvas = page.getByTestId("schematic-canvas");
+  await awaitCanvasSettled(canvas);
+  const [start, finish] = await onScreen(canvas, [
+    { x: 300, y: 200 },
+    { x: 300, y: 300 },
+  ]);
+  await page.mouse.move(start!.x, start!.y);
+  await page.mouse.down();
+  await page.mouse.move(finish!.x, finish!.y, { steps: 8 });
+  await page.mouse.up();
+
+  await expect(page.getByTestId("status")).toContainText(
+    "connected it where it landed",
+  );
+  await expect(page.locator('[data-canvas-hit-kind="route"]')).toHaveCount(2);
+  await expect(page.locator('g[data-layer="junctions"] circle')).toHaveCount(1);
+});
+
+test("dragging a wire segment onto another wire endpoint connects there", async ({
+  page,
+}) => {
+  const project = createEmptyProject("segment-wire", "Segment wire contact");
+  const document = project.documents[0]!;
+  document.presentation.grid = 10;
+  document.instances.push(
+    {
+      id: "R1",
+      symbolId: "resistor",
+      placement: {
+        position: { x: 200, y: 180 },
+        rotation: 0,
+        mirror: "none",
+      },
+    },
+    {
+      id: "R2",
+      symbolId: "resistor",
+      placement: {
+        position: { x: 400, y: 180 },
+        rotation: 0,
+        mirror: "none",
+      },
+    },
+  );
+  document.nets.push(
+    {
+      id: "upper-net",
+      terminals: [
+        { instanceId: "R1", pinName: "2" },
+        { instanceId: "R2", pinName: "2" },
+      ],
+    },
+    { id: "lower-net", terminals: [] },
+  );
+  document.junctions.push(
+    {
+      id: "lower-left",
+      netId: "lower-net",
+      position: { x: 100, y: 300 },
+      role: "route-anchor",
+    },
+    {
+      id: "lower-touch",
+      netId: "lower-net",
+      position: { x: 200, y: 300 },
+      role: "route-anchor",
+    },
+  );
+  document.routes.push(
+    createRoutePath({
+      id: "dragged-wire",
+      netId: "upper-net",
+      start: { kind: "terminal", instanceId: "R1", pinName: "2" },
+      end: { kind: "terminal", instanceId: "R2", pinName: "2" },
+      bends: [],
+      modes: ["manual"],
+    }),
+    createRoutePath({
+      id: "lower-wire",
+      netId: "lower-net",
+      start: { kind: "junction", junctionId: "lower-left" },
+      end: { kind: "junction", junctionId: "lower-touch" },
+      bends: [],
+      modes: ["manual"],
+    }),
+  );
+
+  await page.goto("/editor");
+  await page.getByTestId("project-file").setInputFiles({
+    name: "segment-wire.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  const canvas = page.getByTestId("schematic-canvas");
+  await awaitCanvasSettled(canvas);
+  const [start, finish] = await onScreen(canvas, [
+    { x: 300, y: 200 },
+    { x: 300, y: 300 },
+  ]);
+  await page.mouse.move(start!.x, start!.y);
+  await page.mouse.down();
+  await page.mouse.move(finish!.x, finish!.y, { steps: 8 });
+  await page.mouse.up();
+
+  await expect(page.getByTestId("status")).toContainText(
+    "connected it where it landed",
+  );
+  await expect(page.locator('g[data-layer="junctions"] circle')).toHaveCount(1);
 });
 
 test("a power rail drawn across the tops of wires connects to them", async ({

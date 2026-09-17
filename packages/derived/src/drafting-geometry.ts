@@ -2,10 +2,13 @@ import type {
   DerivedPoint,
   DerivedRect,
   DraftingObject,
+  Mirror,
+  Rotation,
   RichTextDocument,
   SchematicDocument,
   VisualAnchor,
 } from "@icm/model";
+import { mirrorScale } from "@icm/model";
 import type { SymbolResolver } from "@icm/symbols";
 
 import { resolveVisualAnchor, type ResolvedAnchor } from "./anchor.js";
@@ -49,7 +52,8 @@ export type ResolvedDraftingGeometry =
       position: DerivedPoint;
       /** Center of the editable text, which may shift between polarity marks. */
       textPosition: DerivedPoint;
-      rotation: 0 | 90 | 180 | 270;
+      /** Layout bearing for multipart notation. Text and marks stay upright. */
+      rotation: Rotation;
       polarityLines: Array<{
         role: "positive-horizontal" | "positive-vertical" | "negative";
         from: DerivedPoint;
@@ -83,7 +87,7 @@ export type ResolvedDraftingGeometry =
       kind: "callout";
       textPosition: DerivedPoint;
       target: DerivedPoint;
-      rotation: 0 | 90 | 180 | 270;
+      rotation: Rotation;
       textBounds: DerivedRect;
       bounds: DerivedRect;
       diagnostics: DraftingDiagnostic[];
@@ -119,7 +123,7 @@ export type ResolvedDraftingGeometry =
   | {
       kind: "floating-symbol";
       position: DerivedPoint;
-      rotation: 0 | 90 | 180 | 270;
+      rotation: Rotation;
       bounds: DerivedRect;
       diagnostics: DraftingDiagnostic[];
     };
@@ -219,18 +223,18 @@ function resolveAnchorWithRole(
   return { anchor: resolved, diagnostics };
 }
 
-// P1: frozen final-rotation semantics. The renderer, export bounds, and
-// Snapshot all use the geometry.rotation reported here. For a "follow" route
-// anchor the anchor's own rotation composes with the object's persisted
-// rotation; for free/object anchors the object rotation stands alone.
+// The resolved rotation is the layout bearing for multipart text notation.
+// For a "follow" route anchor the anchor's own rotation composes with the
+// object's persisted rotation; for free/object anchors the object rotation
+// stands alone. Glyphs and notation strokes themselves remain screen-upright.
 function composeRotation(
-  anchorRotation: 0 | 90 | 180 | 270,
-  objectRotation: 0 | 90 | 180 | 270,
+  anchorRotation: Rotation,
+  objectRotation: Rotation,
   follow: boolean,
-): 0 | 90 | 180 | 270 {
+): Rotation {
   if (!follow) return objectRotation;
   const composed = (anchorRotation + objectRotation) % 360;
-  return (((composed % 360) + 360) % 360) as 0 | 90 | 180 | 270;
+  return (((composed % 360) + 360) % 360) as Rotation;
 }
 
 function resolveText(
@@ -276,29 +280,33 @@ function resolveText(
   );
   const content = draftTextLayoutContent(document, object, metrics);
   const polarity = object.polarity
-    ? resolvePolarityTextGeometry(position, object.polarity, content, metrics)
+    ? resolvePolarityTextGeometry(
+        position,
+        object.polarity,
+        content,
+        metrics,
+        rotation,
+      )
     : null;
   const textPosition = polarity?.textPosition ?? position;
-  const unrotatedTextBounds = textBounds(
+  const resolvedTextBounds = textBounds(
     textPosition,
     object.alignment,
     0,
     content,
     metrics,
   );
-  const unrotatedBounds = polarity
+  const barePolarity =
+    object.polarity === "positive" || object.polarity === "negative";
+  const bounds = polarity
     ? unionRects([
-        unrotatedTextBounds,
+        ...(barePolarity ? [] : [resolvedTextBounds]),
         paddedBounds(
           unionBounds(polarity.lines.flatMap((line) => [line.from, line.to])),
           STROKE_PADDING / 2,
         ),
       ])
-    : unrotatedTextBounds;
-  const bounds =
-    rotation === 0
-      ? unrotatedBounds
-      : rotatedRectBounds(unrotatedBounds, position, rotation);
+    : resolvedTextBounds;
   return {
     kind: "text" as const,
     position,
@@ -310,11 +318,12 @@ function resolveText(
   };
 }
 
-function resolvePolarityTextGeometry(
+export function resolvePolarityTextGeometry(
   position: DerivedPoint,
   polarity: "both" | "positive" | "negative",
   content: RichTextDocument,
   metrics: ReturnType<typeof richTextMetrics>,
+  rotation: Rotation,
 ): {
   textPosition: DerivedPoint;
   lines: Extract<ResolvedDraftingGeometry, { kind: "text" }>["polarityLines"];
@@ -323,48 +332,52 @@ function resolvePolarityTextGeometry(
   const textHalfHeight = layout.height / 2;
   const markerHalfArm = metrics.fontSize * 0.23;
   const separation = textHalfHeight + markerHalfArm + metrics.fontSize * 0.18;
-  let textOffset = 0;
   let positiveOffset: number | null = null;
   let negativeOffset: number | null = null;
   if (polarity === "both") {
     positiveOffset = -separation;
     negativeOffset = separation;
   } else if (polarity === "positive") {
-    positiveOffset = (-separation - textHalfHeight + markerHalfArm) / 2;
-    textOffset = positiveOffset + separation;
+    positiveOffset = 0;
   } else {
-    textOffset = -(separation - textHalfHeight + markerHalfArm) / 2;
-    negativeOffset = textOffset + separation;
+    negativeOffset = 0;
   }
   const lines: Extract<
     ResolvedDraftingGeometry,
     { kind: "text" }
   >["polarityLines"] = [];
+  const markerCenter = (offsetY: number): DerivedPoint => {
+    const radians = (rotation * Math.PI) / 180;
+    return {
+      x: position.x - offsetY * Math.sin(radians),
+      y: position.y + offsetY * Math.cos(radians),
+    };
+  };
   if (positiveOffset !== null) {
-    const y = position.y + positiveOffset;
+    const center = markerCenter(positiveOffset);
     lines.push(
       {
         role: "positive-horizontal",
-        from: { x: position.x - markerHalfArm, y },
-        to: { x: position.x + markerHalfArm, y },
+        from: { x: center.x - markerHalfArm, y: center.y },
+        to: { x: center.x + markerHalfArm, y: center.y },
       },
       {
         role: "positive-vertical",
-        from: { x: position.x, y: y - markerHalfArm },
-        to: { x: position.x, y: y + markerHalfArm },
+        from: { x: center.x, y: center.y - markerHalfArm },
+        to: { x: center.x, y: center.y + markerHalfArm },
       },
     );
   }
   if (negativeOffset !== null) {
-    const y = position.y + negativeOffset;
+    const center = markerCenter(negativeOffset);
     lines.push({
       role: "negative",
-      from: { x: position.x - markerHalfArm, y },
-      to: { x: position.x + markerHalfArm, y },
+      from: { x: center.x - markerHalfArm, y: center.y },
+      to: { x: center.x + markerHalfArm, y: center.y },
     });
   }
   return {
-    textPosition: { x: position.x, y: position.y + textOffset },
+    textPosition: position,
     lines,
   };
 }
@@ -619,7 +632,7 @@ function resolveFloatingSymbol(
   };
   if (viewBox) {
     // P1: apply the same transform the SVG renderer uses
-    // (translate(position) rotate(rotation) scale(-1 1) when mirror=x) to all
+    // (translate(position) scale(mirror) rotate(rotation)) to all
     // four viewBox corners and take the AABB, so the bounds match the rendered
     // symbol for any rotation/mirror combination.
     const corners: DerivedPoint[] = [
@@ -646,22 +659,25 @@ function resolveFloatingSymbol(
   };
 }
 
-// Mirrors the SVG transform order in render.ts: translate(position), then
-// rotate(rotation) about the origin, then scale(-1 1) for mirror-x.
+// Mirrors the SVG transform order in render.ts: rotate around the local
+// origin, apply independent screen-space mirror axes, then translate.
 function transformSymbolCorner(
   corner: DerivedPoint,
   position: DerivedPoint,
-  rotation: 0 | 90 | 180 | 270,
-  mirror: "none" | "x",
+  rotation: Rotation,
+  mirror: Mirror,
 ): DerivedPoint {
   const rad = (rotation * Math.PI) / 180;
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
-  const rx = mirror === "x" ? -corner.x : corner.x;
-  const ry = corner.y;
+  const rotated = {
+    x: corner.x * cos - corner.y * sin,
+    y: corner.x * sin + corner.y * cos,
+  };
+  const scale = mirrorScale(mirror);
   return {
-    x: position.x + rx * cos - ry * sin,
-    y: position.y + rx * sin + ry * cos,
+    x: position.x + rotated.x * scale.x,
+    y: position.y + rotated.y * scale.y,
   };
 }
 
@@ -705,7 +721,7 @@ function unionRects(rects: DerivedRect[]): DerivedRect {
 function textBounds(
   position: DerivedPoint,
   alignment: "start" | "middle" | "end",
-  rotation: 0 | 90 | 180 | 270,
+  rotation: Rotation,
   content: RichTextDocument,
   metrics: ReturnType<typeof richTextMetrics>,
 ): DerivedRect {
@@ -727,7 +743,7 @@ function textBounds(
 function rotatedRectBounds(
   rect: DerivedRect,
   origin: DerivedPoint,
-  rotation: 90 | 180 | 270,
+  rotation: Rotation,
 ): DerivedRect {
   const radians = (rotation * Math.PI) / 180;
   const cos = Math.cos(radians);

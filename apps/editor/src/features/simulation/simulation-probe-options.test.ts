@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseProject } from "@icm/project-protocol";
 import { createEmptyProject } from "@icm/model";
 
-import fiveTransistorOtaSky130 from "../../examples/five-transistor-ota-sky130.icproj.json";
+import fiveTransistorOtaSky130 from "../../../../../netlists/native-ota-library/legacy-source.icproj.json";
 import {
   deriveSimulationProbeOptions,
   matchSimulationTerminalCurrentProbeOptions,
@@ -350,7 +350,7 @@ describe("simulation probe choices", () => {
     const options = deriveSimulationProbeOptions(project, document.id).voltage;
 
     expect(options).toHaveLength(1);
-    expect(options[0]?.label).toBe("Main · 0");
+    expect(options[0]?.label).toBe("dut · 0");
     expect(options[0]?.key).toContain(":logical:net-ground-a");
   });
 
@@ -402,6 +402,6 @@ describe("simulation probe choices", () => {
     ).voltage.map((option) => option.label);
 
     expect(labels.some((label) => label.includes("ghost"))).toBe(false);
-    expect(labels).toContain("Main · in");
+    expect(labels).toContain("dut · in");
   });
 });

@@ -2,11 +2,14 @@
 
 Status: `accepted`
 
-Primary owner: `worker/agent-session.ts` and `apps/editor/src/agent`
+Primary owners: `worker/agent-session.ts`, `worker/agent-session-runtime.ts`,
+`worker/agent-session-do.ts`, and `apps/editor/src/agent`
 
-The browser Project is authoritative. A user creates a bounded session and
-chooses scopes. The relay returns a short-lived pairing code; claim redemption
-returns `sessionId`, authorized `documentIds`, a short-lived bearer, and a
+The browser Project is authoritative. Clicking **Agent** creates a
+session with full circuit editing, file and simulation access for that Project;
+there is no permission-tier picker. The relay returns a short-lived pairing
+code; claim redemption returns `sessionId`, authorized `documentIds`, a
+short-lived bearer, and a
 session-bound connector credential. A still-valid claim may be redeemed again
 only to rotate both credentials. Bearers are never persisted. The local MCP
 Helper may persist the connector in the user's private profile; the relay
@@ -14,13 +17,27 @@ stores only its verifier, and session revoke invalidates both credentials.
 
 ## Resources
 
+Browser reconnect credentials are scoped to the current tab's sessionStorage,
+using the existing durable recovery working-copy ID rather than a mount-local
+Project counter. Refresh and Gallery return restore that working copy before
+attaching the editor socket. An explicit new/import target does not auto-attach
+the old pairing. Gallery displays saved local pairing evidence, never online
+status; it does not execute Agent requests. Old localStorage credentials are
+not adopted across this identity boundary: existing sessions need one new
+pairing after upgrading. No Project content is duplicated in connector storage.
+
+Manual pause remains authoritative across request completion, socket recovery,
+and connector bearer renewal. A transport failure does not revoke a pairing.
+
 ```text
 GET  /api/agent/kit
 POST /api/agent/claims
 POST /api/agent/connectors/resume
+GET  /api/agent/sessions/{sessionId}/status
 POST /api/agent/sessions/{sessionId}/circuit
 POST /api/agent/sessions/{sessionId}/files
 POST /api/agent/sessions/{sessionId}/simulation
+POST /api/agent/sessions/{sessionId}/projects
 GET  /api/agent/openapi.json
 ```
 
@@ -68,18 +85,45 @@ The deployed defaults are part of the accepted transport contract:
 
 - a Claim remains redeemable for 30 minutes;
 - an Agent bearer remains valid for at most 8 hours and is never persisted;
-- the session and its connector expire after 7 days;
+- the session and its connector expire after 30 minutes of inactivity;
+  activity renews the deadline without an absolute lifetime limit;
 - a completed request result remains in the idempotency cache for 5 minutes,
   still subject to the configured entry-count and byte ceilings.
 
-No credential outlives its containing session. Redeeming a still-valid Claim
-rotates both the connector and bearer; connector resume rotates the bearer.
+Claim redemption, admitted Circuit/File/Simulation/Project operations and their
+responses, manual Document edits (including changes to the Cell roster), and
+explicit pause/resume reset the idle window. Capabilities probes, connector refresh, heartbeat acknowledgements,
+SSE keepalives, and transport reconnects do not. Relay forwards time out after
+30 seconds, well within the idle window. The relay persists the renewed
+deadline, reschedules expiry, and sends `session.renewed` so browser recovery
+and its timer follow the same deadline. `session.expired` ends idle sessions.
+The initial connector expiry returned to a client is a deadline snapshot;
+resume must ask the server even if that saved timestamp has passed.
+
+Every credential requires a live session, even before its own expiry.
+Redeeming a still-valid Claim rotates both the connector and bearer; connector resume rotates the bearer.
 Each rotation invalidates the previous credential. Session revoke, expiry, or
 Project replacement invalidates the Claim, bearer, and connector together. The
 local MCP Helper may persist only the connector in its private user profile;
 browser recovery persists neither Agent credential.
 
 ## Transport state machine
+
+The Session status resource authenticates the existing bearer (including while
+paused) and reads relay observations without forwarding to the browser. Its
+canonical schema lives in `packages/agent-adapter/src/envelope.ts`, alongside
+the existing Session envelopes. `authorization` is active or paused; revoked
+and expired sessions return the existing typed errors. `editor` is attached or
+detached, with `observedAt` and the authoritative idle `expiresAt`. Attachment
+only means an open socket was observed, not that an operation will succeed.
+The read does not resume the session, renew its deadline, or enter the Circuit
+request ledger. It is not a fifth Circuit operation.
+
+MCP and direct clients use this same resource for status. The shared client
+retains pairing on a failed network probe and reports unknown; its previous
+observation remains timestamped evidence, not current confirmation. Only an
+actual Circuit response establishes online execution transport. Normal Circuit
+operations do not require a status request first.
 
 The official thin browser states are:
 
@@ -109,11 +153,21 @@ before deciding what to do; it never blindly changes and replays a request.
 
 ## Permissions
 
+New browser connections grant the complete supported scope set. Replacing a
+connection also grants full access; automatic recovery resumes the original
+session with its existing scopes. Pause and Disconnect remain available.
+
 Circuit permissions independently cover Snapshot, render, source spans,
 geometry, connectivity, presentation, and temporary semantic editor control.
 File permissions independently cover Project download, visual download, and
-candidate staging. The relay checks bearer token, session/document binding,
-scope, expiry, body size, and rate limits before forwarding.
+candidate staging (`project.import`), which also gates the Project resource.
+The separate `simulation.run` scope covers Simulation operations and File
+Resource simulation workspaces, independent of every edit scope; Simulation
+capability and authoring-help requests need no scope. A saved Project-folder
+source update needs both `simulation.run` and `project.import`, plus the
+connectivity edit scope when it carries circuit edits. The relay checks bearer
+token, session/document binding, scope, expiry, body size, and rate limits
+before forwarding.
 
 Semantic editor control may select a canonical locator, highlight a Net,
 activate/fit an existing Cell, or clear focus. It never advances revision,

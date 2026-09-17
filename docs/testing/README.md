@@ -31,51 +31,105 @@ change:
 
 ```powershell
 pnpm gate:plan -- --path packages/model/src/schema/document.ts
-pnpm gate:plan -- --base origin/main
-pnpm gate:preflight -- --base origin/main
-pnpm gate:affected -- --base origin/main
+pnpm gate:plan -- --base <base-ref>
+pnpm gate:preflight -- --base <base-ref>
+pnpm gate:affected -- --base <base-ref>
 ```
+
+Use the current target's base for local checks and the mainline base for batch
+delivery, as described below.
 
 The versioned catalog at `config/validation-gates.json` maps repository paths
 to preflight, affected, and final gates. Shared-core, production-boundary,
 unknown non-documentation, and gate-policy changes select the conservative
-branch/full fallback. Bounded changes select focused browser contracts; this
-does not skip any required GitHub check because all four browser check names
-remain present and run the selected specs.
+branch/full fallback for local planning. The PR planner separately translates
+shipped product paths into focused browser contracts. Unit tests, package
+manifests, the Node-only local host and Node platform package stay in Core
+contracts instead of allocating a browser. An unmapped browser path gets a
+small insertion/runtime-safety fallback. The complete browser suite remains a
+nightly and manual audit.
 
 `gate:preflight` runs cheap static contracts and cross-checks the commit's test
 impact declaration. `gate:affected` runs the catalog's bounded unit, focused
 browser, release, or branch checks. Review the printed reasons before
 execution. When the plan selects `full-delivery`, that complete gate
 supersedes static, unit, focused-browser, release, and branch verification:
-run `gate:preflight` for the independent Test-Impact declaration, skip the
-empty affected stage, and run `gate:full` once. Run `pnpm setup:e2e` once per
-machine or Playwright version instead of paying for a browser installation on
-every full check.
+at batch delivery, run `gate:preflight` for the independent Test-Impact
+declaration, skip the empty affected stage, and run `gate:full` once. Run
+`pnpm setup:e2e` once per machine or Playwright version instead of paying for a
+browser installation on every full check.
 
 Every `apps/editor/e2e/*.spec.ts` file must belong to a focused path group and
 select itself. The gate-planner tests enumerate the directory so adding a spec
-without routing ownership fails deterministically instead of silently making
-that path fall back to the complete browser suite.
+without routing ownership fails deterministically instead of silently relying
+on the generic browser fallback.
 
-## Pull-request batching
+The editor's browser workflows have separate owners: `manual-editor.spec.ts`
+retains general integration, `wiring-semantics.spec.ts` owns wire interaction,
+`component-property-workflows.spec.ts`
+owns live property/model/display edits, and `netlist-workflows.spec.ts` owns
+import, authoring and export. Shared app/canvas dependencies select all three;
+wire-tool changes select their dedicated contract without selecting unrelated
+general, property and netlist UI workflows. Their small shared fixture module
+still selects every consumer. The full component catalog is checked by
+`component-property-catalog.test.ts`; browser catalog checks cover representative
+capabilities and the VDD exception rather than repeating the same UI for every
+symbol. Keep specialized history, rejection, hierarchy and terminal tests.
 
-Every implementation pull request keeps the inexpensive broad protection:
+## Local iteration and batch validation
 
-- `Static contracts` runs all static and generated checks.
-- `Unit and integration tests` runs the complete unit/module suite.
-- `Release contracts` runs the build, release goldens, production smoke, and
+Day-to-day changes accumulate on a local batch branch. Use the development
+server and the smallest checks that prove each target's behavior and direct
+dependencies, then commit it locally. Do not start a full delivery run, PR, or
+deployment merely because one small target is complete.
+
+Keep validation scope distinct from publication scope. Before a local commit,
+`pnpm gate:plan -- --base HEAD` describes its uncommitted delta. After one
+target commit, `HEAD^` is its base; for a target spanning several commits, use
+the base before that target began. Test-Impact validation reads committed
+trailers and therefore runs after the target commit. Direct focused unit/browser
+checks belong to the edit loop; apply the selected preflight before executing
+affected, build, or release gates. A target needing broad validation should get
+it, but a `full-delivery` entry records a batch delivery
+obligation rather than requiring full delivery after each local edit.
+
+At least 10 independently useful completed changes form the default Preview
+batch. Tests, repair commits, and file counts do not inflate that number. Before
+publishing it, refresh the mainline base, regenerate the gate plan for the
+combined diff against `origin/main`, and follow the
+[mainline delivery gate](../../AGENTS.md#mainline-delivery-gate). This checks
+interactions and shared contracts across the batch. An unchanged candidate
+does not need its already-passing local checks repeated while remote CI runs;
+new edits or unresolved failures can require fresh verification.
+
+This changes when delivery validation runs, not the required GitHub checks.
+The [deployment guide](../deployment.md#development-and-publication-cadence)
+owns the local, Preview, and Production handoffs.
+
+## Batch pull-request checks
+
+Every implementation pull request keeps two required checks:
+
+- `Core contracts` shares one checkout and dependency install while running
+  all static and generated checks, the complete unit/module suite, the build,
+  release goldens, production smoke, packaging, and
   `performance-baseline.mjs` budgets.
-- `Browser tests (1/4)` through `Browser tests (4/4)` run the fixed affected
-  specs with two workers per shard. If the path map is missing, high risk, or
-  itself changed, all four checks automatically run the complete browser
-  suite.
+- `Browser tests` runs the specs mapped to the changed shipped-product paths
+  with four workers. An unmapped browser-product path runs the small component
+  insertion and runtime-crash fallback. A non-browser implementation change
+  skips this required job successfully without allocating a runner. GitHub's
+  runner Chrome avoids downloading a separate browser image. `ci:e2e` first
+  compiles only the non-editor workspace projects, whose `dist/` the Vite
+  configuration and the Node-side specs load; Vite serves the editor sources
+  directly because the Core job already owns the production build.
 
-The merge queue, nightly schedule, and manual workflow always force complete
-browser coverage. CI does not repeat on the subsequent `main` push; the
-Preview workflow builds, deploys, and verifies the merged candidate.
-Production is a separate release-tag or explicit-commit promotion after Preview
-acceptance. [Deployment](../deployment.md) owns that sequence and recovery.
+Nightly and manual workflows run the complete browser suite in four shards.
+A PR based on current `main` merges after its two required checks without
+repeating them in a merge queue. CI does not repeat on the subsequent `main`
+push; the Preview workflow builds, deploys, and verifies the merged candidate.
+Production is a separate release-tag or explicit-dispatch promotion after
+Preview acceptance. [Deployment](../deployment.md) owns that sequence and
+recovery.
 
 ## Change discipline
 

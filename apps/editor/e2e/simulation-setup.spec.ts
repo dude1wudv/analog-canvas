@@ -4,6 +4,7 @@ import {
 } from "@icm/model";
 import { test, expect } from "@playwright/test";
 import { parseProject } from "@icm/project-protocol";
+import { unzipSync } from "fflate";
 
 import {
   clickNetlistWorkflowCommand,
@@ -98,7 +99,7 @@ test("the qualified OTA folder opens unchanged and preserves all root and hierar
   });
   await clickNetlistWorkflowCommand(page, "open-analog-simulation");
   const panel = page.getByRole("region", { name: "Analog simulation" });
-  // Ordinary picks write native save text; current instrumentation keeps its owner.
+  // New Helper picks write native Code even in a retained legacy experiment.
   const helper = async (name: string) => {
     await panel.getByRole("button", { name: "Helper", exact: true }).click();
     await panel.getByRole("option", { name, exact: true }).click();
@@ -120,7 +121,7 @@ test("the qualified OTA folder opens unchanged and preserves all root and hierar
   await expect(
     panel.getByRole("textbox", { name: "Simulation source editor" }),
   ).not.toBeFocused();
-  // Repeated current picks stay active without duplicating instrumentation.
+  // Repeated current picks stay active without duplicating native acquisition.
   await page.getByTestId("terminal-VINP-+").click();
   await page.getByTestId("terminal-VINP--").click();
   await expect(page.getByTestId("schematic-canvas")).toHaveClass(
@@ -142,10 +143,11 @@ test("the qualified OTA folder opens unchanged and preserves all root and hierar
   const pickedConfig = readSimulationExperimentConfig(
     pickedProject.simulationFolders[0]!,
   );
-  expect(pickedConfig.ok && pickedConfig.config.outputs.length).toBe(5);
-  expect(
-    pickedConfig.ok && pickedConfig.config.outputs.at(-1)?.expression,
-  ).toMatchObject({ kind: "current" });
+  expect(pickedConfig.ok && pickedConfig.config).toEqual(originalSetupInput);
+  const pickedSource = pickedProject.simulationFolders[0]!.input.files.find(
+    (file) => file.path === savedSetup.input.entry,
+  )!.text;
+  expect(pickedSource).toContain("i(vinp)");
   const circuit = {
     bindingId: savedSetup.input.circuitBindings[0]!.id,
     callPath: [],
@@ -192,17 +194,11 @@ test("the qualified OTA folder opens unchanged and preserves all root and hierar
     savedSetup.input.configPath,
     JSON.stringify(config, null, 2),
   );
-  await panel.getByRole("button", { name: "More code actions" }).click();
-  await page.getByRole("menuitem", { name: "View final deck" }).click();
-  const prepareFiles = panel.getByLabel("Prepare temporary files");
-  await expect(prepareFiles).toBeVisible();
-  await prepareFiles
-    .getByRole("button", { name: "Toggle Prepare", exact: true })
-    .click();
-  await prepareFiles
-    .getByRole("button", { name: "Toggle Netlist", exact: true })
-    .click();
-  await panel.getByRole("treeitem", { name: /prepared\.cir/ }).click();
+  await panel
+    .getByRole("treeitem", { name: "Run", exact: true })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Preview input netlist…" }).click();
+  await expect(panel.getByLabel("Prepare temporary files")).toHaveCount(0);
   const preview = panel.getByRole("region", { name: "File preview" });
   const download = page.waitForEvent("download");
   await preview.getByRole("button", { name: "Download", exact: true }).click();
@@ -224,6 +220,26 @@ test("the qualified OTA folder opens unchanged and preserves all root and hierar
   expect(deck).toContain('.lib "icm-models.lib" tt');
   expect(deck).toContain("tran 2e-8 0.000004");
   expect(executions).toBe(0);
+  await panel
+    .getByRole("treeitem", { name: "Run", exact: true })
+    .click({ button: "right" });
+  await expect(
+    page.getByRole("menuitem", { name: "View executed netlist…" }),
+  ).toBeDisabled();
+  const diagnosticDownload = page.waitForEvent("download");
+  await page
+    .getByRole("menuitem", { name: "Export diagnostic bundle…" })
+    .click();
+  const diagnosticStream = await (await diagnosticDownload).createReadStream();
+  const diagnosticChunks: Buffer[] = [];
+  for await (const chunk of diagnosticStream!)
+    diagnosticChunks.push(Buffer.from(chunk));
+  const diagnosticPaths = Object.keys(
+    unzipSync(Buffer.concat(diagnosticChunks)),
+  );
+  expect(diagnosticPaths).toContain("netlist/prepared.cir");
+  expect(diagnosticPaths).toContain("evidence/source-map.json");
+  expect(diagnosticPaths).not.toContain("netlist/executed.cir");
   const saved = await downloadBytes(page, "File", "Export Project File…");
   const reloaded = parseProject(saved.toString());
   expect(
@@ -245,8 +261,16 @@ test("the qualified OTA folder opens unchanged and preserves all root and hierar
     buffer: saved,
   });
   await clickNetlistWorkflowCommand(page, "open-analog-simulation");
-  await panel.getByRole("button", { name: "More code actions" }).click();
-  await page.getByRole("menuitem", { name: "Advanced configuration" }).click();
+  if (
+    (await panel
+      .getByRole("button", { name: "Explorer", exact: true })
+      .getAttribute("aria-expanded")) !== "true"
+  )
+    await panel.getByRole("button", { name: "Explorer", exact: true }).click();
+  await panel
+    .getByRole("treeitem", { name: "experiment.json", exact: true })
+    .first()
+    .click();
   await expect(
     panel.getByRole("textbox", { name: "Simulation source editor" }),
   ).toContainText(profile.id);
@@ -301,6 +325,7 @@ test("uncommitted source survives reload and an explicit working-copy recovery f
   await expect(panel.locator(".cm-activeLine")).toContainText("XDUT");
   await expect(editor).not.toBeFocused();
   await panel.getByRole("tab", { name: "run.cir", exact: false }).click();
+  await expect(editor).toBeFocused();
   await expect(editor).toContainText(marker);
   const saved = parseProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(),

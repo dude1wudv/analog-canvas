@@ -41,6 +41,7 @@ test("a saved-folder batch prepares first and exposes each ordinary run", async 
     return folder;
   });
   let executions = 0;
+  const executedDecks: string[] = [];
   await page.route("**/api/simulate", async (route) => {
     const body = route.request().postDataJSON();
     if (body.operation === "capabilities")
@@ -67,6 +68,7 @@ test("a saved-folder batch prepares first and exposes each ordinary run", async 
         },
       });
     executions++;
+    executedDecks.push(body.preparedDeck);
     return route.fulfill({
       json: {
         outcome: { status: "completed" },
@@ -109,10 +111,40 @@ test("a saved-folder batch prepares first and exposes each ordinary run", async 
   });
   await clickNetlistWorkflowCommand(page, "open-analog-simulation");
   const panel = page.getByRole("region", { name: "Analog simulation" });
+  const openEntry = async (name: string, folderId: string) => {
+    const folder = panel.getByRole("treeitem", {
+      name: `Folder ${name}`,
+      exact: true,
+    });
+    if ((await folder.getAttribute("aria-expanded")) !== "true")
+      await panel
+        .getByRole("button", { name: `Toggle ${name}`, exact: true })
+        .click();
+    await panel
+      .locator(
+        `[role="treeitem"][data-folder-id="${folderId}"][data-file-path="run.cir"]`,
+      )
+      .click();
+    await expect(
+      panel.getByRole("button", { name: "Run", exact: true }),
+    ).toHaveAttribute("title", `Run ${name} / run.cir`);
+  };
+  await openEntry("TT", "folder-tt");
+  await editSimulationFile(
+    page,
+    "run.cir",
+    deck.replace("divider", "divider TT draft"),
+  );
+  await openEntry("FF", "folder-ff");
+  await editSimulationFile(
+    page,
+    "run.cir",
+    deck.replace("divider", "divider FF draft"),
+  );
   await panel.getByRole("treeitem", { name: "Folder TT", exact: true }).click();
   await panel
     .getByRole("treeitem", { name: "Folder FF", exact: true })
-    .click({ modifiers: ["Control"] });
+    .click({ modifiers: ["ControlOrMeta"] });
   await panel
     .getByRole("treeitem", { name: "Folder FF", exact: true })
     .click({ button: "right" });
@@ -129,13 +161,15 @@ test("a saved-folder batch prepares first and exposes each ordinary run", async 
     batch.getByRole("button", { name: /FF finished/ }),
   ).toBeEnabled();
   expect(executions).toBe(2);
+  expect(executedDecks.some((text) => text.includes("TT draft"))).toBe(true);
+  expect(executedDecks.some((text) => text.includes("FF draft"))).toBe(true);
   await batch.getByRole("button", { name: /FF finished/ }).click();
   await expect(
     panel.getByRole("treeitem", { name: "Folder FF", exact: true }),
   ).toBeVisible();
   await expect(
     panel.getByRole("button", { name: "Run", exact: true }),
-  ).toHaveAttribute("title", "Run FF");
+  ).toHaveAttribute("title", "Run FF / run.cir");
   await expect(panel.getByRole("status").first()).toContainText(
     "Batch finished",
   );
@@ -262,17 +296,34 @@ test("a saved Run Plan prepares without executing and Run starts its ordinary ba
     "experiment.json",
     JSON.stringify(config, null, 2),
   );
-  await panel.getByRole("button", { name: "More code actions" }).click();
-  await page.getByRole("menuitem", { name: "View final deck" }).click();
+  await panel
+    .getByRole("treeitem", { name: "Run", exact: true })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Preview input netlist…" }).click();
   await panel.getByTitle("Batch queue", { exact: true }).click();
   await expect(panel.locator(".simulation-batch-menu-popover")).toContainText(
     "Batch · prepared",
   );
-  await expect(panel.getByLabel("Prepare temporary files")).toBeVisible();
+  await expect(panel.getByLabel("Prepare temporary files")).toHaveCount(0);
+  await expect(panel.getByRole("tab", { name: /prepared\.cir/ })).toBeVisible();
   expect(executions).toBe(0);
   await panel.getByRole("button", { name: "Run", exact: true }).click();
   await expect(panel.locator(".simulation-batch-menu-popover")).toContainText(
     "Batch · finished",
   );
   expect(executions).toBe(6);
+  await panel.locator(".simulation-run-history > summary").click();
+  const history = panel.getByRole("region", {
+    name: "Project runs",
+    exact: true,
+  });
+  await expect(
+    history.getByRole("button", { name: "Open result" }),
+  ).toHaveCount(6);
+  await expect(
+    history.getByRole("listitem").filter({ hasText: "finished" }),
+  ).toHaveCount(6);
+  await expect(
+    history.getByRole("button", { name: "Open result" }).last(),
+  ).toBeEnabled();
 });

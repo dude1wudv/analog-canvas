@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,17 +29,40 @@ async function freshClient(
 }
 
 describe("agent session client", () => {
+  it("retains a canonical request ID and payload through network recovery", async () => {
+    const { client, http } = await freshClient();
+    await client.connect("session-1.code");
+    const circuit = vi.spyOn(http, "circuit");
+    circuit.mockRejectedValueOnce(
+      new AgentSessionError("NETWORK_FAILURE", "lost response", "network"),
+    );
+    const request = {
+      apiVersion: "3.0",
+      operation: "snapshot",
+      documentId: "main",
+      requestId: "caller-owned-id",
+    };
+    expect(await client.request(request)).toMatchObject({ ok: true });
+    expect(circuit).toHaveBeenCalledTimes(2);
+    expect(circuit.mock.calls.map((call) => call[2])).toEqual([
+      request,
+      request,
+    ]);
+    await expect(
+      client.request({ ...request, secret: "invalid" }),
+    ).rejects.toThrow("Invalid Agent Circuit request");
+  });
   it("probes status and clears a replaced project instead of reporting cached online", async () => {
     const { client, http } = await freshClient();
     await client.connect("session-1.code");
-    http.circuitHandler = async () => {
+    vi.spyOn(http, "status").mockImplementation(async () => {
       throw new AgentSessionError(
         "PROJECT_REPLACED",
         "replaced",
         "unrecoverable-credential",
         410,
       );
-    };
+    });
     expect((await client.status()).state).toBe("online");
     expect(await client.status({ refresh: true })).toMatchObject({
       state: "revoked",
@@ -63,6 +86,50 @@ describe("agent session client", () => {
     const calls = http.circuitCalls.length;
     await client.capabilities();
     expect(http.circuitCalls.length).toBe(calls);
+  });
+
+  it("reads relay observations without a Circuit probe and retains pairing on network failure", async () => {
+    const { client, http } = await freshClient();
+    await client.connect("session-1.code");
+    const calls = http.circuitCalls.length;
+    const probe = vi.spyOn(http, "status").mockResolvedValue({
+      ok: true,
+      sessionId: "session-1",
+      projectId: "project-1",
+      documentIds: ["main"],
+      authorization: "paused",
+      editor: "attached",
+      observedAt: 1000,
+      expiresAt: 999999,
+    });
+    expect(await client.status({ refresh: true })).toMatchObject({
+      state: "paused",
+    });
+    probe.mockRejectedValueOnce(
+      new AgentSessionError("NETWORK_FAILURE", "timeout", "network"),
+    );
+    expect(await client.status({ refresh: true })).toMatchObject({
+      state: "unknown",
+      projectId: "project-1",
+      tokenValid: true,
+    });
+    probe.mockResolvedValue({
+      ok: true,
+      sessionId: "session-1",
+      projectId: "project-1",
+      documentIds: ["main"],
+      authorization: "active",
+      editor: "attached",
+      observedAt: 2000,
+      expiresAt: 999999,
+    });
+    expect(await client.status({ refresh: true })).toMatchObject({
+      state: "attached",
+    });
+    expect(http.circuitCalls).toHaveLength(calls);
+    await client.snapshot("main", { refresh: true });
+    expect((await client.status()).state).toBe("online");
+    expect(http.claims).toHaveLength(1);
   });
 
   it("never exposes the token through status or connect reports", async () => {
@@ -107,7 +174,96 @@ describe("agent session client", () => {
     }
   });
 
-  it("refreshes an expired bearer from the connector and retries the request", async () => {
+  it.each(["snapshot", "refreshSnapshot", "render", "traceNet"] as const)(
+    "resumes before selecting the default document for %s in a fresh process",
+    async (operation) => {
+      const directory = await mkdtemp(
+        join(tmpdir(), "analog-default-document-"),
+      );
+      try {
+        const store = new ConnectorStore(join(directory, "connector.json"));
+        const http = new FakeAgentHttp();
+        await new AgentSessionClient({ http, connectorStore: store }).connect(
+          "session-1.code",
+        );
+        const restarted = new AgentSessionClient({
+          http,
+          connectorStore: store,
+        });
+        if (operation === "traceNet")
+          await restarted.traceNet({ netId: "net-1" });
+        else await restarted[operation]();
+        expect(http.resumes).toHaveLength(1);
+        expect(http.claims).toHaveLength(1);
+        expect(http.circuitCalls.at(-1)?.request).toMatchObject({
+          documentId: "main",
+        });
+        expect(
+          restarted.cachedSnapshot("main") === null || operation !== "render",
+        ).toBe(true);
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("does not retry a revoked connector or fetch a document after failed recovery", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "analog-revoked-document-"));
+    try {
+      const store = new ConnectorStore(join(directory, "connector.json"));
+      const http = new FakeAgentHttp();
+      await new AgentSessionClient({ http, connectorStore: store }).connect(
+        "session-1.code",
+      );
+      const calls = http.circuitCalls.length;
+      const resume = vi
+        .spyOn(http, "resumeConnector")
+        .mockRejectedValue(
+          new AgentSessionError(
+            "SESSION_REVOKED",
+            "revoked",
+            "unrecoverable-credential",
+          ),
+        );
+      const restarted = new AgentSessionClient({ http, connectorStore: store });
+      expect(restarted.cachedSnapshot("main")).toBeNull();
+      expect(resume).not.toHaveBeenCalled();
+      await expect(restarted.snapshot()).rejects.toMatchObject({
+        code: "SESSION_REVOKED",
+      });
+      expect(resume).toHaveBeenCalledTimes(1);
+      expect(http.circuitCalls).toHaveLength(calls);
+      expect(await store.load()).toBeNull();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not delete another origin's connector from an explicit shared path", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "analog-origin-"));
+    try {
+      const store = new ConnectorStore(join(directory, "connector.json"));
+      const saved = {
+        version: 1 as const,
+        apiBaseUrl: "https://other.test",
+        sessionId: "other",
+        connectorToken: "private",
+        connectorExpiresAt: 1,
+        storedAt: 0,
+      };
+      await store.save(saved);
+      const client = new AgentSessionClient({
+        http: new FakeAgentHttp(),
+        connectorStore: store,
+      });
+      await expect(client.connect()).rejects.toThrow();
+      expect(await store.load()).toEqual(saved);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("refreshes an expired bearer even after the saved connector deadline passed", async () => {
     const directory = await mkdtemp(join(tmpdir(), "analog-session-refresh-"));
     let nowMs = 1_000;
     try {
@@ -117,7 +273,7 @@ describe("agent session client", () => {
         agentToken: "initial-token",
         tokenExpiresAt: 50_000,
         connectorToken: "connector-token",
-        connectorExpiresAt: 500_000,
+        connectorExpiresAt: 60_000,
         scopes: ["circuit.snapshot"],
         projectId: "project-1",
         documentIds: ["main"],
@@ -260,10 +416,9 @@ describe("agent session client", () => {
     };
     const report = await client.applyActions([
       {
-        kind: "place-component",
-        symbol: "resistor",
-        reference: "R2",
-        position: { x: 700, y: 200 },
+        kind: "set-reference",
+        target: { kind: "instance", reference: "M1" },
+        reference: "M2",
       },
       {
         kind: "move",

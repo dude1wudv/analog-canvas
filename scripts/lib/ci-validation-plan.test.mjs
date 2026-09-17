@@ -18,6 +18,7 @@ describe("CI validation planning", () => {
   it("skips implementation jobs for documentation-only work", () => {
     expect(ciPlan(["docs/user/getting-started.md"])).toMatchObject({
       heavy: false,
+      browser: false,
       mode: "documentation",
       e2eArgs: [],
     });
@@ -26,6 +27,7 @@ describe("CI validation planning", () => {
   it("selects the Gallery browser contract without unrelated editor specs", () => {
     expect(ciPlan(["worker/gallery.ts"])).toMatchObject({
       heavy: true,
+      browser: true,
       mode: "focused",
       e2eArgs: ["apps/editor/e2e/gallery.spec.ts"],
     });
@@ -39,13 +41,42 @@ describe("CI validation planning", () => {
       mode: "focused",
       e2eArgs: [
         "apps/editor/e2e/agent-simulation.spec.ts",
+        "apps/editor/e2e/gui-native-simulation.spec.ts",
+        "apps/editor/e2e/mcp-native-simulation.spec.ts",
         "apps/editor/e2e/simulation-batch.spec.ts",
         "apps/editor/e2e/simulation-code-editor.spec.ts",
-        "apps/editor/e2e/simulation-plot-export.spec.ts",
+        "apps/editor/e2e/simulation-profile-probes.spec.ts",
         "apps/editor/e2e/simulation-setup.spec.ts",
+        "apps/editor/e2e/simulation-spec-results.spec.ts",
         "apps/editor/e2e/simulation-workspace.spec.ts",
       ],
     });
+  });
+
+  it("selects native GUI coverage for simulation implementation and spec edits", () => {
+    for (const path of [
+      "apps/editor/src/features/simulation/spice-simulation-surface.tsx",
+      "apps/editor/e2e/gui-native-simulation.spec.ts",
+    ]) {
+      const plan = ciPlan([path]);
+      expect(plan.mode, path).toBe("focused");
+      expect(plan.e2eArgs, path).toContain(
+        "apps/editor/e2e/gui-native-simulation.spec.ts",
+      );
+    }
+  });
+
+  it("selects native MCP acceptance for MCP implementation and spec edits", () => {
+    for (const path of [
+      "apps/mcp-server/src/main.ts",
+      "apps/editor/e2e/mcp-native-simulation.spec.ts",
+    ]) {
+      const plan = ciPlan([path]);
+      expect(plan.mode, path).toBe("focused");
+      expect(plan.e2eArgs, path).toContain(
+        "apps/editor/e2e/mcp-native-simulation.spec.ts",
+      );
+    }
   });
 
   it("combines fixed browser contracts for a bounded cross-feature change", () => {
@@ -58,23 +89,107 @@ describe("CI validation planning", () => {
       mode: "focused",
       e2eArgs: [
         "apps/editor/e2e/component-insert.spec.ts",
+        "apps/editor/e2e/component-properties-catalog.spec.ts",
+        "apps/editor/e2e/component-property-workflows.spec.ts",
         "apps/editor/e2e/gallery.spec.ts",
       ],
     });
   });
 
-  it("keeps shared model changes on the complete browser suite", () => {
-    expect(ciPlan(["packages/model/src/schema/document.ts"])).toMatchObject({
-      heavy: true,
-      mode: "full",
-      e2eArgs: [],
-    });
+  it("keeps wire editing on its dedicated browser contract", () => {
+    const plan = ciPlan([
+      "apps/editor/src/features/wiring/wire-edit-controller.ts",
+    ]);
+    expect(plan.mode).toBe("focused");
+    expect(plan.e2eArgs).toEqual(["apps/editor/e2e/wiring-semantics.spec.ts"]);
   });
 
-  it("falls back to complete browser coverage for an unmapped code path", () => {
+  it("selects the extracted workflows from their production owners and shared dependencies", () => {
+    const properties = "apps/editor/e2e/component-property-workflows.spec.ts";
+    const netlist = "apps/editor/e2e/netlist-workflows.spec.ts";
+    const conversion = "apps/editor/e2e/netlist-conversion.spec.ts";
+    expect(
+      ciPlan(["apps/editor/src/features/properties/component-property-code.ts"])
+        .e2eArgs,
+    ).toContain(properties);
+    const exportPlan = ciPlan([
+      "apps/editor/src/features/netlist-export/netlist-authoring.ts",
+    ]);
+    expect(exportPlan.e2eArgs).toEqual(
+      expect.arrayContaining([netlist, conversion]),
+    );
+    for (const path of [
+      "apps/editor/src/features/properties/component-property-code.ts",
+      "apps/editor/src/features/netlist-export/netlist-authoring.ts",
+    ]) {
+      const plan = ciPlan([path]);
+      expect(plan.mode, path).toBe("focused");
+      expect(plan.e2eArgs, path).toEqual(
+        expect.arrayContaining([properties, netlist, conversion]),
+      );
+      expect(plan.e2eArgs, path).not.toContain(
+        "apps/editor/e2e/manual-editor.spec.ts",
+      );
+    }
+    for (const path of [
+      "apps/editor/src/app/App.tsx",
+      "apps/editor/src/canvas/editor-canvas-surface.tsx",
+      "apps/editor/src/features/text-editing/canvas-text-editor.tsx",
+      "apps/editor/src/features/drafting/drafting-properties-panel.tsx",
+      "apps/editor/e2e/manual-editor-fixtures.ts",
+    ]) {
+      const plan = ciPlan([path]);
+      expect(plan.mode, path).toBe("focused");
+      expect(plan.e2eArgs, path).toEqual(
+        expect.arrayContaining([
+          properties,
+          netlist,
+          conversion,
+          "apps/editor/e2e/manual-editor.spec.ts",
+        ]),
+      );
+    }
+  });
+
+  it("keeps shared model changes on their mapped browser contracts", () => {
+    const plan = ciPlan(["packages/model/src/schema/document.ts"]);
+    expect(plan).toMatchObject({
+      heavy: true,
+      browser: true,
+      mode: "focused",
+    });
+    expect(plan.e2eArgs).toEqual(
+      expect.arrayContaining([
+        "apps/editor/e2e/hierarchy.spec.ts",
+        "apps/editor/e2e/project-file.spec.ts",
+      ]),
+    );
+  });
+
+  it("uses the small browser fallback for an unmapped product path", () => {
     const plan = ciPlan(["apps/editor/src/lib/new-helper.ts"]);
-    expect(plan.mode).toBe("full");
-    expect(plan.reasons[0]).toContain("no focused browser contract");
+    expect(plan.mode).toBe("fallback");
+    expect(plan.e2eArgs).toEqual([
+      "apps/editor/e2e/component-insert.spec.ts",
+      "apps/editor/e2e/runtime-crash-safety.spec.ts",
+    ]);
+  });
+
+  it("does not allocate a browser runner for non-shipping tests and manifests", () => {
+    expect(
+      ciPlan([
+        "apps/editor/src/components/editor-help-dialog.test.tsx",
+        "apps/local-host/src/local-host.test.ts",
+        "apps/editor/package.json",
+        "packages/platform-node/package.json",
+        "package.json",
+      ]),
+    ).toMatchObject({
+      heavy: true,
+      browser: false,
+      mode: "non-browser",
+      e2eArgs: [],
+    });
   });
 
   it("does not hide an unmapped path behind another focused selection", () => {
@@ -82,7 +197,7 @@ describe("CI validation planning", () => {
       "worker/gallery.ts",
       "apps/editor/src/lib/new-helper.ts",
     ]);
-    expect(plan.mode).toBe("full");
+    expect(plan.mode).toBe("fallback");
     expect(plan.reasons).toContain(
       "uncovered browser impact: apps/editor/src/lib/new-helper.ts",
     );
@@ -102,18 +217,33 @@ describe("CI validation planning", () => {
     }
   });
 
-  it("treats validation-policy documentation as a full fallback", () => {
+  it("does not turn validation-policy documentation into implementation CI", () => {
     expect(ciPlan(["docs/testing/README.md"])).toMatchObject({
-      heavy: true,
-      mode: "full",
+      heavy: false,
+      browser: false,
+      mode: "documentation",
       e2eArgs: [],
     });
   });
 
-  it("forces complete validation for scheduled and merge-queue events", () => {
+  it("keeps workflow-only changes out of the browser runner", () => {
+    expect(ciPlan([".github/workflows/ci.yml"])).toMatchObject({
+      heavy: true,
+      browser: false,
+      mode: "non-browser",
+      e2eArgs: [],
+    });
+  });
+
+  it("forces complete validation for scheduled and manual events", () => {
     expect(
       ciPlan(["docs/user/getting-started.md"], { forceFull: true }),
-    ).toMatchObject({ heavy: true, mode: "full", e2eArgs: [] });
+    ).toMatchObject({
+      heavy: true,
+      browser: true,
+      mode: "full",
+      e2eArgs: [],
+    });
   });
 
   it("renders the browser choice for job logs", () => {

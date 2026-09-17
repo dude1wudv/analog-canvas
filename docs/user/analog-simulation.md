@@ -4,12 +4,25 @@ Use the top **Simulation** button to open Code beside the ordinary Canvas.
 Opening the Editor alone does not load the code editor or start ngspice. This
 workspace is separate from the development-only Digital tool.
 
+Before setup, Simulation shows a three-step Agent guide: connect your Agent,
+describe your goal, and review the results. A prominent status card shows the
+connection state and next action. **Connect Agent** opens the same connection
+panel as the editor's **Agent** button; connected sessions offer **Connection details**.
+State changes never open dialogs or start work by themselves. After setup,
+the Agent entry stays compact in the toolbar, including when maximized.
+**Set up manually** creates the same source starter yourself, and
+**Explore examples** expands the optional example projects.
+Save, Run and file operations remain usable without an Agent.
+
 ## Circuit, source and files
 
-Code and Properties share the right dock but remember independent widths.
-**Explorer** opens a narrow project tree beside the code. Each experiment puts
-Source first, expanded by default. Prepared and Run artifacts appear beneath it,
-marked **tmp** and collapsed by default, with expandable artifact categories.
+Sim Code and Properties occupy independent right-side panes and remember their widths.
+**Explorer** opens a narrow project tree beside the code. Code files appear
+directly under each experiment, without an extra Source directory. On opening a
+Project, only the active experiment is expanded; the others start collapsed.
+The **Run** row, tagged `tmp`, is collapsed by default and
+contains expandable **Results** (raw/CSV) and **Logs** groups. Preparation
+snapshots and internal evidence are not shown in the everyday file tree.
 Source paths also form expandable directories. Choose an experiment there, or
 create, clone, rename or delete one. Multiple experiments can use the same drawn
 Testbench; a different topology is an ordinary separate Cell.
@@ -26,14 +39,31 @@ is the Run target even while viewing another file. Invalid SPICE or JSON can
 be saved; preparation reports what needs repair rather than losing the draft.
 
 **New experiment** asks only for a name. It uses the current Canvas Cell and an
-OP starter. Muted AC, TRAN and DC examples below the editor show what to try next;
-they are hints and never enter the saved file until you type or insert them.
+OP starter. Helper offers analysis commands and argument hints without adding
+text to the saved file until you explicitly insert or type it.
 
-**More code actions** opens advanced configuration, copies/exports the current
-file, or creates a source file. Configuration is not a default tab. It owns
-Profile/corner, output labels and bindings, measurements and the managed Run
-Plan. Native analyses and nominal temperature belong in SPICE, not hidden
-Settings fields. This example runs OP and AC and retains both plots:
+The compact Save and Run icons share the toolbar with Explorer. **Save source**
+applies pending files in the current simulation folder to the current Project,
+without signing in or making a cloud request. Ctrl+S inside the code editor does
+the same. Its icon and tooltip distinguish pending, applying, applied and failed
+states; a failed apply retains the draft for repair and retry. Applied source is
+covered by the Project's browser recovery, not a cloud backup. **File → Save**
+(or the project-level shortcut outside code) still saves the entire Project to
+the signed-in cloud account.
+
+New experiments use the hosted environment automatically; if several are
+offered, as on Preview, **New experiment** adds an **Environment** choice.
+Their internal `experiment.json` is hidden from Source and file tabs, but
+retained in Project backups. Legacy or damaged configurations and pending
+configuration drafts stay visible for compatibility and repair; they are not a
+new environment picker.
+Hover a folder to see its bound Cell without adding text to the file row.
+Use file/folder context menus to copy, download or create files. Right-click a
+file tab (or press Shift+F10 while it is focused) to close it, close other tabs,
+or close all tabs. Closing tabs retains files and pending drafts. Native analyses,
+acquisition, measurements and nominal temperature belong in SPICE. Older
+experiments retain their legacy configuration until explicitly migrated through
+Helper. This example runs OP and AC and retains both plots:
 
 ```spice
 .control
@@ -50,8 +80,10 @@ write out.raw
 An existing entry already has its own control/end block: edit that block rather
 than pasting a second complete program. Native `write` captures the current
 plot only. Noise templates capture density and integrated plots explicitly.
-The collected rawfile defaults to `out.raw`; the selected executor must support
-the declared capture contract.
+New templates use `out.raw`. Current source-native experiments collect the
+single literal path declared by native `write` commands; dynamic or multiple
+paths need repair. Legacy configurations retain their explicit collection path.
+The selected executor must support the declared capture contract.
 
 Code has local Undo while typing. Save commits through the Project edit path;
 Project Undo/Redo owns committed changes. Switching files retains local text
@@ -64,9 +96,10 @@ for repair; it is not silently overwritten.
 
 1. Define the DUT Cell's formal ports. Use **Edit → Manage Cells → Review
    Symbol** before placing the first instance.
-2. Choose **New testbench from current Cell** in Simulation. It creates an
-   ordinary Cell and offers the DUT at the cursor. Escape cancels placement,
-   not the new Cell. The Project top remains unchanged.
+2. Choose **Edit → New Testbench Cell…**; its DUT defaults to the current Cell.
+   **Create Testbench** creates an ordinary Cell and offers the DUT at the
+   cursor. Escape cancels placement, not the new Cell. The Project top remains
+   unchanged.
 3. Draw sources and loads, then create an experiment for that Testbench. Its
    generated binding prints the drawn topology; source text owns the analyses.
 4. Alternatively, use a generated subcircuit binding and write the DUT call,
@@ -75,10 +108,13 @@ for repair; it is not silently overwritten.
 Independent V/I sources keep DC, AC and transient parameters on their Instance.
 PULSE/SIN/PWL and AC can coexist because they apply to different analyses.
 VDD/GND markers are not voltage sources. Current output direction is positive
-entering the selected terminal; **Pick current** uses the actual pin endpoint.
-**Pick Net** adds a voltage output with its concrete hierarchy occurrence.
-Ambiguous occurrences are reported instead of guessed. Advanced output bindings
-and native collected vector expressions remain available in configuration.
+entering the selected terminal; **Pick current on Canvas** uses the actual pin
+endpoint. **Pick Net on Canvas** adds a voltage output with its concrete
+hierarchy occurrence.
+Ambiguous occurrences are reported instead of guessed. New experiments save
+acquisitions in native source (`save`/`.probe`); model-specific current and
+operating-point vectors require a supported mapping. Older experiments may
+retain advanced output bindings in their legacy configuration.
 
 Authorized Cloud Project Cell reuse still uses **Import Cell** and the common
 Cell-closure planner; Agents use `project_cells`. Imports are independent
@@ -88,13 +124,15 @@ Project-local copies, not live remote references.
 
 The bundled five-transistor SKY130 example contains ordinary DUT/Testbench
 Cells and saved OP/DC/AC/TRAN/Noise, bias-detail, corner and waveform experiments.
-Opening its older Project automatically converts setups to source, preserving
-ids, output labels, measurements and effective parameters.
+They are authored native VACASK source for the `vacask-sky130-candidate`
+environment, which is currently configured only on Preview.
 
-Open **File → Open** with the repository's
-`apps/editor/src/examples/five-transistor-ota-sky130.icproj.json`, or use the
-bundled example picker. The recorded ngspice 46/TT qualification for its
-acceptance setup is approximately:
+Open the repository's
+`apps/editor/src/examples/five-transistor-ota-sky130.icproj.json` with
+**File → Import Project File…**, or visit
+`/editor?example=five-transistor-ota-sky130`. The recorded ngspice 46/TT
+qualification of the separate ngspice acceptance Project,
+`netlists/ngspice-ota-qualification/source.icproj.json`, is approximately:
 
 - Vout: 0.75898 V
 - Ibias node: 0.60440 V
@@ -107,17 +145,20 @@ qualification before making that claim.
 
 ## Prepare, run and recover
 
-**Prepare** compiles without executing. **Run** captures source and starts the
-ordinary run, or the sequential batch for a saved Run Plan. **Stop / Cancel
-run** requests cancellation; closing/minimizing a presentation is not cancel.
+**Preview input netlist…**, in the active experiment's context menu, compiles
+without executing and opens the prepared input read-only.
+**Run** captures source and starts the
+ordinary run. A legacy configuration's saved Run Plan can instead start its
+sequential sweep batch. **Cancel run**
+requests cancellation; closing/minimizing a presentation is not cancel.
 Input errors affect that operation, not the Project or Agent session. Correct
 the code and run again. A missing local executor is a configuration issue;
 it does not block editing or saving.
 
-Managed sweeps live in configuration `runPlan`: corner, temperature, named
-variable or exact Instance parameter axes. Nominal values are native `.param`
-and `.temp` source; config variable bindings do not duplicate those values.
-Prepare shows combinations before execution. Multi-experiment batch selection,
+Legacy version-1 configurations retain `runPlan` sweeps over corner,
+temperature, named variable or exact Instance parameter axes; preview shows
+combinations before execution. New version-2 experiments own parameter and
+temperature sweeps in native SPICE. Multi-experiment batch selection,
 cancel/retry and ordinary per-item results reuse the same Run service.
 
 The current qualified analysis/corner set comes from capabilities/Profile.
@@ -127,37 +168,54 @@ refuse a run with a repairable explanation.
 
 ## Results, history and exports
 
-Console, Plot, OP and Compare share one tab row below code. Measurements,
-history and exports stay inside these views. Maximize results temporarily uses the workspace;
-Restore returns to the previous dock size. Maximize Code keeps the editor.
+**View executed netlist…** opens the actual deck captured for the selected run,
+not a newly compiled version of the current source. **Export diagnostic bundle…**
+exports that run's complete evidence, including preparation snapshots, source
+maps, environment/result metadata and execution artifacts. These commands are
+available from the active folder/Run context menus.
+Before any run, the diagnostic export uses the latest prepared input instead.
+Ordinary file-tree downloads contain only the selected visible source/output
+files; hiding diagnostics does not delete them or remove Agent access.
 
-Friendly output labels, complex AC values, solver-recorded DC/time axes and
-Noise density/integrated results use the same numeric adapters as MCP.
-**Operating Point → Show on canvas** paints only exactly mapped, current
-voltages. Changed input pauses that projection. Several OP records require a
-record choice; no value silently wins because it was last.
+Specs and Console share the row below Code. Specs shows **Spec / Sim result /
+Expected / Judgment**, evaluated by the shared service from the captured run
+input. There are no built-in Plot, Compare or OP presentation views. Native OP,
+AC, DC, TRAN and Noise execution and complete raw/CSV remain available.
 
-Saved measurements answer Value, Value at, Minimum, Maximum, Peak to peak,
-Mean or RMS questions about an output. They live in configuration, not in
-frozen result numbers. Mean/RMS use time-weighted TRAN windows. A missing or
-invalid measurement reports its own reason without crashing the whole run.
-Automatic summaries are separate from authored rules. Both export through
-`measurements.csv`.
+Write uniquely named native measurements and ordinary comment annotations:
 
-**Export** downloads visible plots as SVG or PNG, complete output CSV, or a
-complete run ZIP. Explorer exposes authored/generated input, prepared deck,
-rawfile and existing result artifacts. Ctrl/Cmd-select individual rows or use
-Shift for a range, then right-click and choose **Download**. Directories include
-their collapsed descendants; overlapping selections export each file once.
-One file downloads directly and several download as a hierarchy-preserving ZIP.
-Image export follows the visible plot;
-CSV retains full collected numbers. Restricted model data is not bundled.
+```spice
+meas tran peak MAX v(out)
+* @spec peak <= 1.8 unit=V
+```
 
-**Compare** keeps completed results within the session and overlays compatible
-domains/units. Repeated native records require an explicit choice per run;
-equal analysis names do not imply equal records. **Archive** retains up to ten
-verified result archives per Project in this browser. Archives are not embedded
-in Project or synchronized to Cloud; export a run ZIP for portability.
+These comments are ICM acceptance rules, not SPICE commands. Helper can insert
+an editable example; Agent or manual authoring uses identical files. See the
+[Spec protocol](../agent/simulation-specs.md) for range/target rules and units.
+Missing measurements and invalid rules are Not evaluated, never fabricated
+zeros or Failed. Measured values without a rule have no judgment. Editing input
+marks the previous report stale; it is never reevaluated against live edits.
+
+Explorer contains source files and a run directory. Ctrl/Cmd-select or Shift
+select files, right-click Download, or download a directory with its descendants.
+Raw, full analysis CSV and specs.csv are visible for external plotting and
+analysis. The machine report specs.json remains available through File Resource
+and diagnostic exports, not as an everyday tree item. The Agent reads the same
+report and artifacts without opening a panel.
+The legacy simulation-plot export returns SIMULATION_PLOT_RETIRED.
+
+Run history is in Explorer. Completed runs are retained in this browser, not
+embedded in the Project or Cloud-synchronized. Open a saved result without
+rerunning it; the Run/folder context menu offers Archive current run, Download
+complete run, and (for an opened archive) Download project + results. Diagnostic
+exports retain the captured netlist, source maps and other evidence without
+showing internal directories in the ordinary tree.
+
+Sim Code is an independent right workspace alongside Library/Gallery and
+Properties. Its minimize, resize and full-window maximize do not close Properties
+or discard editor state. Maximize results temporarily uses the workspace;
+Restore returns to the editor. Completion updates compact status without moving
+keyboard focus or opening a dialog. Use Cancel to stop a run.
 
 Closing a tab is not reliable cancellation of an admitted hosted run. Use Cancel.
 Replacing the Project ends its presentation scope; revoking an Agent affects its

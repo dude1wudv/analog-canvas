@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createEmptyDocument } from "@icm/model";
 
@@ -38,66 +38,30 @@ describe("style knobs", () => {
 });
 
 describe("DocumentSettingsSection", () => {
-  it("carries the style knobs and the Document-wide bulk defaults", () => {
+  it("presents one plain JSON editor instead of settings forms", () => {
     const markup = renderToStaticMarkup(
       <DocumentSettingsSection
         document={createEmptyDocument("document-main", "Main")}
-        onApplyStyle={vi.fn()}
-        onChangeBulkDefault={vi.fn()}
+        canvas={{
+          showGrid: true,
+          annotationGrid: 5,
+          drawAngle: "free",
+          scrollBehavior: "auto",
+        }}
+        onApply={() => ({ ok: true })}
       />,
     );
 
-    // Docked beside the canvas, not a dialog that hides what it rescales.
     expect(markup).not.toContain('role="dialog"');
-    expect(markup).toContain('aria-label="文档设置"');
-    expect(markup).toContain('aria-label="字号"');
-    expect(markup).toContain('aria-label="连接点大小"');
-    // One Net answers for every NMOS or PMOS, so these belong to the Document
-    // rather than to whichever transistor is selected.
-    expect(markup).toContain('aria-label="默认 NMOS 体端网络"');
-    expect(markup).toContain('aria-label="默认 PMOS 体端网络"');
-  });
-
-  it("shows repeated Ground markers as one Logical Net choice", () => {
-    const document = createEmptyDocument("document-main", "Main");
-    document.nets.push(
-      { id: "net-ground-a", terminals: [] },
-      { id: "net-ground-b", terminals: [] },
-    );
-    document.connectivityEvidence.push(
-      {
-        id: "ground-a",
-        kind: "name-claim",
-        netId: "net-ground-a",
-        owner: { kind: "power-marker", objectId: "GND1" },
-        name: "0",
-        scope: "global",
-        powerDomain: "ground",
-      },
-      {
-        id: "ground-b",
-        kind: "name-claim",
-        netId: "net-ground-b",
-        owner: { kind: "power-marker", objectId: "GND2" },
-        name: "0",
-        scope: "global",
-        powerDomain: "ground",
-      },
-    );
-    document.mosBulkDefaults = { nmosNetId: "net-ground-b" };
-
-    const markup = renderToStaticMarkup(
-      <DocumentSettingsSection
-        document={document}
-        onApplyStyle={vi.fn()}
-        onChangeBulkDefault={vi.fn()}
-      />,
-    );
-
-    expect(markup.match(/value="net-ground-a"/g)).toHaveLength(2);
-    expect(markup).not.toContain('value="net-ground-b"');
-    expect(markup).toContain(
-      'aria-label="默认 NMOS 体端网络"><option value="">无</option><option value="net-ground-a" selected="">0</option>',
-    );
+    expect(markup).toContain('aria-label="Document settings"');
+    expect(markup).toContain('data-testid="document-settings-code-editor"');
+    expect(markup).toContain('aria-label="Loading document Style code"');
+    expect(markup).toContain("&quot;appearance&quot;");
+    expect(markup).toContain("&quot;bulkDefaults&quot;");
+    expect(markup).toContain("&quot;canvas&quot;");
+    expect(markup).toContain("Copy Style JSON");
+    expect(markup).toContain("Defaults");
+    expect(markup).not.toContain("<select");
+    expect(markup).not.toContain("Default NMOS bulk Net");
   });
 });

@@ -80,6 +80,10 @@ describe("CircuitProject schema", () => {
     const project = createEmptyProject("project-test", "Test Project");
     expect(CircuitProjectSchema.parse(project)).toEqual(project);
     expect(CircuitProjectJsonSchema).toMatchObject({ type: "object" });
+    expect(project.documents[0]).toMatchObject({
+      name: "dut",
+      netlist: { name: "dut" },
+    });
   });
 
   it("rejects the retired hidden electrical Net-name owner", () => {
@@ -263,6 +267,29 @@ describe("CircuitProject schema", () => {
 
     expect(SchematicDocumentSchema.safeParse(document).success).toBe(false);
     delete document.instances[0]!.reference;
+    expect(SchematicDocumentSchema.safeParse(document).success).toBe(true);
+  });
+
+  it("accepts VDD Power as the owner of a formal Cell terminal", () => {
+    const document = createEmptyProject("vdd-cell-pin", "VDD Cell Pin")
+      .documents[0]!;
+    document.instances.push({
+      id: "VDD1",
+      symbolId: "vdd-port",
+      placement: null,
+    });
+    document.nets.push({
+      id: "net-vdd",
+      terminals: [{ instanceId: "VDD1", pinName: "P" }],
+    });
+    document.netlist!.terminals.push({
+      id: "terminal-vdd1",
+      name: "VDD",
+      netId: "net-vdd",
+      direction: "inout",
+      interfaceInstanceIds: ["VDD1"],
+    });
+
     expect(SchematicDocumentSchema.safeParse(document).success).toBe(true);
   });
 

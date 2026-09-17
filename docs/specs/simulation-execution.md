@@ -3,7 +3,8 @@
 Status: accepted
 
 Owners: `packages/simulation-service`, `packages/spice-run`, `worker`,
-`containers/ngspice`, `apps/local-host`, `apps/editor/src/features/simulation`
+`containers/ngspice`, `containers/vacask`, `apps/local-host`,
+`apps/editor/src/features/simulation`
 
 [Setup and compilation](simulation.md) owns authored inputs;
 [numeric results](simulation-results.md) owns their interpretation.
@@ -17,14 +18,14 @@ The implementation has these boundaries:
   preparation module resolves capabilities and immutable input identity.
 - SimulationService owns preparation and the session-facing run presentation.
   Its Executor is the execution port; GUI and MCP use the same service and File
-  Resource. On Preview, the managed control plane owns authoritative hosted run
+  Resource. On both hosted channels, the managed control plane owns authoritative run
   admission, idempotency, queueing, retry, cancellation and retention. Local
-  and production direct transports keep the same semantic service contract.
+  direct transports keep the same semantic service contract.
 - spice-run separates request/result types, deck assembly, metadata and terminal
   verdicts. Its public exports remain the same.
 - GUI source editing, diagnostic display and result materialization are separate
-  from workspace orchestration. Charts consume scalar/complex series; derived
-  outputs are not re-encoded as fake simulator analyses.
+  from workspace orchestration. User Agents consume raw scalar/complex series;
+  the product does not derive charts or automatic measurement summaries.
 
 The local host has no default binary, model directory or version, and does not
 probe installed software. Its optional `simulationHandler` uses the same
@@ -32,7 +33,7 @@ probe installed software. Its optional `simulationHandler` uses the same
 reports `configured: false`, and execution returns
 `simulation-not-configured`; Editor and saved inputs remain usable.
 
-Run reads return bounded receipts. Full `result.json` and `outputs.json`
+Run reads return bounded receipts. Full `result.json` and `specs.json`
 remain File artifacts; the GUI materializes these only when a receipt is a
 preview. MCP keeps paged file access instead of receiving unbounded arrays.
 Input freshness is cached per Project structure revision and folder ID; raw
@@ -49,12 +50,47 @@ durability. Lost responses never trigger an automatic second execution.
 - Stimulus sources and loads are ordinary Instances in the author's Testbench
   Cell. Their connectivity and source parameters remain authoritative on those
   Instances. Native analysis/control text and the one experiment configuration
-  belong to the source `SimulationSetup`; purely textual experiments own their
+  belong to the source folder; purely textual experiments own their
   stimuli in source instead. Neither form duplicates a drawn source's values.
-- The deck builder appends `.end` only when the author's testbench did not
-  already close the deck.
+- Native preparation preserves the entry and generated/include file closure.
+  The Worker does not insert model directives or a terminator.
 
-## Model-library selection
+## Native Worker execution boundary
+
+`worker/simulation.ts` routes each request by its selected Profile; its native
+route, `worker/simulation-vacask.ts`, accepts VACASK source only.
+`VACASK_PROFILE_ID` selects the accepted deployment Profile (an isolated
+native-only Worker may set `SIMULATION_PROFILE_ID` instead); the selected
+executor's `/health` supplies its measured environment and capabilities. The
+Worker requires a verified pinned VACASK identity and matching Profile, with
+`inputs: ["source"]` and `rawfileCollection: "native-multi-ascii"`. It maintains
+no independent model-library path, corner list or analysis interpretation.
+
+The native operator-host target uses its own explicit HTTPS origin and private
+gateway credentials (`VACASK_UPSTREAM_URL` and `VACASK_UPSTREAM_TOKEN` when
+routed beside ngspice). An explicitly provisioned `VACASK` container binding uses
+the same native contract. These are execution locations, not alternative
+engines; missing targets never cause fallback. Without a configured Profile
+and native executor, native capabilities remain unconfigured and editing
+remains usable.
+Existing ngspice deployment configuration is not a native registration. The
+[migration roadmap](../roadmap/vacask-migration.md) owns isolated cloud delivery;
+this route change does not qualify or modify existing hosted environments.
+
+Worker and harness share `validateNativeExecutionInput`: revision, entry bytes,
+portable disjoint file/dependency paths, registry digests and byte/count bounds.
+The harness additionally enforces host-filesystem and process limits. Worker
+forwards the exact files, not a recomposed deck. Native numeric interpretation
+belongs to the shared harness assembler. Worker checks result/input hashes,
+executed file bytes and the runtime fingerprint against admission, withholding
+mismatched evidence rather than retrying the process. Cancellation bypasses
+readiness checks; bounded refusal details and Retry-After remain available.
+
+The model-library and legacy container sections below describe the retained
+ngspice baseline, not this native route. Their replacement Profile/image remains
+a separate migration obligation; they must not be used to register VACASK.
+
+## Ngspice baseline model-library selection
 
 A model library is never represented by a bare path. The orchestration layer
 uses one of two explicit forms:
@@ -366,7 +402,7 @@ The service exposes `prepare`, `start`, `read`, `cancel`, and `export`.
 returns a short receipt with a run id; `read` returns status or the final
 result and may wait briefly; `cancel` terminates the process and frees the
 slot. A run id is bound to the session or Project owner that started it.
-No run history is saved in the Project. Managed Preview retains owner-scoped
+No run history is saved in the Project. Managed hosted execution retains owner-scoped
 server records and artifacts for the bounded period below; direct/local receipts
 depend on their session service and resource lifetime. Once that evidence is
 unavailable, a receipt reads as lost. A lost run is never silently rerun.
@@ -381,7 +417,8 @@ continue. Cancellation terminates the active member and marks queued members
 cancelled. Batch start follows the same request-ID idempotency rule as a normal
 start.
 
-`prepare-sweep` is the shared execution primitive used by a saved Run Plan
+For legacy version-1 experiment configurations, `prepare-sweep` is the shared
+execution primitive used by a saved Run Plan
 over corner, temperature, Design Variable, or one or more exact
 instance-parameter axes. It
 expands the Cartesian product into the same bounded 1–16 member batch before
@@ -391,7 +428,9 @@ Instance, and netlist parameter. Variable axes address a stable Setup-local
 variable ID; preparation fans each point value out to all of that variable's
 exact bindings. Sweep members keep their ordinary prepared
 identity, result, and artifact interfaces, so no second executor or result
-protocol is introduced.
+protocol is introduced. Source-native version-2 folders reject these run-only
+variants: their control flow belongs in native SPICE. Saved-folder batches
+remain available independently of the configuration version.
 
 ## Resources and presentation
 
@@ -402,16 +441,16 @@ the canonical operation/result codecs. Its `SimulationFiles` is exposed through
 the existing File Resource. Project folder and source parameters retain the
 existing Project edit authority. Browser and MCP adapters do not compile their
 own decks or own a second simulation model. The browser lazily creates a service
-for its live Project session; opening the editor does not start ngspice.
+for its live Project session; opening the editor does not launch a simulator.
 
 `prepare` accepts the Project's saved folder or an isolated raw workspace. The
 Project source requires `expectedStructureRevision`; there is no inline folder
 that bypasses Project edit ownership. It snapshots input and publishes immutable
 SHA-256-addressed artifact metadata; raw input retains its entry text and include
-files. `prepared.cir` is available before execution. Structured composition uses
-the executor's advertised library and the shared deck builder. The Worker rejects
-a prepared deck that no longer matches its composition instead of silently using
-changed deployment settings.
+files. Prepared input artifacts are available before execution. Native compilation
+uses the shared circuit generator and source files; Worker neither recompiles
+them nor adds a model library. Input/runtime disagreement returns a repairable
+failure instead of silently executing changed deployment settings.
 
 `start` returns a short session-local run receipt. Reusing its request ID and
 payload returns the same run; a changed payload is rejected without invalidating
@@ -422,13 +461,28 @@ through the existing supervisor, whose process-tree cleanup still owns slot
 release. A private random run token authorizes cancellation; health responses
 and Agent artifacts do not expose that token. Cancel-before-admission is remembered
 for the maximum run window. Network uncertainty is never an automatic rerun.
+A terminal executor refusal retains its specific Problem and recovery guidance;
+it is not decoded as a numeric result. A genuine failed analysis may still have
+partial results, which remain readable. Cancellation while queued has no numeric
+artifact and is reported as cancelled, not as a perpetually pending result.
+The same service session can repair the input, prepare and start a new run.
+
+Managed attempts retry only a proven pre-dispatch infrastructure failure or an
+explicit executor refusal (for example busy or not-ready), within the existing
+attempt limit. A lost
+execution reply, post-dispatch consumer/storage failure, or expired execution
+lease ends as `infrastructure-failed` with an unknown-outcome diagnostic, not
+another dispatch. A pending cancellation is not confirmed by lease expiry.
+The same Run record remains readable; duplicate queue delivery cannot restart
+it. This is not proof that an unreachable process was terminated: process
+cleanup and its hard deadline remain the executor supervisor's responsibility.
 MCP transport failures return the effective request ID, including when the tool
 generated it, so an Agent can retry the identical start rather than duplicate it.
 File Resource `list` recovers session draft IDs after a lost create response;
 it returns revision/entry/expiry metadata, not file bodies.
 
 The browser owns its presentation receipts, not execution authority. On the
-managed Preview transport, tab loss does not stop an admitted run: the owner can
+managed hosted transport, tab loss does not stop an admitted run: the owner can
 list its server records, and bounded immutable input/result evidence remains in
 the artifact store for one day. The queue admits at most 50 waiting runs, one
 queued and one active per owner, waits at most five minutes, and dispatches only
@@ -451,24 +505,44 @@ and the names, sizes, and hashes of every preceding artifact. The manifest is
 the portable inventory for the existing File Resource artifacts; it is not a
 second result store and does not claim an external model tree is embedded.
 
-The human Results view binds mappings and authored probe labels by the Run's
-own `preparedId`, never by the latest Setup or most recent Prepare. Historical
-numeric data remains viewable after the Project changes, while stale object
-locations are refused by normal locator resolution. Direct OP Net-voltage
-outputs may be painted on the exact authored anchor and concrete hierarchy
-occurrence only while that input revision is current; raw node strings and
-derived expressions are not guessed back to Canvas objects. AC and TRAN share
-the same output browser, explicit plot tools, marker, expanded view, and
-back-annotation boundary; TRAN uses a linear time axis and does not revive
-Digital Simulation. The compact result export action produces standalone SVG
-or PNG from the visible plot state and downloads complete numeric CSV from File
-Resource artifacts, so displayed decimation is never presented as full data. A
-browser session may retain a bounded set of completed structured results for
-comparison; rows align only by stable output id, analysis, metric, and unit,
-never by display label or array index. This first comparison view is session
-state, not Project or Cloud Project persistence.
+The human result workspace contains Specs and Console. Plot, Compare, OP
+presentation and result-to-Canvas projection are retired; native OP/AC/DC/TRAN/
+Noise execution and raw numeric data remain unchanged. Raw and full
+CSV are the external plotting/analysis handoff. The legacy `simulation-plot`
+export request is recognized but returns `SIMULATION_PLOT_RETIRED`.
 
-The explicit **Archive** action captures a completed run's verified artifact
+Native `meas` computes scalar metrics. Optional `* @spec` source comments declare
+explicit limits, inclusive ranges or targets with absolute tolerances. These
+are ICM annotations, not native SPICE commands. The shared evaluator uses only
+captured reachable source and native reports, never live edits or guessed plot
+associations. Versioned `outputData.specs` and `specs.json` contain the same
+run/prepared/input identity, source provenance, observed value, expected rule,
+judgment and reason; `specs.csv` provides portable rows. The grammar and error
+semantics are specified in [Spec annotations](../agent/simulation-specs.md).
+Missing or invalid measurements and incomplete runs cannot certify a Pass;
+metrics without a rule are unconstrained. Older runs without a report remain
+readable without synthesizing acceptance. Editing source marks the historical
+report stale and never changes its numbers or judgment.
+
+Sim Code occupies an independent right workspace rather than a Properties tab.
+Minimizing it preserves mounted source buffers and run ownership. Explorer
+contains source files and run outputs, including `specs.csv`; it
+also hosts run history. Folder/Run context menus expose archive and export
+operations while internal preparation/evidence files remain in diagnostics.
+
+New runs produce one complete `<analysis>-<record-index>.csv` per captured
+analysis, alongside `out.raw`. `result.data` / `result.json` owns structured raw
+numbers; `outputData.specs` / `specs.json` owns the captured acceptance report.
+The legacy `outputData.analyses` and `diagnostics` arrays are empty for new runs;
+optional legacy measurements and device operating-point summaries are absent.
+No second named-output waveforms, automatic min/max/RMS summaries,
+`outputs-*.csv`, `measurements.csv`, `device-operating-points.csv`, `outputs.json`
+or `native-measurements.json` are generated. Native `meas` values without a rule
+remain unconstrained Spec rows. `specs.json` is available through File Resource
+and diagnostic export, not duplicated beside its CSV in Explorer. Archived
+legacy output artifacts remain readable/exportable without being regenerated.
+
+Automatic retention and **Archive current run** capture a run's verified artifact
 set and compact presentation metadata in browser IndexedDB. At most ten runs
 per Project and 32 MiB per run are accepted. Opening an archive republishes its
 verified files into the current session File Resource and decodes the ordinary
@@ -497,10 +571,10 @@ failure.
 
 ## Validation
 
-- Rawfile and result-data tests use ngspice-generated divider, RC AC/step, and
-  resistor Noise fixtures with closed-form expectations. They protect sample
-  axes, complex values, units, truncation, and typed refusal rather than comparing
-  the parser to its own output.
+- Rawfile and result-data tests use ngspice- and VACASK-generated divider, RC
+  AC/step, and resistor Noise fixtures with closed-form expectations. They
+  protect sample axes, complex values, units, truncation, and typed refusal
+  rather than comparing the parser to its own output.
 - Structured compiler tests protect deterministic extraction, Testbench roots,
   occurrence mapping, terminal-current instrumentation, named outputs, and
   unchanged Project facts.

@@ -95,7 +95,11 @@ export interface CanvasGestureControllerDependencies {
     setPanPreview: (preview: PanPreview | null) => void;
     getInteractionKind: () => string;
     paintSnapGuides: (guides: readonly SnapGuideLine[]) => void;
-    noteCanvasPoint: (point: Point) => void;
+    noteCanvasPoint: (
+      point: Point,
+      rawPoint: Point,
+      svg: SVGSVGElement,
+    ) => void;
     setStatus: (status: string) => void;
     /** A completed right-button frame consumes that gesture's context menu. */
     setContextMenuSuppressed: (suppressed: boolean) => void;
@@ -118,7 +122,7 @@ export interface CanvasGestureControllerDependencies {
   placement: {
     componentPlacementPending: boolean;
     componentSymbolPending: boolean;
-    snapComponentPlacementPoint: (
+    snapPlacementPoint: (
       point: Point,
       svg: SVGSVGElement,
     ) => { point: Point; guides: readonly SnapGuideLine[] };
@@ -260,7 +264,7 @@ export function createCanvasGestureController({
   placement: {
     componentPlacementPending,
     componentSymbolPending,
-    snapComponentPlacementPoint,
+    snapPlacementPoint,
     setComponentPreviewPoint,
     vddRailMode,
     vddRailStart,
@@ -417,9 +421,9 @@ export function createCanvasGestureController({
     // gesture on any of these hit layers would capture the pointer and swallow
     // the later contextmenu event. Route strokes and endpoint circles are
     // already excluded by the background-target classifier below.
-    const contextMenuHitKind = (event.target as Element).getAttribute?.(
-      "data-canvas-hit-kind",
-    );
+    const contextMenuHitKind = (event.target as Element)
+      .closest?.("[data-canvas-hit-kind]")
+      ?.getAttribute("data-canvas-hit-kind");
     if (
       event.button === 2 &&
       (contextMenuHitKind === "instance" ||
@@ -534,7 +538,11 @@ export function createCanvasGestureController({
       event.clientY,
       event.currentTarget,
     );
-    noteCanvasPoint(point);
+    noteCanvasPoint(
+      point,
+      rawPointFromClient(event.clientX, event.clientY, event.currentTarget),
+      event.currentTarget,
+    );
     if (waveformPlacementPending) {
       setWaveformPreviewPoint(point);
       return;
@@ -557,16 +565,18 @@ export function createCanvasGestureController({
         event.clientY,
         event.currentTarget,
       );
-      const snapped = snapComponentPlacementPoint(raw, event.currentTarget);
+      const snapped = snapPlacementPoint(raw, event.currentTarget);
       setComponentPreviewPoint(snapped.point);
       paintSnapGuides(snapped.guides);
       return;
     }
     if (interactionKind === "copy-placement") {
-      setCopyPreviewPoint({
-        x: snapCoordinate(point.x, document.presentation.grid),
-        y: snapCoordinate(point.y, document.presentation.grid),
-      });
+      const snapped = snapPlacementPoint(
+        rawPointFromClient(event.clientX, event.clientY, event.currentTarget),
+        event.currentTarget,
+      );
+      setCopyPreviewPoint(snapped.point);
+      paintSnapGuides(snapped.guides);
       return;
     }
     if (boxPreview?.pointerId === event.pointerId) {

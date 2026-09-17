@@ -74,10 +74,6 @@ export function EditorStatusbar({
   wireRoutingMode,
   wireCornerOrder,
   recoveryLabel,
-  gridDotsVisible,
-  annotationGrid,
-  drawAngleMode,
-  wheelBehavior,
   zoomPercent,
   issues,
   selectionFilterSummary,
@@ -85,11 +81,7 @@ export function EditorStatusbar({
   onToggleWireOptions,
   onWireRoutingModeChange,
   onWireCornerOrderChange,
-  onToggleGridDots,
   onOpenAnalytics,
-  onAnnotationGridChange,
-  onDrawAngleModeChange,
-  onWheelBehaviorChange,
   onZoomOut,
   onZoomIn,
   onFitView,
@@ -103,10 +95,6 @@ export function EditorStatusbar({
   wireRoutingMode: WireRoutingMode;
   wireCornerOrder: WireCornerOrder;
   recoveryLabel: string | null;
-  gridDotsVisible: boolean;
-  annotationGrid: 1 | 5 | 10;
-  drawAngleMode: "free" | "45" | "orthogonal";
-  wheelBehavior: "auto" | "zoom" | "pan";
   zoomPercent: number;
   selectionFilterSummary: string | null;
   issues?: {
@@ -118,11 +106,7 @@ export function EditorStatusbar({
   onToggleWireOptions: () => void;
   onWireRoutingModeChange: (mode: WireRoutingMode) => void;
   onWireCornerOrderChange: (order: WireCornerOrder) => void;
-  onToggleGridDots: () => void;
   onOpenAnalytics: () => void;
-  onAnnotationGridChange: (pitch: 1 | 5 | 10) => void;
-  onDrawAngleModeChange: (mode: "free" | "45" | "orthogonal") => void;
-  onWheelBehaviorChange: (behavior: "auto" | "zoom" | "pan") => void;
   onZoomOut: () => void;
   onZoomIn: () => void;
   onFitView: () => void;
@@ -250,66 +234,8 @@ export function EditorStatusbar({
       <div className="canvas-controls" aria-label="画布视图控件">
         <button
           type="button"
-          aria-label={
-            gridDotsVisible ? "Hide background dots" : "Show background dots"
-          }
-          aria-pressed={gridDotsVisible}
-          title={
-            gridDotsVisible ? "Hide background dots" : "Show background dots"
-          }
-          onClick={onToggleGridDots}
-        >
-          <ToolIcon name="grid" />
-        </button>
-        <select
-          aria-label="注释网格"
-          data-testid="annotation-grid-select"
-          title="文本和绘图注释的放置间距。器件、导线和连接点始终位于 10 单位网格上。"
-          value={annotationGrid}
-          onChange={(event) =>
-            onAnnotationGridChange(
-              Number(event.currentTarget.value) as 1 | 5 | 10,
-            )
-          }
-        >
-          <option value="10">±10</option>
-          <option value="5">±5</option>
-          <option value="1">±1</option>
-        </select>
-        <select
-          aria-label="绘制角度"
-          data-testid="draw-angle-select"
-          title="箭头和直线工具的角度锁定。绘制时按 Shift 始终锁定为 45 度角；导线始终保持正交。"
-          value={drawAngleMode}
-          onChange={(event) =>
-            onDrawAngleModeChange(
-              event.currentTarget.value as "free" | "45" | "orthogonal",
-            )
-          }
-        >
-          <option value="free">自由</option>
-          <option value="45">45°</option>
-          <option value="orthogonal">正交</option>
-        </select>
-        <select
-          aria-label="鼠标滚轮"
-          data-testid="wheel-behavior-select"
-          title="设置普通滚动的行为。自动模式会识别设备：鼠标滚轮缩放，触控板滚动平移。如果识别错误，请明确选择一种模式。双指捏合和 Cmd+滚动始终执行缩放。"
-          value={wheelBehavior}
-          onChange={(event) =>
-            onWheelBehaviorChange(
-              event.currentTarget.value as "auto" | "zoom" | "pan",
-            )
-          }
-        >
-          <option value="auto">滚轮：自动</option>
-          <option value="zoom">滚轮：缩放</option>
-          <option value="pan">滚轮：平移</option>
-        </select>
-        <button
-          type="button"
-          aria-label="缩小"
-          title="缩小"
+          aria-label="Zoom out"
+          title="Zoom out"
           onClick={onZoomOut}
         >
           <ToolIcon name="zoom-out" />

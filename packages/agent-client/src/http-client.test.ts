@@ -15,6 +15,128 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 describe("agent http client", () => {
+  it("reads the canonical Session status using bearer authentication and a short deadline", async () => {
+    const observation = {
+      ok: true,
+      sessionId: "s",
+      projectId: "p",
+      documentIds: ["d"],
+      authorization: "paused",
+      editor: "detached",
+      observedAt: 100,
+      expiresAt: 200,
+    };
+    let invalid = false;
+    const client = new AgentHttpClient({
+      baseUrl: BASE,
+      fetch: async (url, init) => {
+        expect(String(url)).toBe(`${BASE}/api/agent/sessions/s/status`);
+        expect(init?.method).toBe("GET");
+        expect(new Headers(init?.headers).get("authorization")).toBe(
+          "Bearer private",
+        );
+        expect(init?.signal).toBeInstanceOf(AbortSignal);
+        return jsonResponse(
+          200,
+          invalid ? { ...observation, agentToken: "leak" } : observation,
+        );
+      },
+    });
+    expect(await client.status("s", "private")).toEqual(observation);
+    invalid = true;
+    await expect(client.status("s", "private")).rejects.toMatchObject({
+      code: "INVALID_RESPONSE",
+    });
+  });
+  it("reads captured Specs without legacy waveform projections and still rejects unknown fields", async () => {
+    const outputData = {
+      schemaVersion: 1,
+      analyses: [],
+      diagnostics: [],
+      specs: {
+        schemaVersion: 1,
+        runId: "run",
+        preparedId: "prepared",
+        inputDigest: "a".repeat(64),
+        results: [],
+      },
+    };
+    const body = {
+      apiVersion: "3.0",
+      requestId: "spec-read",
+      operation: "read",
+      ok: true,
+      run: {
+        id: "run",
+        preparedId: "prepared",
+        inputRevision: "input",
+        state: "finished",
+        artifacts: [],
+        outputData,
+      },
+    };
+    const http = new AgentHttpClient({
+      baseUrl: BASE,
+      fetch: async () => jsonResponse(200, body),
+    });
+    const request = {
+      apiVersion: "3.0" as const,
+      requestId: "spec-read",
+      operation: "read" as const,
+      runId: "run",
+    };
+    expect(await http.simulation("session", "token", request)).toEqual(body);
+    Object.assign(outputData.specs, { unknown: true });
+    await expect(http.simulation("session", "token", request)).rejects.toThrow(
+      "schema validation",
+    );
+    const rejected = await http
+      .simulation("session", "token", request)
+      .catch((error: unknown) => error);
+    expect(rejected).toMatchObject({
+      code: "INVALID_RESPONSE",
+      category: "request-rejected",
+    });
+    expect(String(rejected)).toContain(
+      "run.outputData.specs (unrecognized_keys)",
+    );
+    expect(String(rejected)).toContain("MCP manifest");
+    expect(String(rejected)).not.toContain("unknown");
+    delete (outputData.specs as Record<string, unknown>).unknown;
+    expect(await http.simulation("session", "token", request)).toEqual(body);
+  });
+  it("reads hidden schema-54 parameter bindings without relaxing unknown-field checks", async () => {
+    const body = snapshotResponse("req-54");
+    if (!body.ok || body.operation !== "snapshot")
+      throw new Error("Expected snapshot");
+    body.snapshot.document.annotations.push({
+      id: "parameter-k",
+      kind: "instance-value",
+      binding: { kind: "instance-value", instanceId: "M1", parameter: "k" },
+      anchor: { kind: "free", position: { x: 0, y: 0 } },
+      rotation: 0,
+      alignment: "start",
+      locked: false,
+      visible: false,
+    });
+    const http = new AgentHttpClient({
+      baseUrl: BASE,
+      fetch: async () => jsonResponse(200, body),
+    });
+    const request = {
+      apiVersion: "3.0" as const,
+      requestId: "req-54",
+      operation: "snapshot" as const,
+      documentId: "main",
+    };
+    expect(await http.circuit("s", "t", request)).toEqual(body);
+    Object.assign(body.snapshot.document.annotations.at(-1)!.binding!, {
+      unsupported: true,
+    });
+    await expect(http.circuit("s", "t", request)).rejects.toThrow(
+      "schema validation",
+    );
+  });
   it("backs off on 429 with byte-identical mutation retries and a finite budget", async () => {
     const bodies: string[] = [];
     const waits: number[] = [];

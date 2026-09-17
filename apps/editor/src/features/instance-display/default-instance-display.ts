@@ -30,7 +30,8 @@ export function instanceLabelAnnotationFor(
   const candidates = document.annotations.filter(
     (annotation) =>
       (annotation.kind === "instance-label" ||
-        annotation.kind === "net-label") &&
+        annotation.kind === "net-label" ||
+        annotation.kind === "power-label") &&
       ((!annotation.binding && annotation.kind === "instance-label") ||
         annotation.binding?.kind === "instance-reference" ||
         annotation.binding?.kind === "cell-terminal-name" ||
@@ -82,7 +83,8 @@ export function defaultInstanceDisplayAnnotations(
     resolver,
     styleProfile,
   );
-  if (options.showDesignator !== false && label) {
+  const showsDesignator = options.showDesignator !== false && Boolean(label);
+  if (showsDesignator && label) {
     annotations.push({
       ...label,
       binding: { kind: "instance-reference", instanceId: instance.id },
@@ -95,6 +97,7 @@ export function defaultInstanceDisplayAnnotations(
       resolver,
       styleProfile,
       options.masterName,
+      showsDesignator ? "value" : "reference",
     );
     if (master) annotations.push(master);
   } else if (
@@ -186,6 +189,7 @@ function defaultMasterNameAnnotation(
   resolver: SymbolResolver,
   styleProfile: SchematicStyleProfile,
   masterName: string,
+  slot: "reference" | "value",
 ): Annotation | null {
   if (!instance.placement || masterName.trim() === "") return null;
   const resolved = resolver.resolve(
@@ -198,7 +202,7 @@ function defaultMasterNameAnnotation(
     resolved,
     styleProfile,
     document.presentation.grid,
-    "value",
+    slot,
   );
   if (!placement) return null;
   const position = placement.position;

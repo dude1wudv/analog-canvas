@@ -3,6 +3,11 @@ import { useEffect, useRef } from "react";
 export interface ReplaceGuardDialogProps {
   /** What is about to replace the dirty work, e.g. "Open amp.icproj.json". */
   intent: string;
+  /**
+   * How many Cloud Projects one account may keep. The composition root hands
+   * in the shared limit so this copy can never fall behind it.
+   */
+  cloudProjectLimit: number;
   saving: boolean;
   onCancel(): void;
   onSaveAndContinue(): void;
@@ -17,6 +22,7 @@ export interface ReplaceGuardDialogProps {
  */
 export function ReplaceGuardDialog({
   intent,
+  cloudProjectLimit,
   saving,
   onCancel,
   onSaveAndContinue,
@@ -74,10 +80,10 @@ export function ReplaceGuardDialog({
               继续<strong>{intent}</strong>会丢弃最新编辑。
             </p>
             <p className="replace-guard-hint">
-              “保存”会将此项目保存在云项目中（最多 3
-              个）。若希望保存为文件，请使用
-              <strong>文件 → 导出项目文件…</strong>下载{" "}
-              <code>.icproj.json</code>。
+              Save keeps this Project in Cloud Projects (up to{" "}
+              {cloudProjectLimit}). Prefer a file?{" "}
+              <strong>File → Export Project File…</strong> downloads{" "}
+              <code>.icproj.json</code>.
             </p>
           </div>
         </div>

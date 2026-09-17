@@ -1,10 +1,7 @@
 import { useState } from "react";
 
 import type { ComponentInsertRequest } from "../component-insert/component-insert-request";
-import {
-  fullInsertLaunch,
-  type InsertLaunch,
-} from "../component-insert/insert-launch";
+import type { InsertLaunch } from "../component-insert/insert-launch";
 import { SymbolArtwork } from "../component-insert/symbol-artwork";
 import { initialComponentParameterValues } from "../component-insert/component-parameters";
 import {
@@ -30,6 +27,7 @@ const COMPACT_LIBRARY_LABELS: Readonly<Record<string, string>> = {
   "closed-switch": "Closed",
   "current-source": "I Src",
   "d-flip-flop": "DFF",
+  "d-flip-flop-reset": "DFF R",
   "d-flip-flop-q": "DFQ",
   "ideal-switch": "Open",
   "simple-switch": "Simple",
@@ -277,19 +275,6 @@ export function ShapesPanel({
           </div>
         </details>
       </div>
-
-      <footer className="shapes-panel-footer">
-        <button
-          type="button"
-          className="shapes-insert"
-          data-testid="shapes-insert"
-          onClick={() => onStartInsert(fullInsertLaunch())}
-          title="插入带参数的元件（I）"
-        >
-          插入
-          <kbd>I</kbd>
-        </button>
-      </footer>
     </aside>
   );
 }

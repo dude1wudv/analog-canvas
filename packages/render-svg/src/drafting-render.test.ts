@@ -1,4 +1,4 @@
-import { createEmptyDocument, transformPoint } from "@icm/model";
+import { createEmptyDocument } from "@icm/model";
 import type { RichTextRun } from "@icm/model";
 import {
   resolveDraftingObjectGeometry,
@@ -21,6 +21,39 @@ const bold = (value: string) => ({
 });
 
 describe("drafting layer rendering", () => {
+  it("defaults notes and their scripts to bold while honoring an explicit normal weight", () => {
+    const document = createEmptyDocument("doc", "Text weights");
+    document.drafting = {
+      objects: [
+        {
+          id: "weight-note",
+          kind: "text",
+          locked: false,
+          zIndex: 0,
+          anchor: { kind: "free", position: { x: 100, y: 100 } },
+          alignment: "start",
+          rotation: 0,
+          content: {
+            runs: [
+              { kind: "text", value: "G" },
+              {
+                kind: "span",
+                style: "subscript",
+                children: [{ kind: "text", value: "m" }],
+              },
+            ],
+          },
+        },
+      ],
+    };
+    expect(renderDocumentSvg(document, resolver)).toMatch(
+      /data-kind="draft-text"[^>]*font-weight="bold"[^>]*>G<tspan[^>]*font-weight:700/u,
+    );
+    document.drafting.objects[0]!.styleOverride = { weight: "normal" };
+    expect(renderDocumentSvg(document, resolver)).toMatch(
+      /data-kind="draft-text"[^>]*font-weight="normal"[^>]*>G<tspan[^>]*font-weight:400/u,
+    );
+  });
   it("exports a transparent complete outline, without a center shaft or duplicated head", () => {
     const document = createEmptyDocument("doc", "Outline arrow");
     document.drafting = {
@@ -188,7 +221,7 @@ describe("drafting layer rendering", () => {
             ],
           },
           alignment: "middle",
-          rotation: 0,
+          rotation: 90,
         },
       ],
     };
@@ -204,6 +237,61 @@ describe("drafting layer rendering", () => {
     expect(svg).toContain("data-icm-formula=");
     expect(svg).toContain("<path");
     expect(svg).not.toContain("<foreignObject");
+    expect(
+      svg.match(
+        /<g data-object-id="formula-1" data-kind="draft-text"[^>]*>/u,
+      )?.[0],
+    ).not.toContain("transform=");
+  });
+
+  it("keeps ordinary glyphs and fractions upright at nonzero rotation", () => {
+    const document = createEmptyDocument("doc", "Upright drafting text");
+    document.drafting = {
+      objects: [
+        {
+          id: "greater-than",
+          kind: "text",
+          locked: false,
+          zIndex: 0,
+          anchor: { kind: "free", position: { x: 40, y: 40 } },
+          content: { runs: [{ kind: "text", value: ">" }] },
+          alignment: "middle",
+          rotation: 90,
+        },
+        {
+          id: "fraction",
+          kind: "text",
+          locked: false,
+          zIndex: 1,
+          anchor: { kind: "free", position: { x: 80, y: 40 } },
+          content: {
+            runs: [
+              {
+                kind: "fraction",
+                numerator: { runs: [{ kind: "text", value: "A" }] },
+                denominator: { runs: [{ kind: "text", value: "B" }] },
+              },
+            ],
+          },
+          alignment: "middle",
+          rotation: 270,
+        },
+      ],
+    };
+
+    const svg = renderDocumentSvg(document, resolver);
+    const glyph = svg.match(
+      /<text data-object-id="greater-than" data-kind="draft-text"[^>]*>/u,
+    )?.[0];
+    const fraction = svg.match(
+      /<g data-object-id="fraction" data-kind="draft-text"[^>]*>/u,
+    )?.[0];
+    expect(glyph).toBeDefined();
+    expect(glyph).not.toContain("transform=");
+    expect(svg).toContain(">&gt;</text>");
+    expect(fraction).toBeDefined();
+    expect(fraction).not.toContain("transform=");
+    expect(svg).toContain('data-role="fraction-bar"');
   });
 
   it.each([
@@ -240,24 +328,17 @@ describe("drafting layer rendering", () => {
       )?.[0];
       expect(group).toBeDefined();
       expect(group?.match(/data-role="polarity-/gu)).toHaveLength(lineCount);
-      expect(group).toContain('transform="rotate(90 100 100)"');
+      expect(group).not.toContain("transform=");
       expect(group).toContain("V_x");
-      if (polarity !== "positive") {
-        const negative = group?.match(
-          /<line data-role="polarity-negative" x1="([^"]+)" y1="([^"]+)" x2="([^"]+)" y2="([^"]+)"/u,
+      for (const horizontalRole of ["positive-horizontal", "negative"]) {
+        const line = group?.match(
+          new RegExp(
+            `<line data-role="polarity-${horizontalRole}" x1="([^"]+)" y1="([^"]+)" x2="([^"]+)" y2="([^"]+)"`,
+            "u",
+          ),
         );
-        expect(negative).not.toBeNull();
-        const worldStart = transformPoint(
-          { x: Number(negative![1]), y: Number(negative![2]) },
-          { x: 100, y: 100 },
-          { rotation: 90, mirror: "none" },
-        );
-        const worldEnd = transformPoint(
-          { x: Number(negative![3]), y: Number(negative![4]) },
-          { x: 100, y: 100 },
-          { rotation: 90, mirror: "none" },
-        );
-        expect(worldStart.y).toBeCloseTo(worldEnd.y, 6);
+        if (!line) continue;
+        expect(Number(line[2])).toBeCloseTo(Number(line[4]), 6);
       }
     },
   );
@@ -301,10 +382,10 @@ describe("drafting layer rendering", () => {
 
     const svg = renderDocumentSvg(document, resolver);
     const subscript = svg.match(
-      /<tspan data-text-run="subscript" x="([^"]+)" y="([^"]+)"/u,
+      /<tspan data-text-run="subscript"[^>]* x="([^"]+)" y="([^"]+)"/u,
     );
     const superscript = svg.match(
-      /<tspan data-text-run="superscript" x="([^"]+)" y="([^"]+)"/u,
+      /<tspan data-text-run="superscript"[^>]* x="([^"]+)" y="([^"]+)"/u,
     );
 
     expect(subscript).not.toBeNull();
@@ -312,6 +393,7 @@ describe("drafting layer rendering", () => {
     expect(subscript?.[1]).toBe(superscript?.[1]);
     expect(Number(superscript?.[2])).toBeLessThan(Number(subscript?.[2]));
     expect(svg.match(/data-text-decoration="overbar"/gu)).toHaveLength(1);
+    expect(svg).not.toContain("spacingAndGlyphs");
     expect(svg).not.toContain("&#160;");
   });
 
@@ -601,6 +683,34 @@ describe("drafting layer rendering", () => {
     expect(svg).toContain(`points="${head},0 ${100 - head},0"`);
   });
 
+  it("exports independently styled ends with filled dots and differently sized heads", () => {
+    const doc = arrowDocument({
+      arrowStart: "dot",
+      arrowEnd: "large-arrow",
+      color: "#123456",
+    });
+    const svg = renderDocumentSvg(doc, resolver);
+    const profile = resolveSchematicStyleProfile(
+      doc.presentation.styleProfileId,
+    );
+    expect(svg.match(/<polygon/gu)).toHaveLength(1);
+    expect(svg).toContain(
+      `<polygon points="100,0 ${100 - profile.annotations.arrowHeadLength * 1.5},`,
+    );
+    expect(svg).toContain(
+      `<circle cx="0" cy="0" r="${profile.annotations.arrowHeadWidth / 2}" fill="#123456"`,
+    );
+    const mixed = renderDocumentSvg(
+      arrowDocument({ arrowStart: "open-arrow", arrowEnd: "small-arrow" }),
+      resolver,
+    );
+    expect(mixed.match(/<polygon/gu)).toHaveLength(2);
+    expect(mixed.match(/<polygon[^>]*fill="none"/gu)).toHaveLength(1);
+    expect(mixed).toContain(
+      `<polygon points="100,0 ${100 - profile.annotations.arrowHeadLength * 0.75},`,
+    );
+  });
+
   it("puts the single head on the start when asked", () => {
     const document = arrowDocument({ arrowHeadAt: "start" });
     const svg = renderDocumentSvg(document, resolver);
@@ -879,9 +989,9 @@ describe("instance value fraction rendering", () => {
     expect(svg).toContain('data-role="fraction-bar"');
     expect(svg).toContain(">10um<");
     expect(svg).toContain(">150nm<");
-    // Fraction parts render three A+ levels (30%) above the subscript scale:
-    // 15.116 × (0.76 × 1.3) ≈ 14.93px, roughly level with the reference label.
-    expect(svg).toContain('font-size="14.93"');
+    // W/L stays compact beside the device while retaining the same bold face:
+    // 15.116 × (0.76 × 1.1) ≈ 12.64px.
+    expect(svg).toContain('font-size="12.64"');
   });
 
   it("keeps the bar when a multiplier follows the fraction", () => {

@@ -112,6 +112,7 @@ export function symbolCategory(symbolId: string): string {
       "buffer",
       "delay-cell",
       "d-flip-flop",
+      "d-flip-flop-reset",
       "d-flip-flop-q",
       "and-gate",
       "or-gate",
@@ -164,6 +165,8 @@ export function symbolCategory(symbolId: string): string {
  * and filled entries are appearance variants, never shared interface objects.
  */
 const LIBRARY_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+  "depletion-nmos": "D-NMOS",
+  "depletion-pmos": "D-PMOS",
   port: "Cell Pin",
   "port-filled": "Cell Pin (filled)",
   "zener-diode": "Zener",
@@ -171,6 +174,10 @@ const LIBRARY_DISPLAY_NAMES: Readonly<Record<string, string>> = {
 
 /** One line saying what an entry does, where the name alone leaves a doubt. */
 const LIBRARY_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  "d-flip-flop-reset":
+    "Rising-edge D flip-flop with an active-high asynchronous reset",
+  "voltage-controlled-switch":
+    "Four-terminal switch: P/N carry the switched path; CP/CN sense the control voltage",
   port: "A terminal on this Cell interface — the parent circuit connects to it",
   "port-filled": "An independent Cell Pin with a solid appearance",
 };
@@ -224,6 +231,7 @@ const SYMBOL_ORDER: readonly string[] = [
   "xor-gate",
   "xnor-gate",
   "d-flip-flop",
+  "d-flip-flop-reset",
   "d-flip-flop-q",
   "delay-cell",
   "variable-resistor",
@@ -233,6 +241,8 @@ const SYMBOL_ORDER: readonly string[] = [
   "zener-diode",
   "tcoil",
   "xfmr",
+  "depletion-nmos",
+  "depletion-pmos",
   "ndmos",
   "pdmos",
   "vdd-port",
@@ -253,15 +263,11 @@ const SYMBOL_ORDER: readonly string[] = [
   // is looking for the pair, so they sit together, after the amplifiers and
   // comparators an analog schematic reaches for far more often.
   "opamp",
-  "opamp-lettered",
   "opamp-differential",
-  "opamp-differential-lettered",
   "voltage-amplifier",
-  "voltage-amplifier-lettered",
   "transconductance",
   "differential-transconductance",
   "comparator",
-  "comparator-unmarked",
   "adc",
   "dac",
   "annotation-arrow",

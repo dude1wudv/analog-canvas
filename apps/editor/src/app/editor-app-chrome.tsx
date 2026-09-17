@@ -1,4 +1,5 @@
-import type { ComponentProps, RefObject } from "react";
+import { NETLIST_PROFILE_LABELS, type NetlistProfileId } from "@icm/netlist";
+import { type ComponentProps, type RefObject } from "react";
 
 import { AccountMenu } from "../components/account";
 import { BugReportLink } from "../components/bug-report-link";
@@ -22,6 +23,10 @@ interface ResetAction {
   execute: () => void;
 }
 
+interface LabeledCommandAction extends CommandAction {
+  label: string;
+}
+
 interface AlignmentAction extends CommandAction {
   mode: EdgeAlignmentMode;
   label: string;
@@ -39,8 +44,9 @@ export interface EditorAppChromeProps {
   onOpenGallery: () => void;
   fileCommands: ComponentProps<typeof FileCommandMenu>;
   searchOpen: boolean;
+  onInsertComponent: () => void;
   onManageCells: () => void;
-  onNewTestbench: () => void;
+  onNewTestbench?: () => void;
   placeProjectCell: CommandAction;
   selectionFilterOpen: boolean;
   onOpenSelectionFilter: () => void;
@@ -48,16 +54,21 @@ export interface EditorAppChromeProps {
   undo: CommandAction;
   redo: CommandAction;
   deleteSelection: CommandAction;
+  copySelectionImages: readonly LabeledCommandAction[];
   resets: readonly ResetAction[];
   rotate: CommandAction;
   mirrorLeftRight: CommandAction;
   mirrorTopBottom: CommandAction;
   alignmentActions: readonly AlignmentAction[];
-  instanceTableOpen: boolean;
+  instanceCodeOpen: boolean;
   netlistPreflightOpen: boolean;
   checkAndSave: CommandAction;
-  onOpenInstanceTable: () => void;
+  onOpenInstanceCode: () => void;
   onOpenNetlistPreflight: () => void;
+  onOpenNetlistConfiguration: () => void;
+  netlistProfileId: NetlistProfileId;
+  netlistFormat: "spice" | "spectre";
+  onExportNetlist: (format: "spice" | "spectre") => void;
   agentAction: { label: string; execute: () => void } | null;
   simulationAction?: () => void;
   simulationState?: "closed" | "open" | "maximized" | "minimized";
@@ -98,6 +109,7 @@ export function EditorAppChrome({
   onOpenGallery,
   fileCommands,
   searchOpen,
+  onInsertComponent,
   onManageCells,
   onNewTestbench,
   placeProjectCell,
@@ -107,16 +119,21 @@ export function EditorAppChrome({
   undo,
   redo,
   deleteSelection,
+  copySelectionImages,
   resets,
   rotate,
   mirrorLeftRight,
   mirrorTopBottom,
   alignmentActions,
-  instanceTableOpen,
+  instanceCodeOpen,
   netlistPreflightOpen,
   checkAndSave,
-  onOpenInstanceTable,
+  onOpenInstanceCode,
   onOpenNetlistPreflight,
+  netlistProfileId,
+  netlistFormat,
+  onOpenNetlistConfiguration,
+  onExportNetlist,
   agentAction,
   simulationAction,
   simulationState = "closed",
@@ -131,6 +148,10 @@ export function EditorAppChrome({
   releaseChannel,
 }: EditorAppChromeProps) {
   const displayedProjectName = projectNameDraft ?? projectName;
+  const copyNetlist = (format: "spice" | "spectre") => {
+    dismissOpenCommandMenus();
+    onExportNetlist(format);
+  };
   return (
     <header className="app-chrome">
       <div className="app-chrome-main">
@@ -206,6 +227,9 @@ export function EditorAppChrome({
             <details className="command-menu" name="editor-command-menu">
               <summary>编辑</summary>
               <div className="command-popover">
+                <button type="button" onClick={onInsertComponent}>
+                  Insert component… (I)
+                </button>
                 <button
                   type="button"
                   data-testid="edit-manage-cells"
@@ -213,9 +237,11 @@ export function EditorAppChrome({
                 >
                   管理 Cell…
                 </button>
-                <button type="button" onClick={onNewTestbench}>
-                  新建 Testbench Cell…
-                </button>
+                {onNewTestbench ? (
+                  <button type="button" onClick={onNewTestbench}>
+                    New Testbench Cell…
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={placeProjectCell.execute}
@@ -262,6 +288,17 @@ export function EditorAppChrome({
                 >
                   删除
                 </button>
+                <span className="command-group-label">Selection image</span>
+                {copySelectionImages.map((action) => (
+                  <button
+                    key={action.label}
+                    type="button"
+                    onClick={action.execute}
+                    disabled={!action.enabled}
+                  >
+                    {action.label}
+                  </button>
+                ))}
                 {resets.map((action) => (
                   <button
                     key={action.label}
@@ -311,39 +348,70 @@ export function EditorAppChrome({
                 ) : null}
               </div>
             </details>
-            <details className="command-menu" name="editor-command-menu">
-              <summary>网表</summary>
-              <div className="command-popover">
-                <span className="command-group-label">编辑</span>
-                <button
-                  type="button"
-                  aria-haspopup="dialog"
-                  aria-expanded={instanceTableOpen}
-                  onClick={onOpenInstanceTable}
+            <div className="netlist-copy-group">
+              <button
+                type="button"
+                className="toolbar-button netlist-copy"
+                data-testid="copy-netlist"
+                aria-label="Copy netlist"
+                title={`Copy ${NETLIST_PROFILE_LABELS[netlistProfileId]} ${netlistFormat === "spice" ? "SPICE (.spi)" : "Spectre (.scs)"} netlist`}
+                onClick={() => copyNetlist(netlistFormat)}
+              >
+                <svg
+                  viewBox="0 0 20 20"
+                  className="tool-icon"
+                  aria-hidden="true"
                 >
-                  实例表…
-                </button>
-                <span className="command-group-label">检查</span>
-                <button
-                  type="button"
-                  aria-haspopup="dialog"
-                  aria-expanded={netlistPreflightOpen}
-                  onClick={onOpenNetlistPreflight}
-                >
-                  检查报告…
-                </button>
-                <button
-                  type="button"
-                  data-testid="check-and-save"
-                  disabled={!checkAndSave.enabled}
-                  onClick={checkAndSave.execute}
-                  title={`运行 ERC 与视觉检查，并保存此${fileCommands.projectStoreItemLabel}`}
-                >
-                  <span className="toolbar-check-glyph" aria-hidden="true" />
-                  检查并保存
-                </button>
-              </div>
-            </details>
+                  <path
+                    d="M7 7h10v10H7z M13 7V3H3v10h4"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                Netlist
+              </button>
+              <details className="command-menu" name="editor-command-menu">
+                <summary
+                  aria-label="Netlist"
+                  title="Netlist formats and checks"
+                />
+                <div className="command-popover">
+                  <button type="button" onClick={onOpenNetlistConfiguration}>
+                    Configuration…
+                  </button>
+                  <span className="command-group-label">Authoring</span>
+                  <button
+                    type="button"
+                    aria-expanded={instanceCodeOpen}
+                    onClick={onOpenInstanceCode}
+                  >
+                    Instances…
+                  </button>
+                  <span className="command-group-label">Check</span>
+                  <button
+                    type="button"
+                    aria-haspopup="dialog"
+                    aria-expanded={netlistPreflightOpen}
+                    onClick={() => onOpenNetlistPreflight()}
+                  >
+                    Check Report…
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="check-and-save"
+                    disabled={!checkAndSave.enabled}
+                    onClick={checkAndSave.execute}
+                    title={`Check ERC and visual issues, and save this ${fileCommands.projectStoreItemLabel}`}
+                  >
+                    <span className="toolbar-check-glyph" aria-hidden="true" />
+                    Check and Save
+                  </button>
+                </div>
+              </details>
+            </div>
             {simulationAction ? (
               <button
                 type="button"
@@ -358,14 +426,17 @@ export function EditorAppChrome({
               </button>
             ) : null}
             {agentAction ? (
-              <details className="command-menu" name="editor-command-menu">
-                <summary>Agent</summary>
-                <div className="command-popover">
-                  <button type="button" onClick={agentAction.execute}>
-                    {agentAction.label}
-                  </button>
-                </div>
-              </details>
+              <button
+                type="button"
+                data-testid="open-agent"
+                title={agentAction.label}
+                onClick={() => {
+                  dismissOpenCommandMenus();
+                  agentAction.execute();
+                }}
+              >
+                Agent
+              </button>
             ) : null}
             {/* Publishing is the primary narrow-window action. Keeping it
                 immediately after the compact menus makes it visible before

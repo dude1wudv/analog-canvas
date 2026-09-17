@@ -1,6 +1,14 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createEmptyProject, createSimulationFolder } from "@icm/model";
+import { parseProject } from "@icm/project-protocol";
+import {
+  ngspiceSimulationDevices as nativeSimulationDevices,
+  ngspiceDeviceOpVectors as nativeDeviceOpVectors,
+  generateCircuitSource,
+  planCircuitSourceEdit,
+} from "@icm/netlist";
 import {
   prepareSourceExecutionInput,
   CapabilitiesSchema,
@@ -52,6 +60,193 @@ async function run(request, name) {
 }
 
 describe.skipIf(!endpoint)("candidate ngspice46 source qualification", () => {
+  it("executes edited AC clauses and preserves top-level Cell parameter defaults", async () => {
+    const caps = CapabilitiesSchema.parse(
+      await (await post({ operation: "capabilities" })).json(),
+    );
+    const project = parseProject(
+      readFileSync(
+        new URL(
+          "../netlists/native-ota-library/legacy-source.icproj.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+    const root = project.documents.find(
+      (cell) => cell.id === project.topDocumentId,
+    );
+    root.netlist.formalParameters.push({ name: "VBIAS", defaultValue: "1.8" });
+    const folder = createSimulationFolder({
+      id: "source-edits",
+      engine: "ngspice",
+      name: "Source edits",
+      documentId: root.id,
+      profileId: profile.id,
+    });
+    const generated = generateCircuitSource(
+      project,
+      folder.input.circuitBindings[0],
+      folder.input,
+      "ngspice",
+    );
+    expect(generated.ok).toBe(true);
+    const body = generated.source.sourceBodies.find(
+      (body) => body.instanceId === "VDD",
+    );
+    const plan = planCircuitSourceEdit(
+      generated.source,
+      generated.source.text.slice(0, body.startOffset) +
+        " DC {VBIAS} AC 1 -90" +
+        generated.source.text.slice(body.endOffset),
+    );
+    expect(plan.ok).toBe(true);
+    for (const change of plan.changes)
+      root.instances.find(
+        (instance) => instance.id === change.instanceId,
+      ).netlist.parameters[change.parameter] = change.value;
+    const entry = folder.input.files.find(
+      (file) => file.path === folder.input.entry,
+    );
+    entry.text =
+      '* source parameters\n.include "circuit.spice"\n.control\nset filetype=ascii\nset appendwrite\nsave v(vdd)\nop\nwrite out.raw\nac lin 2 1k 2k\nwrite out.raw\n.endc\n.end\n';
+    const prepared = await prepareSourceExecutionInput(project, folder, caps);
+    expect(prepared.ok, JSON.stringify(prepared)).toBe(true);
+    const result = await run(prepared.input, "source-parameters-default");
+    expect(result.outcome.status, JSON.stringify(result)).toBe("completed");
+    expect(
+      result.data.analyses
+        .find((a) => a.analysis === "op")
+        .probes.find((p) => p.name === "v(vdd)").value,
+    ).toBeCloseTo(1.8, 8);
+    const ac = result.data.analyses
+      .find((a) => a.analysis === "ac")
+      .probes.find((p) => p.name === "v(vdd)");
+    expect(ac.real[0]).toBeCloseTo(0, 8);
+    expect(ac.imag[0]).toBeCloseTo(-1, 8);
+    entry.text = entry.text.replace(".control", ".param VBIAS=1.7\n.control");
+    const overridden = await prepareSourceExecutionInput(project, folder, caps);
+    expect(overridden.ok, JSON.stringify(overridden)).toBe(true);
+    const next = await run(overridden.input, "source-parameters-override");
+    expect(next.outcome.status, JSON.stringify(next)).toBe("completed");
+    expect(
+      next.data.analyses
+        .find((a) => a.analysis === "op")
+        .probes.find((p) => p.name === "v(vdd)").value,
+    ).toBeCloseTo(1.7, 8);
+  }, 160_000);
+  it("reads the reviewed SKY130 wrapper's native OP parameters", async () => {
+    const circuit = parseProject(
+      readFileSync(
+        new URL(
+          "../netlists/native-ota-library/legacy-source.icproj.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+    const folder = createSimulationFolder({
+      id: "native-sky130",
+      engine: "ngspice",
+      name: "Native SKY130",
+      profileId: profile.id,
+      documentId: "document-ota-5t-testbench",
+    });
+    const devices = nativeSimulationDevices(circuit, folder.input).filter(
+      (device) => device.polarity,
+    );
+    // The fixture includes the five-transistor core plus its bias device XM6.
+    expect(devices.map((device) => device.reference).sort()).toEqual([
+      "xdut.xm1",
+      "xdut.xm2",
+      "xdut.xm3",
+      "xdut.xm4",
+      "xdut.xm5",
+      "xdut.xm6",
+    ]);
+    const entry = folder.input.files.find(
+      (file) => file.path === folder.input.entry,
+    );
+    entry.text = entry.text.replace(
+      "\nop\n",
+      `\nsave ${devices.flatMap(nativeDeviceOpVectors).join(" ")}\nop\n`,
+    );
+    const response = await post({ operation: "capabilities" });
+    const compiled = await prepareSourceExecutionInput(
+      circuit,
+      folder,
+      CapabilitiesSchema.parse(await response.json()),
+    );
+    expect(compiled.ok, JSON.stringify(compiled)).toBe(true);
+    const result = await run(compiled.input, "native-sky130-op");
+    expect(result.outcome.status, JSON.stringify(result)).toBe("completed");
+    const probes = result.data.analyses.find(
+      (analysis) => analysis.analysis === "op",
+    ).probes;
+    // Acquisition availability/identity, not a new electrical golden or an
+    // invented threshold. Numeric OTA qualification remains the existing tests.
+    for (const vector of devices.flatMap(nativeDeviceOpVectors)) {
+      const probe = probes.find((candidate) =>
+        [vector, `i(${vector})`, `v(${vector})`].includes(candidate.name),
+      );
+      expect(probe, vector).toBeDefined();
+      expect(Number.isFinite(probe.value), vector).toBe(true);
+    }
+  }, 160_000);
+  it("collects native hierarchical Device OP and top-level terminal probes", async () => {
+    const response = await post({ operation: "capabilities" });
+    const caps = CapabilitiesSchema.parse(await response.json());
+    const folder = createSimulationFolder({
+      id: "native-device",
+      engine: "ngspice",
+      name: "Native device",
+      profileId: profile.id,
+    });
+    folder.input.files.find((file) => file.path === folder.input.entry).text = [
+      "Native naming contract; illustrative MOS1, not a PDK qualification",
+      ".model NM NMOS level=1 vto=0.5 kp=100u",
+      "V1 d 0 1",
+      "V2 g 0 1",
+      "R1 d 0 1k",
+      "X1 d g inner",
+      ".subckt inner d g",
+      "M2 d g 0 0 NM w=10u l=1u",
+      ".ends",
+      ".probe i(r1,2)",
+      ".control",
+      "set filetype=ascii",
+      "save @m.x1.m2[id] @m.x1.m2[gm] @m.x1.m2[vgs]",
+      "op",
+      "write native.raw",
+      ".endc",
+      ".end",
+      "",
+    ].join("\n");
+    const compiled = await prepareSourceExecutionInput(
+      createEmptyProject("native-device", "Native"),
+      folder,
+      caps,
+    );
+    expect(compiled.ok, JSON.stringify(compiled)).toBe(true);
+    const result = await run(compiled.input, "native-device");
+    expect(result.outcome.status, JSON.stringify(result)).toBe("completed");
+    const probes = result.data.analyses.find(
+      (analysis) => analysis.analysis === "op",
+    ).probes;
+    expect(
+      probes.find((probe) => probe.name === "i(@m.x1.m2[id])").value,
+    ).toBeCloseTo(0.000125, 8);
+    expect(
+      probes.find((probe) => probe.name === "@m.x1.m2[gm]").value,
+    ).toBeCloseTo(0.0005, 8);
+    expect(
+      probes.find((probe) => probe.name === "v(@m.x1.m2[vgs])").value,
+    ).toBeCloseTo(1, 8);
+    expect(probes.find((probe) => probe.name === "i(r1:n2)").value).toBeCloseTo(
+      -0.001,
+      8,
+    );
+  });
   for (const [name, compile, validate] of [
     ["ota-op-dc-ac", compileHostedSky130Project, validateHostedSky130Result],
     [

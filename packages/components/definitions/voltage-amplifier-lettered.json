@@ -5,17 +5,17 @@
     "id": "voltage-amplifier-lettered",
     "name": "Voltage Amplifier (lettered)",
     "viewBox": {
-      "x": -34,
-      "y": -32,
-      "width": 68,
-      "height": 64
+      "x": -44,
+      "y": -34,
+      "width": 88,
+      "height": 68
     },
     "pins": [
       {
         "name": "IN",
         "role": "input",
         "at": {
-          "x": -30,
+          "x": -40,
           "y": 0
         },
         "direction": "west",
@@ -42,11 +42,11 @@
       {
         "kind": "line",
         "from": {
-          "x": -30,
+          "x": -40,
           "y": 0
         },
         "to": {
-          "x": -23.63,
+          "x": -30,
           "y": 0
         },
         "style": {
@@ -57,17 +57,24 @@
       },
       {
         "kind": "path",
-        "data": "M -23.63 -28.62 L -23.63 28.62 L 23.63 0 Z",
+        "data": "M -30 -30 L -30 30 L 21.961524 0 Z",
         "style": {
           "strokeRole": "emphasis",
           "lineCap": "butt",
-          "lineJoin": "miter"
+          "lineJoin": "miter",
+          "miterLimit": 4
+        },
+        "bounds": {
+          "x": -30,
+          "y": -30,
+          "width": 51.961524,
+          "height": 60
         }
       },
       {
         "kind": "line",
         "from": {
-          "x": 23.63,
+          "x": 21.961524,
           "y": 0
         },
         "to": {
@@ -86,13 +93,40 @@
       "defaultFormula": "A",
       "supportsCoefficient": false,
       "center": {
-        "x": -7.88,
+        "x": -12.68,
         "y": 0
       },
       "fontSize": 16
     }
   },
   "electrical": null,
+  "subcircuit": {
+    "id": "voltage-amplifier-lettered",
+    "symbolId": "voltage-amplifier-lettered",
+    "target": "voltage_amplifier",
+    "ports": [
+      {
+        "name": "VDD",
+        "direction": "inout",
+        "supply": "VDD"
+      },
+      {
+        "name": "VSS",
+        "direction": "inout",
+        "supply": "VSS"
+      },
+      {
+        "name": "VIN",
+        "direction": "input",
+        "pinName": "IN"
+      },
+      {
+        "name": "VOUT",
+        "direction": "output",
+        "pinName": "OUT"
+      }
+    ]
+  },
   "catalog": {
     "library": "razavi",
     "symbolId": "voltage-amplifier-lettered",
@@ -100,7 +134,7 @@
     "category": "analog-block",
     "reviewStatus": "reviewed",
     "pinOrder": ["IN", "OUT"],
-    "palette": true,
+    "palette": false,
     "automaticMappings": [],
     "manualOnlyReason": "Textbook gain block has implicit reference nodes and no exact primitive SPICE terminal contract.",
     "assetPath": "voltage-amplifier-lettered.json",

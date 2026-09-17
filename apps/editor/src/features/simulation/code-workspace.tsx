@@ -4,6 +4,8 @@ import {
   useId,
   useState,
   type ReactNode,
+  type MouseEvent,
+  type KeyboardEvent,
 } from "react";
 import type { ArtifactRef } from "@icm/simulation-service/contract";
 import {
@@ -28,14 +30,14 @@ export interface SimulationCodeFile {
   draft?: boolean;
 }
 export interface SimulationExplorerArtifactGroup {
-  key: "prepare" | "run";
+  key: "run";
   label: string;
   description: string;
   artifacts: readonly ArtifactRef[];
 }
 export type SimulationExplorerSelection =
   | { kind: "source"; folderId: string; path: string }
-  | { kind: "artifact"; groupKey: "prepare" | "run"; artifact: ArtifactRef };
+  | { kind: "artifact"; groupKey: "run"; artifact: ArtifactRef };
 export interface SimulationCodeWorkspaceProps {
   workspaceKey: string;
   files: readonly SimulationCodeFile[];
@@ -45,7 +47,6 @@ export interface SimulationCodeWorkspaceProps {
   onSelectFile(path: string, folderId?: string): void;
   onNewFile?(folderId?: string): void;
   onCopyFile?(path: string, folderId?: string): void;
-  onExportFile?(path: string, folderId?: string): void;
   onFileAction?(
     action: "rename" | "delete" | "entry" | "discard",
     path: string,
@@ -68,10 +69,11 @@ export interface SimulationCodeWorkspaceProps {
   actions: ReactNode;
   toolbarEnd?: ReactNode;
   status?: ReactNode;
+  sourceContext?: ReactNode;
   console: ReactNode;
   results: ReactNode;
-  outputActions?: ReactNode;
-  outputPane: "console" | "plot" | "operating-point" | "compare";
+  history?: ReactNode;
+  outputPane: "console" | "specs";
   onSelectOutputPane(pane: SimulationCodeWorkspaceProps["outputPane"]): void;
   maximized?: boolean;
   onToggleMaximize?(): void;
@@ -145,6 +147,52 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
     setOpened(next);
     if (props.activePath === path) props.onSelectFile(next.at(-1) ?? "");
   };
+  const closeAll = () => {
+    setOpened([]);
+    props.onSelectFile("");
+    props.onCloseArtifact?.();
+  };
+  const tabMenu = (path: string | null, x: number, y: number) =>
+    ui.menu(
+      x,
+      y,
+      [
+        {
+          label: "Close",
+          run: () =>
+            path === null ? props.onCloseArtifact?.() : closeFile(path),
+        },
+        {
+          label: "Close others",
+          disabled: tabs.length + Number(Boolean(props.artifactPreview)) <= 1,
+          run: () => {
+            setOpened(path === null ? [] : [path]);
+            props.onSelectFile(path ?? "");
+            if (path !== null) props.onCloseArtifact?.();
+          },
+        },
+        { label: "Close all", run: closeAll },
+      ],
+      "Editor tab actions",
+    );
+  const tabMenuHandlers = (path: string | null) => ({
+    onContextMenu: (event: MouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      tabMenu(path, event.clientX, event.clientY);
+    },
+    onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+      if (
+        event.key === "ContextMenu" ||
+        (event.shiftKey && event.key === "F10")
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        const rect = event.currentTarget.getBoundingClientRect();
+        tabMenu(path, rect.left, rect.bottom);
+      }
+    },
+  });
   return (
     <section
       className={`simulation-code-workspace${props.maximized ? " is-maximized" : ""}`}
@@ -167,7 +215,8 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
         ) {
           event.preventDefault();
           event.stopPropagation();
-          if (props.activePath) closeFile(props.activePath);
+          if (props.artifactPreview) props.onCloseArtifact?.();
+          else if (props.activePath) closeFile(props.activePath);
         }
       }}
     >
@@ -181,46 +230,6 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
           资源管理器
         </button>
         <div className="simulation-code-actions">{props.actions}</div>
-        <div className="simulation-code-more">
-          <button
-            type="button"
-            aria-label="更多代码操作"
-            onClick={(event) => {
-              const rect = event.currentTarget.getBoundingClientRect();
-              ui.menu(
-                rect.left,
-                rect.bottom,
-                [
-                  {
-                    label: "高级配置",
-                    run: () => openFile(props.configPath),
-                  },
-                  {
-                    label: "复制当前文件",
-                    disabled: !props.activePath,
-                    run: () => props.onCopyFile?.(props.activePath),
-                  },
-                  {
-                    label: "导出当前文件…",
-                    disabled: !props.activePath,
-                    run: () => props.onExportFile?.(props.activePath),
-                  },
-                  {
-                    label: "关闭所有编辑器",
-                    run: () => {
-                      setOpened([]);
-                      props.onSelectFile("");
-                    },
-                  },
-                  ...(props.additionalActions ?? []),
-                ],
-                "代码操作",
-              );
-            }}
-          >
-            ···
-          </button>
-        </div>
         {props.toolbarEnd}
       </header>
       <div className="simulation-code-source-area">
@@ -232,6 +241,7 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
             aria-label="仿真文件"
           >
             <SimulationFileTree {...props} onSelectFile={openFile} />
+            {props.history}
           </aside>
         ) : null}
         {filesOpen ? (
@@ -290,7 +300,10 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
               aria-label="已打开的仿真文件"
             >
               {props.artifactPreview ? (
-                <div className="simulation-code-tab simulation-artifact-tab">
+                <div
+                  className="simulation-code-tab simulation-artifact-tab"
+                  {...tabMenuHandlers(null)}
+                >
                   <button type="button" role="tab" aria-selected="true">
                     {props.artifactPreview.artifact.name}
                     <span> tmp</span>
@@ -307,7 +320,11 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
               {tabs.map((path) => {
                 const file = props.files.find((f) => f.path === path)!;
                 return (
-                  <div className="simulation-code-tab" key={path}>
+                  <div
+                    className="simulation-code-tab"
+                    key={path}
+                    {...tabMenuHandlers(path)}
+                  >
                     <button
                       type="button"
                       role="tab"
@@ -345,6 +362,7 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
               ref={setDocumentActions}
             />
           </div>
+          {props.sourceContext}
           <div className="simulation-code-document-content">
             <div
               hidden={!props.activePath || Boolean(props.artifactPreview)}
@@ -448,36 +466,28 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
         aria-label="代码输出"
       >
         <header className="simulation-code-output-tabs">
-          <div role="tablist" aria-label="代码输出视图">
-            {(["console", "plot", "operating-point", "compare"] as const).map(
-              (pane) => (
-                <button
-                  key={pane}
-                  type="button"
-                  role="tab"
-                  aria-selected={pane === props.outputPane}
-                  aria-label={
-                    pane === "operating-point" ? "工作点" : undefined
-                  }
-                  onClick={() => {
-                    props.onSelectOutputPane(pane);
-                    setCollapsed(false);
-                  }}
-                >
+          <div role="tablist" aria-label="Code output view">
+            {(["specs", "console"] as const).map((pane) => (
+              <button
+                key={pane}
+                type="button"
+                role="tab"
+                aria-selected={pane === props.outputPane}
+                onClick={() => {
+                  props.onSelectOutputPane(pane);
+                  setCollapsed(false);
+                }}
+              >
+                {
                   {
-                    {
-                      console: "控制台",
-                      plot: "绘图",
-                      "operating-point": "OP",
-                      compare: "比较",
-                    }[pane]
-                  }
-                </button>
-              ),
-            )}
+                    console: "Console",
+                    specs: "Specs",
+                  }[pane]
+                }
+              </button>
+            ))}
           </div>
           <span className="simulation-code-output-spacer" />
-          {props.outputActions}
           <button
             type="button"
             aria-label={

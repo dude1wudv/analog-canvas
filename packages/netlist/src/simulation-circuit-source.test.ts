@@ -1,10 +1,10 @@
-import {
-  CURRENT_PROJECT_SCHEMA_VERSION,
-  LegacyProjectSimulationSetupSchema,
-} from "@icm/model";
+import { LegacyProjectSimulationSetupSchema } from "@icm/model";
 import { describe, expect, it } from "vitest";
 import { CircuitProjectSchema } from "@icm/model";
-import ota from "../../../apps/editor/src/examples/five-transistor-ota-sky130.icproj.json";
+import {
+  currentFiveTransistorOtaCircuitSource,
+  legacyFiveTransistorOta as ota,
+} from "../../../apps/editor/src/examples/five-transistor-ota.test-support.js";
 import { analyzeDesignNetlist } from "./extract.js";
 const legacySetups = () =>
   ota.simulationSetups.map((s) => LegacyProjectSimulationSetupSchema.parse(s));
@@ -15,13 +15,9 @@ import {
 } from "./simulation-circuit-source.js";
 
 function fixture() {
-  const project = CircuitProjectSchema.parse({
-    ...Object.fromEntries(
-      Object.entries(ota).filter(([key]) => key !== "simulationSetups"),
-    ),
-    schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
-    simulationFolders: [],
-  });
+  const project = CircuitProjectSchema.parse(
+    currentFiveTransistorOtaCircuitSource(),
+  );
   const folder = legacySetups().find((s) => s.input.kind === "structured")!;
   if (folder.input.kind !== "structured") throw Error("expected Canvas folder");
   const result = generateCircuitSource(project, {
@@ -46,6 +42,98 @@ function replace(
   return text;
 }
 describe("Circuit parameter source projection", () => {
+  it("prints and edits ngspice source parameters without passing through the native grammar", () => {
+    const { project, source } = fixture();
+    const generated = generateCircuitSource(
+      project,
+      source.binding,
+      undefined,
+      "ngspice",
+    );
+    expect(generated.ok).toBe(true);
+    if (!generated.ok) return;
+    const body = generated.source.sourceBodies!.find(
+      (p) => p.instanceId === "VDD",
+    )!;
+    const plan = planCircuitSourceEdit(
+      generated.source,
+      generated.source.text.slice(0, body.startOffset) +
+        " DC 1.8 AC 1 90" +
+        generated.source.text.slice(body.endOffset),
+    );
+    expect(plan.ok, JSON.stringify(plan)).toBe(true);
+    expect(plan.ok && plan.changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ parameter: "acMagnitude", value: "1" }),
+        expect.objectContaining({ parameter: "acPhase", value: "90" }),
+      ]),
+    );
+    expect(generated.source.text).not.toContain('type="dc"');
+  });
+  it("adds, changes and removes AC/phase and waveforms while keeping source nodes locked", () => {
+    const { project, source } = fixture();
+    const body = source.sourceBodies!.find(
+      (body) => body.instanceId === "VDD",
+    )!;
+    const edit = (suffix: string) =>
+      planCircuitSourceEdit(
+        source,
+        source.text.slice(0, body.startOffset) +
+          suffix +
+          source.text.slice(body.endOffset),
+      );
+    const plan = edit(
+      ' dc=(BIAS) mag=1 phase=-90 type="sine" sinedc=0 ampl=1 freq=1k',
+    );
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ parameter: "acMagnitude", value: "1" }),
+        expect.objectContaining({ parameter: "acPhase", value: "-90" }),
+        expect.objectContaining({ parameter: "waveform", value: "sin" }),
+      ]),
+    );
+    const instance = project.documents
+      .find((d) => d.id === body.documentId)!
+      .instances.find((i) => i.id === body.instanceId)!;
+    plan.changes.forEach((change) => {
+      instance.netlist!.parameters[change.parameter] = change.value;
+    });
+    const regenerated = generateCircuitSource(project, source.binding);
+    expect(regenerated.ok).toBe(true);
+    if (!regenerated.ok) return;
+    expect(regenerated.source.text).toContain(
+      'type="sine" dc=(BIAS) mag=1 phase=-90 sinedc=0 ampl=1 freq=1000 delay=0 theta=0 tdphase=0',
+    );
+    const nextBody = regenerated.source.sourceBodies!.find(
+      (b) => b.instanceId === "VDD",
+    )!;
+    const removed = planCircuitSourceEdit(
+      regenerated.source,
+      regenerated.source.text.slice(0, nextBody.startOffset) +
+        ' type="dc" dc=1.8' +
+        regenerated.source.text.slice(nextBody.endOffset),
+    );
+    expect(removed).toMatchObject({
+      ok: true,
+      changes: expect.arrayContaining([
+        expect.objectContaining({ parameter: "acMagnitude", unset: true }),
+        expect.objectContaining({ parameter: "acPhase", unset: true }),
+        expect.objectContaining({ parameter: "waveform", value: "dc" }),
+      ]),
+    });
+    expect(
+      planCircuitSourceEdit(
+        source,
+        source.text.replace("VDD (vdd 0)", "VDD (changed 0)"),
+      ),
+    ).toMatchObject({ ok: false, code: "SIMULATION_CIRCUIT_STRUCTURE_LOCKED" });
+    expect(edit(" dc=1.8 mag=")).toMatchObject({
+      ok: false,
+      code: "SIMULATION_PARAMETER_INVALID",
+    });
+  });
   it("prints an unresolved model slot without crashing or assigning a model", () => {
     const { project, source } = fixture();
     const width = source.parameters.find((p) => p.parameter === "w")!;
@@ -162,13 +250,7 @@ describe("Circuit parameter source projection", () => {
       ],
     });
     expect(project).toEqual(
-      CircuitProjectSchema.parse({
-        ...Object.fromEntries(
-          Object.entries(ota).filter(([key]) => key !== "simulationSetups"),
-        ),
-        schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
-        simulationFolders: [],
-      }),
+      CircuitProjectSchema.parse(currentFiveTransistorOtaCircuitSource()),
     );
     for (const span of source.parameters)
       expect(source.text.slice(span.startOffset, span.endOffset)).toBe(
@@ -179,8 +261,8 @@ describe("Circuit parameter source projection", () => {
     const { source } = fixture();
     const index = source.parameters.findIndex((p) => p.parameter === "w");
     const changed = replace(source, [{ index, text: "25" }]).replace(
-      ".subckt",
-      ".subckt changed",
+      "subckt",
+      "subckt changed",
     );
     expect(planCircuitSourceEdit(source, changed)).toMatchObject({
       ok: false,
@@ -190,7 +272,7 @@ describe("Circuit parameter source projection", () => {
       planCircuitSourceEdit(source, replace(source, [{ index, text: "-1" }])),
     ).toMatchObject({ ok: false, code: "SIMULATION_PARAMETER_INVALID" });
     expect(
-      planCircuitSourceEdit(source, replace(source, [{ index, text: "{W}" }])),
+      planCircuitSourceEdit(source, replace(source, [{ index, text: "{W+}" }])),
     ).toMatchObject({ ok: false, code: "SIMULATION_PARAMETER_INVALID" });
     expect(
       planCircuitSourceEdit(source, replace(source, [{ index, text: "25u" }])),
@@ -212,4 +294,41 @@ describe("Circuit parameter source projection", () => {
     const plan = planCircuitSourceEdit(source, replace(source, widths));
     expect(plan.ok && plan.changes.length).toBe(2);
   });
+  it("round-trips native parameter references through Canvas and reviewed PDK units", () => {
+    const { project, source } = fixture();
+    const index = source.parameters.findIndex((p) => p.parameter === "w");
+    const edited = replace(source, [{ index, text: "(WIDTH * 2)" }]);
+    const plan = planCircuitSourceEdit(source, edited);
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.changes[0]!.value).toBe("{(WIDTH * 2) * 1u}");
+    for (const change of plan.changes)
+      project.documents
+        .find((d) => d.id === change.documentId)!
+        .instances.find((i) => i.id === change.instanceId)!.netlist!.parameters[
+        change.parameter
+      ] = change.value;
+    const regenerated = generateCircuitSource(project, source.binding);
+    expect(regenerated.ok).toBe(true);
+    if (!regenerated.ok) return;
+    expect(regenerated.source.text).toBe(edited);
+    expect(planCircuitSourceEdit(regenerated.source, edited)).toEqual({
+      ok: true,
+      changes: [],
+    });
+    const exported = analyzeDesignNetlist(project, {
+      rootDocumentId: source.binding.documentId,
+    });
+    expect(exported.ir).not.toBeNull();
+  });
+  it.each(["{}", "{W", "{W;quit}", "{W}\nRnew out 0 1", "{W) + 1}"])(
+    "does not let an expression escape its Circuit slot: %s",
+    (text) => {
+      const { source } = fixture();
+      const index = source.parameters.findIndex((p) => p.parameter === "w");
+      expect(
+        planCircuitSourceEdit(source, replace(source, [{ index, text }])).ok,
+      ).toBe(false);
+    },
+  );
 });

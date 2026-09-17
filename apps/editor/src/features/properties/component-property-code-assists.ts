@@ -1,4 +1,7 @@
-import { jsonLanguage } from "@codemirror/lang-json";
+// The property model needs syntax ranges, not CodeMirror's editor runtime.
+// Use the same underlying grammar without pulling view/state into App startup.
+import { parser } from "@lezer/json";
+import { magneticDisplayParameters } from "@icm/derived";
 import { reflectOrientation } from "@icm/model";
 import { componentDetailFields } from "./component-property-details";
 import {
@@ -11,7 +14,7 @@ import {
   type CanvasPropertyField,
 } from "./component-property-fields";
 
-type JsonNode = ReturnType<typeof jsonLanguage.parser.parse>["topNode"];
+type JsonNode = ReturnType<typeof parser.parse>["topNode"];
 export interface PropertyCodeSpan {
   field: CanvasPropertyField;
   from: number;
@@ -23,10 +26,22 @@ export interface PropertyCodeSpan {
 export function propertyCodeSpans(
   source: string,
   context?: ComponentPropertyCodeContext,
+  customFields?: readonly CanvasPropertyField[],
 ): PropertyCodeSpan[] {
   const spans: PropertyCodeSpan[] = [];
-  const fields = [
+  const fields: readonly CanvasPropertyField[] = customFields ?? [
     ...CANVAS_PROPERTY_FIELDS,
+    ...(context
+      ? magneticDisplayParameters(context.instance.symbolId).map(
+          (parameter) => ({
+            path: `display.parameters.${parameter.name}`,
+            label: parameter.label,
+            kind: "boolean" as const,
+            description: "",
+            help: `Show ${parameter.label} on the canvas`,
+          }),
+        )
+      : []),
     ...(context
       ? componentDetailFields(context.instance, context.details)
       : []),
@@ -54,7 +69,7 @@ export function propertyCodeSpans(
       }
     }
   }
-  const root = jsonLanguage.parser.parse(source).topNode.getChild("Object");
+  const root = parser.parse(source).topNode.getChild("Object");
   if (root) visit(root, "");
   return spans;
 }
@@ -129,7 +144,6 @@ export function reflectedPropertyCode(
   if (!parsed.ok || !parsed.value.placement) return [];
   const next = reflectOrientation(parsed.value.placement, direction);
   return propertyCodeChanges(source, context, {
-    "placement.rotation": next.rotation,
     "placement.mirror": next.mirror,
   });
 }

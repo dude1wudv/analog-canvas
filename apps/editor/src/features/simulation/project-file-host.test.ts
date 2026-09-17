@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parseProject, serializeProject } from "@icm/project-protocol";
 import { generateCircuitSource } from "@icm/netlist";
 import { SimulationFiles, sha256 } from "@icm/simulation-service/files";
-import ota from "../../examples/five-transistor-ota-sky130.icproj.json";
+import ota from "../../../../../netlists/native-ota-library/legacy-source.icproj.json";
 import { EditorDocumentController } from "../../document/document-controller";
 import { createSimulationProjectFileHost } from "./project-file-host";
 
@@ -48,6 +48,59 @@ function fixture(actor: "human" | "agent" = "human") {
   };
 }
 describe("shared human/Agent generated Circuit File Resource", () => {
+  it("adds and unsets source clauses through the same atomic undoable transaction", async () => {
+    const f = fixture();
+    const before = f.controller.project;
+    const source = f.source.sourceBodies!.find(
+      (body) => body.instanceId === "VDD",
+    )!;
+    const write = async (text: string, original: string) =>
+      f.files.handle({
+        action: "update",
+        owner: f.owner,
+        expectedRevision: f.controller.project.structureRevision,
+        circuitEdits: [
+          {
+            path: f.source.binding.path,
+            textDigest: await sha256(original),
+            text,
+          },
+        ],
+      });
+    const added =
+      f.source.text.slice(0, source.endOffset) +
+      " mag=1 phase=-90" +
+      f.source.text.slice(source.endOffset);
+    expect(await write(added, f.source.text)).toMatchObject({ ok: true });
+    const parameters = () =>
+      f.controller.project.documents
+        .find((d) => d.id === source.documentId)!
+        .instances.find((i) => i.id === source.instanceId)!.netlist!.parameters;
+    expect(parameters()).toMatchObject({ acMagnitude: "1", acPhase: "-90" });
+    const generated = generateCircuitSource(
+      f.controller.project,
+      f.source.binding,
+    );
+    if (!generated.ok) throw Error("Expected Circuit");
+    expect(
+      await write(
+        generated.source.text.replace(" mag=1 phase=-90", ""),
+        generated.source.text,
+      ),
+    ).toMatchObject({ ok: true });
+    expect(parameters()).not.toHaveProperty("acMagnitude");
+    expect(parameters()).not.toHaveProperty("acPhase");
+    f.controller.transact([{ kind: "undo" }]);
+    expect(parameters()).toMatchObject({ acMagnitude: "1", acPhase: "-90" });
+    f.controller.transact([{ kind: "undo" }]);
+    expect(
+      f.controller.project.documents.map(
+        ({ revision: _revision, ...document }) => document,
+      ),
+    ).toEqual(
+      before.documents.map(({ revision: _revision, ...document }) => document),
+    );
+  });
   it.each(["human", "agent"] as const)(
     "commits source and mapped sizes atomically with normal undo/redo (%s)",
     async (actor) => {

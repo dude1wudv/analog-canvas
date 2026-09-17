@@ -1,6 +1,6 @@
 {
   "name": "@icm/editor",
-  "version": "0.2.0",
+  "version": "0.9.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,6 +8,7 @@
     "dev": "vite"
   },
   "dependencies": {
+    "@lezer/json": "1.0.3",
     "@codemirror/autocomplete": "6.20.3",
     "@codemirror/commands": "6.11.0",
     "@codemirror/lang-json": "6.0.2",
@@ -34,12 +35,14 @@
     "fflate": "0.8.3",
     "mathlive": "0.110.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
     "@vitejs/plugin-react": "6.0.5",
-    "fake-indexeddb": "^6.2.5"
+    "fake-indexeddb": "^6.2.5",
+    "wrangler": "4.131.1"
   }
 }

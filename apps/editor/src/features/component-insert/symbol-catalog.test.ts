@@ -102,6 +102,8 @@ describe("component insertion catalog", () => {
     );
     expect(symbolCategory("ndmos")).toBe("Extended Devices");
     expect(symbolCategory("pdmos")).toBe("Extended Devices");
+    expect(symbolCategory("depletion-nmos")).toBe("Extended Devices");
+    expect(symbolCategory("depletion-pmos")).toBe("Extended Devices");
     expect(symbolCategory("annotation-arrow")).toBe("Annotations");
     expect(symbolCategory("annotation-polarity-both")).toBe("Annotations");
     expect(symbolCategory("annotation-ellipsis")).toBe("Annotations");
@@ -126,15 +128,12 @@ describe("component insertion catalog", () => {
     expect(groups.at(-1)?.category).toBe("Extended Devices");
   });
 
-  it("offers marked and unmarked comparators as separate analog blocks", () => {
+  it("offers one comparator entry and keeps its unmarked style internal", () => {
     const symbols = flattenComponentCatalog(
       componentCatalog("razavi-textbook-v1", "comparator"),
     );
 
-    expect(symbols.map((symbol) => symbol.id)).toEqual([
-      "comparator",
-      "comparator-unmarked",
-    ]);
+    expect(symbols.map((symbol) => symbol.id)).toEqual(["comparator"]);
   });
 
   it("offers the two-terminal variable resistor as a searchable extended device", () => {
@@ -238,6 +237,8 @@ describe("component insertion catalog", () => {
       "zener-diode",
       "tcoil",
       "xfmr",
+      "depletion-nmos",
+      "depletion-pmos",
       "ndmos",
       "pdmos",
     ]);
@@ -245,6 +246,12 @@ describe("component insertion catalog", () => {
   });
 
   it("describes the filled Cell Pin as an independent authoring object", () => {
+    expect(libraryDisplayName("depletion-nmos", "Depletion NMOS")).toBe(
+      "D-NMOS",
+    );
+    expect(libraryDisplayName("depletion-pmos", "Depletion PMOS")).toBe(
+      "D-PMOS",
+    );
     expect(libraryDisplayName("zener-diode", "Zener Diode")).toBe("Zener");
     expect(libraryDescription("port-filled")).toBe(
       "An independent Cell Pin with a solid appearance",
@@ -303,6 +310,8 @@ describe("reach order inside a category", () => {
       "zener-diode",
       "tcoil",
       "xfmr",
+      "depletion-nmos",
+      "depletion-pmos",
       "ndmos",
       "pdmos",
     ]);
@@ -338,15 +347,11 @@ describe("reach order inside a category", () => {
     // often, rather than leading the group as the letter A did.
     expect(blocks).toEqual([
       "opamp",
-      "opamp-lettered",
       "opamp-differential",
-      "opamp-differential-lettered",
       "voltage-amplifier",
-      "voltage-amplifier-lettered",
       "transconductance",
       "differential-transconductance",
       "comparator",
-      "comparator-unmarked",
       "adc",
       "dac",
     ]);
@@ -369,6 +374,7 @@ describe("reach order inside a category", () => {
       "xor-gate",
       "xnor-gate",
       "d-flip-flop",
+      "d-flip-flop-reset",
       "d-flip-flop-q",
       "delay-cell",
     ]);

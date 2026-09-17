@@ -1,6 +1,6 @@
 # Project File Compatibility
 
-The current Project schema version is `51`. It retains schematic-only
+The current Project schema version is `56`. It retains schematic-only
 hierarchy integrity, a Project structural revision, stable formal Cell ports,
 and definition-level Cell symbol presentation. It also has one typed Instance
 netlist authority, formal Cell parameters, and Project-local external
@@ -25,7 +25,11 @@ overrides remain readable for compatibility but are no longer editable.
 Each Annotation may independently carry an optional presentation-only
 `textColor`. An Instance Reference or value with Automatic text color inherits
 its owning Instance foreground; other annotations inherit the document
-foreground. Drafting text keeps its separate drawing-object color override.
+foreground. Transformer and T-Coil parameter labels independently bind to
+K or a winding value; their visibility and positions survive save/reopen.
+Schema 54 adds the optional parameter selector and upgrades schema 53 without
+changing the drawing. Drafting text keeps its separate drawing-object color
+override.
 Rectangles and circles may additionally carry independent border and opaque
 fill colors plus a `background` or `foreground` drafting plane. Missing plane
 data preserves the historical foreground behavior.
@@ -34,10 +38,10 @@ An Instance may also carry optional schematic-only `signalFlowParameters`
 netlist/SPICE parameters. Width and height are optional 10-unit-grid minimums:
 the shared Transfer Function renderer expands beyond them when 12-unit formula
 text, a fraction, or a coefficient needs more room, and never clips or shrinks
-the formula to satisfy an undersized request. A canonical v51 file can be
+the formula to satisfy an undersized request. A canonical v56 file can be
 opened, saved, reopened, and saved again without byte drift.
 
-Schemas v24 through v51 are accepted through the explicit chained upgrades.
+Schemas v24 through v55 are accepted through the explicit chained upgrades.
 Schema v32 adds optional `Annotation.textColor`; schema v33 removes the
 ownerless `explicit-equivalence` record. A v32 file without that record changes
 only its version stamp. A file containing it is rejected at the exact evidence
@@ -65,22 +69,28 @@ and schema v47 adds selected hierarchy-aware MOS operating-point details.
 Schema v48 adds design variables, v49 converts saved simulation intent to
 source files, and v50 names those collections simulation folders. Schema v51
 adds rectangle/circle fill and front/background drafting planes; a v50 Project
-is advanced without changing any authored object.
+is advanced without changing any authored object. Schema v52 converts the
+legacy local-X mirror to independent horizontal or vertical mirroring, and v53
+allows 45-degree rotation steps; a v52 file changes only its stamp.
+Schema v55 adds independent arrow start/end styles: small, medium, or large
+arrowheads, dots, no head, and legacy open arrowheads. Unset ends preserve the
+previous head style, placement, and scale; v54 content changes only its stamp.
 These additions do not invent intent while upgrading an older Project.
 The original file is never overwritten silently. Schemas older than v24 and
-versions newer than v51 are rejected by the project-file boundary.
+versions newer than v56 are rejected by the project-file boundary.
 
 The canonical-current corpus at
 [`fixtures/projects/compatibility-corpus.json`](../../fixtures/projects/compatibility-corpus.json)
-lists every shipped Project fixture. It distinguishes byte-stable accepted
-files from named rejected inputs. Previous-version compatibility uses a
-focused synthetic regression instead of retaining historic Project assets.
+lists current and explicitly retained historical circuit fixtures. It distinguishes
+byte-stable current files, historical inputs tested through migration, and named
+rejected inputs. Synthetic regressions cover other previous-version transitions;
+the original OTA conversion witness remains unchanged for migration testing.
 Retired fields such as first-class
 `Document.ports`, `Net.ports`, `spice.*`, and `routeAttachment` are invalid.
 
 An incompatible Project is rejected before it can replace the current browser
 Project. Conversion, when needed, is an explicit external operation that must
-produce and validate a complete v51 candidate before a human chooses to load it.
+produce and validate a complete v56 candidate before a human chooses to load it.
 
 Equal visible Label, Port, power-marker, and explicit global-declaration names
 resolve to one Logical Net without erasing their separate Base Net identities.
@@ -97,3 +107,10 @@ explicitly clearing site data. Use **File / Save** for the formal Cloud Project
 and **Export Project File…** for portable bytes. A direct backup download is
 shown when recovery storage fails. These operations do not delete browser
 recovery copies.
+
+Schema 56 adds optional electrical Wire `styleOverride.lineStyle` (`solid`,
+`dashed`, or `dotted`). Styling does not change electrical connectivity or
+netlist output. The schema 55 upgrade preserves all existing Route data and
+changes only the version stamp. MOS bulk connections retain their dedicated
+dash pattern. Select a Wire and set `appearance.lineStyle` in its Properties
+code to change it.

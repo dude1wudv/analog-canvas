@@ -13,6 +13,7 @@ import { differentialInputSibling } from "../editor-shell/differential-input-swa
 import { differentialOutputSibling } from "../editor-shell/differential-output-swap";
 import { switchContactStyleSibling } from "../editor-shell/switch-contact-style";
 import type { CanvasPropertyField } from "./component-property-fields";
+import { componentInternalMark } from "./component-visual-variants";
 
 export interface ComponentPropertyDetailsContext {
   parameters: readonly ComponentParameter[];
@@ -21,7 +22,7 @@ export interface ComponentPropertyDetailsContext {
 }
 
 export interface ComponentPropertyDetailsValue {
-  reference?: string;
+  netlistName?: string;
   parameters?: Record<string, string>;
   netlistTarget?: string;
   symbol?: string;
@@ -48,7 +49,7 @@ export function componentPropertyDetailsValue(
 ): ComponentPropertyDetailsValue {
   if (!context) return {};
   return {
-    ...(instance.reference ? { reference: instance.reference } : {}),
+    ...(instance.reference ? { netlistName: instance.reference } : {}),
     ...(instance.netlist
       ? {
           parameters: {
@@ -67,10 +68,12 @@ export function componentPropertyDetailsValue(
     ...(context.modelTarget
       ? { netlistTarget: context.modelTarget.defaultValue }
       : {}),
-    ...(componentSymbolOptions(instance.symbolId).length > 1
+    // Analog variants are authored through appearance's independent controls.
+    // A second symbol field would compete with those values on every edit.
+    ...(switchContactStyleSibling(instance.symbolId)
       ? { symbol: instance.symbolId }
       : {}),
-    ...(context.signalFlow
+    ...(context.signalFlow && componentInternalMark(instance) === undefined
       ? { signalFlow: instance.signalFlowParameters ?? {} }
       : {}),
   };
@@ -84,7 +87,7 @@ export function parseComponentPropertyDetails(
   const baseline = componentPropertyDetailsValue(instance, context);
   const result: ComponentPropertyDetailsValue = {};
   for (const key of [
-    "reference",
+    "netlistName",
     "parameters",
     "netlistTarget",
     "symbol",
@@ -177,10 +180,10 @@ export function componentDetailFields(
       description: "",
     },
     {
-      path: "reference",
-      label: "Reference",
+      path: "netlistName",
+      label: "Netlist name",
       kind: "text",
-      description: "Netlist name",
+      description: "",
       help: "Unique electrical instance name in this Cell. Double-click the drawing label to edit its visual text independently.",
     },
     {
@@ -198,7 +201,7 @@ export function componentDetailFields(
     })),
     {
       path: "netlistTarget",
-      label: "Model",
+      label: "Target netlist",
       kind: context.modelTarget?.suggestions.length ? "choice" : "text",
       options: [
         ...new Set([
@@ -207,7 +210,7 @@ export function componentDetailFields(
           context.modelTarget?.defaultValue ?? "",
         ]),
       ].map((value) => ({ value, label: value || "None" })),
-      description: 'Model name · "": clear',
+      description: "",
       help: "Choose a suggested model or type a custom model name in JSON. An empty string clears the target; model compatibility checks still apply.",
     },
     {
@@ -218,13 +221,17 @@ export function componentDetailFields(
         value,
         label: value,
       })),
-      description: "Pin-compatible variant",
+      description: "",
     },
-    {
-      path: "signalFlow",
-      label: "Signal flow",
-      kind: "text",
-      description: "Presentation only",
-    },
+    ...(componentInternalMark(instance) === undefined
+      ? [
+          {
+            path: "signalFlow",
+            label: "Signal flow",
+            kind: "text" as const,
+            description: "",
+          },
+        ]
+      : []),
   ];
 }

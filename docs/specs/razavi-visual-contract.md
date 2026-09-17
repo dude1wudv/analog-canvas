@@ -66,7 +66,7 @@ PDF extraction, Symbol generation, and raster comparison are separate tools:
 ```text
 source PDF -> tools/pdf-vector-extract -> pinned vector evidence + PNG witness
 pinned vector evidence -> family generator -> Symbol DSL
-PNG witness + rendered Symbol -> tools/calibration/razavi/fidelity-diff.mjs -> report
+PNG witness + rendered Symbol -> tools/calibration/razavi/symbol-fidelity-diff.mjs -> report
 ```
 
 The PDF extractor must not import the fidelity implementation, and the
@@ -92,8 +92,13 @@ may support exploration but is not a reviewed regression baseline.
 
 - Electrical pin anchors use the canonical 10-unit connection grid.
 - Visual primitives may use measured finite-decimal logical coordinates.
-- Visual calibration must not move pins, change pin order, or change topology.
-- Instance transforms apply local x mirror, then rotation, then translation.
+- Visual calibration must not move pins, change pin order, or change topology
+  unless a family generator records an explicit product lead-normalization
+  rule. NPN/PNP preserve their extracted body and arrow geometry while moving
+  B from `-40` to `-30` and C/E from `±30` to `±20`, placing all three
+  connection anchors one grid cell closer to the body.
+- Instance transforms apply rotation, independent screen-space mirror axes,
+  then translation.
 - A symbol family has one canonical shared body geometry; polarity, arrow,
   hidden-pin presentation, and other semantic differences remain separate.
 - A geometry change must satisfy every registered orientation, sample, and
@@ -118,18 +123,21 @@ points first, then cap/join, then miter limit, and only then outline amplitude.
 
 The following are distinct reviewed presentations and must not be conflated:
 
-| Object                                    | Presentation           | Meaning                                     |
-| ----------------------------------------- | ---------------------- | ------------------------------------------- |
-| `port` symbol                             | Hollow circle and lead | Explicit hollow interface symbol            |
-| `port-filled` symbol (`solid-port` alias) | Filled circle and lead | Explicit manual solid-endpoint symbol       |
-| Explicit `Junction`                       | Filled solid dot       | Route-graph branch/join object              |
-| Device pin, bend, or crossing             | No automatic dot       | Geometry alone never creates node semantics |
+| Object                                    | Presentation           | Meaning                                    |
+| ----------------------------------------- | ---------------------- | ------------------------------------------ |
+| `port` symbol                             | Hollow circle and lead | Explicit hollow interface symbol           |
+| `port-filled` symbol                      | Filled circle and lead | Explicit manual solid-endpoint symbol      |
+| Explicit `Junction`                       | Filled solid dot       | Route-graph branch/join object             |
+| Unconnected device pin, bend, or crossing | No automatic dot       | Unconfirmed geometry has no node semantics |
+| Route dragged onto a visible device pin   | Derived filled dot     | Committed endpoint contact creates a node  |
 
 Both `port` and `port-filled` are reviewed palette symbols and ordinary
 single-pin Instances. `port-filled` is manual-only and has no automatic SPICE
 mapping. Hollow versus filled is explicit product intent, not a style-profile
-fallback. A power label belongs to an explicit Net and rail Route/Junction
-geometry; it does not replace either symbol presentation.
+fallback. A placed `vdd-port` is the reviewed supply marker; its local/formal
+or Global meaning follows the schematic model. A drawn power rail uses explicit
+Net and Route/Junction geometry. These authoring forms do not replace the
+hollow or filled Port presentation.
 
 ## Style, text, and rendering
 
@@ -149,10 +157,10 @@ strokes:
   emphasis: 2.4
   ground: 2.906977
   supply: 1.8
+  powerRail: 3.24
   annotation: 1.6
 nodes:
   junctionRadius: 3.77907
-  portOriginRadius: 2.47907
 annotations:
   supplyBarWidth: 20
   currentArrowLength: 53.488372
@@ -287,7 +295,7 @@ pnpm --filter @icm/model build
 pnpm --filter @icm/derived build
 pnpm --filter @icm/render-svg build
 pnpm --filter @icm/exporters build
-node tools/calibration/razavi/fidelity-diff.mjs <target>
+node tools/calibration/razavi/symbol-fidelity-diff.mjs <target>
 ```
 
 The PDF extraction command and dependencies are documented in

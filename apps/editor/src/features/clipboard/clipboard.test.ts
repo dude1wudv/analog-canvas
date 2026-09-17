@@ -28,6 +28,64 @@ import {
 const resolver = new InMemorySymbolResolver(builtInSymbols);
 
 describe("schematic clipboard", () => {
+  it("copies inherited Ground authority onto the selected marker's new Base Net", () => {
+    const document = createEmptyDocument("legacy-gnd", "Ground");
+    document.instances.push(
+      {
+        id: "G1",
+        symbolId: "ground",
+        placement: { position: { x: 0, y: 0 }, rotation: 0, mirror: "none" },
+      },
+      {
+        id: "G2",
+        symbolId: "ground",
+        placement: { position: { x: 100, y: 0 }, rotation: 0, mirror: "none" },
+      },
+    );
+    document.nets.push({
+      id: "gnd",
+      terminals: ["G1", "G2"].map((instanceId) => ({
+        instanceId,
+        pinName: "0",
+      })),
+    });
+    document.connectivityEvidence.push({
+      id: "owner",
+      kind: "name-claim",
+      netId: "gnd",
+      name: "0",
+      scope: "global",
+      powerDomain: "ground",
+      owner: { kind: "power-marker", objectId: "G1" },
+    });
+    const copied = copySelection(document, ["G2"])!;
+    expect(copied.connectivityEvidence).toEqual([
+      expect.objectContaining({
+        name: "0",
+        owner: { kind: "power-marker", objectId: "G2" },
+      }),
+    ]);
+    const proposal = proposePaste(document, copied, { x: 300, y: 0 }, 1);
+    const pasted = executeTransaction(
+      document,
+      {
+        transactionId: "paste-ground",
+        documentId: document.id,
+        expectedRevision: 0,
+        actor: { kind: "human", id: "test" },
+        edits: proposal.edits,
+      },
+      { symbolResolver: resolver },
+    );
+    expect(pasted.ok, JSON.stringify(pasted)).toBe(true);
+    if (!pasted.ok) return;
+    const grounds = resolveDocumentLogicalNets(pasted.document).groups.filter(
+      (group) => group.name === "0",
+    );
+    expect(grounds).toHaveLength(1);
+    expect(grounds[0]!.baseNetIds).toHaveLength(2);
+    expect(document.connectivityEvidence).toHaveLength(1);
+  });
   it.each(["fallback", "dry-run"])(
     "keeps %s drawing previews at the same coordinates as the paste",
     (mode) => {
@@ -705,7 +763,7 @@ describe("schematic clipboard", () => {
     expect(mirroredPreview.instances[0]?.placement).toMatchObject({
       position: { x: 140, y: 80 },
       rotation: 0,
-      mirror: "x",
+      mirror: "horizontal",
     });
   });
 
@@ -831,8 +889,8 @@ describe("schematic clipboard", () => {
       { kind: "reflect", direction: "left-right" },
     ]);
     expect(mirrored.instances.map((instance) => instance.placement)).toEqual([
-      { position: { x: 100, y: 100 }, rotation: 0, mirror: "x" },
-      { position: { x: 0, y: 140 }, rotation: 0, mirror: "x" },
+      { position: { x: 100, y: 100 }, rotation: 0, mirror: "horizontal" },
+      { position: { x: 0, y: 140 }, rotation: 0, mirror: "horizontal" },
     ]);
 
     // A quarter turn orbits R2 around the anchor while both parts turn.
@@ -867,7 +925,11 @@ describe("schematic clipboard", () => {
       ),
     ).toEqual([
       { kind: "rotate_instance", instanceId: "R1-copy-1", rotation: 180 },
-      { kind: "mirror_instance", instanceId: "R1-copy-1", mirror: "x" },
+      {
+        kind: "mirror_instance",
+        instanceId: "R1-copy-1",
+        mirror: "horizontal",
+      },
       { kind: "rotate_instance", instanceId: "R1-copy-1", rotation: 270 },
     ]);
   });

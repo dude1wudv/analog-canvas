@@ -5,17 +5,17 @@
     "id": "opamp-lettered",
     "name": "Operational Amplifier (lettered)",
     "viewBox": {
-      "x": -34,
-      "y": -28,
-      "width": 68,
-      "height": 56
+      "x": -44,
+      "y": -34,
+      "width": 88,
+      "height": 68
     },
     "pins": [
       {
         "name": "IN+",
         "role": "non-inverting-input",
         "at": {
-          "x": -30,
+          "x": -40,
           "y": 10
         },
         "direction": "west",
@@ -28,7 +28,7 @@
         "name": "IN-",
         "role": "inverting-input",
         "at": {
-          "x": -30,
+          "x": -40,
           "y": -10
         },
         "direction": "west",
@@ -55,11 +55,11 @@
       {
         "kind": "line",
         "from": {
-          "x": -30,
+          "x": -40,
           "y": -10
         },
         "to": {
-          "x": -26.952962,
+          "x": -30,
           "y": -10
         },
         "style": {
@@ -71,11 +71,11 @@
       {
         "kind": "line",
         "from": {
-          "x": -30,
+          "x": -40,
           "y": 10
         },
         "to": {
-          "x": -26.797909,
+          "x": -30,
           "y": 10
         },
         "style": {
@@ -87,7 +87,7 @@
       {
         "kind": "line",
         "from": {
-          "x": 23.202091,
+          "x": 21.961524,
           "y": 0
         },
         "to": {
@@ -102,7 +102,13 @@
       },
       {
         "kind": "path",
-        "data": "M -26.7979 -24.9983 L -26.7979 25 L 23.2021 0 Z",
+        "data": "M -30 -30 L -30 30 L 21.961524 0 Z",
+        "bounds": {
+          "x": -30,
+          "y": -30,
+          "width": 51.961524,
+          "height": 60
+        },
         "style": {
           "strokeRole": "emphasis",
           "lineCap": "butt",
@@ -113,51 +119,53 @@
       {
         "kind": "line",
         "from": {
-          "x": -18.047038,
-          "y": 8.749129
+          "x": -23.75,
+          "y": 11
         },
         "to": {
-          "x": -18.047038,
-          "y": 16.249129
+          "x": -23.75,
+          "y": 17
         },
+        "part": "input-polarity",
         "style": {
           "strokeRole": "normal",
-          "lineCap": "butt",
-          "lineJoin": "miter"
+          "lineCap": "round",
+          "lineJoin": "round"
         }
       },
       {
         "kind": "line",
         "from": {
-          "x": -21.796167,
-          "y": 12.5
+          "x": -26.75,
+          "y": 14
         },
         "to": {
-          "x": -14.296167,
-          "y": 12.5
+          "x": -20.75,
+          "y": 14
         },
+        "part": "input-polarity",
         "style": {
           "strokeRole": "normal",
-          "lineCap": "butt",
-          "lineJoin": "miter"
+          "lineCap": "round",
+          "lineJoin": "round"
         }
       },
       {
         "kind": "line",
         "from": {
-          "x": -21.796167,
-          "y": -12.5
+          "x": -26.75,
+          "y": -14
         },
         "to": {
-          "x": -14.296167,
-          "y": -12.5
+          "x": -20.75,
+          "y": -14
         },
+        "part": "upright-input-polarity-negative",
         "style": {
           "strokeRole": "normal",
-          "lineCap": "butt",
-          "lineJoin": "miter"
-        },
-        "part": "upright-input-polarity-negative"
+          "lineCap": "round",
+          "lineJoin": "round"
+        }
       }
     ],
     "variants": [],
@@ -165,13 +173,45 @@
       "defaultFormula": "A",
       "supportsCoefficient": false,
       "center": {
-        "x": -10.13,
+        "x": -12.68,
         "y": 0
       },
       "fontSize": 16
     }
   },
   "electrical": null,
+  "subcircuit": {
+    "id": "opamp-lettered",
+    "symbolId": "opamp-lettered",
+    "target": "opamp",
+    "ports": [
+      {
+        "name": "VDD",
+        "direction": "inout",
+        "supply": "VDD"
+      },
+      {
+        "name": "VSS",
+        "direction": "inout",
+        "supply": "VSS"
+      },
+      {
+        "name": "VIP",
+        "direction": "input",
+        "pinName": "IN+"
+      },
+      {
+        "name": "VIN",
+        "direction": "input",
+        "pinName": "IN-"
+      },
+      {
+        "name": "VOUT",
+        "direction": "output",
+        "pinName": "OUT"
+      }
+    ]
+  },
   "catalog": {
     "library": "razavi",
     "symbolId": "opamp-lettered",
@@ -179,7 +219,7 @@
     "category": "analog-block",
     "reviewStatus": "reviewed",
     "pinOrder": ["IN+", "IN-", "OUT"],
-    "palette": true,
+    "palette": false,
     "automaticMappings": [],
     "manualOnlyReason": "Three-terminal textbook op-amp; SPICE subcircuit pin and supply contracts require an explicit PDK mapping.",
     "assetPath": "opamp-lettered.json",

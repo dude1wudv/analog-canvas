@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DesignNetlistIR } from "./ir.js";
 import { analyzeDesignNetlist } from "./extract.js";
-import { printSpiceNetlist } from "./printers.js";
+import { printSpectreNetlist, printSpiceNetlist } from "./printers.js";
 
 function claimNet(
   document: CircuitProject["documents"][number],
@@ -399,6 +399,10 @@ describe("structural SPICE round trip", () => {
       { pinName: "2", netName: "B" },
     ]);
     expect(printSpiceNetlist(analysis.ir!)).toContain("C1 A B 2p");
+    expect(printSpectreNetlist(analysis.ir!)).toContain(
+      "C1 (A B) capacitor c=2p",
+    );
+    expect(exported?.nodes).toHaveLength(2);
   });
 
   it("preserves a real Project's hierarchy, interfaces, globals, opens, and parameters", async () => {

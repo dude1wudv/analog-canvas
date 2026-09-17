@@ -10,6 +10,7 @@ import {
   AgentSessionMachine,
   AgentSessionMessageSchema,
   AgentSessionScopeSchema,
+  AgentSessionStatusResponseSchema,
   invalidAgentRequestResponse,
   parseAgentCircuitRequest,
   parseAgentFileResourceRequest,
@@ -56,6 +57,7 @@ export class AgentSessionDO {
   private machine: AgentSessionMachine | null = null;
   private readonly ready: Promise<void>;
   private creating = false;
+  private publishedExpiresAt: number | null = null;
   private readonly pendingForwards = new Map<string, PendingForward>();
   private readonly eventSubscribers = new Map<
     ReadableStreamDefaultController<Uint8Array>,
@@ -94,6 +96,34 @@ export class AgentSessionDO {
     if (url.pathname === "/editor") {
       return this.connectEditor(request, machine);
     }
+    if (request.method === "GET" && url.pathname === "/status") {
+      const now = Date.now();
+      const auth = machine.authorizeStatus(bearerToken(request), now);
+      if (!auth.ok)
+        return jsonResponse(
+          errorBody(auth.code, errorMessage(auth.code)),
+          transportStatus(auth.code),
+          allowedOrigin,
+        );
+      return jsonResponse(
+        AgentSessionStatusResponseSchema.parse({
+          ok: true,
+          sessionId: machine.sessionId,
+          projectId: machine.projectId,
+          documentIds: machine.documentIds,
+          authorization: machine.statusAt(now),
+          editor: (this.state.getWebSockets?.(EDITOR_SOCKET_TAG) ?? []).some(
+            (socket) => socket.readyState === WebSocket.OPEN,
+          )
+            ? "attached"
+            : "detached",
+          observedAt: now,
+          expiresAt: machine.expiresAt,
+        }),
+        200,
+        allowedOrigin,
+      );
+    }
     if (request.method === "POST" && url.pathname === "/circuit") {
       return this.circuit(request, machine, allowedOrigin);
     }
@@ -122,6 +152,8 @@ export class AgentSessionDO {
     await this.ready;
     const machine = await this.loadMachine();
     if (!machine) return;
+    const status = machine.statusAt(Date.now());
+    if (status === "expired" || status === "revoked") return;
     const text =
       typeof message === "string" ? message : new TextDecoder().decode(message);
     const size = machine.checkMessageSize(
@@ -156,8 +188,10 @@ export class AgentSessionDO {
           control.data.projectId,
           control.data.documentIds,
         )
-      )
+      ) {
+        machine.recordActivity(Date.now());
         await this.persist();
+      }
       socket.send(
         JSON.stringify({
           protocolVersion: AGENT_SESSION_PROTOCOL_VERSION,
@@ -204,12 +238,23 @@ export class AgentSessionDO {
     } else if (envelope.kind === "event") {
       const event = AgentSessionEventSchema.safeParse(envelope.payload);
       if (event.success && event.data.sessionId === machine.sessionId) {
+        if (
+          event.data.type === "document.revision-changed" &&
+          event.data.actorKind === "human" &&
+          machine.assertDocument(machine.projectId, event.data.documentId).ok
+        ) {
+          machine.recordActivity(Date.now());
+          await this.persist();
+        }
         this.emit(event.data);
       }
     }
   }
 
   async webSocketClose(socket?: WebSocket) {
+    // Hibernatable sockets require an explicit close reply. Without it the
+    // browser stays CLOSING and never reaches its reconnect handler.
+    if (socket && socket.readyState !== WebSocket.CLOSED) socket.close();
     await this.ready;
     const replacement = (
       this.state.getWebSockets?.(EDITOR_SOCKET_TAG) ?? []
@@ -239,6 +284,12 @@ export class AgentSessionDO {
   async alarm(): Promise<void> {
     await this.ready;
     const machine = await this.loadMachine();
+    if (machine && Date.now() < machine.expiresAt - EXPIRY_WARNING_MS) {
+      await this.state.storage.setAlarm?.(
+        machine.expiresAt - EXPIRY_WARNING_MS,
+      );
+      return;
+    }
     if (machine && Date.now() < machine.expiresAt) {
       const event: AgentSessionEvent = {
         type: "session.expiring",
@@ -252,9 +303,9 @@ export class AgentSessionDO {
     }
     if (machine) {
       machine.revoke();
-      this.emit({ type: "session.revoked", sessionId: machine.sessionId });
+      this.emit({ type: "session.expired", sessionId: machine.sessionId });
       this.notifyEditor({
-        type: "session.revoked",
+        type: "session.expired",
         sessionId: machine.sessionId,
       });
     }
@@ -330,9 +381,6 @@ export class AgentSessionDO {
       });
       this.machine = created.machine;
       await this.persist();
-      await this.state.storage.setAlarm?.(
-        Math.max(Date.now(), created.session.expiresAt - EXPIRY_WARNING_MS),
-      );
       return jsonResponse(
         { ok: true, session: created.session },
         200,
@@ -389,8 +437,12 @@ export class AgentSessionDO {
         allowedOrigin,
       );
     }
-    this.emit({ type: "session.ready", sessionId: machine.sessionId });
-    this.notifyEditor({ type: "session.ready", sessionId: machine.sessionId });
+    const type =
+      machine.statusAt(Date.now()) === "paused"
+        ? "session.paused"
+        : "session.ready";
+    this.emit({ type, sessionId: machine.sessionId });
+    this.notifyEditor({ type, sessionId: machine.sessionId });
     return jsonResponse(
       {
         ok: true,
@@ -446,6 +498,11 @@ export class AgentSessionDO {
         socket.close(4001, "editor transport replaced");
       }
     }
+    this.notifyEditor({
+      type: "session.renewed",
+      sessionId: machine.sessionId,
+      expiresAt: new Date(machine.expiresAt).toISOString(),
+    });
     if (status === "paused") {
       pair[1].send(
         JSON.stringify({
@@ -467,7 +524,11 @@ export class AgentSessionDO {
           requestId: `event-${crypto.randomUUID()}`,
           sentAt: new Date().toISOString(),
           kind: "event",
-          payload: { type: "session.ready", sessionId: machine.sessionId },
+          payload: {
+            type: "session.ready",
+            sessionId: machine.sessionId,
+            expiresAt: new Date(machine.expiresAt).toISOString(),
+          },
         }),
       );
     }
@@ -561,6 +622,8 @@ export class AgentSessionDO {
         allowedOrigin,
       );
     }
+    if (circuitRequest.operation !== "capabilities")
+      machine.recordActivity(Date.now());
     await this.persist();
     this.emit({
       type: "operation.started",
@@ -570,6 +633,8 @@ export class AgentSessionDO {
     try {
       const result = await this.forwardToEditor(machine, circuitRequest);
       machine.completeRequest(circuitRequest.requestId, result, Date.now());
+      if (circuitRequest.operation !== "capabilities")
+        machine.recordActivity(Date.now());
       await this.persist();
       this.emit({
         type: "operation.completed",
@@ -690,6 +755,7 @@ export class AgentSessionDO {
         transportStatus(begin.code),
         allowedOrigin,
       );
+    machine.recordActivity(Date.now());
     await this.persist();
     this.emit({
       type: "operation.started",
@@ -709,6 +775,7 @@ export class AgentSessionDO {
       } else {
         machine.completeRequest(fileRequest.requestId, result, Date.now());
       }
+      machine.recordActivity(Date.now());
       await this.persist();
       this.emit({
         type: "operation.completed",
@@ -820,6 +887,11 @@ export class AgentSessionDO {
         transportStatus(begin.code),
         allowedOrigin,
       );
+    if (
+      simulationRequest.operation !== "capabilities" &&
+      simulationRequest.operation !== "authoring-help"
+    )
+      machine.recordActivity(Date.now());
     await this.persist();
     this.emit({
       type: "operation.started",
@@ -833,6 +905,11 @@ export class AgentSessionDO {
         "simulation-request",
       );
       machine.completeRequest(simulationRequest.requestId, result, Date.now());
+      if (
+        simulationRequest.operation !== "capabilities" &&
+        simulationRequest.operation !== "authoring-help"
+      )
+        machine.recordActivity(Date.now());
       await this.persist();
       this.emit({
         type: "operation.completed",
@@ -942,6 +1019,7 @@ export class AgentSessionDO {
         allowedOrigin,
       );
     }
+    machine.recordActivity(Date.now());
     await this.persist();
     this.emit({
       type: "operation.started",
@@ -955,6 +1033,7 @@ export class AgentSessionDO {
         "project-request",
       );
       machine.completeRequest(projectRequest.requestId, result, Date.now());
+      machine.recordActivity(Date.now());
       await this.persist();
       this.emit({
         type: "operation.completed",
@@ -1039,6 +1118,15 @@ export class AgentSessionDO {
     const body = (await request.json().catch(() => null)) as {
       action?: unknown;
     } | null;
+    const status = machine.statusAt(Date.now());
+    if (status === "expired" || status === "revoked") {
+      const code = status === "expired" ? "SESSION_EXPIRED" : "SESSION_REVOKED";
+      return jsonResponse(
+        errorBody(code, errorMessage(code)),
+        transportStatus(code),
+        allowedOrigin,
+      );
+    }
     if (body?.action === "pause") machine.pause();
     else if (body?.action === "resume") machine.resume();
     else if (body?.action === "revoke") machine.revoke();
@@ -1052,6 +1140,7 @@ export class AgentSessionDO {
     if (body.action === "revoke" || body.action === "replace-project") {
       await this.state.storage.deleteAll?.();
     } else {
+      machine.recordActivity(Date.now());
       await this.persist();
     }
     const type =
@@ -1192,8 +1281,10 @@ export class AgentSessionDO {
         SESSION_STATE_KEY,
       );
     if (!stored) return null;
-    this.machine = AgentSessionMachine.restore(stored, () =>
-      crypto.randomUUID(),
+    this.machine = AgentSessionMachine.restore(
+      stored,
+      () => crypto.randomUUID(),
+      Date.now(),
     );
     return this.machine;
   }
@@ -1204,9 +1295,12 @@ export class AgentSessionDO {
         SESSION_STATE_KEY,
       );
     if (stored) {
-      this.machine = AgentSessionMachine.restore(stored, () =>
-        crypto.randomUUID(),
+      this.machine = AgentSessionMachine.restore(
+        stored,
+        () => crypto.randomUUID(),
+        Date.now(),
       );
+      await this.persist();
     }
   }
 
@@ -1218,5 +1312,18 @@ export class AgentSessionDO {
       return;
     }
     await this.state.storage.put(SESSION_STATE_KEY, this.machine.serialize());
+    if (this.publishedExpiresAt !== this.machine.expiresAt) {
+      this.publishedExpiresAt = this.machine.expiresAt;
+      await this.state.storage.setAlarm?.(
+        Math.max(Date.now(), this.machine.expiresAt - EXPIRY_WARNING_MS),
+      );
+      const event: AgentSessionEvent = {
+        type: "session.renewed",
+        sessionId: this.machine.sessionId,
+        expiresAt: new Date(this.machine.expiresAt).toISOString(),
+      };
+      this.emit(event);
+      this.notifyEditor(event);
+    }
   }
 }

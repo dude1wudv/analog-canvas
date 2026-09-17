@@ -9,7 +9,12 @@ import {
   type Point,
 } from "@icm/model";
 import { builtInSymbols, InMemorySymbolResolver } from "@icm/symbols";
-import { resolveEndpointConnection, resolveRouteGeometry } from "@icm/derived";
+import {
+  contactRequiresJunctionDot,
+  deriveDocumentContactEvidence,
+  resolveEndpointConnection,
+  resolveRouteGeometry,
+} from "@icm/derived";
 import {
   proposeLooseRouteTranslation,
   proposeRouteEndpointMove,
@@ -71,12 +76,19 @@ function port(
     interfaceInstanceIds: [id],
   });
 }
-function commit(d: SchematicDocument, edits: readonly SchematicEdit[]) {
+function commit(
+  d: SchematicDocument,
+  edits: readonly SchematicEdit[],
+  expectedElectricalEffect?: ReturnType<
+    typeof proposeWireSegmentMove
+  >["expectedElectricalEffect"],
+) {
   expect(SchematicDocumentSchema.safeParse(d).success).toBe(true);
   const plan = createRoutingOperationPlan(d, {
     intent: "route-geometry",
     edits,
     diagnostics: [],
+    ...(expectedElectricalEffect ? { expectedElectricalEffect } : {}),
   });
   const result = gateRoutingOperationPlan(d, plan, {
     symbolResolver: resolver,
@@ -157,8 +169,8 @@ describe("atomic endpoint landing", () => {
     "classifies coincident terminals as endpoints regardless of instance order (%s)",
     (reverse) => {
       const d = looseWires();
-      port(d, "P1", "n", { x: 40, y: 50 });
-      port(d, "P2", "m", { x: 40, y: 50 });
+      port(d, "P1", "n", { x: 50, y: 50 });
+      port(d, "P2", "m", { x: 50, y: 50 });
       if (reverse) d.instances.reverse();
       d.routes[1]!.start = { kind: "terminal", instanceId: "P2", pinName: "P" };
       const p = proposeRouteEndpointMove(
@@ -239,7 +251,12 @@ describe("terminal-aware shortening", () => {
   it.each([0, 90, 180, 270] as const)(
     "does not fold wire over a Port lead at rotation %s",
     (rotation) => {
-      for (const mirror of ["none", "x"] as const) {
+      for (const mirror of [
+        "none",
+        "horizontal",
+        "vertical",
+        "both",
+      ] as const) {
         for (const reverse of [false, true]) {
           const d = looseWires();
           d.routes = [];
@@ -287,8 +304,8 @@ describe("terminal-aware shortening", () => {
           ];
           if (reverse) points.reverse();
           expect(points).toEqual([
-            at({ x: 10, y: 0 }),
-            at({ x: 10, y: 100 }),
+            at({ x: 0, y: 0 }),
+            at({ x: 0, y: 100 }),
             at({ x: 200, y: 100 }),
           ]);
           expect(final.instances).toEqual(d.instances);
@@ -308,4 +325,124 @@ describe("terminal-aware shortening", () => {
       }
     },
   );
+});
+
+describe("segment landing on an endpoint", () => {
+  it("connects and dots a capacitor pin touched by the moved segment", () => {
+    const d = createEmptyDocument("segment-pin", "Segment pin contact");
+    d.presentation.grid = 10;
+    d.instances.push(
+      {
+        id: "R1",
+        symbolId: "resistor",
+        placement: {
+          position: { x: 0, y: -20 },
+          rotation: 0,
+          mirror: "none",
+        },
+      },
+      {
+        id: "R2",
+        symbolId: "resistor",
+        placement: {
+          position: { x: 100, y: -20 },
+          rotation: 0,
+          mirror: "none",
+        },
+      },
+      {
+        id: "C1",
+        symbolId: "capacitor",
+        placement: {
+          position: { x: 50, y: 120 },
+          rotation: 0,
+          mirror: "none",
+        },
+      },
+    );
+    d.nets.push({
+      id: "n",
+      terminals: [
+        { instanceId: "R1", pinName: "2" },
+        { instanceId: "R2", pinName: "2" },
+      ],
+    });
+    d.nets.push({
+      id: "capacitor-top",
+      terminals: [{ instanceId: "C1", pinName: "1" }],
+    });
+    d.routes.push(
+      createRoutePath({
+        id: "r",
+        netId: "n",
+        start: { kind: "terminal", instanceId: "R1", pinName: "2" },
+        end: { kind: "terminal", instanceId: "R2", pinName: "2" },
+        bends: [],
+        modes: ["manual"],
+      }),
+    );
+
+    // Pull the straight wire down into a U. Its new horizontal segment lands
+    // on C1.1 at (50,100), the same gesture as the reported capacitor case.
+    const proposal = proposeWireSegmentMove(d, resolver, "r", 0, {
+      x: 50,
+      y: 100,
+    });
+    const final = commit(d, proposal.edits, proposal.expectedElectricalEffect);
+
+    const capacitorNetId = final.nets.find((net) =>
+      net.terminals.some(
+        (terminal) => terminal.instanceId === "C1" && terminal.pinName === "1",
+      ),
+    )?.id;
+    expect(capacitorNetId).toBe(final.routes[0]?.netId);
+    expect(conductorNets(final).size).toBe(1);
+    expect(final.routes).toHaveLength(2);
+    const contact = deriveDocumentContactEvidence(
+      final,
+      resolver,
+    ).contacts.find(
+      (candidate) => candidate.point.x === 50 && candidate.point.y === 100,
+    );
+    expect(contact).toBeDefined();
+    expect(contactRequiresJunctionDot(contact!)).toBe(true);
+  });
+
+  it("connects when a moved segment lands on another wire endpoint", () => {
+    const d = looseWires();
+    d.junctions.find((junction) => junction.id === "X")!.position = {
+      x: 0,
+      y: 50,
+    };
+    d.junctions.find((junction) => junction.id === "Y")!.position = {
+      x: -100,
+      y: 50,
+    };
+    const proposal = proposeWireSegmentMove(d, resolver, "r", 0, {
+      x: 50,
+      y: 50,
+    });
+    const final = commit(d, proposal.edits, proposal.expectedElectricalEffect);
+
+    expect(conductorNets(final).size).toBe(1);
+  });
+
+  it("keeps a true wire-interior crossing unconnected", () => {
+    const d = looseWires();
+    d.junctions.find((junction) => junction.id === "X")!.position = {
+      x: 50,
+      y: 20,
+    };
+    d.junctions.find((junction) => junction.id === "Y")!.position = {
+      x: 50,
+      y: 80,
+    };
+    const proposal = proposeWireSegmentMove(d, resolver, "r", 0, {
+      x: 50,
+      y: 50,
+    });
+    const final = commit(d, proposal.edits, proposal.expectedElectricalEffect);
+
+    expect(conductorNets(final).size).toBe(2);
+  });
 });

@@ -1,5 +1,51 @@
 # Deployment
 
+## Development and publication cadence
+
+Use three stages so deployment work is paid per accepted batch rather than per
+small edit:
+
+| Stage      | Unit of work                                                               | Completion                                                                                                                 |
+| ---------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Local      | One bounded feature, fix, or improvement on the current local batch branch | Local feedback through `pnpm dev`, focused validation, and an explanatory local commit                                     |
+| Preview    | At least 10 completed changes in one batch PR                              | Whole-batch delivery checks, both required PR checks against current `main`, one main merge, and hosted Preview acceptance |
+| Production | A Preview-accepted candidate with release authorization                    | Version-tag or explicit-dispatch deployment and Production verification                                                    |
+
+Ten changes means ten independently useful outcomes, not ten commits or files.
+Supporting tests and follow-up repairs belong to their original change. Keep
+the current working list and count in `plan/local-batch.md`, with the durable
+intent and evidence in each commit and the batch PR. Continue the batch across
+local tasks instead of opening a separate PR for each task. An explicit user
+request may publish Preview earlier or hold the batch longer.
+
+Local commits do not publish either site. A requested remote branch backup
+also remains local-stage work. When the batch is ready, validate its combined
+diff once for delivery and merge one PR; merging ten separate PRs would still
+trigger repeated Preview deployments. Review the combined risk, including
+interactions between otherwise small changes. Documentation-only work retains
+the workflow's existing deployment exclusions.
+
+The same immutable candidate receives one complete required CI pass. A current
+branch merges directly after that pass; it does not enter a second merge-queue
+run. If another change reaches `main` first, update the branch and rerun because
+the candidate has changed. Preview selects hosted acceptance from the merged
+paths. Ordinary editor work runs one published-MCP managed-engine smoke and one
+GUI source journey in parallel. Agent, Simulation, simulator/netlist execution,
+and deployment-boundary changes retain the complete qualification and product
+journeys. Manual Preview runs are deep by default. Production promotes the
+accepted bytes without rebuilding in either case.
+
+Choose any release version while preparing the candidate for Preview. After
+acceptance, Production publication is a separate release decision, covered by
+the user's current or earlier authorization for that release. Neither the
+change count nor Preview success automatically publishes Production. New local
+work may accumulate in the next batch while the accepted Preview waits for a
+Production release.
+
+The existing deployment triggers below implement this cadence. See
+[working rules](../AGENTS.md#three-stage-development-and-delivery) and
+[validation timing](testing/README.md#local-iteration-and-batch-validation).
+
 ## Channels and data isolation
 
 | Channel | Trigger and configuration | Data boundary |
@@ -21,14 +67,24 @@ remove production Cloudflare authentication.
 Select the intended commit and use either a version tag or explicit dispatch.
 [ADR 0057](adr/0057-release-channels-preview-and-production.md) explains the choice.
 
-
 ## Deploy, verify, recover
 
 Production records its rollback target **before** deployment. It verifies the
-serving shell/editor/analytics, MCP manifest, and stale-asset handling. If the
-check fails, it restores the recorded Worker version, verifies that result,
+serving shell/editor/analytics, MCP manifest, and stale-asset handling. If a
+post-deploy secret sync or verification fails, it restores the recorded Worker
+version, verifies that result,
 and still fails the deployment run. Without a rollback target, it reports that
 human intervention is required.
+
+Deep Preview acceptance runs the complete numerical, dual-engine, public
+Agent/MCP, source-workspace GUI and private cross-Project journeys once; the
+fast path runs only its two smoke journeys. Production verifies
+that the served entry bytes match the accepted candidate, checks its public
+routes and MCP manifest, creates and removes one lightweight Agent session, and
+runs a baseline OP/TRAN/DC/Noise simulation smoke with Production bindings.
+Preview's private cross-Project acceptance identity is never installed or
+accepted on Production. The simulator token is required before deployment, and
+each channel's managed queues and artifact bucket are reconciled independently.
 
 Recovery limitations:
 
@@ -48,7 +104,7 @@ human evidence.
 
 ## Where the simulator runs
 
-The Worker forwards to the configured operator gateway using
+The Worker forwards ngspice runs to the configured operator gateway using
 `SIMULATION_UPSTREAM_URL` and its secret `SIMULATION_UPSTREAM_TOKEN`.
 The gateway validates its matching `SIMULATION_ACCESS_TOKEN`; that token never
 enters the executor that runs authored SPICE. The container image is defined by
@@ -72,23 +128,34 @@ because it cannot prove a timed-out process is gone.
 `execution.target` identifies transport. A request naming an unconfigured
 executor is refused, not redirected.
 
+Preview also routes the native VACASK Profile named by `VACASK_PROFILE_ID` to a
+separate gateway at `VACASK_UPSTREAM_URL`, using the Preview secret
+`VACASK_UPSTREAM_TOKEN`. The Simulator host workflow's `vacask-preview` action
+builds that isolated candidate on the operator host from
+[`containers/vacask/host/compose.yaml`](../containers/vacask/host/compose.yaml)
+with its own Compose project, Tunnel and hostname, installs the secret, and
+leaves the shared ngspice stack unchanged; it does not deploy Worker code.
+Production configures no VACASK engine. The requested Profile selects the
+engine, ngspice remains the default, and neither engine falls back to the other.
+
 ### Managed and direct transport
 
-Preview uses `/api/simulation/runs`. Its durable control object owns owner-bound
-admission, idempotency, leases, cancellation, and bounded run records. Queue
+Both hosted channels use `/api/simulation/runs`. Each channel's durable control
+object owns owner-bound admission, idempotency, leases, cancellation, and bounded run records. Queue
 dispatch sends work to the operator host's declared single slot; R2 holds
-immutable input/result artifacts. Account ownership is preferred; Preview can
+immutable input/result artifacts. Account ownership is preferred; either channel can
 issue an opaque HttpOnly anonymous capability. Capacity controls remain active
 for both.
 
-`/api/simulate` remains the direct/internal contract and the explicit
-Production/local transport until managed bindings are promoted. A managed
-failure never triggers fallback to it. The local host has no automatic
-simulator or PDK discovery.
+`/api/simulate` remains the direct/internal contract and the local transport.
+A managed failure never triggers fallback to it. Production and Preview use
+separate queues, control namespaces, and R2 buckets; both share the existing
+ngspice operator gateway, which enforces its single execution slot. The local
+host has no automatic simulator or PDK discovery.
 
 [Simulation execution](specs/simulation-execution.md) owns queue, deadline,
 retention, result, and error contracts. Neither managed retention nor browser
-comparison stores run history in the Project.
+archives store run history in the Project.
 
 ## External resource retirement
 

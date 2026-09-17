@@ -15,6 +15,10 @@ import type { ToolSessionState } from "./tools.js";
 
 const Id = z.string().min(1).max(256);
 const Name = z.string().trim().min(1).max(128);
+const NativeName = Id.regex(
+  /^\S+$/u,
+  "Use an exact native identifier without whitespace",
+);
 const common = { documentId: Id.optional() };
 const FolderArgs = z.discriminatedUnion("action", [
   z.strictObject({
@@ -31,7 +35,9 @@ const FolderArgs = z.discriminatedUnion("action", [
     rootDocumentId: Id.optional(),
     profileId: Id,
     template: z.enum(["op", "ac", "tran"]).optional(),
-    dut: z.strictObject({ name: Id, ports: z.array(Id) }).optional(),
+    dut: z
+      .strictObject({ name: NativeName, ports: z.array(NativeName) })
+      .optional(),
   }),
   z.strictObject({
     action: z.literal("update"),
@@ -170,6 +176,14 @@ async function read(
         `${parsed.path}: ${parsed.message}. Source files remain editable through simulation_files.`,
       ),
     };
+  if (parsed.authority === "code")
+    return {
+      ok: false as const,
+      result: failure(
+        "SIMULATION_NATIVE_CODE_REQUIRED",
+        "This experiment is native VACASK Code-authoritative. Use simulation_files for native save v/dv/i/di/p selectors and analysis commands; derived quantities use authored postprocess Python. Read simulation authoring-help for shared source helpers. Legacy JSON helpers cannot downgrade it or add another electrical authority.",
+      ),
+    };
   return {
     ok: true as const,
     folder,
@@ -206,7 +220,7 @@ function upsert<T extends { id: string }>(items: T[], item: T) {
 export const simulationAuthoringTools: readonly Entry[] = [
   tool(
     "simulation_folder",
-    "Manage saved source experiments: list/get/create/clone/rename/remove. create writes the same small OP source template used by Code. Omit rootDocumentId for text only; rootDocumentId alone runs the drawn Cell directly. Add dut {name, ports} using the exported subcircuit name and ordered ports to start a text TB around that Cell without creating another Cell. Native analyses, .param, .temp and control programs are edited with simulation_files; input replacement can change bindings/dependencies. There is no parallel structured analyses authority. Updates are revision-guarded; malformed code can still be saved.",
+    "Manage saved source experiments: list/get/create/clone/rename/remove. create writes the same native VACASK OP/AC/TRAN source template used by Code. Omit rootDocumentId for text only; rootDocumentId alone runs the drawn Cell directly. Add dut {name, ports} using the exported subcircuit name and ordered ports to start a text TB around that Cell without creating another Cell. Native parameters, analysis settings (including temperature), save and control programs are edited with simulation_files; input replacement can change bindings/dependencies. There is no parallel structured analyses authority. Updates are revision-guarded; malformed code can still be saved.",
     FolderArgs,
     async (parsed, session) => {
       const snapshot = await session.client.snapshot(parsed.documentId, {
@@ -295,7 +309,7 @@ export const simulationAuthoringTools: readonly Entry[] = [
   ),
   tool(
     "simulation_output",
-    "Manage experiment output ASTs in the one configuration source file. Use {kind:'vector',vector:'v(out)'} for native vectors, circuit-qualified voltage/current for Canvas anchors, and unary/binary math ASTs. Native SPICE expressions in run.cir remain freely editable. Missing runtime vectors diagnose at prepare/result time, never end the session.",
+    "Legacy version-1 experiments only: manage output ASTs in their configuration file. Native Code experiments use simulation_files to edit save selectors and postprocess Python, not .probe/let. Read simulation authoring-help for shared examples. This helper cannot downgrade native source or create parallel JSON rules.",
     OutputArgs,
     async (parsed, session) => {
       const result = await read(session, parsed.folderId, parsed.documentId);
@@ -329,7 +343,7 @@ export const simulationAuthoringTools: readonly Entry[] = [
   ),
   tool(
     "simulation_measurement",
-    "Manage saved per-record scalar measurements in the experiment configuration source. value, sample-at, minimum, maximum, peak-to-peak, mean and RMS share the runtime schema. A measurement may be authored before its analysis or output exists; prepare and result diagnostics identify unresolved references without blocking file editing.",
+    "Legacy version-1 experiments only: manage saved per-record scalar measurements. Native VACASK experiments compute measurements in authored postprocess Python, not ngspice meas. simulation authoring-help with name embed supplies editable scalar/curve report helpers; apply source with simulation_files. This helper cannot add JSON measurement rules to native experiments.",
     MeasurementArgs,
     async (parsed, session) => {
       const result = await read(session, parsed.folderId, parsed.documentId);
@@ -364,7 +378,7 @@ export const simulationAuthoringTools: readonly Entry[] = [
   ),
   tool(
     "simulation_device_operating_point",
-    "Select MOS occurrences for terminal-derived VGS, VDS, VBS and drain-entering ID. circuit names the generated binding and authored X callPath; occurrence addresses hierarchy inside that binding. This edits the same experiment configuration used by Code, not a second folder object. OP may be added to the native program before or after this helper.",
+    "Legacy version-1 experiments only: select MOS occurrences for terminal-derived VGS/VDS/VBS/ID. Native VACASK experiments use simulation_files for save p(instance,parameter) and analysis name op; available quantities depend on the native device module. Arbitrary terminal currents require the supported acquisition helper, not a guessed i(pin). This helper cannot add JSON selections to native experiments.",
     DeviceArgs,
     async (parsed, session) => {
       const result = await read(session, parsed.folderId, parsed.documentId);

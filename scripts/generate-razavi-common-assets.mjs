@@ -9,6 +9,13 @@ import { fileURLToPath } from "node:url";
 import { format } from "prettier";
 
 import { loadRazaviReferenceAuthority } from "./lib/razavi-reference-authority.mjs";
+import {
+  ANALOG_TRIANGLE,
+  ANALOG_TRIANGLE_BOUNDS,
+  ANALOG_TRIANGLE_PATH,
+  ANALOG_TRIANGLE_OUTPUT_X,
+  ANALOG_TRIANGLE_VIEWBOX,
+} from "./lib/analog-triangle.mjs";
 import { normalizeSwitchLeads } from "./lib/normalize-switch-leads.mjs";
 
 /**
@@ -24,20 +31,20 @@ import { normalizeSwitchLeads } from "./lib/normalize-switch-leads.mjs";
  */
 const ONE_CELL_LEAD_SYMBOLS = new Set(["closed-switch", "ideal-switch"]);
 const ANALOG_BLOCK_LEAD_LENGTH = 10;
+const ANALOG_TRIANGLE_LEFT_X = ANALOG_TRIANGLE.leftX;
+const ANALOG_TRIANGLE_APEX_X = ANALOG_TRIANGLE.apexX;
 
 /**
- * Keep gain-block connection anchors on the nearest outer grid points. The
- * reference body is untouched; only the blank lead between it and the sheet
- * connection is compacted to the one-cell Analog Blocks contract.
+ * Every triangular Analog Block shares the Op Amp body and output column.
+ * This keeps Library tiles and placed
+ * symbols visually interchangeable instead of preserving incidental source-
+ * figure differences.
  */
 function normalizeVoltageAmplifierLeads(symbol) {
   const targetX = new Map([
-    ["IN", -30],
-    ["OUT", 30],
+    ["IN", -40],
+    ["OUT", ANALOG_TRIANGLE_OUTPUT_X],
   ]);
-  const originalPins = new Map(
-    symbol.pins.map((pin) => [pin.name, { ...pin.at }]),
-  );
   symbol.pins = symbol.pins.map((pin) => ({
     ...pin,
     at: { ...pin.at, x: targetX.get(pin.name) },
@@ -46,18 +53,77 @@ function normalizeVoltageAmplifierLeads(symbol) {
       leadLength: ANALOG_BLOCK_LEAD_LENGTH,
     },
   }));
+  const [inputLead, body, outputLead] = symbol.primitives;
+  if (
+    inputLead?.kind !== "line" ||
+    body?.kind !== "path" ||
+    outputLead?.kind !== "line"
+  ) {
+    fail("voltage-amplifier lost its lead/body/lead geometry");
+  }
+  symbol.primitives = [
+    {
+      ...inputLead,
+      from: { x: -40, y: 0 },
+      to: { x: ANALOG_TRIANGLE_LEFT_X, y: 0 },
+    },
+    {
+      ...body,
+      data: ANALOG_TRIANGLE_PATH,
+      bounds: ANALOG_TRIANGLE_BOUNDS,
+      style: { ...body.style, miterLimit: 4 },
+    },
+    {
+      ...outputLead,
+      from: { x: ANALOG_TRIANGLE_APEX_X, y: 0 },
+      to: { x: ANALOG_TRIANGLE_OUTPUT_X, y: 0 },
+    },
+  ];
+  symbol.viewBox = ANALOG_TRIANGLE_VIEWBOX;
+}
+
+/**
+ * The extracted BJT bodies and arrows are the visual authority, but their
+ * blank external leads reached one grid cell beyond the nearest useful sheet
+ * anchors. Pull only the three electrical pin endpoints inward by one
+ * 10-unit cell; keep every body/arrow point unchanged.
+ */
+function normalizeBjtLeads(symbol) {
+  const originalPins = new Map(
+    symbol.pins.map((pin) => [pin.name, { ...pin.at }]),
+  );
+  const targetFor = (pin) =>
+    pin.name === "B" ? { x: -30, y: 0 } : { x: 0, y: Math.sign(pin.at.y) * 20 };
+  symbol.pins = symbol.pins.map((pin) => ({
+    ...pin,
+    at: targetFor(pin),
+    presentation: {
+      ...pin.presentation,
+      leadLength: ANALOG_BLOCK_LEAD_LENGTH,
+    },
+  }));
+  const replacePinAnchor = (point) => {
+    const pin = symbol.pins.find((candidate) => {
+      const original = originalPins.get(candidate.name);
+      return original.x === point.x && original.y === point.y;
+    });
+    return pin ? { ...pin.at } : point;
+  };
   symbol.primitives = symbol.primitives.map((primitive) => {
-    if (primitive.kind !== "line") return primitive;
-    let from = primitive.from;
-    let to = primitive.to;
-    for (const pin of symbol.pins) {
-      const original = originalPins.get(pin.name);
-      if (from.x === original.x && from.y === original.y) from = pin.at;
-      if (to.x === original.x && to.y === original.y) to = pin.at;
-    }
-    return { ...primitive, from, to };
+    if (primitive.kind === "line")
+      return {
+        ...primitive,
+        from: replacePinAnchor(primitive.from),
+        to: replacePinAnchor(primitive.to),
+      };
+    if (primitive.kind === "polyline")
+      return {
+        ...primitive,
+        points: primitive.points.map(replacePinAnchor),
+      };
+    return primitive;
   });
-  symbol.viewBox = { x: -34, y: -32, width: 68, height: 64 };
+  symbol.viewBox = { x: -34, y: -24, width: 42, height: 48 };
 }
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -118,6 +184,7 @@ for (const [symbolId, name, category, pinOrder, automaticMappings] of entries) {
   }
   delete symbol.aliases;
   if (ONE_CELL_LEAD_SYMBOLS.has(symbolId)) normalizeSwitchLeads(symbol);
+  if (symbolId === "npn" || symbolId === "pnp") normalizeBjtLeads(symbol);
   if (symbolId === "voltage-amplifier") {
     normalizeVoltageAmplifierLeads(symbol);
   }
@@ -163,7 +230,12 @@ for (const [symbolId, name, category, pinOrder, automaticMappings] of entries) {
         "fixtures/visual-reference/razavi-reference-v1/manifest.json",
       referencePath: `fixtures/visual-reference/razavi-reference-v1/${symbolId}-vector-source.json`,
       converterPath: "scripts/generate-razavi-common-assets.mjs",
-      converterVersion: 1,
+      converterVersion: symbolId === "voltage-amplifier" ? 6 : 1,
+      ...(symbolId === "voltage-amplifier"
+        ? {
+            bodyNormalization: "equilateral-triangle",
+          }
+        : {}),
     },
   };
   if (entry) Object.assign(entry, nextEntry);

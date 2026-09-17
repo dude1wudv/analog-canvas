@@ -14,10 +14,10 @@ The insertion UI lists exact reviewed Symbol IDs plus the current Project's
 eligible Cell definitions in a dynamic **Cells** section. A Cell selection
 uses the same cursor preview, grid snap, rotation, mirror, and cancellation
 state as a Symbol; its commit factory alone differs, creating one typed
-subcircuit Instance through a Project structural transaction. `Xn` is its sole
-Netlist Reference and is emitted and displayed by default. A separate visible
-Cell/master label, when present, is ordinary literal attached text with no
-identity or hierarchy authority. Both `port` and
+subcircuit Instance through a Project structural transaction. `Xn` remains its
+sole Netlist Reference and is emitted, but an internal Cell shows only its
+Cell/master name in the normal Reference slot by default. That attached text
+has no identity or hierarchy authority. Both `port` and
 `port-filled` remain manually reachable artwork for one concept: **Cell Pin**.
 Terminal `P` participates in ordinary snap, wire, move/stretch, and selection
 behavior. Placement atomically creates the Instance, Base Net membership, and
@@ -50,8 +50,9 @@ drafting object.
 
 There is no separate Cell Interface authoring surface. A child Cell Pin shows
 only its object-anchored terminal-name annotation in the normal Reference slot;
-its stable Instance ID is not drawn and it has no Instance Reference. Normal
-Properties own direction. Annotation rename changes only that declaration.
+its stable Instance ID is not drawn and it has no Instance Reference. Its
+interface direction is managed in Cell Manager. Annotation rename changes only
+that declaration.
 Caller reconciliation compares the formal name projection before and after:
 it does nothing while the old-name group survives and never merges caller
 Nets when a declaration joins an existing name.
@@ -68,27 +69,47 @@ properties together as strict, editable JSON. For example, a resistor:
 
 ```json
 {
-  "reference": "R1",
-  "parameters": { "value": "10k", "tc": "0.1" },
-  "netlistTarget": "",
   "placement": {
-    "at": [360, 240],
+    "coordinate": [360, 240],
     "rotation": 90,
     "mirror": "none"
   },
+  "appearance": {
+    "color": "auto"
+  },
   "display": {
-    "reference": true,
+    "visualAnnotation": true,
     "value": false
   },
-  "appearance": {
-    "foreground": "auto"
-  }
+  "displayName": "R1",
+  "parameters": { "value": "10k", "tc": "0.1" },
+  "netlistName": "R1",
+  "netlistTarget": ""
 }
 ```
 
-`placement.at` is the `[x, y]` grid coordinate, rotation is restricted to
-quarter turns, and mirror is `"none"` or `"x"`. Display keys appear only for
-annotations supported by that Symbol. Fixed colors are displayed as compact
+`displayName` is the visual instance annotation and can differ from the
+electrical `netlistName` used by netlist export;
+`display.visualAnnotation` only controls whether its drawing annotation is
+visible. `placement.coordinate` is the `[x, y]` grid coordinate, rotation is restricted to
+45-degree steps, and mirror is `"none"`, `"horizontal"`, `"vertical"`, or
+`"both"`. Enter confirms the current JSON without inserting a line break;
+Shift+Enter inserts one. Display keys appear only for
+annotations supported by that Symbol; when present, the `display` object is
+kept with placement and appearance near the top. Newly placed Resistor,
+Capacitor, and Inductor devices, including their
+adjustable variants, author `1k`, `1p`, and `1n` as their initial netlist
+values. T-coil starts with `L1=1n`, `L2=1n`, `K=1`, and `CB=1p`; XFMR starts
+with `Lp=1n`, `Ls=1n`, and `K=1`. These compound-device parameters remain
+authoring values until an explicit structural lowering contract is added.
+Transformer and T-Coil Properties expose independent switches under
+`display.parameters`: K and each winding inductance (plus CB for T-Coil).
+Each switch controls one live value label. Editing a parameter updates its
+label; clearing the value hides it. Visibility changes are undoable, and
+re-enabling a label preserves its authored position. Untouched labels stack
+outside the symbol and remain upright through rotation and mirroring.
+
+Fixed colors are displayed as compact
 `[R, G, B]` tuples with integer channels 0–255; six-digit hex input remains
 accepted and persisted instance colors remain hex. Four direct line-color
 controls provide light gray, red, green, and blue, while three bounded RGB
@@ -101,7 +122,9 @@ root keys and invalid values are rejected without changing the Document.
 `parameters` contains descriptor-owned values and arbitrary model/dialect
 overrides as raw strings; empty values or removed keys unset a parameter.
 `netlistTarget` accepts model names, including reviewed external targets, and
-an empty string clears it. A target switch composes the existing structural
+an empty string clears it. Its JSON value carries a compact inline selector
+populated from reviewed targets while preserving authored custom values. A
+target switch composes the existing structural
 planner with the rest of the draft into one project transaction. No new
 project format or parallel netlist authority is introduced.
 
@@ -113,21 +136,36 @@ and Cell-level interface/layout operations retain their existing typed
 authoring surfaces; removing a component remains an explicit Delete action.
 
 The lazy JSON editor provides syntax highlighting, bracket matching, JSON
-diagnostics and local text undo. The content is ordinary selectable text: it
-contains no injected comments, value chips, selectors, switches, or other DOM
-widgets. Canvas-layer field metadata still owns validation of rotation, mirror,
-color channels, and other bounded values. A separate Line fieldset below the
-editor offers light gray, red, green, and blue shortcuts plus custom RGB and an
-Auto reset. It edits the same draft as typing; valid edits transact immediately
-through the existing planner. Incomplete syntax disables that external color
-control until the code is valid again.
+diagnostics and local text undo. Its document remains ordinary selectable raw
+JSON. Descriptor-owned parameter values show their declared unit as a non-data
+line annotation, and `netlistTarget` carries a compact non-data selector.
+Canvas-layer field metadata still owns
+validation of rotation, mirror, color channels, and other bounded values. A
+small, non-text switch is visually decorated after each `display.visualAnnotation` and
+`display.value` boolean, as well as each `display.parameters` entry, for immediate
+visibility toggling. Compact action
+buttons after `placement.rotation` and `placement.mirror` rotate clockwise by
+90 degrees and reflect left/right or top/bottom. Direct JSON editing continues
+to accept all eight 45-degree orientations. Horizontal
+and vertical reflection are persisted independently; mirror actions never
+rewrite `placement.rotation`, and applying both records `"both"`. A matching color
+button after `appearance.color` opens an anchored chooser for light gray,
+red, green, blue, black, and one compact bounded RGB tuple input. `"auto"`
+remains available through direct JSON editing. These controls never enter the
+document, so selection, Copy JSON, and saving contain only authored JSON. Their
+changes edit the same draft as typing and valid edits transact immediately
+through the existing planner. Invalid syntax or values disable the controls
+until the code is valid again.
+Component code exposes no background or fill field. Shape code uses
+`appearance.fillColor` only for objects with an independently fillable body,
+such as rectangles and circles.
 Invalid or rejected drafts preserve the last accepted canvas state. External
 undo/redo synchronizes the editor without replaying edits; Escape blurs this
 editor without applying legacy form drafts or discarding incomplete text.
 **Discard draft** restores the last accepted state when
 the draft is invalid or rejected, without changing the circuit.
 **Defaults** loads known parameter, orientation, color, and formula defaults
-immediately and remains undoable; it preserves coordinates, reference, model
+immediately and remains undoable; it preserves coordinates, netlist name, model
 target, display flags, and unknown overrides. Defaults sits in the Properties
 header with Copy and conditional Discard; there is no Apply button.
 **Copy JSON** copies
@@ -169,13 +207,22 @@ new interfaces use deterministic direction-aware automatic layout.
 Canonical `nmos`/`pmos` use the asset's `textbook-3terminal` visual variant by
 default while retaining D/G/S/B electrically. A manual MOS uses explicit B
 membership first, then an explicitly configured cell default; otherwise bulk
-remains unresolved. Drawing the visible `bulk-dashed` connection clears that
-default binding and connects B to the selected Net in the same transaction.
-Imported MOS instances do not receive a guessed fourth node.
+remains unresolved in the authored connectivity graph. Strict netlist and
+simulation extraction use actual B membership or explicit NoConnect; otherwise
+they report `MISSING_PIN_NET`, without a polarity-based supply default. User-facing
+export presets follow the same connectivity rule and do not repair missing Bulk.
+Drawing the visible `bulk-dashed` connection
+clears any configured default binding and connects B to the selected Net in the
+same transaction. Imported MOS instances retain their authored fourth node;
+when it is absent, the same missing-terminal rule applies.
 Properties shows Bulk as one compact row: its current Net or an explicit
 Unconnected/No Connect state sits beside the draw action. Hovering the status
 reveals the terminal and binding source; a drawn route's dashed presentation
-is described there too. Unresolved bulk is not repeated as a second message.
+is described there too. A visible bulk route inherits its owning MOS instance's
+foreground color instead of carrying independent wire styling. Selecting that
+route identifies it as `Bulk · <instance>` and offers only the bulk-specific
+delete action, rather than the generic wire color, label, and arrow controls.
+Unresolved bulk is not repeated as a second message.
 Drawing is disabled for retained-unplaced instances until they are placed.
 
 ## Formula-capable behavioral blocks
@@ -201,36 +248,36 @@ behavioral blocks remain manual-only; a structural netlist requires an explicit
 implementation mapping.
 
 Ground is the `ground` component connected through pin `0`; placement reuses an
-existing global ground supply Net. Power Rail is a virtual Library item presented
+existing global ground supply Net. VDD Power is placed as a local formal Cell
+Pin by default; Properties can switch its unchanged artwork and physical Net to
+an explicit Global declaration. Power Rail is a virtual Library item presented
 through the same I-dialog, Library, and placement input plane as components.
 Its editor-local VDD artwork is preview-only and is not registered with the
 product Symbol Resolver. Before the first click the artwork follows the
 pointer; after the first click the preview becomes a straight horizontal or
 vertical rail, selected by the pointer's dominant axis. The second click
-creates a Base Net with the selected global supply claim, creates two route-anchor
+creates a Base Net with the selected local supply claim, creates two route-anchor
 Junctions and one `power-rail` Route, and persists one net-name-bound RichText
 power-label annotation. Same-name supply claims resolve to one Logical Net
 without a physical merge. The Route is the only rail geometry: the annotation adds no
 supply bar or terminal stub, and the semantic name uses the shared Razavi
 schematic-math style. It creates no VDD Instance and exits placement after the
-commit. Deleting the rail also deletes its power label and rail-only Junctions;
+commit. A rail explicitly drawn onto an existing Global supply retains that
+electrical connection. Deleting the rail also deletes its power label and rail-only Junctions;
 an otherwise-unused local Net follows the ordinary orphan lifecycle.
 
 ## Project sessions
 
-New, Open, SPICE import, Gallery/My Example open, and recovery restore are
+New, Open, SPICE import, Gallery/built-in example open, and recovery restore are
 Project-session transitions rather than Document edits. A dirty current Project
 always requires an explicit discard or cancel decision before one of these
 transitions commits; a successful browser-recovery write is safety evidence,
 not authorization to replace the foreground Project. Candidate files and
 gallery/recovery payloads are parsed and validated before that decision.
 
-The editor retains one in-memory Previous Project snapshot when a live session
-is replaced. **Previous Project** swaps it with the current session through the
-same dirty-work guard. This bounded session rollback is deliberately separate
-from Document Undo/Redo. Boot-time deep links and an explicit Refresh restore do
-not create a Previous Project entry because no live foreground session is being
-replaced.
+The editor has no Previous Project stack: replacing a live session does not
+retain the outgoing Project in memory for a later swap, and the File menu
+offers no **Previous Project** command.
 
 Project dirty detection covers `structureRevision` and every Document revision,
 not only the active Cell, and compares the content with the last acknowledged
@@ -239,15 +286,13 @@ one empty Main Cell, no SPICE source manifest entries, and no external
 subcircuit definitions; it does not mutate the previous Project into an empty
 shell. Opening a Cloud Project binds its stable id and revision to the runtime
 session; importing a file does not. After a Cloud Save, **Revert to Last Saved**
-restores that acknowledged content through the same guard and makes the
-outgoing working copy the Previous Project. Export and backup never establish
-or advance this baseline.
+restores that acknowledged content through the same guard. Export and backup
+never establish or advance this baseline.
 
 ## Cell reset lifecycle
 
-Cell reset commands are Document transactions and therefore use Document Undo,
-not Previous Project. Each command previews an exact affected-object count
-before commit:
+Cell reset commands are Document transactions and therefore use Document Undo.
+Each command previews an exact affected-object count before commit:
 
 - **Clear Drawing** removes authored Route geometry and drafting objects while
   retaining Instances, Nets, Junction topology, ports, and semantic
@@ -273,15 +318,25 @@ Idle
   -> SymbolPlacement(preview, rotation)
   -> VddRailPlacement(preview, optional first point)
   -> CopyPlacement(clipboard, anchor, preview)
+  -> SelectionMove(M/Shift+M command move)
   -> Wire(source, authoredSteps, routingMode, cornerOrder, preview)
   -> Drawing(tool, source, waypoints, preview, snap)
 ```
 
-Box selection, selection move, pan, and text-edit sessions remain bounded
-gesture owners, but every reset boundary cancels them together with the
-canonical interaction. No component preview, rail endpoint, clipboard, authored
-Wire step, routing mode, drawing point, or snap guide is stored in a parallel
-React mode flag.
+`T` and the Text toolbar action enter drafting-text placement through the same
+placement state as components. A translucent text preview starts at the last
+canvas pointer position and follows the pointer on the annotation grid. Clicking
+commits one free text object at that preview position and opens its text editor.
+Before that click, neither the document nor undo history changes; Escape or
+choosing another tool discards the preview. Fixed catalog text presets keep their
+existing placement behavior.
+
+`M` and `Shift+M` enter SelectionMove, which previews at the pointer and
+commits on one click. Box selection, pointer-drag selection move, pan, and
+text-edit sessions remain bounded gesture owners, but every reset boundary
+cancels them together with the canonical interaction. No component preview,
+rail endpoint, clipboard, authored Wire step, routing mode, drawing point, or
+snap guide is stored in a parallel React mode flag.
 Command arbitration reads the reducer's synchronously advanced state, not the
 last rendered React closure, so consecutive native events such as `Escape -> C`
 observe the first transition even when React batches the next render.
@@ -292,20 +347,25 @@ any angle ([ADR 0014](../adr/0014-resolved-route-geometry.md));
 a middle-button drag pans as usual. F3 opens Wire options including corner
 order. Existing authored legs are immutable under mode switches; Backspace
 removes the latest authored step rather than an automatically compiled elbow.
+A fresh automatic orthogonal connection compares both right-angle corners and
+simple one-grid-clear corridors around symbol ink, then uses the shortest path
+that does not cross a component. A visible pin on the original path remains an
+intentional electrical contact. Any fixed point, explicit corner order,
+45-degree mode, or free-angle mode bypasses this assistance.
 
-Activating the same tool is idempotent: repeated C, W, A, K, or selection of the
+Activating the same tool is idempotent: repeated C, W, or selection of the
 same Library item preserves the active session. Activating a different creation
 tool replaces the current interaction atomically after drag and snap cleanup.
-During component or Copy Placement, `R` quarter-turns the transient preview;
-`Shift+R` mirrors it left/right and `Shift+V` mirrors it top/bottom. Every
+During component or Copy Placement, `R` turns the transient preview by 90 degrees;
+`Shift+R` mirrors it left/right and `Ctrl/Cmd+R` mirrors it top/bottom. Every
 subsequent committed copy receives the same transient orientation, while the
 source selection remains unchanged. The background grid-dot button changes
 only the editor-local canvas paint. Instance reference labels use the first active Document grid line one interval beyond
 the drawn symbol ink. The padded interaction envelope never contributes to
 that clearance, and placement uses nearest-grid normalization for calibrated
-finite-decimal ink edges rather than directional outward snapping. A quarter
-turn reflows a canonical label from its local side at that fixed spacing; four
-quarter turns return its position and alignment to the initial values. Opening
+finite-decimal ink edges rather than directional outward snapping. A 45-degree
+turn reflows a canonical label from its local side at that fixed spacing; eight
+such turns return its position and alignment to the initial values. Opening
 I cancels the current canvas interaction before showing the dialog.
 Escape, Document switch, Project replacement, Clear Canvas, restore, and Agent
 focus reset all use the same transient-cancellation boundary.
@@ -340,8 +400,10 @@ ordinary click.
 
 Escape cancels the active preview without mutation. A committed gesture is one
 atomic transaction. Hover, geometric crossing, selection, and preview never
-change connectivity. A wire endpoint or explicit segment tap is required to
-create contact.
+change connectivity. A wire endpoint, explicit segment tap, or a moved Route
+segment landing exactly on a visible endpoint creates contact, whether that
+endpoint is a device pin or a Junction at the end of another wire. Two Route
+interiors crossing still do not connect.
 
 ## Movement closure
 
@@ -438,8 +500,12 @@ selection entry point: a plain click replaces the selection, while
 `Shift`/`Ctrl`-click toggles that object without discarding other selected
 kinds. Right-clicking an already-selected one preserves the complete mixed
 selection and opens the shared context menu; right-clicking an unselected one
-selects it first. Device-swap choices appear only when the complete selection
-contains exactly one Instance.
+selects it first. The shared context menu is limited to direct selection
+operations: Duplicate, Rotate, horizontal/vertical Mirror, Delete, and Align
+when multiple eligible objects are selected. Device replacement, hierarchy
+creation/placement, and image export do not appear in the canvas context menu.
+Pin-compatible drawing variants remain explicit Properties code;
+selected-image clipboard export lives under Edit.
 
 Placed Instances, explicitly selected schematic annotations, and explicitly
 selected free or object-anchored DraftText are eligible participants. An
@@ -482,8 +548,10 @@ without requiring an Alt cycle.
 Every visible editable label is one persisted RichText annotation. Component
 insertion uses one default-display policy: ordinary instances receive an
 `instance-reference` label, which projects only `Instance.reference`.
-Internal Cells and external subcircuits additionally receive their
-Cell/master presentation as attached literal text; a Cell Pin receives only an object-anchored
+Internal Cells receive only their Cell/master presentation in the normal
+Reference slot; external subcircuits additionally receive it below their
+visible Reference. The default internal-Cell text follows a Cell rename while
+deliberately customized literal content remains custom. A Cell Pin receives only an object-anchored
 `cell-terminal-name`; and parameter values use `instance-value` when requested
 and displayable.
 Properties exposes **Netlist Reference** for explicit electrical renaming:
@@ -506,8 +574,10 @@ Netlist Reference: following annotations update, custom content copies exactly.
 Old additional annotations are retained as user-authored content rather than
 silently deleted; new edits never generate a hidden/default plus custom pair.
 For a Cell Pin, a character edit renames the terminal while a formatting-only
-edit persists a same-text annotation `formatOverride`. Properties exposes the
-Cell Pin name and direction. Net naming remains a Net Label operation.
+edit persists a same-text annotation `formatOverride`. Its name is edited on
+the canvas and its interface direction is managed in Cell Manager; Properties
+does not repeat either control below the component code. Net naming remains a
+Net Label operation.
 The renderer never synthesizes text from Instance IDs and no empty suppressor
 label exists. Visual annotation display is a Properties toggle for one or many
 selected components: hiding sets the annotation's optional `visible: false`
@@ -538,6 +608,13 @@ label is one visual deletion: the label removal is planned once, so the atomic
 transaction cannot reject a duplicated annotation removal. Drafting text has
 no electrical meaning.
 
+The standalone `+` and `−` entries in **Annotations** are fixed polarity
+marks, not editable text. Their vector-stroke center is the placement anchor,
+so the preview, snapped click point, persisted mark, hit target, and selection
+frame all share one center. Their empty compatibility content contributes no
+text bounds and double-click does not open the RichText editor. The combined
+`+ / text / −` polarity annotation remains editable in its center as before.
+
 Selecting an Annotation exposes its own Text color control. Auto removes only
 that Annotation's `textColor`; instance reference/value text then inherits the
 owning Instance's effective foreground, while other annotations use the
@@ -545,6 +622,18 @@ Document profile foreground. Selecting drafting text exposes its independent
 drafting color override, whose Auto state uses the Document profile foreground.
 Both controls transact through their owning object and preserve unrelated
 style fields, selection, and electrical content.
+
+The floating RichText editor also inserts canonical `fraction` runs at the
+caret in notes and literal visual annotations. Numerator and denominator are
+editable in place; Tab advances through the two parts and back to surrounding
+text, while Shift+Tab reverses that navigation. A selection with one unambiguous
+slash is converted without losing its character styles; other selections become
+the numerator. Editing and reopening preserve fraction nodes. Fractions can be
+mixed with styled companion text and additional fractions on the same line.
+Their bars are formal SVG line elements, so canvas and exported artwork agree.
+The existing W/L projection retains its established geometry. Source-only fields
+and bound electrical names do not gain arbitrary fraction formatting, and an
+atomic Formula continues to use its existing editor.
 
 The floating RichText editor has one formula action for editable text content.
 It opens a MathLive math field plus the exact LaTeX source, lets the author
@@ -569,8 +658,8 @@ Open, demo load, restore, and human-approved staged import replace the entire
 Project through one replacement boundary; they are not Edit Engine
 transactions. Replacement cancels pending recovery for the outgoing Project
 and terminates its Agent session. A complete Project covered by the schema
-24→51 upgrade chain may be upgraded at the read boundary and then enters the
-editor only as schema-51; migrated files are marked as needing save.
+24→56 upgrade chain may be upgraded at the read boundary and then enters the
+editor only as schema-56; migrated files are marked as needing save.
 
 Selection, viewport, active tool, previews, Agent tokens, and approval UI are
 transient and never enter Project JSON. Recovery is scheduled only after a
@@ -583,9 +672,11 @@ ordinary in-app navigation, selection, zoom, and panel changes do not affect
 it. New, Open, Revert, recovery restore, and approved staged replacement use
 one concise application dialog with Stay, Save to Cloud and continue, and
 Continue without saving. The dialog states the destination and distinguishes
-Cloud Save (at most three private Cloud Projects) from local Project-file
-export without exposing browser-recovery internals. A startup recovery offer is
-a non-modal overlay and never silently
+Cloud Save (private Cloud Projects, up to a per-account limit) from local
+Project-file export without exposing browser-recovery internals. The limit it
+shows is the editor's shared Cloud Project limit, the same value the File menu
+counts against, not a figure written into the dialog text. A startup recovery
+offer is a non-modal overlay and never silently
 replaces the active Project.
 
 Same-site destinations owned by the product, including Gallery and Analytics,
@@ -604,8 +695,8 @@ topology hash, history, recovery, or formal export.
 ## Deterministic validation
 
 - state-transition, shortcut focus-guard, and command-by-interaction matrix
-  tests, including repeated C/W/A/K, I/Escape/re-entry, and render-free
-  `Escape -> C` bursts after NMOS, PMOS, and passive placement;
+  tests, including repeated C/W, unbound A and K, I/Escape/re-entry, and
+  render-free `Escape -> C` bursts after NMOS, PMOS, and passive placement;
 - component placement and ordinary terminal connectivity for both
   interface-marker assets;
 - VDD rail picker/Library preview, cancellation at both phases, creation with no

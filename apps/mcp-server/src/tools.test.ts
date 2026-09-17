@@ -33,6 +33,23 @@ function parseText(result: {
 }
 
 describe("mcp tool surface", () => {
+  it("reports the actual runtime origin without remote pairing for local readiness", async () => {
+    const { session, http } = await toolSession();
+    const result = parseText(
+      await callTool("connection_status", { refresh: false }, session),
+    );
+    expect(result).toMatchObject({ runtime: { apiBaseUrl: http.baseUrl } });
+  });
+  it("advertises raw and captured Specs rather than a retired result renderer", () => {
+    const tools = listToolDefinitions();
+    expect(tools.find((t) => t.name === "simulation")?.description).toContain(
+      "outputData.specs",
+    );
+    const download = tools.find((t) => t.name === "export_file")!;
+    expect(download.description).toContain("simulation_files");
+    expect(download.description).toContain("SIMULATION_PLOT_RETIRED");
+    expect(download.description).not.toContain("same plot renderer");
+  });
   it("exposes compact Circuit, File and Simulation tools with JSON-schema inputs", () => {
     const tools = listToolDefinitions();
     expect(tools.map((tool) => tool.name)).toEqual([
@@ -203,11 +220,40 @@ describe("mcp tool surface", () => {
         {
           folder: {
             version: 4,
-            input: { kind: "source", circuitBindings: [] },
+            input: {
+              kind: "source",
+              circuitBindings: [],
+              files: expect.arrayContaining([
+                expect.objectContaining({
+                  path: "run.cir",
+                  text: expect.stringContaining("analysis op op"),
+                }),
+              ]),
+            },
           },
         },
       ],
     });
+    expect(
+      parseText(
+        await callTool(
+          "simulation_folder",
+          {
+            action: "create",
+            folderId: "bad-dut",
+            name: "Bad DUT",
+            profileId: "test",
+            rootDocumentId: "main",
+            dut: { name: "amp", ports: ["in\ncontrol"] },
+          },
+          session,
+        ),
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "SIMULATION_HELPER_INPUT_INVALID", recovery: "fix-input" },
+    });
+    expect(writes).toHaveLength(3);
     expect(
       parseText(
         await callTool(
@@ -233,7 +279,9 @@ describe("mcp tool surface", () => {
               files: expect.arrayContaining([
                 expect.objectContaining({
                   path: "testbench.spice",
-                  text: expect.stringContaining("XDUT inp inn out amp"),
+                  text: expect.stringContaining(
+                    "XDUT ('inp' 'inn' 'out') 'amp'",
+                  ),
                 }),
               ]),
             },
@@ -254,7 +302,7 @@ describe("mcp tool surface", () => {
       error: { code: "SIMULATION_FOLDER_UPDATE_EMPTY" },
     });
   });
-  it("writes output, measurement and MOS helpers into the one config source, preserving native programs", async () => {
+  it("retains legacy JSON helpers without permitting native experiments to downgrade", async () => {
     const http = new FakeAgentHttp(),
       { session } = await toolSession(http);
     await callTool("connect", { claimCode: "session-1.code" }, session);
@@ -284,6 +332,46 @@ describe("mcp tool surface", () => {
       }
       return capabilitiesResponse(request.requestId);
     };
+    const original = JSON.stringify(snapshot.project.simulationFolders);
+    for (const name of [
+      "simulation_output",
+      "simulation_measurement",
+      "simulation_device_operating_point",
+    ]) {
+      expect(
+        parseText(
+          await callTool(name, { action: "list", folderId: "s" }, session),
+        ),
+      ).toMatchObject({
+        ok: false,
+        error: { code: "SIMULATION_NATIVE_CODE_REQUIRED" },
+      });
+    }
+    expect(
+      parseText(
+        await callTool(
+          "simulation_output",
+          {
+            action: "upsert",
+            folderId: "s",
+            label: "Vout",
+            expression: { kind: "vector", vector: "v(out)" },
+          },
+          session,
+        ),
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "SIMULATION_NATIVE_CODE_REQUIRED" },
+    });
+    expect(JSON.stringify(snapshot.project.simulationFolders)).toBe(original);
+    // Explicit fixture for the retained v1 compatibility lane.
+    snapshot.project.simulationFolders[0]!.input.files.find(
+      (f) => f.path === "experiment.json",
+    )!.text = JSON.stringify({
+      version: 1,
+      environment: { profileId: "test" },
+    });
     const cfg = () => {
       const result = readSimulationExperimentConfig(
         snapshot.project.simulationFolders[0]!,
@@ -421,7 +509,10 @@ describe("mcp tool surface", () => {
           session,
         ),
       ),
-    ).toMatchObject({ ok: true, outputs: [] });
+    ).toMatchObject({
+      ok: false,
+      error: { code: "SIMULATION_NATIVE_CODE_REQUIRED" },
+    });
   });
 
   it("inspect and search refresh by default so human edits are visible", async () => {

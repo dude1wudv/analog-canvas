@@ -1,4 +1,7 @@
-import type { SimulationFocusTarget } from "./simulation-focus-target";
+import {
+  SimulationAgentGuidance,
+  SimulationAgentStart,
+} from "./simulation-agent-guidance";
 import { useEffect, useRef, useState } from "react";
 import {
   WorkspaceInteractions,
@@ -10,6 +13,7 @@ import {
   type SimulationRunPlanAxis,
 } from "@icm/model";
 import { createSimulationStarter } from "@icm/netlist";
+import { profileEngine } from "@icm/simulation-service";
 import type { SimulationCodeWorkspaceProps } from "./code-workspace";
 import type {
   ArtifactRef,
@@ -22,11 +26,11 @@ import type {
 } from "@icm/simulation-service/contract";
 import { downloadTextArtifact } from "../../document/project-file-service";
 import type { SpiceSimulationSurfaceProps } from "./simulation-surface-types";
+import { SimulationExampleCards } from "./simulation-example-cards";
 export type {
   SpiceSimulationSurfaceProps,
   SimulationFolderSaveResult,
 } from "./simulation-surface-types";
-import authoringProfile from "../../../../../containers/ngspice/hosted-sky130-profile.json";
 import {
   SourceCodePane,
   type SourceCodeHandle,
@@ -36,40 +40,18 @@ import {
   sourcePresentation,
   type SimulationPresentationOutput as SimulationOutputSpec,
 } from "./source-presentation";
+import { SimulationSpecResults } from "./simulation-spec-results";
+import { sha256 } from "@icm/simulation-service/files";
 import { SimulationProblemView } from "./simulation-problem-view";
 import { SimulationRunDetails } from "./simulation-run-details";
-import { AcResultsExplorer } from "./ac-results-explorer";
-import { DcResultsExplorer } from "./dc-results-explorer";
-import { TransientResultsExplorer } from "./transient-results-explorer";
-import {
-  SimulationAnalysisCard,
-  SimulationOutputResults,
-} from "./simulation-output-results";
-import { deriveOperatingPointCanvasProjection } from "./operating-point-projection";
-import {
-  resultRecordGroups,
-  resultRecordLabel,
-  type RecordSelection,
-} from "./simulation-result-records";
-import type { OperatingPointDisplay } from "./operating-point-labels";
-import { DeviceOperatingPointResults } from "./device-operating-point-results";
-
+import { SimulationActionIcon } from "./simulation-action-icon";
 import {
   buildSimulationArtifactArchive,
+  buildSimulationWorkspaceArchive,
   readSimulationArtifact,
   readSimulationArtifactPreview,
   type SimulationArtifactContent,
 } from "./simulation-artifact-files";
-import {
-  buildVisibleSimulationPlotDownload,
-  downloadSimulationPlot,
-  type SimulationPlotExportFormat,
-} from "./simulation-plot-export";
-import {
-  SimulationRunComparison,
-  type SimulationComparisonRun,
-} from "./simulation-run-comparison";
-import { SimulationWaveformComparison } from "./simulation-waveform-comparison";
 import { createBrowserSimulationArchiveStore } from "./browser-simulation-archive-store";
 import {
   captureSimulationRunArchive,
@@ -77,23 +59,10 @@ import {
   type SimulationRunArchiveSummary,
 } from "./simulation-run-archive";
 
-const MAX_COMPARISON_RUNS = 5;
 type ResultTab = SimulationCodeWorkspaceProps["outputPane"];
 
 function preferredResultTab(run: Run): ResultTab {
-  const analyses = run.outputData?.analyses ?? run.result?.data?.analyses ?? [];
-  if (
-    analyses.some(
-      (analysis) =>
-        analysis.analysis === "dc" ||
-        analysis.analysis === "ac" ||
-        analysis.analysis === "tran",
-    )
-  )
-    return "plot";
-  if (analyses.some((analysis) => analysis.analysis === "op"))
-    return "operating-point";
-  return "console";
+  return run.state === "finished" ? "specs" : "console";
 }
 
 interface PreparedPresentation {
@@ -103,15 +72,6 @@ interface PreparedPresentation {
   readonly analysisLabel: string;
   readonly rootDocumentId?: string;
   readonly folderName: string;
-}
-
-function focusTarget(
-  output: SimulationOutputSpec,
-): SimulationFocusTarget | null {
-  const expression = output.expression;
-  return expression.kind === "voltage" || expression.kind === "current"
-    ? { ...expression, id: output.id }
-    : null;
 }
 
 function uiProblem(code: string, message: string): Problem {
@@ -130,6 +90,14 @@ export function SpiceSimulationSurface(props: SpiceSimulationSurfaceProps) {
 function SimulationSurface(props: SpiceSimulationSurfaceProps) {
   const interaction = useWorkspaceInteractions();
   const { session, project, open } = props;
+  const [sharedRuns, setSharedRuns] = useState(
+    () => props.runHistory?.snapshot() ?? [],
+  );
+  useEffect(() => {
+    const history = props.runHistory;
+    setSharedRuns(history?.snapshot() ?? []);
+    return history?.subscribe(() => setSharedRuns(history.snapshot()));
+  }, [props.runHistory]);
   const selectedFolder = project.simulationFolders.find(
     (folder) => folder.id === props.selectedFolderId,
   );
@@ -138,6 +106,10 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
   const [capabilities, setCapabilities] = useState<Capabilities>();
   const [prepared, setPrepared] = useState<Prepared>();
   const [run, setRun] = useState<Run>();
+  const openedProjectFiles = useRef(new Map<string, string>());
+  const openedProjectFile = run
+    ? openedProjectFiles.current.get(run.id)
+    : undefined;
   const [batch, setBatch] = useState<SimulationBatch>();
   const hydratedBatchRuns = useRef(new Set<string>());
   const batchRuns = useRef(new Map<string, { prepared: Prepared; run: Run }>());
@@ -175,7 +147,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     });
     return () => props.onSourceBuffer?.(null);
   }, [dirty, selectedFolder?.id, props.onSourceBuffer]);
-  const [resultTab, setResultTab] = useState<ResultTab>("plot");
+  const [resultTab, setResultTab] = useState<ResultTab>("specs");
 
   const [artifactPreview, setArtifactPreview] =
     useState<SimulationArtifactContent>();
@@ -188,17 +160,6 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
       busy?.startsWith("preview:") ? undefined : busy,
     );
   };
-  const [canvasOpEnabled, setCanvasOpEnabled] = useState(false);
-  const [opRecord, setOpRecord] = useState<{ runId: string; index: number }>();
-  const [comparisonRecords, setComparisonRecords] = useState<
-    Record<string, RecordSelection>
-  >({});
-  const [canvasOpDisplay, setCanvasOpDisplay] =
-    useState<OperatingPointDisplay>("named");
-  const resultsBodyRef = useRef<HTMLDivElement>(null);
-  const [retainedComparisonRuns, setRetainedComparisonRuns] = useState<
-    readonly SimulationComparisonRun[]
-  >([]);
   const [archiveStore] = useState(() => createBrowserSimulationArchiveStore());
   const archivedRunIds = useRef(new Set<string>());
   const [archives, setArchives] = useState<
@@ -215,9 +176,6 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     document.addEventListener("pointerdown", closeTaskbarMenus);
     return () => document.removeEventListener("pointerdown", closeTaskbarMenus);
   }, []);
-  const operatingPointProjectionRef = useRef(props.onOperatingPointProjection);
-  operatingPointProjectionRef.current = props.onOperatingPointProjection;
-  useEffect(() => () => operatingPointProjectionRef.current?.(null), []);
   useEffect(() => {
     let stopped = false;
     void archiveStore.list(project.id).then((result) => {
@@ -226,7 +184,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     return () => {
       stopped = true;
     };
-  }, [archiveStore, project.id, open]);
+  }, [archiveStore, project.id, open, sharedRuns]);
   useEffect(
     () => () => {
       archiveStore.close();
@@ -244,7 +202,6 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     setRun(previous?.run);
     setProblem(undefined);
     closeArtifact();
-    props.onOperatingPointProjection?.(null);
   }, [props.selectedFolderId]);
   const lock = useRef(false);
   const alive = useRef(true);
@@ -269,10 +226,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     }
     if (!reply.ok) {
       setProblem(reply.error);
-      if (selectedFolder) {
-        setResultTab("console");
-      } else {
-      }
+      if (selectedFolder) setResultTab("console");
     } else if ("batch" in reply) {
       setBatch(reply.batch);
       setProblem(undefined);
@@ -284,27 +238,6 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
         });
       setRun(reply.run);
       setProblem(undefined);
-      const presentation = preparedPresentations.current.get(
-        reply.run.preparedId,
-      );
-      if (
-        canvasOpEnabled &&
-        reply.run.state === "finished" &&
-        reply.run.inputStatus !== "changed" &&
-        presentation?.rootDocumentId
-      ) {
-        props.onOperatingPointProjection?.(
-          deriveOperatingPointCanvasProjection(
-            project,
-            presentation.rootDocumentId,
-            reply.run.inputRevision,
-            reply.run.outputData,
-            presentation.outputs,
-            canvasOpDisplay,
-            opRecord?.runId === reply.run.id ? opRecord.index : undefined,
-          ),
-        );
-      } else props.onOperatingPointProjection?.(null);
       if (
         reply.run.result ||
         reply.run.error ||
@@ -411,19 +344,23 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
       clearTimeout(timer);
     };
   }, [batch?.id, batch?.state, session, project]);
-  const execute = async (start: boolean) => {
+  const execute = async (start: boolean, inspect = false) => {
     if (lock.current) return;
     const authored = await codeRef.current?.flush();
     if (!authored?.ok) return;
     const selectedConfig = readSimulationExperimentConfig(authored.folder);
     if (selectedConfig.ok && selectedConfig.config.runPlan.mode === "sweep") {
-      await executeSweep(selectedConfig.config.runPlan.axes, start, authored);
+      await executeSweep(
+        selectedConfig.config.runPlan.axes,
+        start,
+        authored,
+        inspect,
+      );
       return;
     }
     lock.current = true;
     setBusy(true);
     setProblem(undefined);
-    props.onOperatingPointProjection?.(null);
     try {
       const reply = await session.handle({
         operation: "prepare",
@@ -440,6 +377,18 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
         });
       }
       receive(reply);
+      if (
+        inspect &&
+        reply.ok &&
+        "prepared" in reply &&
+        alive.current &&
+        activeFolderId.current === authored.folder.id
+      ) {
+        const deck = reply.prepared.artifacts.find(
+          (artifact) => artifact.name === "prepared.cir",
+        );
+        if (deck) await preview(deck);
+      }
       if (start && reply.ok && "prepared" in reply && alive.current)
         receive(
           await session.handle({
@@ -455,12 +404,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
   };
   const executeBatch = async (selection: readonly string[]) => {
     if (lock.current) return;
-    const authored = await codeRef.current?.flush();
-    if (authored && !authored.ok) return;
-    const folders = project.simulationFolders.filter((folder) =>
-      selection.includes(folder.id),
-    );
-    if (folders.length < 2) {
+    if (new Set(selection).size < 2) {
       setProblem(
         uiProblem(
           "SIMULATION_BATCH_SELECTION_REQUIRED",
@@ -474,11 +418,12 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     setProblem(undefined);
     hydratedBatchRuns.current.clear();
     try {
+      const authored = await codeRef.current?.flushFolders(selection);
+      if (!authored?.ok) return;
+      const folders = authored.folders;
       const preparedReply = await session.handle({
         operation: "prepare-batch",
-        expectedStructureRevision: authored?.ok
-          ? authored.revision
-          : project.structureRevision,
+        expectedStructureRevision: authored.revision,
         items: folders.map((folder) => ({
           id: folder.id,
           folderId: folder.id,
@@ -492,11 +437,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
         );
         if (!folder) continue;
         preparedPresentations.current.set(item.prepared.id, {
-          ...sourcePresentation(
-            authored?.ok && authored.folder.id === folder.id
-              ? authored.folder
-              : folder,
-          ),
+          ...sourcePresentation(folder),
           prepared: structuredClone(item.prepared),
         });
         folderResults.current.set(folder.id, { prepared: item.prepared });
@@ -516,6 +457,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     axes: readonly SimulationRunPlanAxis[],
     start: boolean,
     authored: Extract<SourceFlush, { ok: true }>,
+    inspect = false,
   ) => {
     if (lock.current || !selectedFolder) return;
     lock.current = true;
@@ -548,7 +490,19 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
         );
       else {
         const first = preparedReply.batch.items[0];
-        if (first) await showBatchItem(first);
+        if (first) {
+          await showBatchItem(first);
+          if (
+            inspect &&
+            alive.current &&
+            activeFolderId.current === authored.folder.id
+          ) {
+            const deck = first.prepared.artifacts.find(
+              (artifact) => artifact.name === "prepared.cir",
+            );
+            if (deck) await preview(deck);
+          }
+        }
       }
     } finally {
       lock.current = false;
@@ -619,7 +573,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     setArtifactPreview(result.content);
   };
   const downloadBundle = async (
-    key: "prepare" | "run",
+    key: "diagnostics" | "run",
     artifacts: readonly ArtifactRef[],
   ) => {
     setArtifactBusy(`bundle:${key}`);
@@ -669,7 +623,13 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
       setProblem(captured.error);
       return;
     }
-    const saved = await archiveStore.save(captured.value);
+    const saved = await archiveStore.save(
+      sharedRuns.find((item) => item.id === run.id)?.archive ?? {
+        ...captured.value,
+        id: `run-${run.id}`,
+        ...(openedProjectFile ? { projectFile: openedProjectFile } : {}),
+      },
+    );
     setArtifactBusy(undefined);
     if (!saved.ok) {
       setProblem(
@@ -691,7 +651,12 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
   };
   const openArchivedRun = async (archiveId: string) => {
     setArtifactBusy(`archive:open:${archiveId}`);
-    const stored = await archiveStore.read(archiveId);
+    const memoryArchive = sharedRuns.find(
+      (item) => item.archive?.id === archiveId,
+    )?.archive;
+    const stored = memoryArchive
+      ? { ok: true as const, value: memoryArchive }
+      : await archiveStore.read(archiveId);
     if (!stored.ok || !stored.value) {
       setArtifactBusy(undefined);
       setProblem(
@@ -715,6 +680,11 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
       ...stored.value.presentation,
       prepared: restored.value.prepared,
     };
+    if (stored.value.projectFile)
+      openedProjectFiles.current.set(
+        restored.value.run.id,
+        stored.value.projectFile,
+      );
     preparedPresentations.current.set(restored.value.prepared.id, presentation);
     archivedRunIds.current.add(restored.value.run.id);
     folderResults.current.set(stored.value.presentation.folderId, {
@@ -747,49 +717,11 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     setArchives((current) =>
       current.filter((archive) => archive.id !== archiveId),
     );
-  };
-  const exportVisiblePlots = async (format: SimulationPlotExportFormat) => {
-    if (!resultsBodyRef.current) return;
-    setArtifactBusy(`plots:${format}`);
-    try {
-      const result = await buildVisibleSimulationPlotDownload(
-        resultsBodyRef.current,
-        format,
-      );
-      if (!result) {
-        setProblem(
-          uiProblem(
-            "PLOT_EXPORT_UNAVAILABLE",
-            "导出图像前，请打开绘图并确保至少有一个可见图表",
-          ),
-        );
-        return;
-      }
-      downloadSimulationPlot(result);
-    } catch (error) {
-      setProblem(
-        uiProblem(
-          "PLOT_EXPORT_FAILED",
-          error instanceof Error
-            ? error.message
-            : "无法导出当前可见绘图",
-        ),
-      );
-    } finally {
-      setArtifactBusy(undefined);
-    }
+    props.runHistory?.forgetArchive(archiveId);
   };
   const batchRunning = batch && ["running", "cancelling"].includes(batch.state);
   const running =
     (run && ["running", "cancelling"].includes(run.state)) || batchRunning;
-  const activeCell = project.documents.find(
-    (candidate) => candidate.id === props.activeDocumentId,
-  );
-  const hasDutInstance = Boolean(
-    activeCell?.instances.some(
-      (instance) => instance.netlist?.binding?.kind === "subcircuit",
-    ),
-  );
   const finishedBatchItems =
     batch?.items.filter((item) =>
       ["finished", "failed", "cancelled", "lost"].includes(item.state),
@@ -813,95 +745,10 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
   const runPresentation = run
     ? preparedPresentations.current.get(run.preparedId)
     : undefined;
-  const canvasOpProjection =
-    run && runPresentation?.rootDocumentId
-      ? deriveOperatingPointCanvasProjection(
-          project,
-          runPresentation.rootDocumentId,
-          run.inputRevision,
-          run.outputData,
-          runPresentation.outputs,
-          canvasOpDisplay,
-          opRecord?.runId === run.id ? opRecord.index : undefined,
-        )
-      : undefined;
-  const currentComparisonRun: SimulationComparisonRun | undefined =
-    run?.outputData && runPresentation
-      ? {
-          id: run.id,
-          label: runPresentation.folderName,
-          inputRevision: run.inputRevision,
-          environment: runPresentation.prepared.environment,
-          outputData: run.outputData,
-          measurements: run.outputData.measurements ?? [],
-          current: true,
-        }
-      : undefined;
-  const batchComparisonRuns: readonly SimulationComparisonRun[] =
-    batch?.items
-      .flatMap((item) => {
-        if (!item.runId) return [];
-        const resolved = batchRuns.current.get(item.runId);
-        const presentation = preparedPresentations.current.get(
-          item.prepared.id,
-        );
-        if (!resolved?.run.outputData || !presentation) return [];
-        return [
-          {
-            id: resolved.run.id,
-            label: presentation.folderName,
-            inputRevision: resolved.run.inputRevision,
-            environment: presentation.prepared.environment,
-            outputData: resolved.run.outputData,
-            measurements: resolved.run.outputData.measurements ?? [],
-            current: resolved.run.id === run?.id,
-          },
-        ];
-      })
-      .slice(-MAX_COMPARISON_RUNS) ?? [];
-  const automaticComparisonIds = new Set(
-    batchComparisonRuns.map((candidate) => candidate.id),
-  );
-  const comparisonRuns = [
-    ...retainedComparisonRuns.filter(
-      (candidate) =>
-        candidate.id !== currentComparisonRun?.id &&
-        !automaticComparisonIds.has(candidate.id),
-    ),
-    ...batchComparisonRuns,
-    ...(currentComparisonRun &&
-    !automaticComparisonIds.has(currentComparisonRun.id)
-      ? [currentComparisonRun]
-      : []),
-  ]
-    .slice(-MAX_COMPARISON_RUNS)
-    .map((candidate) => ({
-      ...candidate,
-      records: comparisonRecords[candidate.id] ?? {},
-    }));
-  const retainCurrentComparison = (): void => {
-    if (!currentComparisonRun) return;
-    setRetainedComparisonRuns((current) => {
-      if (current.some((candidate) => candidate.id === currentComparisonRun.id))
-        return current;
-      // Reserve one column for the next/current run.
-      if (current.length >= MAX_COMPARISON_RUNS - 1) return current;
-      return [
-        ...current,
-        structuredClone({ ...currentComparisonRun, current: false }),
-      ];
-    });
-  };
   const runPreparedArtifactIds = new Set(
     runPresentation?.prepared.artifacts.map((artifact) => artifact.id) ?? [],
   );
   const artifactGroups = [
-    {
-      key: "prepare" as const,
-      label: "准备",
-      description: "已编译输入",
-      artifacts: prepared?.artifacts ?? [],
-    },
     {
       key: "run" as const,
       label: "Run",
@@ -912,27 +759,73 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
         ) ?? [],
     },
   ];
-  const resultCsvArtifacts = run
-    ? (() => {
-        const csv = run.artifacts.filter((artifact) =>
-          artifact.name.toLowerCase().endsWith(".csv"),
-        );
-        const evaluated = csv.filter(
-          (artifact) =>
-            artifact.name.startsWith("outputs-") ||
-            artifact.name === "measurements.csv",
-        );
-        return evaluated.length ? evaluated : csv;
-      })()
-    : [];
-  const presentationProbes =
-    runPresentation?.outputs.flatMap((output) => {
-      const probe = focusTarget(output);
-      return probe ? [probe] : [];
-    }) ?? [];
-  const presentationLabels = Object.fromEntries(
-    (runPresentation?.outputs ?? []).map((output) => [output.id, output.label]),
+  // A run's diagnostics must stay tied to that run, never a newer prepared input.
+  const diagnosticArtifacts = run?.artifacts ?? prepared?.artifacts ?? [];
+  const executedDeck = run?.artifacts.find(
+    (artifact) => artifact.name === "executed.cir",
   );
+  const diagnosticActions = [
+    {
+      label: "Download complete run…",
+      disabled: !run || !!artifactBusy,
+      run: () => void downloadBundle("run", run?.artifacts ?? []),
+    },
+    {
+      label: "Download project + results…",
+      disabled: !run || !openedProjectFile || !!artifactBusy,
+      run: async () => {
+        if (!run || !openedProjectFile) return;
+        setArtifactBusy("bundle:project");
+        const result = await buildSimulationWorkspaceArchive(session.files, [
+          {
+            kind: "text",
+            path: "project.icproj.json",
+            text: openedProjectFile,
+          },
+          ...run.artifacts.map((artifact) => ({
+            kind: "artifact" as const,
+            path: `results/${artifact.name}`,
+            artifact,
+          })),
+        ]);
+        setArtifactBusy(undefined);
+        if (!result.ok) {
+          setProblem(result.error);
+          return;
+        }
+        const url = URL.createObjectURL(
+          new Blob([result.bytes as BlobPart], { type: "application/zip" }),
+        );
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = "project-with-results.zip";
+        anchor.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      },
+    },
+    {
+      label: "Archive current run",
+      disabled: !run || !!artifactBusy,
+      run: () => void archiveCurrentRun(),
+    },
+    {
+      label: "Preview input netlist…",
+      disabled: busy || running,
+      run: () => void execute(false, true),
+    },
+    {
+      label: "View executed netlist…",
+      disabled: !executedDeck || artifactBusy !== undefined,
+      run: () => {
+        if (executedDeck) void preview(executedDeck);
+      },
+    },
+    {
+      label: "Export diagnostic bundle…",
+      disabled: diagnosticArtifacts.length === 0 || artifactBusy !== undefined,
+      run: () => void downloadBundle("diagnostics", diagnosticArtifacts),
+    },
+  ];
   const [requestedRun, setRequestedRun] = useState<string>();
   useEffect(() => {
     if (requestedRun && requestedRun === selectedFolder?.id) {
@@ -984,10 +877,35 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
       );
       return;
     }
-    const name = await interaction.name({
+    const selection = await interaction.name({
       kind: "folder",
       ...(action === "rename" && current ? { folderId: current.id } : {}),
-      label: action === "rename" ? "文件夹名称" : "新仿真文件夹名称",
+      label: action === "rename" ? "Folder name" : "New simulation folder name",
+      ...(action === "new" && capabilities?.profiles.length
+        ? {
+            profiles: capabilities.profiles.map((profile) => ({
+              id: profile.id,
+              name: profile.label ?? profile.id,
+            })),
+          }
+        : {}),
+      ...(action === "new"
+        ? {
+            cellSelection: {
+              initial: props.activeDocumentId,
+              options: latestProject.documents.map(({ id, name }) => ({
+                id,
+                name,
+              })),
+              validate: (documentId: string) =>
+                session
+                  .currentProject()
+                  ?.documents.some((cell) => cell.id === documentId)
+                  ? undefined
+                  : "Select an existing Cell for this experiment.",
+            },
+          }
+        : {}),
       validate: (value) =>
         session
           .currentProject()
@@ -1006,13 +924,13 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
             ? `${current?.name} copy`
             : `Simulation ${latestProject.simulationFolders.length + 1}`,
     });
-    if (!name?.trim()) return;
+    if (!selection) return;
     const identity = {
       id:
         action === "rename" && current
           ? current.id
           : `simulation-folder-${crypto.randomUUID()}`,
-      name: name.trim(),
+      name: selection.name,
     };
     // Naming is non-modal: refresh the revision and source after the user finishes.
     const namingProject = session.currentProject();
@@ -1024,12 +942,45 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     let created: typeof current;
     if (newest) created = { ...structuredClone(newest), ...identity };
     else {
+      // Creation is non-modal: never silently substitute a different Cell if
+      // the selected one disappeared while the user was naming the folder.
+      if (
+        !selection.documentId ||
+        !namingProject.documents.some(
+          (cell) => cell.id === selection.documentId,
+        )
+      ) {
+        setProblem(
+          uiProblem(
+            "SIMULATION_STARTER_INVALID",
+            "The selected Cell no longer exists. Select a Cell and create the experiment again.",
+          ),
+        );
+        return;
+      }
+      const profile =
+        capabilities?.profiles.find((p) => p.id === selection.profileId) ??
+        capabilities?.profiles[0];
+      const engine = profile
+        ? profileEngine(profile, capabilities?.rawfileCollection)
+        : "vacask";
+      if (!engine) {
+        setProblem(
+          uiProblem(
+            "SIMULATION_ENGINE_UNAVAILABLE",
+            "The selected Profile does not declare an execution dialect.",
+          ),
+        );
+        return;
+      }
       const result = createSimulationStarter(namingProject, {
         ...identity,
         mode: "circuit",
-        documentId:
-          props.draftContext?.rootDocumentId ?? props.activeDocumentId,
-        profileId: capabilities?.profiles[0]?.id ?? authoringProfile.id,
+        documentId: selection.documentId,
+        // Offline authoring uses the same candidate as the native starters.
+        // Prepare still requires that the connected service advertises it.
+        profileId: profile?.id ?? "vacask-sky130-candidate",
+        engine,
         template: "op",
       });
       if (!result.ok) {
@@ -1043,444 +994,140 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     else props.onSelectFolderId(created.id);
   };
   const createFolder = () => void folderAction("new", []);
-  const outputActions = (
-    <>
-      {run ? (
-        <div className="simulation-result-actions">
-          <button
-            type="button"
-            disabled={
-              artifactBusy !== undefined ||
-              (!run.result && !run.outputData) ||
-              !selectedFolder ||
-              selectedFolder.id !== runPresentation?.folderId
-            }
-            onClick={() => void archiveCurrentRun()}
-          >
-            {artifactBusy === "archive:save" ? "正在归档…" : "归档"}
-          </button>
-          <details className="simulation-result-export">
-            <summary>导出</summary>
-            <div>
-              {resultTab === "plot" ? (
-                <>
+  const revealSpec = async (source: {
+    path: string;
+    line: number;
+    text: string;
+  }) => {
+    const file = selectedFolder?.input.files.find(
+      (f) => f.path === source.path,
+    );
+    if (!file || file.text.split(/\r?\n/)[source.line - 1] !== source.text) {
+      setProblem(
+        uiProblem(
+          "SPEC_SOURCE_CHANGED",
+          "This specification belongs to an earlier source snapshot. Open that run's executed source.",
+        ),
+      );
+      setResultTab("console");
+      return;
+    }
+    const lines = file.text.split("\n");
+    const startOffset = lines
+      .slice(0, source.line - 1)
+      .reduce((sum, line) => sum + line.length + 1, 0);
+    setResultsMaximized(false);
+    await codeRef.current?.reveal({
+      scope: "authored",
+      path: source.path,
+      textDigest: await sha256(file.text),
+      startOffset,
+      endOffset: startOffset + source.text.length,
+      line: source.line,
+      column: 1,
+    });
+  };
+  const historyContent = (
+    <details className="simulation-run-history">
+      <summary>Run history</summary>{" "}
+      {archives.some(
+        (item) =>
+          item.folderId === selectedFolder?.id &&
+          !sharedRuns.some((run) => run.archive?.id === item.id),
+      ) ? (
+        <section
+          className="simulation-archive-list"
+          aria-label="Saved folder results"
+        >
+          <strong>Saved results · this browser</strong>
+          <ul>
+            {archives
+              .filter(
+                (item) =>
+                  item.folderId === selectedFolder?.id &&
+                  !sharedRuns.some((run) => run.archive?.id === item.id),
+              )
+              .map((item) => (
+                <li key={item.id}>
+                  <span>
+                    {item.origin === "agent" ? "Agent · " : ""}
+                    {item.folderName} · {item.state ?? "saved"} ·{" "}
+                    {new Date(item.createdAt).toLocaleString()}
+                  </span>
                   <button
                     type="button"
                     disabled={artifactBusy !== undefined}
-                    onClick={() => void exportVisiblePlots("svg")}
+                    onClick={() => void openArchivedRun(item.id)}
                   >
-                    {artifactBusy === "plots:svg"
-                      ? "正在准备 SVG…"
-                      : "可见绘图 · SVG"}
+                    Open result
                   </button>
                   <button
                     type="button"
-                    disabled={artifactBusy !== undefined}
-                    onClick={() => void exportVisiblePlots("png")}
+                    aria-label={`Delete saved result ${item.id}`}
+                    onClick={() => void deleteArchivedRun(item.id)}
                   >
-                    {artifactBusy === "plots:png"
-                      ? "正在准备 PNG…"
-                      : "可见绘图 · PNG"}
+                    Delete
                   </button>
-                </>
-              ) : null}
-              {resultCsvArtifacts.length ? (
-                <section>
-                  <small>完整结果数据</small>
-                  {resultCsvArtifacts.map((artifact) => (
-                    <button
-                      key={artifact.id}
-                      type="button"
-                      disabled={artifactBusy !== undefined}
-                      onClick={() => void download(artifact)}
-                    >
-                      {artifact.name}
-                    </button>
-                  ))}
-                </section>
-              ) : null}
-              <button
-                type="button"
-                disabled={
-                  artifactBusy !== undefined || run.artifacts.length === 0
-                }
-                onClick={() => void downloadBundle("run", run.artifacts)}
-              >
-                Complete run · ZIP
-              </button>
-            </div>
-          </details>
-        </div>
+                </li>
+              ))}
+          </ul>
+        </section>
       ) : null}
-    </>
+      {sharedRuns.some(
+        (item) => item.presentation.folderId === selectedFolder?.id,
+      ) ? (
+        <section className="simulation-archive-list" aria-label="Project runs">
+          <strong>Project runs · automatically archived in this browser</strong>
+          <ul>
+            {sharedRuns
+              .filter(
+                (item) => item.presentation.folderId === selectedFolder?.id,
+              )
+              .map((item) => (
+                <li key={item.id}>
+                  <span>
+                    {item.owner === "agent" ? "Agent" : "You"} ·{" "}
+                    {item.presentation.folderName} ·{" "}
+                    {item.presentation.analysisLabel} · {item.state}
+                    {item.error ? (
+                      <small role="status">{item.error}</small>
+                    ) : null}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={!item.archive || artifactBusy !== undefined}
+                    onClick={() =>
+                      item.archive && void openArchivedRun(item.archive.id)
+                    }
+                  >
+                    Open result
+                  </button>
+                </li>
+              ))}
+          </ul>
+        </section>
+      ) : null}
+    </details>
   );
   const resultContent = (
     <section
       className="simulation-results-dock"
       aria-label="仿真结果"
     >
-      <div ref={resultsBodyRef} className="simulation-results-body">
-        {resultTab === "plot" ? (
-          <div className="simulation-analysis-view simulation-plot-view">
-            {run?.outputData ? (
-              <SimulationOutputResults
-                resultKey={run.id}
-                data={{
-                  ...run.outputData,
-                  analyses: run.outputData.analyses.filter(
-                    (analysis) => analysis.analysis !== "op",
-                  ),
-                }}
-                outputs={runPresentation?.outputs ?? []}
-                signalTargets={runPresentation?.prepared.signalTargets}
-                {...(props.onFocusProbe
-                  ? {
-                      onFocusProbe: (probe: SimulationFocusTarget) =>
-                        props.onFocusProbe?.(
-                          probe,
-                          probe.rootDocumentId ??
-                            runPresentation?.rootDocumentId,
-                        ),
-                    }
-                  : {})}
-              />
-            ) : null}
-            {!run?.outputData &&
-              run?.result?.data?.analyses
-                .filter((analysis) => analysis.analysis === "dc")
-                .map((analysis, index) => (
-                  <SimulationAnalysisCard key={`dc-${index}`} kind="dc">
-                    <DcResultsExplorer
-                      analysis={analysis}
-                      vectors={runPresentation?.prepared.vectors ?? []}
-                      probes={presentationProbes}
-                      labels={presentationLabels}
-                      {...(props.onFocusProbe
-                        ? {
-                            onFocusProbe: (probe: SimulationFocusTarget) =>
-                              props.onFocusProbe?.(
-                                probe,
-                                runPresentation?.rootDocumentId,
-                              ),
-                          }
-                        : {})}
-                    />
-                  </SimulationAnalysisCard>
-                ))}
-            {!run?.outputData &&
-              run?.result?.data?.analyses
-                .filter((analysis) => analysis.analysis === "ac")
-                .map((analysis, index) => (
-                  <SimulationAnalysisCard
-                    key={`${run.id}:ac:${index}`}
-                    kind="ac"
-                  >
-                    <AcResultsExplorer
-                      resultKey={`${run.id}:ac:${index}`}
-                      analysis={analysis}
-                      vectors={runPresentation?.prepared.vectors ?? []}
-                      probes={presentationProbes}
-                      labels={presentationLabels}
-                      {...(props.onFocusProbe
-                        ? {
-                            onFocusProbe: (probe: SimulationFocusTarget) =>
-                              props.onFocusProbe?.(
-                                probe,
-                                runPresentation?.rootDocumentId,
-                              ),
-                          }
-                        : {})}
-                    />
-                  </SimulationAnalysisCard>
-                ))}
-            {!run?.outputData &&
-              run?.result?.data?.analyses
-                .filter((analysis) => analysis.analysis === "tran")
-                .map((analysis, index) => (
-                  <SimulationAnalysisCard
-                    key={`${run.id}:tran:${index}`}
-                    kind="tran"
-                  >
-                    <TransientResultsExplorer
-                      resultKey={`${run.id}:tran:${index}`}
-                      analysis={analysis}
-                      vectors={runPresentation?.prepared.vectors ?? []}
-                      probes={presentationProbes}
-                      labels={presentationLabels}
-                      {...(props.onFocusProbe
-                        ? {
-                            onFocusProbe: (probe: SimulationFocusTarget) =>
-                              props.onFocusProbe?.(
-                                probe,
-                                runPresentation?.rootDocumentId,
-                              ),
-                          }
-                        : {})}
-                    />
-                  </SimulationAnalysisCard>
-                ))}
-            {!run?.result?.data?.analyses.some(
-              (analysis) =>
-                analysis.analysis === "dc" ||
-                analysis.analysis === "ac" ||
-                analysis.analysis === "tran",
-            ) ? (
-              <p className="simulation-empty-result">
-                Run a DC, AC, or transient analysis to see a plot.
-              </p>
-            ) : null}
-          </div>
+      <div className="simulation-results-body">
+        {run && archivedRunIds.current.has(run.id) ? (
+          <p>
+            Viewing a saved input snapshot, not a new run of the current source.
+          </p>
         ) : null}
-
-        {resultTab === "operating-point" ? (
-          <div className="simulation-analysis-view simulation-operating-point-view">
-            <div className="simulation-op-canvas-controls">
-              {run?.outputData &&
-              (resultRecordGroups(run.outputData).get("op")?.length ?? 0) >
-                1 ? (
-                <label>
-                  Canvas OP record
-                  <select
-                    value={opRecord?.runId === run.id ? opRecord.index : ""}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      setOpRecord(
-                        value === ""
-                          ? undefined
-                          : { runId: run.id, index: Number(value) },
-                      );
-                      setCanvasOpEnabled(false);
-                      props.onOperatingPointProjection?.(null);
-                    }}
-                  >
-                    <option value="">选择记录…</option>
-                    {resultRecordGroups(run.outputData)
-                      .get("op")!
-                      .map(({ index, analysis }) => (
-                        <option key={index} value={index}>
-                          {resultRecordLabel(index, analysis)}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-              ) : null}
-              <button
-                type="button"
-                aria-pressed={canvasOpEnabled}
-                disabled={
-                  !canvasOpProjection?.values.length ||
-                  run?.inputStatus === "changed"
-                }
-                onClick={() => {
-                  const enabled = !canvasOpEnabled;
-                  setCanvasOpEnabled(enabled);
-                  props.onOperatingPointProjection?.(
-                    enabled && canvasOpProjection ? canvasOpProjection : null,
-                  );
-                }}
-              >
-                {canvasOpEnabled ? "隐藏画布数值" : "在画布上显示"}
-              </button>
-              <label>
-                Canvas labels
-                <select
-                  value={canvasOpDisplay}
-                  disabled={!canvasOpEnabled}
-                  onChange={(event) => {
-                    const display = event.currentTarget
-                      .value as OperatingPointDisplay;
-                    setCanvasOpDisplay(display);
-                    if (canvasOpEnabled && canvasOpProjection)
-                      props.onOperatingPointProjection?.({
-                        ...canvasOpProjection,
-                        display,
-                      });
-                  }}
-                >
-                  <option value="named">已命名及聚焦项</option>
-                  <option value="all">全部采集项</option>
-                </select>
-              </label>
-              <span>
-                {run?.inputStatus === "changed"
-                  ? "已暂停：电路发生变化"
-                  : `${canvasOpProjection?.values.length ?? 0} direct Net voltage${canvasOpProjection?.values.length === 1 ? "" : "s"}`}
-              </span>
-            </div>
-            {run?.outputData ? (
-              <>
-                <DeviceOperatingPointResults
-                  devices={run.outputData.deviceOperatingPoints ?? []}
-                />
-                <SimulationOutputResults
-                  resultKey={`${run.id}:op`}
-                  data={{
-                    ...run.outputData,
-                    analyses: run.outputData.analyses.filter(
-                      (analysis) => analysis.analysis === "op",
-                    ),
-                  }}
-                  outputs={runPresentation?.outputs ?? []}
-                />
-              </>
-            ) : null}
-            {!run?.outputData &&
-              run?.result?.data?.analyses
-                .filter((analysis) => analysis.analysis === "op")
-                .map((analysis, index) => (
-                  <SimulationAnalysisCard key={index} kind="op">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>向量</th>
-                          <th>数值</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {analysis.probes.map((probe) => (
-                          <tr key={probe.name}>
-                            <td>{probe.name}</td>
-                            <td>
-                              {probe.value.toPrecision(6)} {probe.unit}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </SimulationAnalysisCard>
-                ))}
-            {!run?.result?.data?.analyses.some(
-              (analysis) => analysis.analysis === "op",
-            ) ? (
-              <p className="simulation-empty-result">
-                Run an operating-point analysis to see values.
-              </p>
-            ) : null}
-          </div>
+        {resultTab === "specs" ? (
+          <SimulationSpecResults
+            report={run?.outputData?.specs}
+            hasRun={!!run?.result}
+            stale={activeDirty || run?.inputStatus === "changed"}
+            onSource={revealSpec}
+          />
         ) : null}
-
-        {resultTab === "compare" ? (
-          <div className="simulation-comparison-view">
-            {comparisonRuns.flatMap((candidate) =>
-              [...resultRecordGroups(candidate.outputData)]
-                .filter(([, records]) => records.length > 1)
-                .map(([kind, records]) => (
-                  <label key={`${candidate.id}:${kind}`}>
-                    {candidate.label} · {kind.toUpperCase()} record
-                    <select
-                      aria-label={`${candidate.id} ${kind} comparison record`}
-                      value={comparisonRecords[candidate.id]?.[kind] ?? ""}
-                      onChange={(event) => {
-                        const value = event.currentTarget.value;
-                        setComparisonRecords((current) => ({
-                          ...current,
-                          [candidate.id]: {
-                            ...current[candidate.id],
-                            [kind]: value === "" ? undefined : Number(value),
-                          },
-                        }));
-                      }}
-                    >
-                      <option value="">比较前请选择…</option>
-                      {records.map(({ index, analysis }) => (
-                        <option key={index} value={index}>
-                          {resultRecordLabel(index, analysis)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )),
-            )}
-            <SimulationWaveformComparison
-              runs={comparisonRuns}
-              actions={
-                <div className="simulation-comparison-actions">
-                  <button
-                    type="button"
-                    disabled={
-                      !currentComparisonRun ||
-                      retainedComparisonRuns.some(
-                        (candidate) => candidate.id === currentComparisonRun.id,
-                      ) ||
-                      retainedComparisonRuns.length >= MAX_COMPARISON_RUNS - 1
-                    }
-                    onClick={retainCurrentComparison}
-                  >
-                    {retainedComparisonRuns.some(
-                      (candidate) => candidate.id === currentComparisonRun?.id,
-                    )
-                      ? "已保留当前结果"
-                      : "保留当前结果"}
-                  </button>
-                  {retainedComparisonRuns.length ? (
-                    <button
-                      type="button"
-                      onClick={() => setRetainedComparisonRuns([])}
-                    >
-                      Clear kept
-                    </button>
-                  ) : null}
-                </div>
-              }
-            />
-            {comparisonRuns.length < 2 && currentComparisonRun ? (
-              <p className="simulation-comparison-hint">
-                Keep this result, change the circuit or conditions, then run
-                again to compare.
-              </p>
-            ) : null}
-            <SimulationRunComparison
-              runs={comparisonRuns}
-              onRemove={(runId) =>
-                setRetainedComparisonRuns((current) =>
-                  current.filter((candidate) => candidate.id !== runId),
-                )
-              }
-            />
-            {archives.length ? (
-              <section
-                className="simulation-archive-list"
-                aria-label="已保存的结果归档"
-              >
-                <header>
-                  <strong>浏览器归档</strong>
-                  <small>Local to this browser · {archives.length}/10</small>
-                </header>
-                <ul>
-                  {archives.map((archive) => (
-                    <li key={archive.id}>
-                      <span>
-                        <strong>{archive.folderName}</strong>
-                        <small>
-                          {archive.analysisLabel} ·{" "}
-                          {archive.environment.corner?.toUpperCase() ??
-                            archive.environment.profileId}{" "}
-                          · {new Date(archive.createdAt).toLocaleString()}
-                        </small>
-                      </span>
-                      <button
-                        type="button"
-                        disabled={artifactBusy !== undefined}
-                        onClick={() => void openArchivedRun(archive.id)}
-                      >
-                        Open
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Delete archived ${archive.folderName}`}
-                        disabled={artifactBusy !== undefined}
-                        onClick={() => void deleteArchivedRun(archive.id)}
-                      >
-                        ×
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
-          </div>
-        ) : null}
-
         {resultTab === "console" ? (
           <div className="simulation-console-view">
             {run?.state === "lost" ? (
@@ -1534,7 +1181,9 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     <div className="simulation-task-actions">
       {running ? (
         <button
-          className="simulation-stop-button"
+          className="simulation-stop-button simulation-action-button"
+          aria-label={batchRunning ? "Cancel batch" : "Cancel run"}
+          title={batchRunning ? "Cancel batch" : "Cancel run"}
           disabled={
             batch?.state === "cancelling" || run?.state === "cancelling"
           }
@@ -1549,24 +1198,24 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
                 .then(receive);
           }}
         >
-          {batchRunning ? "取消批量运行" : "取消运行"}
+          <SimulationActionIcon kind="stop" />
         </button>
       ) : selectedFolder ? (
         <button
-          className="simulation-primary-button simulation-run-button"
+          className="simulation-action-button simulation-run-button"
+          aria-busy={busy}
           disabled={busy}
           onClick={() => void execute(true)}
           aria-label="Run"
-          title={`Run ${selectedFolder.name}`}
+          title={`Run ${selectedFolder.name} / ${selectedFolder.input.entry}`}
+          aria-description={`Run ${selectedFolder.name} / ${selectedFolder.input.entry}`}
         >
-          ▶
+          <SimulationActionIcon kind={busy ? "saving" : "run"} />
+          <span className="simulation-run-target">{selectedFolder.name}</span>
         </button>
       ) : (
-        <button
-          className="simulation-primary-button simulation-setup-button"
-          onClick={createFolder}
-        >
-          Set up
+        <button className="simulation-setup-button" onClick={createFolder}>
+          Manual setup
         </button>
       )}
       <span
@@ -1626,47 +1275,52 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     </div>
   );
   const windowActions = (
-    <div className="simulation-window-actions">
-      <button
-        className="simulation-minimize-button"
-        onClick={props.onMinimize}
-        aria-label="最小化仿真"
-        title="最小化仿真"
-      >
-        <span className="simulation-minimize-glyph" aria-hidden="true" />
-      </button>
-      <button
-        className="simulation-maximize-button"
-        onClick={props.onToggleMaximized}
-        aria-label={
-          props.maximized ? "还原仿真面板" : "最大化仿真面板"
-        }
-        title={
-          props.maximized ? "还原仿真面板" : "最大化仿真面板"
-        }
-      >
-        {props.maximized ? "↙" : "□"}
-      </button>
-      <button
-        className="simulation-close-button"
-        onClick={async () => {
-          if (
-            await interaction.confirm({
-              title: "退出仿真？",
-              message:
-                "未保存的源文件草稿和临时运行文件将被丢弃，正在进行的运行将被取消。",
-              acceptLabel: "退出仿真",
-            })
-          ) {
-            codeRef.current?.discard();
-            props.onExit();
+    <>
+      {props.agentGuidance && selectedFolder ? (
+        <SimulationAgentGuidance {...props.agentGuidance} />
+      ) : null}
+      <div className="simulation-window-actions">
+        <button
+          className="simulation-minimize-button"
+          onClick={props.onMinimize}
+          aria-label="Minimize simulation"
+          title="Minimize simulation"
+        >
+          <span className="simulation-minimize-glyph" aria-hidden="true" />
+        </button>
+        <button
+          className="simulation-maximize-button"
+          onClick={props.onToggleMaximized}
+          aria-label={
+            props.maximized ? "Restore simulation panel" : "Maximize simulation"
           }
-        }}
-        aria-label="退出仿真"
-      >
-        ×
-      </button>
-    </div>
+          title={
+            props.maximized ? "Restore simulation panel" : "Maximize simulation"
+          }
+        >
+          {props.maximized ? "↙" : "□"}
+        </button>
+        <button
+          className="simulation-close-button"
+          onClick={async () => {
+            if (
+              await interaction.confirm({
+                title: "Exit Simulation?",
+                message:
+                  "Unsaved source drafts and temporary run files will be discarded. An active run will be cancelled.",
+                acceptLabel: "Exit Simulation",
+              })
+            ) {
+              codeRef.current?.discard();
+              props.onExit();
+            }
+          }}
+          aria-label="Exit simulation"
+        >
+          ×
+        </button>
+      </div>
+    </>
   );
 
   return (
@@ -1684,22 +1338,22 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     >
       {!selectedFolder ? (
         <header className="simulation-taskbar">
-          {simulationActions}
+          {props.agentGuidance ? (
+            <strong className="simulation-start-title">Simulation</strong>
+          ) : (
+            simulationActions
+          )}
           {windowActions}
         </header>
-      ) : null}
-
-      {!selectedFolder && !hasDutInstance ? (
-        <p className="simulation-context-hint">
-          No DUT instance in this Cell · Edit → New Testbench Cell if needed.
-        </p>
       ) : null}
 
       {selectedFolder ? (
         <SourceCodePane
           ref={codeRef}
+          capabilities={capabilities}
           diagnostics={activeProblem?.diagnostics}
           project={project}
+          activeDocumentId={props.activeDocumentId}
           folder={selectedFolder}
           selectedCircuitObject={props.selectedCircuitObject}
           {...(props.onPreviewSignal
@@ -1728,7 +1382,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
           onProblem={setProblem}
           console={resultContent}
           results={resultContent}
-          outputActions={outputActions}
+          history={historyContent}
           artifactGroups={artifactGroups}
           artifactPreview={artifactPreview}
           artifactBusy={artifactBusy}
@@ -1740,11 +1394,24 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
           maximized={resultsMaximized}
           onToggleMaximize={toggleResultsMaximized}
           onRun={() => void execute(true)}
-          onPrepare={() => void execute(false)}
+          additionalActions={diagnosticActions}
           folders={{
             folders: project.simulationFolders.map((folder) => ({
               ...folder,
               configPath: folder.input.configPath,
+              cellLabel: folder.input.circuitBindings.length
+                ? "Cell: " +
+                  [
+                    ...new Set(
+                      folder.input.circuitBindings.map(
+                        (binding) =>
+                          project.documents.find(
+                            (cell) => cell.id === binding.documentId,
+                          )?.name ?? `Missing (${binding.documentId})`,
+                      ),
+                    ),
+                  ].join(", ")
+                : "No Canvas Cell",
               files: [
                 ...folder.input.files.map((file) => ({
                   path: file.path,
@@ -1762,12 +1429,22 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
             onAction: (action, ids) => void folderAction(action, ids),
           }}
           onHistoryBoundary={props.onHistoryBoundary}
-          onSaveProject={props.onSaveProject}
-          projectSaveState={props.projectSaveState}
         />
       ) : (
-        <div className="simulation-empty-result">
+        <div className="simulation-start-workspace">
+          {props.agentGuidance ? (
+            <SimulationAgentStart
+              {...props.agentGuidance}
+              onManualSetup={createFolder}
+            />
+          ) : null}
           {interaction.edit?.kind === "folder" ? <WorkspaceNameInput /> : null}
+          {!project.simulationFolders.length && props.onOpenExample ? (
+            <details className="simulation-start-examples">
+              <summary>Explore examples</summary>
+              <SimulationExampleCards onOpen={props.onOpenExample} />
+            </details>
+          ) : null}
         </div>
       )}
     </section>

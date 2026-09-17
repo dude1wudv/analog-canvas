@@ -17,8 +17,6 @@ import {
   type ComponentPropertyCodeContext,
   type ComponentPropertyCodeValue,
 } from "./component-property-code";
-import { ColorOverrideControl } from "./color-override-control";
-import { parseCanvasColor } from "./component-property-fields";
 
 type Instance = SchematicDocument["instances"][number];
 const PropertyJsonEditor = lazy(
@@ -27,12 +25,15 @@ const PropertyJsonEditor = lazy(
 
 export interface ComponentPropertyCodeEditorProps {
   instance: Instance;
+  displayName?: string | null;
   revision: number;
   referenceVisible: boolean | null;
   valueVisible: boolean | null;
+  parameterVisibility?: Record<string, boolean>;
+  connection?: "cell-pin" | "global" | null;
+  netName?: string | null;
   defaultForeground?: string;
   details?: ComponentPropertyCodeContext["details"];
-  focusRequest?: number;
   onApply: (
     value: ComponentPropertyCodeValue,
   ) => { ok: true } | { ok: false; message: string };
@@ -41,22 +42,38 @@ export interface ComponentPropertyCodeEditorProps {
 /** Compact editable JSON for placement, display, and appearance. */
 export function ComponentPropertyCodeEditor({
   instance,
+  displayName,
   revision,
   referenceVisible,
   valueVisible,
+  parameterVisibility,
+  connection,
+  netName,
   defaultForeground = "#000000",
   details,
-  focusRequest = 0,
   onApply,
 }: ComponentPropertyCodeEditorProps) {
   const context = useMemo<ComponentPropertyCodeContext>(
     () => ({
       instance,
+      ...(displayName !== undefined ? { displayName } : {}),
       referenceVisible,
       valueVisible,
+      ...(parameterVisibility ? { parameterVisibility } : {}),
+      ...(connection !== undefined ? { connection } : {}),
+      ...(netName !== undefined ? { netName } : {}),
       ...(details ? { details } : {}),
     }),
-    [instance, referenceVisible, valueVisible, details],
+    [
+      instance,
+      displayName,
+      referenceVisible,
+      valueVisible,
+      parameterVisibility,
+      connection,
+      netName,
+      details,
+    ],
   );
   const baseline = useMemo(
     () => formatComponentPropertyCode(context),
@@ -87,6 +104,9 @@ export function ComponentPropertyCodeEditor({
     () => parseComponentPropertyCode(draft, context),
     [context, draft],
   );
+  const statusMessage =
+    applyMessage ??
+    (parsed.ok ? null : `${parsed.message} · Canvas keeps the last valid edit`);
 
   const copy = async (): Promise<void> => {
     try {
@@ -112,24 +132,6 @@ export function ComponentPropertyCodeEditor({
       return;
     }
     appliedCode.current = normalized;
-  };
-
-  const lineColor =
-    parsed.ok && parsed.value.appearance.foreground !== "auto"
-      ? parsed.value.appearance.foreground
-      : undefined;
-  const changeLineColor = (foreground: string | undefined): void => {
-    if (!parsed.ok) return;
-    change(
-      serializeComponentPropertyCode({
-        ...parsed.value,
-        appearance: {
-          foreground: foreground
-            ? parseCanvasColor(foreground, "appearance.foreground")
-            : "auto",
-        },
-      }),
-    );
   };
 
   return (
@@ -199,25 +201,15 @@ export function ComponentPropertyCodeEditor({
           value={draft}
           historyKey={historyKey}
           context={context}
-          focusRequest={focusRequest}
+          defaultForeground={defaultForeground}
           onChange={change}
         />
       </Suspense>
-      <ColorOverrideControl
-        label="行"
-        value={lineColor}
-        fallback={defaultForeground}
-        disabled={!parsed.ok}
-        onChange={changeLineColor}
-      />
-      <div className="component-property-code-status" aria-live="polite">
-        <span>
-          {applyMessage ??
-            (parsed.ok
-              ? "实时"
-              : `${parsed.message} · Canvas keeps the last valid edit`)}
-        </span>
-      </div>
+      {statusMessage ? (
+        <div className="component-property-code-status" aria-live="polite">
+          <span>{statusMessage}</span>
+        </div>
+      ) : null}
     </section>
   );
 }

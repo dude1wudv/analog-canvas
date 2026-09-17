@@ -1,15 +1,14 @@
-import {
-  CURRENT_PROJECT_SCHEMA_VERSION,
-  LegacyProjectSimulationSetupSchema,
-} from "@icm/model";
+import { LegacyProjectSimulationSetupSchema } from "@icm/model";
 import { describe, expect, it } from "vitest";
 import {
   CircuitProjectSchema,
   SimulationExperimentConfigSchema,
   type SimulationRunVariant,
-  type ProjectSimulationFolder,
 } from "@icm/model";
-import ota from "../../../apps/editor/src/examples/five-transistor-ota-sky130.icproj.json";
+import {
+  currentFiveTransistorOtaCircuitSource,
+  legacyFiveTransistorOta as ota,
+} from "../../../apps/editor/src/examples/five-transistor-ota.test-support.js";
 const legacySetups = () =>
   ota.simulationSetups.map((s) => LegacyProjectSimulationSetupSchema.parse(s));
 import { migrateSimulationSetupToSource } from "./simulation-source-migration.js";
@@ -19,13 +18,9 @@ import { compileSourceSimulation } from "./simulation-source-compile.js";
 import { locateSimulationText } from "./simulation-source-map.js";
 
 function fixture() {
-  const project = CircuitProjectSchema.parse({
-    ...Object.fromEntries(
-      Object.entries(ota).filter(([key]) => key !== "simulationSetups"),
-    ),
-    schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
-    simulationFolders: [],
-  });
+  const project = CircuitProjectSchema.parse(
+    currentFiveTransistorOtaCircuitSource(),
+  );
   const folder = migrateSimulationSetupToSource(
     project,
     legacySetups()[0]!,
@@ -167,13 +162,7 @@ describe("native source run projection", () => {
       ),
     ).toBe(true);
     expect(f.project).toEqual(
-      CircuitProjectSchema.parse({
-        ...Object.fromEntries(
-          Object.entries(ota).filter(([key]) => key !== "simulationSetups"),
-        ),
-        schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
-        simulationFolders: [],
-      }),
+      CircuitProjectSchema.parse(currentFiveTransistorOtaCircuitSource()),
     );
   });
   it("leaves unbound native expressions to ngspice and only requires finite values for managed projection", () => {
@@ -229,40 +218,27 @@ describe("native source run projection", () => {
       expect.objectContaining({ code: "SIMULATION_TEMPERATURE_AMBIGUOUS" }),
     );
   });
-  it("supports native-only temperature points and produces compilable mapped projections for OTA", () => {
+  it("retains legacy temperature projections for inspection without executing them through the native compiler", () => {
     const f = fixture();
-    const point = compileSourceSimulation(f.project, f.folder, {
+    const before = structuredClone(f.folder);
+    const variant = {
       variables: [{ variableId: "base", value: "12u" }],
       environment: { temperatureC: 85 },
-    });
-    expect(point.ok, JSON.stringify(point.ok ? [] : point.diagnostics)).toBe(
-      true,
-    );
-    if (!point.ok) return;
-    expect(point.authoredFiles).toEqual(f.folder.input.files);
-    const bias = point.files.find((f) => f.path === "bias.spice")!.text;
+    };
+    const point = projectPoint(f, variant);
+    expect(point.diagnostics).toEqual([]);
+    const biasFile = point.mappedFiles.find((f) => f.path === "bias.spice")!;
+    const bias = biasFile.text;
     expect(bias).toContain("BASE=12u");
-    const sourceMap = point.sourceMaps.find((f) => f.path === "bias.spice")!;
-    expect(locateSimulationText(sourceMap, bias.indexOf("12u"))).toMatchObject({
+    expect(locateSimulationText(biasFile, bias.indexOf("12u"))).toMatchObject({
       purpose: "run-variant",
     });
-    const native = structuredClone(f.folder) satisfies ProjectSimulationFolder;
-    native.input.circuitBindings = [];
-    const config = native.input.files.find(
-      (file) => file.path === native.input.configPath,
-    )!;
-    config.text = JSON.stringify({
-      version: 1,
-      environment: { profileId: "native" },
-    });
-    native.input.files.find((file) => file.path === native.input.entry)!.text =
-      "* native\r\nV1 a 0 1\r\n.control\r\nop\r\n.endc\r\n.end\r\n";
-    const result = compileSourceSimulation(f.project, native, {
-      environment: { temperatureC: 125 },
-    });
-    expect(
-      result.ok &&
-        result.files.find((file) => file.path === native.input.entry)!.text,
-    ).toContain(".temp 125\nV1");
+    expect(compileSourceSimulation(f.project, f.folder, variant)).toMatchObject(
+      {
+        ok: false,
+        diagnostics: [{ code: "SIMULATION_LEGACY_SOURCE" }],
+      },
+    );
+    expect(f.folder).toEqual(before);
   });
 });

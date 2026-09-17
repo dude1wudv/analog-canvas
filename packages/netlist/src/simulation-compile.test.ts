@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CircuitProjectSchema,
-  CURRENT_PROJECT_SCHEMA_VERSION,
   createEmptyDocument,
   createEmptyProject,
   deriveStableId,
@@ -15,7 +14,7 @@ import {
   type SimulationStructuredInput,
   type SimulationStructuredSetup,
 } from "@icm/model";
-import fiveTransistorOtaSky130 from "../../../apps/editor/src/examples/five-transistor-ota-sky130.icproj.json";
+import { currentFiveTransistorOtaCircuitSource } from "../../../apps/editor/src/examples/five-transistor-ota.test-support.js";
 import {
   buildSimulationDeck,
   readSimulationData,
@@ -23,6 +22,9 @@ import {
 } from "@icm/spice-run";
 
 import { compileStructuredSimulation } from "./simulation-compile.js";
+import { printVacaskWithLocations } from "./vacask-printer.js";
+import { vacaskAcquisition } from "./vacask-acquisitions.js";
+import { parseVacaskRawfile } from "../../spice-run/src/vacask-rawfile.js";
 
 function claimNet(
   document: SchematicDocument,
@@ -349,16 +351,226 @@ function codes(result: Awaited<ReturnType<typeof compile>>): string[] {
 }
 
 describe("compiling a structured simulation folder", () => {
-  it("derives hierarchy-aware NMOS and PMOS terminal operating points", async () => {
-    const project = CircuitProjectSchema.parse({
-      ...Object.fromEntries(
-        Object.entries(fiveTransistorOtaSky130).filter(
-          ([key]) => key !== "simulationSetups",
-        ),
-      ),
-      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
-      simulationFolders: [],
+  it("keeps exact circuit acquisition addresses before simulator vector formatting", async () => {
+    const result = await compile(
+      hierarchicalProject(),
+      setupWith({
+        analyses: [{ kind: "op" }],
+        outputs: [
+          {
+            id: "inner",
+            label: "Inner",
+            expression: {
+              kind: "voltage",
+              documentId: "dut",
+              occurrence: ["inst-x1"],
+              anchor: { kind: "base-net", netId: "dut-net-out" },
+            },
+          },
+          {
+            id: "formal",
+            label: "Formal",
+            expression: {
+              kind: "voltage",
+              documentId: "dut",
+              occurrence: ["inst-x1"],
+              anchor: { kind: "base-net", netId: "dut-net-a" },
+            },
+          },
+          {
+            id: "current",
+            label: "Current",
+            expression: {
+              kind: "current",
+              documentId: "dut",
+              occurrence: ["inst-x1"],
+              instanceId: "dut-rt",
+              pinName: "1",
+            },
+          },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.acquisitionAddresses.inner).toEqual({
+      kind: "voltage",
+      path: ["X1"],
+      node: "OUT",
     });
+    expect(result.acquisitionAddresses.formal).toEqual({
+      kind: "voltage",
+      path: [],
+      node: "IN",
+    });
+    expect(result.acquisitionAddresses.current).toEqual({
+      kind: "current",
+      path: ["X1"],
+      senseReference: "VICMPRB003",
+    });
+    expect(vacaskAcquisition(result.acquisitionAddresses.inner!)).toEqual({
+      quantity: "voltage",
+      vector: "X1:OUT",
+      save: "v('X1:OUT')",
+    });
+    expect(vacaskAcquisition(result.acquisitionAddresses.current!)).toEqual({
+      quantity: "current",
+      vector: "X1:VICMPRB003:flow(br)",
+      save: "i('X1:VICMPRB003')",
+    });
+  });
+
+  it("does not prefix a global supply voltage with its occurrence", async () => {
+    const project = hierarchicalProject();
+    const child = project.documents.find((d) => d.id === "dut")!;
+    child.connectivityEvidence = child.connectivityEvidence.filter(
+      (e) => !(e.kind === "name-claim" && e.netId === "dut-net-out"),
+    );
+    claimNet(child, "dut-net-out", "VDD", "global", "vdd");
+    const result = await compile(
+      project,
+      setupWith({
+        analyses: [{ kind: "op" }],
+        outputs: [
+          {
+            id: "supply",
+            label: "Supply",
+            expression: {
+              kind: "voltage",
+              documentId: "dut",
+              occurrence: ["inst-x1"],
+              anchor: { kind: "base-net", netId: "dut-net-out" },
+            },
+          },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.acquisitionAddresses.supply).toEqual({
+      kind: "voltage",
+      path: [],
+      node: "VDD",
+    });
+    expect(result.vectors[0]!.vector).toBe("v(vdd)");
+    expect(vacaskAcquisition(result.acquisitionAddresses.supply!).vector).toBe(
+      "VDD",
+    );
+  });
+
+  it.skipIf(!process.env.VACASK_BIN || !process.env.VACASK_MODULES)(
+    "runs Canvas-generated native terminal instrumentation with exact probe identities and signs",
+    async () => {
+      const project = hierarchicalProject();
+      const before = structuredClone(project);
+      const result = await compile(
+        project,
+        setupWith({
+          analyses: [{ kind: "op" }],
+          outputs: [
+            {
+              id: "inner",
+              label: "Inner",
+              expression: {
+                kind: "voltage",
+                documentId: "dut",
+                occurrence: ["inst-x1"],
+                anchor: { kind: "base-net", netId: "dut-net-out" },
+              },
+            },
+            {
+              id: "formal",
+              label: "Formal",
+              expression: {
+                kind: "voltage",
+                documentId: "dut",
+                occurrence: ["inst-x1"],
+                anchor: { kind: "base-net", netId: "dut-net-a" },
+              },
+            },
+            {
+              id: "enter",
+              label: "Entering",
+              expression: {
+                kind: "current",
+                documentId: "dut",
+                occurrence: ["inst-x1"],
+                instanceId: "dut-rt",
+                pinName: "1",
+              },
+            },
+            {
+              id: "leave",
+              label: "Leaving",
+              expression: {
+                kind: "current",
+                documentId: "dut",
+                occurrence: ["inst-x1"],
+                instanceId: "dut-rt",
+                pinName: "2",
+              },
+            },
+          ],
+        }),
+      );
+      if (!result.ok) throw Error(JSON.stringify(result.diagnostics));
+      expect(project).toEqual(before);
+      const printed = printVacaskWithLocations(result.circuit, true);
+      if (!printed.ok) throw Error(JSON.stringify(printed.diagnostics));
+      const acquisitions = Object.fromEntries(
+        Object.entries(result.acquisitionAddresses).map(([id, address]) => [
+          id,
+          vacaskAcquisition(address),
+        ]),
+      );
+      const cwd = mkdtempSync(join(tmpdir(), "icm-native-canvas-probes-"));
+      writeFileSync(
+        join(cwd, "run.sim"),
+        printed.text +
+          '\ncontrol\nabort always\noptions rawfile="ascii" strictsave=2\nsave ' +
+          Object.values(acquisitions)
+            .map((a) => a.save)
+            .join(" ") +
+          "\nanalysis proof op\nendc\n",
+      );
+      const startup = join(cwd, "startup.toml");
+      writeFileSync(startup, "# controlled Canvas probe qualification\n");
+      const run = spawnSync(
+        process.env.VACASK_BIN!,
+        ["--tomlfile", startup, "-n", "1", "-b", "1", "run.sim"],
+        {
+          cwd,
+          encoding: "utf8",
+          windowsHide: true,
+          timeout: 15000,
+          env: { ...process.env, SIM_MODULE_PATH: process.env.VACASK_MODULES },
+        },
+      );
+      writeFileSync(join(cwd, "stdout.log"), run.stdout ?? "");
+      writeFileSync(join(cwd, "stderr.log"), run.stderr ?? "");
+      expect(run.error, cwd).toBeUndefined();
+      expect(run.status, `${cwd}\n${run.stdout}\n${run.stderr}`).toBe(0);
+      const raw = parseVacaskRawfile(
+        readFileSync(join(cwd, "proof.raw"), "utf8"),
+      );
+      if (!raw.ok) throw Error(raw.error.message);
+      const values = new Map(
+        raw.plots[0]!.vectors.map((v) => [v.variable.name, v.real[0]]),
+      );
+      for (const [id, expected] of [
+        ["inner", 0.5],
+        ["formal", 1],
+        ["enter", 0.0005],
+        ["leave", -0.0005],
+      ] as const)
+        expect(values.get(acquisitions[id]!.vector)).toBeCloseTo(expected, 12);
+    },
+  );
+
+  it("derives hierarchy-aware NMOS and PMOS terminal operating points", async () => {
+    const project = CircuitProjectSchema.parse(
+      currentFiveTransistorOtaCircuitSource(),
+    );
     const result = await compile(
       project,
       setupWith({
@@ -423,16 +635,10 @@ describe("compiling a structured simulation folder", () => {
     expect(result.request.netlist).toContain("VICMPRB");
   });
 
-  it("refuses a selected MOS with unavailable Bulk instead of guessing", async () => {
-    const project = CircuitProjectSchema.parse({
-      ...Object.fromEntries(
-        Object.entries(fiveTransistorOtaSky130).filter(
-          ([key]) => key !== "simulationSetups",
-        ),
-      ),
-      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
-      simulationFolders: [],
-    });
+  it("rejects selected MOS operating points when bulk connections are missing", async () => {
+    const project = CircuitProjectSchema.parse(
+      currentFiveTransistorOtaCircuitSource(),
+    );
     const dut = project.documents.find(
       (document) => document.id === "document-ota-5t",
     )!;
@@ -440,11 +646,15 @@ describe("compiling a structured simulation folder", () => {
     dut.nets = dut.nets.map((net) => ({
       ...net,
       terminals: net.terminals.filter(
-        (terminal) => terminal.instanceId !== "M1" || terminal.pinName !== "B",
+        (terminal) =>
+          !["M1", "M3"].includes(terminal.instanceId) ||
+          terminal.pinName !== "B",
       ),
     }));
-    const m1 = dut.instances.find((instance) => instance.id === "M1")!;
-    m1.mosBulkBinding = undefined;
+    for (const instanceId of ["M1", "M3"])
+      dut.instances.find(
+        (instance) => instance.id === instanceId,
+      )!.mosBulkBinding = undefined;
 
     const result = await compile(
       project,
@@ -459,14 +669,20 @@ describe("compiling a structured simulation folder", () => {
             instanceId: "M1",
             occurrence: ["XDUT"],
           },
+          {
+            id: "op-m3",
+            documentId: "document-ota-5t",
+            instanceId: "M3",
+            occurrence: ["XDUT"],
+          },
         ],
       }),
     );
 
     expect(result.ok).toBe(false);
-    // Structural extraction owns the stronger invariant: a model/subcircuit
-    // MOS may not reach simulation with its B terminal missing at all.
-    expect(codes(result)).toContain("MISSING_PIN_NET");
+    expect(
+      result.diagnostics.filter((item) => item.code === "MISSING_PIN_NET"),
+    ).toHaveLength(2);
   });
 
   it("compiles Noise against a root independent source and writes both plots", async () => {
@@ -886,7 +1102,8 @@ describe("compiling a structured simulation folder", () => {
   it("declares a global Net with the definitions, ahead of the testbench", async () => {
     const project = hierarchicalProject();
     const dut = project.documents.find((item) => item.id === "dut")!;
-    claimNet(dut, "dut-net-a", "VDD", "global", "vdd");
+    dut.nets.push({ id: "dut-global-vdd", terminals: [] });
+    claimNet(dut, "dut-global-vdd", "VDD", "global", "vdd");
 
     const result = await compile(
       project,
@@ -935,7 +1152,7 @@ describe("compiling a structured simulation folder", () => {
       "GENERATED_NET_NAME",
     ]);
     expect(result.vectors).toEqual([
-      { probeId: "probe-mid", vector: "v(n0001)", quantity: "voltage" },
+      { probeId: "probe-mid", vector: "v(net0)", quantity: "voltage" },
     ]);
   });
 
@@ -1703,7 +1920,7 @@ describe.skipIf(!ngspiceOnPath())("running a compiled deck", () => {
         "ac",
       ]);
       for (const analysis of reading.data.analyses) {
-        if (!("probes" in analysis))
+        if (analysis.analysis !== "op" && analysis.analysis !== "ac")
           throw new Error(`Unexpected ${analysis.analysis} result`);
         const names = new Set(analysis.probes.map((probe) => probe.name));
         for (const vector of compiled.vectors) {

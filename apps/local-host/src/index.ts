@@ -4,6 +4,7 @@ import { readFile, stat } from "node:fs/promises";
 import { extname, isAbsolute, relative, resolve } from "node:path";
 
 import { handleLocalSimulation } from "./simulation-endpoint.js";
+export { createLocalSimulationHandler } from "./simulation-adapter.js";
 
 const TYPES: Readonly<Record<string, string>> = {
   ".css": "text/css; charset=utf-8",
@@ -59,12 +60,37 @@ export async function startLocalHost(
       return;
     }
     if (isSimulate) {
+      const address = server.address();
+      const authority =
+        address && typeof address !== "string"
+          ? `${hostname === "::1" ? "[::1]" : hostname}:${address.port}`
+          : "";
+      if (
+        request.headers.host !== authority ||
+        (request.headers.origin !== undefined &&
+          request.headers.origin !== `http://${authority}`)
+      ) {
+        request.resume();
+        response.writeHead(403, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "origin-not-allowed" }));
+        return;
+      }
+      if (
+        !/^application\/json(?:;|$)/iu.test(
+          request.headers["content-type"] ?? "",
+        )
+      ) {
+        request.resume();
+        response.writeHead(415, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "json-required" }));
+        return;
+      }
       await handleLocalSimulation(request, response, options.simulationHandler);
       return;
     }
     if (request.url === "/healthz") {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end('{"status":"ok","version":"0.2.0"}\n');
+      response.end('{"status":"ok","version":"0.9.2"}\n');
       return;
     }
     try {

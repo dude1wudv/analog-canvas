@@ -6,6 +6,7 @@ import {
 } from "@icm/devices";
 import {
   captureRoutingCopyFragment,
+  withPowerMarkerOwnership,
   createRoutingOperationPlan,
   executeTransaction,
   gridAlignmentDiagnostics,
@@ -28,6 +29,7 @@ import type {
   Point,
   RouteBranch,
   RouteEndpoint,
+  Rotation,
   SchematicDocument,
   VisualAnchor,
 } from "@icm/model";
@@ -104,9 +106,9 @@ export interface ExplicitCopyRoutingSelection {
 /**
  * Compile the transient copy-placement commands into the same ordered
  * instance edits used by ordinary canvas rotation and reflection.  Keeping
- * every intermediate operation matters: a screen-space reflection can change
- * both the persisted mirror bit and rotation, and that intermediate state is
- * where the Edit Engine follows labels and connected Routes.
+ * every intermediate operation matters: each screen-space reflection changes
+ * only the corresponding persisted mirror axis, and that intermediate state
+ * is where the Edit Engine follows labels and connected Routes.
  */
 export function copyPlacementOrientationEdits(
   instances: readonly Instance[],
@@ -163,22 +165,44 @@ export function orientClipboard(
 ): SchematicClipboard {
   if (operations.length === 0) return clipboard;
   const anchor = pivot ?? clipboardPlacementAnchor(clipboard) ?? { x: 0, y: 0 };
-  const mapPoint = (point: Point): Point =>
+  const mapVector = (vector: Point): Point =>
     operations.reduce((current, operation) => {
       if (operation.kind === "reflect") {
         return operation.direction === "left-right"
-          ? { x: 2 * anchor.x - current.x, y: current.y }
-          : { x: current.x, y: 2 * anchor.y - current.y };
+          ? { x: -current.x, y: current.y }
+          : { x: current.x, y: -current.y };
       }
-      const dx = current.x - anchor.x;
-      const dy = current.y - anchor.y;
-      return operation.deltaDegrees === 90
-        ? { x: anchor.x - dy, y: anchor.y + dx }
-        : { x: anchor.x + dy, y: anchor.y - dx };
-    }, point);
-  const mapVector = (vector: Point): Point => {
-    const mapped = mapPoint({ x: anchor.x + vector.x, y: anchor.y + vector.y });
-    return { x: mapped.x - anchor.x, y: mapped.y - anchor.y };
+      if (operation.deltaDegrees === 90) {
+        return { x: -current.y, y: current.x };
+      }
+      if (operation.deltaDegrees === -90) {
+        return { x: current.y, y: -current.x };
+      }
+      const radians = (operation.deltaDegrees * Math.PI) / 180;
+      const cosine = Math.cos(radians);
+      const sine = Math.sin(radians);
+      return {
+        x: current.x * cosine - current.y * sine,
+        y: current.x * sine + current.y * cosine,
+      };
+    }, vector);
+  const snap = (coordinate: number): number =>
+    Math.round(coordinate / clipboard.sourceGrid) * clipboard.sourceGrid;
+  const needsGridSnap = operations.some(
+    (operation) =>
+      operation.kind === "rotate" &&
+      Math.abs(operation.deltaDegrees) % 90 !== 0,
+  );
+  const snapVector = (vector: Point): Point => {
+    const mapped = mapVector(vector);
+    return needsGridSnap ? { x: snap(mapped.x), y: snap(mapped.y) } : mapped;
+  };
+  const mapPoint = (point: Point): Point => {
+    const mapped = mapVector({ x: point.x - anchor.x, y: point.y - anchor.y });
+    const transformed = { x: anchor.x + mapped.x, y: anchor.y + mapped.y };
+    return needsGridSnap
+      ? { x: snap(transformed.x), y: snap(transformed.y) }
+      : transformed;
   };
   const flipsWorldX = mapVector({ x: 1, y: 0 }).x < 0;
   return {
@@ -211,7 +235,7 @@ export function orientClipboard(
       if (clone.anchor.kind === "free") {
         clone.anchor.position = mapPoint(clone.anchor.position);
       } else if (clone.anchor.kind === "object") {
-        clone.anchor.localOffset = mapVector(clone.anchor.localOffset);
+        clone.anchor.localOffset = snapVector(clone.anchor.localOffset);
         clone.anchor.fallbackPosition = mapPoint(clone.anchor.fallbackPosition);
       } else {
         clone.anchor.fallbackPosition = mapPoint(clone.anchor.fallbackPosition);
@@ -235,7 +259,7 @@ export function orientClipboard(
         if (anchor.kind === "object") {
           return {
             ...anchor,
-            localOffset: mapVector(anchor.localOffset),
+            localOffset: snapVector(anchor.localOffset),
             fallbackPosition: mapPoint(anchor.fallbackPosition),
           };
         }
@@ -258,17 +282,15 @@ export function orientClipboard(
           ? Math.round(normalized) % 360
           : normalized;
       };
-      const quarterTurns = operations.reduce(
+      const rotationDegrees = operations.reduce(
         (total, operation) =>
           operation.kind === "rotate"
-            ? (((total + operation.deltaDegrees / 90) % 4) + 4) % 4
+            ? (((total + operation.deltaDegrees) % 360) + 360) % 360
             : total,
         0,
       );
-      const turnedRotation = (
-        rotation: 0 | 90 | 180 | 270,
-      ): 0 | 90 | 180 | 270 =>
-        (((rotation / 90 + quarterTurns) % 4) * 90) as 0 | 90 | 180 | 270;
+      const turnedRotation = (rotation: Rotation): Rotation =>
+        ((rotation + rotationDegrees) % 360) as Rotation;
       clone.anchor = mapAnchor(clone.anchor);
       switch (clone.kind) {
         case "text": {
@@ -685,6 +707,7 @@ export function clipboardPreviewDocument(
 export function captureDocumentComposition(
   document: SchematicDocument,
 ): SchematicClipboard | null {
+  document = withPowerMarkerOwnership(document);
   const draftingObjects = document.drafting?.objects ?? [];
   if (
     document.instances.length === 0 &&
@@ -757,6 +780,7 @@ export function copySelection(
   draftingIds: readonly string[] = [],
   routingSelection?: ExplicitCopyRoutingSelection,
 ): SchematicClipboard | null {
+  document = withPowerMarkerOwnership(document);
   const selectedIds = new Set(instanceIds);
   const instances = document.instances.filter((instance) =>
     selectedIds.has(instance.id),
@@ -1377,21 +1401,43 @@ export function proposePaste(
       return { kind: "upsert_connectivity_evidence", evidence: clone };
     }),
   );
-  edits.push(
-    ...clipboard.routes.map((route): SchematicEdit => ({
-      kind: "set_route_path",
-      route: createRoutePath({
-        id: routeIds.get(route.id)!,
-        netId: netIds.get(route.netId)!,
-        start: mapEndpoint(route.start, instanceIds, junctionIds),
-        end: mapEndpoint(routeEnd(route), instanceIds, junctionIds),
-        bends: routeBends(route).map((point) => movePoint(point, offset)),
-        modes: route.legs.map((leg) => leg.mode),
-        ...(route.presentation ? { presentation: route.presentation } : {}),
-        ...(route.styleOverride
-          ? { styleOverride: structuredClone(route.styleOverride) }
+  const clonedRoutesBySource = new Map(
+    clipboard.routes.map((source) => [
+      source,
+      createRoutePath({
+        id: routeIds.get(source.id)!,
+        netId: netIds.get(source.netId)!,
+        start: mapEndpoint(source.start, instanceIds, junctionIds),
+        end: mapEndpoint(routeEnd(source), instanceIds, junctionIds),
+        bends: routeBends(source).map((point) => movePoint(point, offset)),
+        modes: source.legs.map((leg) => leg.mode),
+        ...(source.presentation ? { presentation: source.presentation } : {}),
+        ...(source.styleOverride
+          ? { styleOverride: structuredClone(source.styleOverride) }
           : {}),
       }),
+    ]),
+  );
+  const pastedLegIds = new Map(
+    [...clonedRoutesBySource].flatMap(([source, clone]) =>
+      source.legs.map((leg, index) => [leg.id, clone.legs[index]!.id]),
+    ),
+  );
+  for (const annotation of clipboard.annotations) {
+    if (
+      annotation.anchor.kind === "route" &&
+      routeIds.has(annotation.anchor.routeId) &&
+      !pastedLegIds.has(annotation.anchor.legId)
+    ) {
+      errors.push(
+        `Annotation ${annotation.id} references a Leg outside its copied Route`,
+      );
+    }
+  }
+  edits.push(
+    ...[...clonedRoutesBySource.values()].map((route): SchematicEdit => ({
+      kind: "set_route_path",
+      route,
     })),
   );
   edits.push(
@@ -1436,7 +1482,7 @@ export function proposePaste(
                   clone.binding?.kind === "instance-reference"
                 ? {
                     binding: {
-                      kind: clone.binding.kind,
+                      ...clone.binding,
                       instanceId:
                         objectIds.get(clone.binding.instanceId) ??
                         clone.binding.instanceId,
@@ -1446,59 +1492,23 @@ export function proposePaste(
           ...(annotation.netId
             ? { netId: netIds.get(annotation.netId) ?? annotation.netId }
             : {}),
-          anchor:
-            annotation.anchor.kind === "free"
-              ? {
-                  kind: "free",
-                  position: movePoint(annotation.anchor.position, offset),
-                }
-              : annotation.anchor.kind === "object"
-                ? {
-                    ...annotation.anchor,
-                    objectId:
-                      objectIds.get(annotation.anchor.objectId) ??
-                      annotation.anchor.objectId,
-                    fallbackPosition: movePoint(
-                      annotation.anchor.fallbackPosition,
-                      offset,
-                    ),
-                  }
-                : {
-                    ...annotation.anchor,
-                    routeId:
-                      routeIds.get(annotation.anchor.routeId) ??
-                      annotation.anchor.routeId,
-                    fallbackPosition: movePoint(
-                      annotation.anchor.fallbackPosition,
-                      offset,
-                    ),
-                  },
+          anchor: remapPastedVisualAnchor(
+            annotation.anchor,
+            objectIds,
+            routeIds,
+            pastedLegIds,
+            offset,
+            true,
+          ),
         },
       };
-    }),
-  );
-  const clonedRoutesBySource = new Map(
-    clipboard.routes.flatMap((source) => {
-      const clonedId = routeIds.get(source.id);
-      const edit = edits.find(
-        (candidate) =>
-          candidate.kind === "set_route_path" &&
-          candidate.route.id === clonedId,
-      );
-      return edit?.kind === "set_route_path"
-        ? [[source, edit.route] as const]
-        : [];
     }),
   );
   const idRemap: OperationIdRemap = {
     instances: Object.fromEntries(instanceIds),
     nets: Object.fromEntries(netIds),
     routes: Object.fromEntries(routeIds),
-    legs: Object.fromEntries(
-      [...clonedRoutesBySource].flatMap(([source, clone]) =>
-        source.legs.map((leg, index) => [leg.id, clone.legs[index]!.id]),
-      ),
-    ),
+    legs: Object.fromEntries(pastedLegIds),
     bends: Object.fromEntries(
       [...clonedRoutesBySource].flatMap(([source, clone]) =>
         source.legs.flatMap((leg, index) => {
@@ -1521,7 +1531,6 @@ export function proposePaste(
   // Drafting objects carry no connectivity, so a copy is the object itself
   // under a fresh id, shifted by the same placement offset as everything else.
   const pastedAnchorObjectIds = new Map([...objectIds, ...draftingIds]);
-  const pastedLegIds = new Map(Object.entries(idRemap.legs));
   for (const object of clipboard.draftingObjects) {
     const id = draftingIds.get(object.id)!;
     const translated = translateDraftingObject(

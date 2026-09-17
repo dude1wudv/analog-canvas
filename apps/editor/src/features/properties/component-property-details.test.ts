@@ -17,7 +17,11 @@ const instance: Instance = {
   id: "M1",
   reference: "M1",
   symbolId: "nmos",
-  placement: { position: { x: 200, y: 160 }, rotation: 90, mirror: "x" },
+  placement: {
+    position: { x: 200, y: 160 },
+    rotation: 90,
+    mirror: "horizontal",
+  },
   netlist: {
     parameters: { w: "EV", l: "L", nf: "2", m: "1", custom: "{x+1}" },
   },
@@ -43,15 +47,16 @@ describe("unified component property details", () => {
       expect(
         fields.find((field) => field.path === `parameters.${key}`)?.description,
       ).toBe("m");
-    expect(
-      fields.find((field) => field.path === "reference")?.description,
-    ).toBe("Netlist name");
+    expect(fields.find((field) => field.path === "netlistName")?.label).toBe(
+      "Netlist name",
+    );
   });
   it("retains reviewed model choices outside the short comment", () => {
     const field = componentDetailFields(instance, context.details).find(
       (item) => item.path === "netlistTarget",
     )!;
     expect(field.kind).toBe("choice");
+    expect(field.label).toBe("Target netlist");
     expect(field.options).toEqual([
       { value: "", label: "None" },
       { value: "model_a", label: "model_a" },
@@ -60,8 +65,16 @@ describe("unified component property details", () => {
   });
   it("round-trips authored strings, overrides, and model target without unit conversion", () => {
     const source = formatComponentPropertyCode(context);
+    expect(Object.keys(JSON.parse(source))).toEqual([
+      "placement",
+      "appearance",
+      "display",
+      "parameters",
+      "netlistName",
+      "netlistTarget",
+    ]);
     expect(JSON.parse(source)).toMatchObject({
-      reference: "M1",
+      netlistName: "M1",
       parameters: instance.netlist!.parameters,
       netlistTarget: "model_a",
     });
@@ -89,7 +102,7 @@ describe("unified component property details", () => {
   });
   it("plans parameter set/unset, identity and placement as ordinary atomic edits", () => {
     const decoded = JSON.parse(formatComponentPropertyCode(context));
-    decoded.reference = "M2";
+    decoded.netlistName = "M2";
     decoded.parameters.w = "3u";
     decoded.parameters.custom = "";
     delete decoded.parameters.nf;
@@ -129,9 +142,13 @@ describe("unified component property details", () => {
   it("loads real descriptor defaults but preserves placement coordinates, identity, target and unknown overrides", () => {
     const defaults = JSON.parse(defaultComponentPropertyCode(context));
     expect(defaults).toMatchObject({
-      reference: "M1",
+      netlistName: "M1",
       netlistTarget: "model_a",
-      placement: { at: [200, 160], rotation: 0, mirror: "none" },
+      placement: {
+        coordinate: [200, 160],
+        rotation: 0,
+        mirror: "none",
+      },
       parameters: { custom: "{x+1}" },
     });
     for (const parameter of componentParameters("nmos"))
@@ -152,6 +169,35 @@ describe("unified component property details", () => {
       ]),
     );
     expect(componentSymbolOptions("nmos")).toEqual(["nmos"]);
+  });
+
+  it("keeps contact-style symbol choices but rejects a second authority for amplifier polarity", () => {
+    for (const symbolId of ["opamp-differential", "ideal-switch"]) {
+      const variantContext = {
+        ...context,
+        instance: { ...instance, symbolId },
+      };
+      const decoded = JSON.parse(formatComponentPropertyCode(variantContext));
+      if (symbolId === "ideal-switch") {
+        expect(decoded.symbol).toBe(symbolId);
+        decoded.symbol = "simple-switch";
+        expect(
+          parseComponentPropertyCode(JSON.stringify(decoded), variantContext),
+        ).toMatchObject({
+          ok: true,
+          value: { symbol: "simple-switch" },
+        });
+      } else {
+        expect(decoded).not.toHaveProperty("symbol");
+        decoded.symbol = "opamp-differential-crossed";
+        expect(
+          parseComponentPropertyCode(JSON.stringify(decoded), variantContext),
+        ).toEqual({
+          ok: false,
+          message: "symbol is not available for this component",
+        });
+      }
+    }
   });
 
   it("keeps Digital Clock primary controls connected to its compatibility pulse values", () => {

@@ -84,6 +84,7 @@ type RecoveryLifecycle = Pick<
 };
 
 export interface UseProjectFileLifecycleOptions {
+  restoreWorkingSession?: boolean;
   project: CircuitProject;
   projectSessionId: string;
   viewBox: GridRect;
@@ -105,6 +106,7 @@ export interface UseProjectFileLifecycleOptions {
 }
 
 export function useProjectFileLifecycle({
+  restoreWorkingSession = false,
   project,
   projectSessionId,
   viewBox,
@@ -124,8 +126,11 @@ export function useProjectFileLifecycle({
   const [restoreAfterRefresh] = useState(
     () =>
       typeof window !== "undefined" &&
-      window.sessionStorage.getItem(REFRESH_RESTORE_STORAGE_KEY) === "true",
+      (restoreWorkingSession ||
+        window.sessionStorage.getItem(REFRESH_RESTORE_STORAGE_KEY) === "true"),
   );
+  const [startupRestoreReady, setStartupRestoreReady] =
+    useState(!restoreAfterRefresh);
   useEffect(() => {
     if (restoreAfterRefresh) {
       window.sessionStorage.removeItem(REFRESH_RESTORE_STORAGE_KEY);
@@ -609,9 +614,9 @@ export function useProjectFileLifecycle({
       });
       setStatus(
         staged.migrated
-          ? `Imported and upgraded ${staged.fileName} from schema ${staged.sourceSchemaVersion} to schema ${openedProject.schemaVersion}${normalizedDocumentCount > 0 ? ` and normalized Wire topology in ${normalizedDocumentCount} Cell${normalizedDocumentCount === 1 ? "" : "s"}` : ""} — save to Cloud or export to keep the upgrade`
+          ? `Imported and upgraded ${staged.fileName} from schema ${staged.sourceSchemaVersion} to schema ${openedProject.schemaVersion}${normalizedDocumentCount > 0 ? ` and normalized connectivity and Wire topology in ${normalizedDocumentCount} Cell${normalizedDocumentCount === 1 ? "" : "s"}` : ""} — save to Cloud or export to keep the upgrade`
           : normalizedDocumentCount > 0
-            ? `Opened ${staged.fileName} and normalized Wire topology in ${normalizedDocumentCount} Cell${normalizedDocumentCount === 1 ? "" : "s"} — save to Cloud or export to keep the repair`
+            ? `Opened ${staged.fileName} and normalized connectivity and Wire topology in ${normalizedDocumentCount} Cell${normalizedDocumentCount === 1 ? "" : "s"} — save to Cloud or export to keep the repair`
             : `Opened ${staged.fileName} at revision ${staged.topDocumentRevision}`,
       );
     };
@@ -718,6 +723,7 @@ export function useProjectFileLifecycle({
         },
       );
       setStatus(`Restored recovery revision ${restoredDocument.revision}`);
+      setStartupRestoreReady(true);
     })();
     // The recovery coordinator methods are stable for one mounted editor.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -766,6 +772,7 @@ export function useProjectFileLifecycle({
     startupRecovery === null;
 
   return {
+    startupRestoreReady,
     persistenceState,
     cloudBinding,
     savedProjectBaseline,

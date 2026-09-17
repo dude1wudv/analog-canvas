@@ -1,60 +1,6 @@
 import type { SchematicDocument } from "@icm/model";
 
-type FormalTerminal = NonNullable<
-  SchematicDocument["netlist"]
->["terminals"][number];
 type PinSide = "north" | "east" | "south" | "west" | "auto";
-
-export function FormalPortProperties({
-  terminal,
-  revision,
-  onRename,
-  onDirectionChange,
-}: {
-  terminal: FormalTerminal;
-  revision: number;
-  onRename: (name: string) => void;
-  onDirectionChange: (
-    terminalId: string,
-    direction: FormalTerminal["direction"],
-  ) => void;
-}) {
-  return (
-    <div className="formal-port-properties" aria-label="Cell Pin 属性">
-      <label>
-        <span>端子名称</span>
-        <input
-          key={`${terminal.id}-${revision}-terminal-name`}
-          aria-label="Cell Pin 名称"
-          defaultValue={terminal.name}
-          onBlur={(event) => onRename(event.currentTarget.value)}
-        />
-      </label>
-      <label>
-        <span>方向</span>
-        <select
-          aria-label="Cell Pin 方向"
-          value={terminal.direction}
-          onChange={(event) =>
-            onDirectionChange(
-              terminal.id,
-              event.currentTarget.value as FormalTerminal["direction"],
-            )
-          }
-        >
-          <option value="input">输入</option>
-          <option value="output">输出</option>
-          <option value="inout">双向</option>
-          <option value="passive">无源</option>
-        </select>
-      </label>
-      <small>
-        This Port defines the Cell interface and every parent symbol
-        automatically.
-      </small>
-    </div>
-  );
-}
 
 export function CellSymbolLayoutProperties({
   cell,

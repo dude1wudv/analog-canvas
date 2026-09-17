@@ -1,4 +1,5 @@
 import { razaviTextbookProfile } from "@icm/derived";
+import { mirrorScale, type Mirror, type Rotation } from "@icm/model";
 import {
   renderSymbolDefinitionBody,
   renderUprightSignalFlowFormula,
@@ -14,8 +15,8 @@ export interface ComponentPlacementPreviewProps {
   symbolId: string;
   symbol?: SymbolDefinition;
   position: { x: number; y: number };
-  rotation: 0 | 90 | 180 | 270;
-  mirror?: "none" | "x";
+  rotation: Rotation;
+  mirror?: Mirror;
 }
 
 export function ComponentPlacementPreview({
@@ -33,9 +34,10 @@ export function ComponentPlacementPreview({
     (candidate) => candidate.id === variantId,
   );
 
-  const transform = `translate(${position.x} ${position.y}) rotate(${rotation})${
-    mirror === "x" ? " scale(-1 1)" : ""
-  }`;
+  const scale = mirrorScale(mirror);
+  const mirrorTransform =
+    scale.x === 1 && scale.y === 1 ? "" : ` scale(${scale.x} ${scale.y})`;
+  const transform = `translate(${position.x} ${position.y})${mirrorTransform} rotate(${rotation})`;
   const pinNames = renderSymbolPreviewPinNames(
     definition,
     variant?.hiddenPinNames ?? [],
@@ -50,10 +52,12 @@ export function ComponentPlacementPreview({
   );
 
   return (
-    <>
+    // Upright text lives outside the body's transform, but belongs to the
+    // same non-interactive ghost. Otherwise moving the pointer can replace a
+    // pressed text node before pointerup and prevent the browser's click.
+    <g className="component-placement-preview">
       <g
         data-testid="component-placement-preview"
-        className="component-placement-preview"
         transform={transform}
         fill="none"
         stroke="currentColor"
@@ -82,6 +86,6 @@ export function ComponentPlacementPreview({
           dangerouslySetInnerHTML={{ __html: pinNames }}
         />
       ) : null}
-    </>
+    </g>
   );
 }

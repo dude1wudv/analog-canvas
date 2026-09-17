@@ -10,8 +10,10 @@
     "comparator",
     "comparator-inputs-swapped",
     "comparator-unmarked",
+    "comparator-unmarked-inputs-swapped",
     "current-source",
     "d-flip-flop",
+    "d-flip-flop-reset",
     "d-flip-flop-q",
     "delay-cell",
     "adder",
@@ -84,7 +86,7 @@
       "runtimeOwner": "presentation.nodes.junction"
     }
   ],
-  "extendedEntries": ["ndmos", "pdmos"],
+  "extendedEntries": ["depletion-nmos", "depletion-pmos", "ndmos", "pdmos"],
   "deviceOrder": [
     "resistor",
     "variable-resistor",
@@ -95,6 +97,8 @@
     "variable-inductor",
     "nmos",
     "pmos",
+    "depletion-nmos",
+    "depletion-pmos",
     "ndmos",
     "pdmos",
     "diode",

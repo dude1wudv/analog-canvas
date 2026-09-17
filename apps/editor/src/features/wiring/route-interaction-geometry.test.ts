@@ -16,6 +16,8 @@ import {
   routeTapPoint,
   defaultInstanceLabel,
   dragNetLabelAttachmentAtPoint,
+  closestNetConductorPoint,
+  netLabelPlacementTargetAtPoint,
   dragRouteAttachmentAtPoint,
   effectiveRouteAttachment,
   looseRouteAnchorIds,
@@ -188,6 +190,35 @@ describe("route interaction geometry", () => {
     });
   });
 
+  it("uses one tolerant Route projection for Net Label preview and commit", () => {
+    const document = looseRouteDocument();
+    const record = routeRecord(document);
+
+    expect(
+      netLabelPlacementTargetAtPoint([record], { x: 70, y: 6 }, 7),
+    ).toEqual({
+      routeId: "route-1",
+      routeAttachment: {
+        routeId: "route-1",
+        legId: document.routes[0]!.legs[0]!.id,
+        t: 0.7,
+        direction: "forward",
+        normalOffset: -8,
+      },
+      conductorPoint: { x: 70, y: 0 },
+      labelPosition: { x: 70, y: -8 },
+    });
+    expect(
+      netLabelPlacementTargetAtPoint([record], { x: 70, y: 8 }, 7),
+    ).toBeNull();
+    expect(
+      netLabelPlacementTargetAtPoint([record], { x: 70, y: 30 }, 0, "route-1"),
+    ).toMatchObject({
+      routeId: "route-1",
+      conductorPoint: { x: 70, y: 0 },
+    });
+  });
+
   it("keeps a dragged marker label in a stable bounded halo around its route", () => {
     const document = looseRouteDocument();
     const record = routeRecord(document);
@@ -238,6 +269,17 @@ describe("route interaction geometry", () => {
     ).toMatchObject({ segmentIndex: 1, t: 0.4, normalOffset: -8 });
     expect(
       dragNetLabelAttachmentAtPoint([record], { x: 0, y: 0 }, "route-2"),
+    ).toBeNull();
+  });
+
+  it("finds the nearest conductor for a freely placed Net label tether", () => {
+    const document = looseRouteDocument();
+    const record = routeRecord(document);
+    expect(
+      closestNetConductorPoint([record], "net-1", { x: -40, y: 70 }),
+    ).toEqual({ x: 0, y: 0 });
+    expect(
+      closestNetConductorPoint([record], "other-net", { x: 20, y: 70 }),
     ).toBeNull();
   });
 

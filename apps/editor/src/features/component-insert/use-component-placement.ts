@@ -29,7 +29,7 @@ import type {
   SchematicDocument,
 } from "@icm/model";
 import { defaultDraftTextDocument } from "@icm/model";
-import type { SymbolResolver } from "@icm/symbols";
+import { hierarchicalSymbolId, type SymbolResolver } from "@icm/symbols";
 
 import type { ComponentInsertRequest } from "./component-insert-request";
 import type {
@@ -119,9 +119,11 @@ export interface UseComponentPlacementOptions {
     object: Extract<DraftingObject, { kind: "text" }>,
   ) => void;
   nextId: (prefix: string) => string;
-  rotateComponentPlacement: (delta: 90 | -90) => void;
+  rotateComponentPlacement: (delta: 45 | -45 | 90 | -90) => void;
   mirrorComponentPlacement: (direction: ScreenFlip) => void;
-  componentPlacementRotation: 0 | 90 | 180 | 270;
+  componentPlacementRotation: NonNullable<
+    SchematicDocument["instances"][number]["placement"]
+  >["rotation"];
   componentPlacementMirror: NonNullable<
     SchematicDocument["instances"][number]["placement"]
   >["mirror"];
@@ -361,7 +363,6 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
   };
 
   const placeNewCell = (
-    symbolId: string,
     position: Point,
     placementRequest: PendingComponentPlacement,
   ): void => {
@@ -379,7 +380,8 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
       options.setStatus("The selected Cell no longer exists");
       return;
     }
-    const id = nextInstanceId(options.document, symbolId);
+    const currentSymbolId = hierarchicalSymbolId(child.netlist.name);
+    const id = nextInstanceId(options.document, currentSymbolId);
     const reference =
       placementRequest.referenceText ??
       nextReference(
@@ -407,7 +409,7 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
       options.styleProfile,
       {
         showDesignator: placementRequest.showReference,
-        masterName: placementRequest.cellName,
+        masterName: child.netlist.name,
       },
     );
     const committed = options.transactProject(
@@ -423,7 +425,7 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
     options.selectOnly("instance", [id]);
     options.setComponentPreviewPoint(position);
     options.setStatus(
-      `Placed ${placementRequest.cellName} as ${id} · click to place another · Esc exits`,
+      `Placed ${child.netlist.name} as ${id} · click to place another · Esc exits`,
     );
   };
 
@@ -495,12 +497,16 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
   };
 
   const placeNewCellPin = (
-    symbolId: "port" | "port-filled",
+    symbolId: "port" | "port-filled" | "vdd-port",
     position: Point,
     placementRequest: PendingComponentPlacement,
   ): void => {
     const id = nextInstanceId(options.document, symbolId);
-    if (placementRequest.kind !== "cell-pin" || !placementRequest.direction)
+    const supply = symbolId === "vdd-port";
+    if (
+      !supply &&
+      (placementRequest.kind !== "cell-pin" || !placementRequest.direction)
+    )
       return;
     const instance = {
       id,
@@ -516,6 +522,7 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
       options.resolver,
       instance,
       options.visibleEndpoints,
+      supply ? { powerMarker: false } : undefined,
     );
     if (contact.rejected || contact.ambiguous) {
       options.setStatus(
@@ -533,9 +540,11 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
       : undefined;
     const connectedName = connectedLogicalNet?.name?.trim();
     const formalName =
-      placementRequest.portName?.trim() ||
+      (placementRequest.kind === "cell-pin"
+        ? placementRequest.portName?.trim()
+        : undefined) ||
       connectedName ||
-      nextCellPinName(options.document);
+      (supply ? "VDD" : nextCellPinName(options.document));
     const baseNetId = `net-cell-pin-${id.toLowerCase()}`;
     let netId = contact.netId ?? baseNetId;
     let netSuffix = 2;
@@ -566,14 +575,37 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
               newNetId: netId,
             },
           ]),
+      ...(supply
+        ? planInitialMosBulkDefault(options.document, "vdd", netId)
+        : []),
     ];
-    const annotations = defaultInstanceDisplayAnnotations(
-      options.document,
-      instance,
-      options.resolver,
-      options.styleProfile,
-      { formalTerminalId: `terminal-${id.toLowerCase()}` },
-    );
+    const terminalId = `terminal-${id.toLowerCase()}`;
+    const resolvedSupply = supply
+      ? options.resolver.resolve(instance.symbolId)
+      : undefined;
+    const annotations =
+      supply && resolvedSupply
+        ? [
+            {
+              ...vddPowerLabelAnnotation({
+                instance,
+                resolved: resolvedSupply,
+                netId,
+                grid: options.document.presentation.grid,
+              }),
+              binding: {
+                kind: "cell-terminal-name" as const,
+                terminalId,
+              },
+            },
+          ]
+        : defaultInstanceDisplayAnnotations(
+            options.document,
+            instance,
+            options.resolver,
+            options.styleProfile,
+            { formalTerminalId: terminalId },
+          );
     const annotation = annotations[0] ? { ...annotations[0] } : undefined;
     const committed = options.transactProject(
       "place-cell-pin",
@@ -581,10 +613,13 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
         instance,
         connectionEdits,
         terminal: {
-          id: `terminal-${id.toLowerCase()}`,
+          id: terminalId,
           name: formalName,
           netId,
-          direction: placementRequest.direction,
+          direction:
+            supply || placementRequest.kind !== "cell-pin"
+              ? "inout"
+              : placementRequest.direction!,
           interfaceInstanceIds: [id],
         },
         ...(annotation ? { annotation } : {}),
@@ -594,7 +629,7 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
     options.selectOnly("instance", [id]);
     options.setComponentPreviewPoint(position);
     options.setStatus(
-      `Added Cell Pin ${formalName} · click to place another · Esc exits`,
+      `Added ${supply ? "VDD Power Cell Pin" : "Cell Pin"} ${formalName} · click to place another · Esc exits`,
     );
   };
 
@@ -664,11 +699,16 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
       Boolean(placementRequest.polarity) &&
       placementRequest.polarity !== "both";
     const preset = placementRequest.text;
-    let id = options.nextId(placementRequest.polarity ? "polarity" : "text");
+    const prefix = placementRequest.polarity
+      ? "polarity"
+      : placementRequest.editAfterPlacement
+        ? "note"
+        : "text";
+    let id = options.nextId(prefix);
     while (
       options.document.drafting?.objects.some((object) => object.id === id)
     ) {
-      id = options.nextId("polarity");
+      id = options.nextId(prefix);
     }
     // The semantic-text helper turns the suffix into a true subscript. The
     // authored value is therefore "Vx"; a literal underscore would be drawn.
@@ -695,6 +735,11 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
     }
     options.cancelAllTransientInteraction();
     options.selectOnly("drafting", [object.id]);
+    if (placementRequest.editAfterPlacement) {
+      options.beginDraftingTextEditing(object);
+      options.setStatus(`Added drafting text ${id}`);
+      return;
+    }
     if (preset) {
       options.setStatus(`Added ${placementRequest.symbolId}`);
       return;
@@ -725,18 +770,21 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
   const beginInsertedComponentPlacement = (
     request: ComponentInsertRequest,
   ): void => {
-    const nextRecent = [
-      request.symbolId,
-      ...recentSymbolIds.filter((symbolId) => symbolId !== request.symbolId),
-    ].slice(0, 8);
-    setRecentSymbolIds(nextRecent);
-    try {
-      window.localStorage.setItem(
-        options.recentStorageKey,
-        JSON.stringify(nextRecent),
-      );
-    } catch {
-      // Recency is convenience-only and must never block placement.
+    // Plain Text has no catalog tile to recall in the Insert picker.
+    if (!(request.kind === "drafting-text" && request.editAfterPlacement)) {
+      const nextRecent = [
+        request.symbolId,
+        ...recentSymbolIds.filter((symbolId) => symbolId !== request.symbolId),
+      ].slice(0, 8);
+      setRecentSymbolIds(nextRecent);
+      try {
+        window.localStorage.setItem(
+          options.recentStorageKey,
+          JSON.stringify(nextRecent),
+        );
+      } catch {
+        // Recency is convenience-only and must never block placement.
+      }
     }
     options.cancelCanvasDrag();
     options.clearTransientCanvasState();
@@ -780,6 +828,9 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
               referenceText: null,
               showValue: false,
               text: request.text,
+              ...(request.editAfterPlacement
+                ? { editAfterPlacement: true }
+                : {}),
             }
           : request.kind === "symbol" &&
               (request.symbolId === "port" ||
@@ -798,9 +849,11 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
             : request;
     options.beginComponentPlacement(pendingRequest);
     options.setStatus(
-      request.kind === "polarity-annotation"
-        ? `Place ${request.symbolName} on the canvas · R rotates · Esc cancels`
-        : `Place ${request.symbolName} on the canvas · R rotates · Shift+R / Ctrl+R mirrors · Esc cancels`,
+      request.kind === "drafting-text" && request.editAfterPlacement
+        ? "Place text: click to place and edit · R rotates · Esc cancels"
+        : request.kind === "polarity-annotation"
+          ? `Place ${request.symbolName} on the canvas · R rotates · Esc cancels`
+          : `Place ${request.symbolName} on the canvas · R rotates · Shift+R / Ctrl+R mirrors · Esc cancels`,
     );
   };
 
@@ -826,9 +879,11 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
     setInsertInitialSelectionId(null);
   };
 
-  const rotatePendingComponent = (delta: 90 | -90): void => {
+  const rotatePendingComponent = (delta: 45 | -45 | 90 | -90): void => {
     options.rotateComponentPlacement(delta);
-    options.setStatus(`Component rotation ${delta > 0 ? "+90°" : "−90°"}`);
+    options.setStatus(
+      `Component rotation ${delta > 0 ? `+${delta}°` : `${delta}°`}`,
+    );
   };
 
   const mirrorPendingComponent = (direction: ScreenFlip): void => {
@@ -867,18 +922,17 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
     } else if (options.pendingComponentPlacement.kind === "retained-instance") {
       const instanceId = options.pendingComponentPlacement.instanceId;
       if (instanceId) placeRetainedInstance(instanceId, point);
-    } else if (options.pendingComponentPlacement.kind === "cell-pin") {
+    } else if (
+      options.pendingComponentPlacement.kind === "cell-pin" ||
+      options.pendingSymbolId === "vdd-port"
+    ) {
       placeNewCellPin(
-        options.pendingSymbolId as "port" | "port-filled",
+        options.pendingSymbolId as "port" | "port-filled" | "vdd-port",
         point,
         options.pendingComponentPlacement,
       );
     } else if (options.pendingComponentPlacement.kind === "cell") {
-      placeNewCell(
-        options.pendingSymbolId,
-        point,
-        options.pendingComponentPlacement,
-      );
+      placeNewCell(point, options.pendingComponentPlacement);
     } else if (
       options.pendingComponentPlacement.kind === "external-subcircuit"
     ) {

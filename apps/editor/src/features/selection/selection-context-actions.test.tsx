@@ -1,15 +1,92 @@
-import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { createEmptyDocument, createRoutePath } from "@icm/model";
 
 import {
   EndpointActionsSection,
+  GroupPropertiesSection,
   MosBulkConnectionSection,
   RouteActionsSection,
   RoutingGuidanceSection,
 } from "./selection-context-actions";
 
 describe("selection context actions", () => {
+  const routeFixture = () => {
+    const document = createEmptyDocument("doc", "Route properties");
+    document.nets.push({ id: "net-1", terminals: [] });
+    document.junctions.push(
+      {
+        id: "j1",
+        netId: "net-1",
+        position: { x: 0, y: 0 },
+        role: "route-anchor",
+      },
+      {
+        id: "j2",
+        netId: "net-1",
+        position: { x: 100, y: 0 },
+        role: "route-anchor",
+      },
+    );
+    const route = createRoutePath({
+      id: "route-1",
+      netId: "net-1",
+      start: { kind: "junction", junctionId: "j1" },
+      end: { kind: "junction", junctionId: "j2" },
+      bends: [],
+      modes: ["manual"],
+    });
+    route.styleOverride = { arrow: "middle" };
+    document.routes.push(route);
+    const netLabel = {
+      id: "net-label-route-1",
+      kind: "net-label" as const,
+      netId: "net-1",
+      binding: { kind: "net-name" as const, netId: "net-1" },
+      anchor: { kind: "free" as const, position: { x: 50, y: -8 } },
+      alignment: "middle" as const,
+      rotation: 0 as const,
+      locked: false,
+      content: { runs: [{ kind: "text" as const, value: "OUT" }] },
+    };
+    document.annotations.push(netLabel);
+    document.connectivityEvidence.push({
+      id: "claim-1",
+      kind: "name-claim",
+      netId: "net-1",
+      name: "OUT",
+      scope: "local",
+      owner: { kind: "net-label", annotationId: netLabel.id },
+    });
+    return { document, route, netLabel };
+  };
+
+  it("uses one code surface for a multi-component selection", () => {
+    const markup = renderToStaticMarkup(
+      <GroupPropertiesSection
+        active
+        count={4}
+        selectionKey="test-selection"
+        revision={3}
+        context={{
+          symbol: "resistor",
+          parameters: { value: "" },
+          reference: "",
+          value: false,
+          foreground: "",
+        }}
+        defaultForeground="#000000"
+        onApply={vi.fn(() => ({ ok: true as const }))}
+      />,
+    );
+    expect(markup).toContain('aria-label="Batch component properties"');
+    expect(markup).toContain("4 selected");
+    expect(markup).toContain('aria-label="Loading batch property code"');
+    expect(markup).toContain("Empty values keep");
+    expect(markup).not.toContain("Canvas labels");
+    expect(markup).not.toContain("Visual annotation");
+  });
+
   it.each([
     ["unresolved", null, "未连接", "请为体端选择网络"],
     ["no-connect", null, "No Connect", "有意保持未连接"],
@@ -59,37 +136,55 @@ describe("selection context actions", () => {
   });
 
   it("renders route label and highlight actions", () => {
+    const { document, route, netLabel } = routeFixture();
     const markup = renderToStaticMarkup(
       <RouteActionsSection
         active
-        netLabelInputRef={createRef<HTMLInputElement>()}
-        netLabel="OUT"
-        color={undefined}
-        arrow="middle"
+        document={document}
+        route={route}
+        netLabel={netLabel}
         defaultColor="#000"
         highlightActive
-        onNetLabelChange={vi.fn()}
-        onColorChange={vi.fn()}
-        onArrowChange={vi.fn()}
-        onDeleteNetLabel={vi.fn()}
-        onAddCurrentArrow={vi.fn()}
+        onApply={vi.fn(() => ({ ok: true }))}
         onToggleHighlight={vi.fn()}
         onDeleteWire={vi.fn()}
       />,
     );
-    expect(markup).toContain('aria-label="电气网络标签"');
-    expect(markup).toContain('value="OUT"');
-    expect(markup).toContain('aria-label="导线颜色选择器"');
-    expect(markup).toContain('value="#000000"');
-    expect(markup).toContain('aria-label="导线颜色自定义 RGB"');
-    expect(markup).toContain("灰色 · #6b7280");
-    expect(markup).not.toContain("Violet");
-    expect(markup).toContain("使用文档前景色");
-    expect(markup).toContain('aria-label="导线方向箭头"');
-    expect(markup).toContain('<option value="middle" selected="">');
-    expect(markup).toContain("箭头位于末端");
-    expect(markup).toContain("Add current arrow");
-    expect(markup).toContain("清除网络高亮（H）");
+    expect(markup).toContain('aria-label="Annotation property code"');
+    expect(markup).toContain("Route");
+    expect(markup).toContain("OUT");
+    expect(markup).toContain("directionArrow");
+    expect(markup).not.toContain('aria-label="Electrical Net label"');
+    expect(markup).not.toContain('aria-label="Wire direction arrow"');
+    expect(markup).not.toContain('aria-label="Wire line style"');
+    expect(markup).not.toContain("current arrow");
+    expect(markup).toContain("Clear Net highlight (H)");
+  });
+
+  it("presents a MOS bulk route as instance-owned instead of a generic wire", () => {
+    const { document, route } = routeFixture();
+    const markup = renderToStaticMarkup(
+      <RouteActionsSection
+        active
+        document={document}
+        route={route}
+        netLabel={null}
+        bulkOwnerLabel="M1"
+        defaultColor="#000"
+        highlightActive={false}
+        onApply={vi.fn(() => ({ ok: true }))}
+        onToggleHighlight={vi.fn()}
+        onDeleteWire={vi.fn()}
+      />,
+    );
+    expect(markup).toContain('aria-label="MOS bulk route actions"');
+    expect(markup).toContain("Bulk connection");
+    expect(markup).toContain("Follows <strong>M1</strong> line color");
+    expect(markup).toContain("Delete bulk connection");
+    expect(markup).not.toContain("Electrical route");
+    expect(markup).not.toContain("Wire color");
+    expect(markup).not.toContain("Direction arrow");
+    expect(markup).not.toContain("Wire line style");
   });
 
   it("blocks No Connect while a terminal remains connected", () => {

@@ -41,8 +41,8 @@ For Razavi formal output, the reviewed `port` and `port-filled` Symbol assets
 provide explicit hollow and filled interface presentations. Each is an
 ordinary single-pin Instance whose pin `P` uses normal terminal connectivity;
 the renderer does not replace either symbol with a separate model-level Port
-shape. Power labels belong to explicit Nets and Route/Junction rail geometry,
-not to a Port-specific presentation. Explicit Junctions render independently;
+shape. Placed `vdd-port` artwork and drawn Net/Route power rails retain their
+own reviewed presentations; electrical ownership follows the schematic model. Explicit Junctions render independently;
 device-pin anchors, ordinary corners, and geometric crossings never acquire a
 dot from appearance or degree alone.
 An explicit branch Junction on a valid VDD Net that contains a `power-rail`
@@ -60,8 +60,9 @@ The editor creates its grid and interaction overlay outside the formal group.
 Annotations are semantic `instance-label`, `instance-value`, `net-label`,
 `power-label`, and `route-marker` objects. Current
 annotations rotate the arrow independently so their text stays upright.
-Explicit instance labels suppress only the renderer's default instance ID.
-Their text and position are editable without changing stable instance IDs.
+Instance text comes from authored annotations and their typed bindings;
+the renderer does not synthesize default labels from internal Instance IDs.
+Text and position can change without changing stable Instance IDs.
 Instance labels and values inherit their owning Instance's effective
 foreground by default; an optional per-Annotation `textColor` override changes
 only that annotation's text. Net, power, and route-marker annotations use the
@@ -101,31 +102,40 @@ resolved, so continuation text cannot shift the anchor or escape export
 bounds.
 
 Derived visual diagnostics cover unplaced or unresolved symbols, symbol and
-label overlap, short route segments, ambiguous Junction dots, unsatisfied
-layout constraints, and optional export-page bounds. Diagnostics never mutate
-geometry. Unresolved symbols and ambiguous Junction dots are blocking errors;
-spacing and layout-quality findings are observations.
+label overlap, Routes through symbols, collinear same-Net Route overlap, Route
+departure against a pin's outward direction, terminals resting on another
+Net's Route, non-standard wire angles, short route segments, ambiguous
+Junction dots, unsatisfied layout constraints, and optional export-page
+bounds. Diagnostics never mutate geometry. Unresolved symbols and ambiguous
+Junction dots are blocking errors. Non-standard wire angles are gate-eligible
+structural warnings; a terminal resting on another Net's Route is a
+structural warning outside the gate. Spacing and other layout-quality findings
+are observations.
 
 Every finding declares `category`, `confidence`, and `gateEligible`.
 Structural findings describe high-confidence model, topology, or explicit
 constraint conditions. Visual observations describe heuristic geometry and
 require inspection of the formal render. A gate-ineligible observation must
-never become an automatic layout objective merely because a recipe lists its
-code. Where deterministic primitive bounds exist, overlap analysis uses the
+never become an automatic layout objective merely because a quality policy
+lists its code. Where deterministic primitive bounds exist, overlap analysis uses the
 active symbol variant's visible geometry and clusters repeated overlaps.
 
 ## Invariants
 
 - Formal output is black on white with no gradients, shadows, or decorative
   frames.
-- Symbol geometry uses square line caps and miter joins unless a reviewed
+- Symbol geometry uses butt line caps and miter joins unless a reviewed
   symbol explicitly requires another choice.
-- Instance transforms apply local x-coordinate mirror, then rotation, then
-  translation, matching the model coordinate contract.
+- Instance transforms apply rotation, then independent screen-space horizontal
+  and/or vertical reflection, then translation. Mirror actions do not rewrite
+  the authored rotation.
 - Polarity notation moves with its component or drafting annotation, while
   every negative-polarity bar remains horizontal on the page at all rotations.
   Symbol assets identify those bars with an `upright-*-polarity-negative`
   primitive part instead of relying on geometric guesses in the renderer.
+- Drafting text, formulas, fractions, and polarity marks keep their glyphs and
+  strokes upright. Rotation may change a multipart polarity annotation's
+  layout direction, but never rotates the notation itself.
 - Instance and pin text is emitted outside component transforms, so component
   rotation and mirroring cannot rotate or mirror its glyphs.
 - Object and layer ordering is deterministic by stable ID and fixed layer

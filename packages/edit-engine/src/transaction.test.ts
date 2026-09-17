@@ -224,7 +224,7 @@ describe("Edit Transaction envelope", () => {
         id: "P1",
         symbolId: "port",
         placement: {
-          position: { x: 510, y: 200 },
+          position: { x: 520, y: 200 },
           rotation: 0,
           mirror: "none",
         },
@@ -2052,7 +2052,7 @@ describe("Edit Transaction envelope", () => {
           position: { x: 120, y: 90 },
         },
         { kind: "rotate_instance", instanceId: "M1", rotation: 90 },
-        { kind: "mirror_instance", instanceId: "M1", mirror: "x" },
+        { kind: "mirror_instance", instanceId: "M1", mirror: "horizontal" },
       ],
     });
     expect(transformed).toMatchObject({
@@ -2065,7 +2065,7 @@ describe("Edit Transaction envelope", () => {
             placement: {
               position: { x: 120, y: 90 },
               rotation: 90,
-              mirror: "x",
+              mirror: "horizontal",
             },
           },
         ],

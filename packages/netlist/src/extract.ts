@@ -1,4 +1,9 @@
-import { foldNetName, projectCellInterface, routeEndpoints } from "@icm/model";
+import {
+  deriveStableId,
+  foldNetName,
+  projectCellInterface,
+  routeEndpoints,
+} from "@icm/model";
 import {
   deriveProjectNetNameProjection,
   directObjectLocator,
@@ -8,6 +13,7 @@ import {
 } from "@icm/derived";
 import type {
   CircuitProject,
+  ConnectivityEvidence,
   ExternalSubcircuitDefinition,
   Instance,
   SchematicDocument,
@@ -16,14 +22,18 @@ import type {
 import {
   createReferenceIndex,
   deviceDescriptor,
+  nextReference,
   projectLengthToSky130Micrometres,
   requiredParameterNames,
   resolveReviewedExternalBinding,
+  subcircuitDescriptor,
+  type BuiltInSubcircuitDescriptor,
 } from "@icm/devices";
 
 import type {
   DesignNetlistCell,
   DesignNetlistAnalysisResult,
+  DesignNetlistExternalMaster,
   DesignNetlistInstance,
   NetlistDiagnostic,
 } from "./ir.js";
@@ -172,6 +182,7 @@ function reachableDocuments(
 
 interface CellNetContext {
   nameByNetId: Map<string, string>;
+  nameByAuthoredName: Map<string, string>;
   netByTerminal: Map<string, ResolvedLogicalNet>;
   noConnectNameByTerminal: Map<string, string>;
   nets: DesignNetlistCell["nets"];
@@ -195,14 +206,80 @@ function encodeCandidate(
   return encodeNetName(name, scope, options.format, options.namingProfile);
 }
 
-function buildNetContext(
+/**
+ * A visible Ground or VDD marker is already an explicit electrical statement.
+ * Older drawings and copied markers can predate the persisted name-claim
+ * ownership record, so recover that statement in the read-only export view.
+ * Ordinary unnamed Nets still receive deterministic net0-style names below.
+ */
+function withNetlistPowerMarkerClaims(
   document: SchematicDocument,
+): SchematicDocument {
+  const logicalNets = resolveDocumentLogicalNets(document);
+  const claimedMarkers = new Set(
+    document.connectivityEvidence.flatMap((evidence) =>
+      evidence.kind === "name-claim" && evidence.owner.kind === "power-marker"
+        ? [evidence.owner.objectId]
+        : [],
+    ),
+  );
+  const additions: ConnectivityEvidence[] = [];
+  for (const instance of document.instances) {
+    const ground = instance.symbolId === "ground";
+    if (
+      (!ground && instance.symbolId !== "vdd-port") ||
+      claimedMarkers.has(instance.id)
+    )
+      continue;
+    const pinName = deviceDescriptor(instance.symbolId)?.pinOrder[0];
+    if (!pinName) continue;
+    const nets = document.nets.filter((net) =>
+      net.terminals.some(
+        (terminal) =>
+          terminal.instanceId === instance.id && terminal.pinName === pinName,
+      ),
+    );
+    if (nets.length !== 1) continue;
+    const logicalNet = logicalNets.byBaseNetId.get(nets[0]!.id);
+    if (
+      !logicalNet ||
+      logicalNet.name ||
+      logicalNet.powerDomain !== "none" ||
+      logicalNet.conflicts.length > 0
+    )
+      continue;
+    additions.push({
+      id: deriveStableId(
+        "connectivity-evidence",
+        "netlist-power-marker",
+        document.id,
+        instance.id,
+      ),
+      kind: "name-claim",
+      netId: nets[0]!.id,
+      name: ground ? "0" : "VDD",
+      scope: "global",
+      powerDomain: ground ? "ground" : "vdd",
+      owner: { kind: "power-marker", objectId: instance.id },
+    });
+  }
+  return additions.length === 0
+    ? document
+    : {
+        ...document,
+        connectivityEvidence: [...document.connectivityEvidence, ...additions],
+      };
+}
+
+function buildNetContext(
+  sourceDocument: SchematicDocument,
   documentsById: Map<string, SchematicDocument>,
   externalDefinitionsById: ReadonlyMap<string, ExternalSubcircuitDefinition>,
   projectedNames: ReadonlyMap<string, ProjectedNetName>,
   options: ResolvedDesignNetlistAnalysisOptions,
   diagnostics: NetlistDiagnostic[],
 ): CellNetContext {
+  const document = withNetlistPowerMarkerClaims(sourceDocument);
   if (document.nets.length > MAX_NETS_PER_CELL) {
     diagnostic(
       diagnostics,
@@ -240,6 +317,19 @@ function buildNetContext(
         "CONFLICTING_LOGICAL_NET_POWER_DOMAIN",
         `Logical Net ${logicalNet.id} connects incompatible power markers`,
         [...logicalNet.baseNetIds, ...logicalNet.evidenceIds],
+      );
+    }
+    if (logicalNet.conflicts.includes("formal-global-conflict")) {
+      diagnostic(
+        diagnostics,
+        document.id,
+        "FORMAL_PORT_GLOBAL_NET_CONFLICT",
+        `Logical Net ${logicalNet.id} is both a formal Cell Pin and a Global Net`,
+        [
+          ...logicalNet.baseNetIds,
+          ...logicalNet.formalTerminalIds,
+          ...logicalNet.evidenceIds,
+        ],
       );
     }
     const projectedName = projectedNames.get(logicalNet.id);
@@ -319,7 +409,7 @@ function buildNetContext(
   }
 
   const nameByNetId = new Map<string, string>();
-  let generatedIndex = 1;
+  let generatedIndex = 0;
   for (const logicalNet of logicalNets.groups) {
     const projectedName = projectedNames.get(logicalNet.id);
     let name =
@@ -403,7 +493,7 @@ function buildNetContext(
     if (!name && logicalNet.scope !== "global") {
       let encodedGenerated: EncodedNetName;
       do {
-        name = `N${String(generatedIndex).padStart(4, "0")}`;
+        name = `net${generatedIndex}`;
         generatedIndex += 1;
         encodedGenerated = encodeCandidate(name, "local", options);
       } while (
@@ -548,6 +638,12 @@ function buildNetContext(
   const emittedNetNames = new Set<string>();
   return {
     nameByNetId,
+    nameByAuthoredName: new Map(
+      logicalNets.groups.flatMap((net) => {
+        const name = nameByNetId.get(net.baseNetIds[0]!);
+        return net.name && name ? [[foldNetName(net.name), name] as const] : [];
+      }),
+    ),
     netByTerminal,
     noConnectNameByTerminal,
     nets: [
@@ -583,6 +679,9 @@ function terminalNetName(
     `${instance.id}\u0000${pinName}`,
   );
   if (noConnectName) return noConnectName;
+  if (name) return name;
+  // Missing connectivity is an error, not permission to infer a supply from
+  // device polarity or a matching Net name elsewhere in the Cell.
   if (!name) {
     diagnostic(
       diagnostics,
@@ -643,6 +742,7 @@ function extractHierarchyInstance(
     child.netlist.formalParameters,
     diagnostics,
   );
+  // Callers and definitions share the authored interface, including its order.
   const nodes = projectCellInterface(child.netlist).ports.flatMap((port) => {
     const netName = terminalNetName(
       document,
@@ -718,7 +818,6 @@ function extractExternalSubcircuitInstance(
   instance: Instance,
   definition: ExternalSubcircuitDefinition | undefined,
   context: CellNetContext,
-  options: ResolvedDesignNetlistAnalysisOptions,
   diagnostics: NetlistDiagnostic[],
 ): DesignNetlistInstance | null {
   const netlist = instance.netlist;
@@ -840,16 +939,6 @@ function extractExternalSubcircuitInstance(
             if (!entry) return [];
             let rawValue = entry[1];
             if (parameter.targetUnit === "micrometre") {
-              if (options.format !== "spice") {
-                diagnostic(
-                  diagnostics,
-                  document.id,
-                  "UNSUPPORTED_REVIEWED_BINDING_DIALECT",
-                  `${reviewed.masterName} geometry projection is reviewed only for SPICE/ngspice`,
-                  [instance.id],
-                );
-                return [];
-              }
               try {
                 rawValue = projectLengthToSky130Micrometres(rawValue);
               } catch (error) {
@@ -891,6 +980,87 @@ function extractExternalSubcircuitInstance(
   };
 }
 
+function extractBuiltInSubcircuitInstance(
+  document: SchematicDocument,
+  instance: Instance,
+  definition: BuiltInSubcircuitDescriptor,
+  reference: string,
+  context: CellNetContext,
+  diagnostics: NetlistDiagnostic[],
+): DesignNetlistInstance | null {
+  const netlist = instance.netlist;
+  const binding = netlist?.binding;
+  if (binding && binding.kind !== "unresolved-subcircuit") {
+    diagnostic(
+      diagnostics,
+      document.id,
+      "BUILTIN_SUBCIRCUIT_BINDING_MISMATCH",
+      `Analog Block ${reference} requires a black-box subcircuit target`,
+      [instance.id],
+    );
+    return null;
+  }
+  const target =
+    binding?.kind === "unresolved-subcircuit"
+      ? binding.name
+      : definition.target;
+  if (!isIdentifier(reference) || !isIdentifier(target)) {
+    diagnostic(
+      diagnostics,
+      document.id,
+      "INVALID_SUBCIRCUIT_IDENTIFIER",
+      `Analog Block ${reference} or target ${target} is outside the portable identifier subset`,
+      [instance.id],
+    );
+  }
+  const parameters = Object.entries(netlist?.parameters ?? {});
+  for (const [name] of parameters) {
+    if (isIdentifier(name)) continue;
+    diagnostic(
+      diagnostics,
+      document.id,
+      "INVALID_PARAMETER_NAME",
+      `Parameter name is outside the portable identifier subset: ${name}`,
+      [instance.id],
+    );
+  }
+  const nodes = definition.ports.flatMap((port) => {
+    if (port.supply) {
+      // The library declares a fixed named supply, not permission to invent
+      // a Net or a Cell interface. Resolve authored identity before encoding.
+      const netName = context.nameByAuthoredName.get(foldNetName(port.supply));
+      if (netName) return [{ pinName: port.name, netName }];
+      diagnostic(
+        diagnostics,
+        document.id,
+        "MISSING_BLOCK_SUPPLY",
+        `Analog Block ${reference} requires an authored ${port.supply} Net; declare its supply explicitly or use an external definition with the intended interface`,
+        [instance.id],
+      );
+      return [];
+    }
+    const netName = terminalNetName(
+      document,
+      instance,
+      port.pinName,
+      context,
+      diagnostics,
+    );
+    return netName ? [{ pinName: port.name, netName }] : [];
+  });
+  return {
+    id: instance.id,
+    reference,
+    invocationKind: "subcircuit",
+    deviceClass: "hierarchical",
+    target,
+    nodes,
+    parameters: parameters
+      .sort(([a], [b]) => compareText(a, b))
+      .map(([name, rawValue]) => ({ name, rawValue })),
+  };
+}
+
 function extractDeviceInstance(
   document: SchematicDocument,
   instance: Instance,
@@ -917,7 +1087,7 @@ function extractDeviceInstance(
         diagnostics,
         document.id,
         "INVALID_NET_MARKER",
-        `Net marker ${instance.id} must connect to an explicitly named Net`,
+        `Net marker ${instance.id} must connect to one valid Net`,
         [instance.id],
       );
     } else if (
@@ -1163,44 +1333,61 @@ function extractCell(
     diagnostics,
   );
   const interfaceProjection = projectCellInterface(document.netlist);
-  const ports = interfaceProjection.ports.flatMap((port) => {
-    let hasMissingNet = false;
-    for (const netId of port.netIds) {
-      if (document.nets.some((candidate) => candidate.id === netId)) continue;
-      hasMissingNet = true;
-      diagnostic(
-        diagnostics,
-        document.id,
-        "MISSING_INTERFACE_NET",
-        `Netlist terminal ${port.name} references unknown Net ${netId}`,
-        [netId],
+  const ports: DesignNetlistCell["ports"] = interfaceProjection.ports.flatMap(
+    (port) => {
+      let hasMissingNet = false;
+      for (const netId of port.netIds) {
+        if (document.nets.some((candidate) => candidate.id === netId)) continue;
+        hasMissingNet = true;
+        diagnostic(
+          diagnostics,
+          document.id,
+          "MISSING_INTERFACE_NET",
+          `Netlist terminal ${port.name} references unknown Net ${netId}`,
+          [netId],
+        );
+      }
+      if (hasMissingNet) return [];
+      const logicalNet = resolveDocumentLogicalNets(document).byBaseNetId.get(
+        port.netIds[0]!,
       );
-    }
-    if (hasMissingNet) return [];
-    const logicalNet = resolveDocumentLogicalNets(document).byBaseNetId.get(
-      port.netIds[0]!,
-    );
-    const encodedPort = encodeCandidate(
-      port.name,
-      logicalNet?.scope ?? "local",
-      options,
-    );
-    if (!encodedPort.ok) {
-      diagnostic(
-        diagnostics,
-        document.id,
-        encodedPort.code,
-        `Port ${port.name} cannot be encoded for ${options.format}: ${encodedPort.message}`,
-        [...port.netIds],
+      const encodedPort = encodeCandidate(
+        port.name,
+        logicalNet?.scope ?? "local",
+        options,
       );
-      return [];
-    }
-    const representativeNetId = port.netIds[0]!;
-    const netName = context.nameByNetId.get(representativeNetId) ?? port.name;
-    return [{ id: representativeNetId, name: encodedPort.token, netName }];
-  });
-
+      if (!encodedPort.ok) {
+        diagnostic(
+          diagnostics,
+          document.id,
+          encodedPort.code,
+          `Port ${port.name} cannot be encoded for ${options.format}: ${encodedPort.message}`,
+          [...port.netIds],
+        );
+        return [];
+      }
+      const representativeNetId = port.netIds[0]!;
+      const netName = context.nameByNetId.get(representativeNetId) ?? port.name;
+      return [{ id: representativeNetId, name: encodedPort.token, netName }];
+    },
+  );
   const referenceIndex = createReferenceIndex(document);
+  const syntheticReferences = new Map<string, string>();
+  const reservedReferences = new Set(referenceIndex.byReference.keys());
+  for (const instance of [...document.instances].sort((left, right) =>
+    left.id.localeCompare(right.id),
+  )) {
+    if (instance.reference || !subcircuitDescriptor(instance.symbolId))
+      continue;
+    const policy = referenceIndex.policyByInstanceId.get(instance.id);
+    if (!policy) continue;
+    const reference = nextReference(referenceIndex, policy, {
+      reservedReferences,
+    });
+    if (!reference) continue;
+    syntheticReferences.set(instance.id, reference);
+    reservedReferences.add(reference.toLowerCase());
+  }
   const reportedDuplicateReferences = new Set<string>();
   for (const issue of referenceIndex.issues) {
     if (issue.code === "MISSING_REFERENCE") continue;
@@ -1240,14 +1427,23 @@ function extractCell(
     interfaceProjection.ports.flatMap((port) => port.interfaceInstanceIds),
   );
   for (const instance of [...document.instances].sort((a, b) => {
-    const left = a.reference ?? a.id;
-    const right = b.reference ?? b.id;
+    const left = a.reference ?? syntheticReferences.get(a.id) ?? a.id;
+    const right = b.reference ?? syntheticReferences.get(b.id) ?? b.id;
     return compareText(left, right) || a.id.localeCompare(b.id);
   })) {
     if (cellPinInstanceIds.has(instance.id)) continue;
     const binding = instance.netlist?.binding;
-    const extracted =
-      binding?.kind === "subcircuit"
+    const builtInSubcircuit = subcircuitDescriptor(instance.symbolId);
+    const extracted = builtInSubcircuit
+      ? extractBuiltInSubcircuitInstance(
+          document,
+          instance,
+          builtInSubcircuit,
+          instance.reference ?? syntheticReferences.get(instance.id)!,
+          context,
+          diagnostics,
+        )
+      : binding?.kind === "subcircuit"
         ? extractHierarchyInstance(
             document,
             instance,
@@ -1263,7 +1459,6 @@ function extractCell(
                 (definition) => definition.id === binding.definitionId,
               ),
               context,
-              options,
               diagnostics,
             )
           : extractDeviceInstance(document, instance, context, diagnostics);
@@ -1373,27 +1568,15 @@ function analyzeDesign(
       ),
     ),
   ].sort(compareText);
-  return {
-    ir: {
-      topCellId: resolvedOptions.rootDocumentId,
-      cells,
-      globals,
-      externalMasters: [
-        ...new Map(
-          documents
-            .flatMap((document) => document.instances)
-            .flatMap((instance) => {
-              const binding = instance.netlist?.binding;
-              if (binding?.kind !== "external-subcircuit") return [];
-              const definition = project.externalSubcircuitDefinitions.find(
-                (item) => item.id === binding.definitionId,
-              );
-              return definition ? [[definition.id, definition] as const] : [];
-            }),
-        ).values(),
-      ]
-        .sort((left, right) => compareText(left.name, right.name))
-        .map((definition) => ({
+  const externalMasters = new Map<string, DesignNetlistExternalMaster>();
+  for (const instance of documents.flatMap((document) => document.instances)) {
+    const binding = instance.netlist?.binding;
+    if (binding?.kind === "external-subcircuit") {
+      const definition = project.externalSubcircuitDefinitions.find(
+        (item) => item.id === binding.definitionId,
+      );
+      if (definition) {
+        externalMasters.set(`external:${definition.id}`, {
           id: definition.id,
           name: definition.name,
           terminals: definition.terminals.map((terminal) => ({
@@ -1407,7 +1590,38 @@ function analyzeDesign(
               ? {}
               : { defaultValue: parameter.defaultValue }),
           })),
-        })),
+        });
+      }
+    }
+    const descriptor = subcircuitDescriptor(instance.symbolId);
+    if (!descriptor) continue;
+    const target =
+      binding?.kind === "unresolved-subcircuit"
+        ? binding.name
+        : descriptor.target;
+    externalMasters.set(`builtin:${target.toLowerCase()}`, {
+      id: descriptor.id,
+      name: target,
+      terminals: descriptor.ports.map((port, index) => ({
+        id: deriveStableId(
+          "built-in-subcircuit-port",
+          descriptor.id,
+          String(index),
+        ),
+        name: port.name,
+        direction: port.direction,
+      })),
+      formalParameters: [],
+    });
+  }
+  return {
+    ir: {
+      topCellId: resolvedOptions.rootDocumentId,
+      cells,
+      globals,
+      externalMasters: [...externalMasters.values()].sort((left, right) =>
+        compareText(left.name, right.name),
+      ),
     },
     diagnostics,
   };

@@ -16,6 +16,7 @@ import {
   normalizedBearing,
   rotatePointByDegrees,
 } from "../../canvas/canvas-geometry";
+import { rectangleGridGeometry } from "./rectangle-grid-geometry";
 
 export type DraftingHandle =
   | { kind: "from" | "to" | "outline-width" | "rotate" }
@@ -267,6 +268,22 @@ export function applyDraftingHandle(
   ) {
     const opposite = originalGeometry.corners[(handle.index + 2) % 4];
     if (!opposite) return object;
+    if (object.rotation % 90 === 0) {
+      const { center, width, height } = rectangleGridGeometry(
+        opposite,
+        point,
+        grid,
+      );
+      if (width === 0 || height === 0) return object;
+      const swapAxes = object.rotation % 180 !== 0;
+      return {
+        ...object,
+        center,
+        anchor: { kind: "free", position: center },
+        width: swapAxes ? height : width,
+        height: swapAxes ? width : height,
+      };
+    }
     const radians = (object.rotation * Math.PI) / 180;
     const ux = { x: Math.cos(radians), y: Math.sin(radians) };
     const uy = { x: -Math.sin(radians), y: Math.cos(radians) };
@@ -451,7 +468,7 @@ function rotateFreeAnchor(
 export function rotateDraftingObject(
   object: DraftingObject,
   geometry: ResolvedDraftingGeometry,
-  deltaDegrees: 90 | -90,
+  deltaDegrees: 45 | -45 | 90 | -90 | 135 | -135 | 180,
   grid: number,
 ): DraftingObject | null {
   if (object.locked) return null;

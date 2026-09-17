@@ -164,8 +164,10 @@ describe("Razavi symbol catalog", () => {
       ["comparator", "reviewed", "razavi-reference-v1"],
       ["comparator-inputs-swapped", "reviewed", "razavi-reference-v1"],
       ["comparator-unmarked", "reviewed", "razavi-reference-v1"],
+      ["comparator-unmarked-inputs-swapped", "reviewed", "razavi-reference-v1"],
       ["current-source", "reviewed", "razavi-reference-v1"],
       ["d-flip-flop", "reviewed", "razavi-reference-v1"],
+      ["d-flip-flop-reset", "reviewed", "razavi-reference-v1"],
       ["d-flip-flop-q", "reviewed", "razavi-reference-v1"],
       ["delay-cell", "reviewed", "razavi-reference-v1"],
       ["adder", "reviewed", "razavi-reference-v1"],
@@ -398,6 +400,51 @@ describe("Razavi symbol catalog", () => {
     );
   });
 
+  it("adds an active-high reset terminal without changing the reviewed DFF body", () => {
+    const dff = requireRazaviCatalogSymbol("d-flip-flop");
+    const resettable = requireRazaviCatalogSymbol("d-flip-flop-reset");
+
+    expect(resettable.pins.map((pin) => [pin.name, pin.role])).toEqual([
+      ["D", "input"],
+      ["CK", "clock"],
+      ["RST", "reset"],
+      ["Q", "output"],
+      ["QBAR", "output-complement"],
+    ]);
+    expect(resettable.pins.find((pin) => pin.name === "RST")).toMatchObject({
+      at: { x: 0, y: 50 },
+      direction: "south",
+      presentation: {
+        leadLength: 15,
+        showName: true,
+        textStyle: "math-symbol",
+        textSizeScale: 0.68,
+      },
+    });
+    expect(
+      resettable.primitives.find(
+        (primitive) => primitive.part === "reset-lead",
+      ),
+    ).toMatchObject({
+      kind: "line",
+      from: { x: 0, y: 35 },
+      to: { x: 0, y: 50 },
+    });
+    expect(resettable.primitives[2]).toMatchObject({
+      kind: "path",
+      data: "M -25.000855 -25.0 L 25.000855 -25.0 L 25.000855 35.0 L -25.000855 35.0 Z",
+    });
+    expect(resettable.pins.filter((pin) => pin.name !== "RST")).toEqual(
+      dff.pins,
+    );
+    expect(resettable.viewBox).toEqual({
+      x: -42,
+      y: -27,
+      width: 84,
+      height: 79,
+    });
+  });
+
   it("keeps the page-331 Delay Cell proportions and source glyph outlines", () => {
     const delayCell = requireRazaviCatalogSymbol("delay-cell");
     expect(delayCell.pins.map((pin) => pin.name)).toEqual(["A", "Y"]);
@@ -435,37 +482,121 @@ describe("Razavi symbol catalog", () => {
     ).toBe(true);
   });
 
-  it("keeps the enlarged FD Amp angle, pair spacing, and joined leads", () => {
-    const opampTriangle = requireRazaviCatalogSymbol("opamp").primitives.find(
-      (primitive) => primitive.kind === "path",
+  it("declares exact bounds for every fixed Analog Block path, including interior marks", () => {
+    const family = razaviCatalogSymbols.filter((symbol) =>
+      /^(?:opamp|voltage-amplifier|comparator|differential-transconductance)(?:-|$)/u.test(
+        symbol.id,
+      ),
+    );
+    expect(family).toHaveLength(20);
+    for (const symbol of family)
+      for (const primitive of symbol.primitives) {
+        if (primitive.kind !== "path") continue;
+        // These authored outlines and polarity marks contain only straight
+        // segments, so their extrema are independently known from the vertices.
+        expect(primitive.data.replace(/[MLZ\d.,+\-\s]/gu, ""), symbol.id).toBe(
+          "",
+        );
+        const points = pathPoints(primitive.data);
+        const xs = points.map((point) => point.x),
+          ys = points.map((point) => point.y);
+        expect(
+          primitive.bounds,
+          `${symbol.id} ${primitive.part ?? "body"}`,
+        ).toEqual({
+          x: Math.min(...xs),
+          y: Math.min(...ys),
+          width: Math.max(...xs) - Math.min(...xs),
+          height: Math.max(...ys) - Math.min(...ys),
+        });
+      }
+  });
+
+  it("uses one equilateral triangle, pair spacing, and visible leads across Analog Blocks", () => {
+    const opamp = requireRazaviCatalogSymbol("opamp");
+    const opampTriangle = opamp.primitives.find(
+      (primitive) =>
+        primitive.kind === "path" && primitive.style?.strokeRole === "emphasis",
     );
     if (opampTriangle?.kind !== "path") {
       throw new Error("Op Amp must retain its triangle path");
     }
-    const pathPoints = (data: string) => {
-      const values = [...data.matchAll(/-?\d+(?:\.\d+)?/gu)].map((match) =>
-        Number(match[0]),
+
+    const family = razaviCatalogSymbols.filter((symbol) =>
+      /^(?:opamp|voltage-amplifier|comparator)(?:-|$)/u.test(symbol.id),
+    );
+    expect(family).toHaveLength(18);
+    for (const { id: symbolId } of family) {
+      const candidate = requireRazaviCatalogSymbol(symbolId);
+      const triangle = candidate.primitives.find(
+        (primitive) =>
+          primitive.kind === "path" &&
+          primitive.style?.strokeRole === "emphasis",
       );
-      return {
-        leftTop: { x: values[0]!, y: values[1]! },
-        leftBottom: { x: values[2]!, y: values[3]! },
-        apex: { x: values[4]!, y: values[5]! },
-      };
-    };
-    const opampPoints = pathPoints(opampTriangle.data);
-    const opampWidth = opampPoints.apex.x - opampPoints.leftTop.x;
-    const originalFdAspect = (14.9998 - -20) / (14.9993 - -15.0002);
-    const distanceToEdge = (
-      point: { x: number; y: number },
-      from: { x: number; y: number },
-      to: { x: number; y: number },
-    ) =>
-      Math.abs(
-        (to.y - from.y) * point.x -
-          (to.x - from.x) * point.y +
-          to.x * from.y -
-          to.y * from.x,
-      ) / Math.hypot(to.y - from.y, to.x - from.x);
+      expect(triangle, `${symbolId} triangle`).toMatchObject({
+        kind: "path",
+        data: opampTriangle.data,
+        style: opampTriangle.style,
+      });
+      expect(candidate.viewBox, `${symbolId} viewBox`).toEqual(opamp.viewBox);
+      if (triangle?.kind !== "path") throw new Error("triangle missing");
+      const points = pathPoints(triangle.data);
+      expect(points).toHaveLength(3);
+      // Use the vertical base as the grid anchor, allowing the apex to carry
+      // the irrational altitude required by an equilateral triangle.
+      const base = points.filter(
+        (point) => point.x === Math.min(...points.map((point) => point.x)),
+      );
+      expect(base, `${symbolId} grid-aligned vertical base`).toEqual([
+        { x: -30, y: -30 },
+        { x: -30, y: 30 },
+      ]);
+      const sideLengths = points.map((point, index) => {
+        const next = points[(index + 1) % 3]!;
+        return Math.hypot(point.x - next.x, point.y - next.y);
+      });
+      for (const length of sideLengths)
+        expect(length, `${symbolId} side`).toBeCloseTo(60, 5);
+      // The pin-end of each lead stays on-grid and the body-end meets an
+      // outline edge; there must be no open seam or lead through the interior.
+      for (const pin of candidate.pins) {
+        if (pin.direction === "east") {
+          expect(pin.at.x, `${symbolId}.${pin.name} shared output column`).toBe(
+            30,
+          );
+          expect(
+            pin.at.x - Math.max(...points.map((point) => point.x)),
+            `${symbolId}.${pin.name} beyond apex`,
+          ).toBeCloseTo(60 - 30 * Math.sqrt(3), 5);
+        }
+        const lead = candidate.primitives.find(
+          (primitive) =>
+            primitive.kind === "line" &&
+            [primitive.from, primitive.to].some(
+              (point) => point.x === pin.at.x && point.y === pin.at.y,
+            ),
+        );
+        if (lead?.kind !== "line")
+          throw new Error(`${symbolId}.${pin.name} lead missing`);
+        const contact =
+          lead.from.x === pin.at.x && lead.from.y === pin.at.y
+            ? lead.to
+            : lead.from;
+        const onEdge = points.some((point, index) => {
+          const next = points[(index + 1) % 3]!;
+          const edge = Math.hypot(next.x - point.x, next.y - point.y);
+          return (
+            Math.abs(
+              Math.hypot(contact.x - point.x, contact.y - point.y) +
+                Math.hypot(contact.x - next.x, contact.y - next.y) -
+                edge,
+            ) < 1e-6
+          );
+        });
+        expect(onEdge, `${symbolId}.${pin.name} body contact`).toBe(true);
+      }
+    }
+
     for (const symbolId of [
       "opamp-differential",
       "opamp-differential-lettered",
@@ -475,84 +606,30 @@ describe("Razavi symbol catalog", () => {
         expect.arrayContaining([
           expect.objectContaining({
             name: "IN+",
-            at: { x: -40, y: 20 },
+            at: { x: -40, y: 10 },
           }),
           expect.objectContaining({
             name: "IN-",
-            at: { x: -40, y: -20 },
+            at: { x: -40, y: -10 },
           }),
           expect.objectContaining({
-            at: { x: -10, y: -20 },
+            at: { x: 30, y: -10 },
           }),
           expect.objectContaining({
-            at: { x: -10, y: 20 },
+            at: { x: 30, y: 10 },
           }),
         ]),
       );
-      for (const primitive of symbol.primitives.slice(0, 4)) {
+      const leads = symbol.primitives.slice(0, 4);
+      for (const primitive of leads) {
         expect(primitive).toMatchObject({
           kind: "line",
           style: { strokeRole: "normal" },
         });
       }
       const triangle = symbol.primitives[4];
-      if (triangle?.kind !== "path") {
-        throw new Error("FD Amp must retain its triangle path");
-      }
-      const points = pathPoints(triangle.data);
-      const width = points.apex.x - points.leftTop.x;
-      const height = points.leftBottom.y - points.leftTop.y;
-      expect(width).toBeCloseTo(opampWidth * 1.4, 6);
-      expect((points.leftTop.x + points.apex.x) / 2).toBeCloseTo(
-        (opampPoints.leftTop.x + opampPoints.apex.x) / 2,
-        6,
-      );
-      expect(width / height).toBeCloseTo(originalFdAspect, 5);
-      expect(triangle.style).toEqual(opampTriangle.style);
-      const edgeXAtY = (y: number) =>
-        y <= points.apex.y
-          ? points.leftTop.x +
-            ((y - points.leftTop.y) / (points.apex.y - points.leftTop.y)) *
-              width
-          : points.leftBottom.x +
-            ((points.leftBottom.y - y) /
-              (points.leftBottom.y - points.apex.y)) *
-              width;
-      for (const primitive of symbol.primitives.filter(
-        (candidate) => candidate.part === "output-polarity",
-      )) {
-        if (primitive.kind !== "line") continue;
-        expect(primitive.from.x).toBeLessThan(edgeXAtY(primitive.from.y));
-        expect(primitive.to.x).toBeLessThan(edgeXAtY(primitive.to.y));
-      }
-      const lowerInputMark = symbol.primitives.find(
-        (primitive) =>
-          primitive.kind === "line" &&
-          primitive.part === "input-polarity" &&
-          primitive.from.y === primitive.to.y &&
-          primitive.from.y > 0,
-      );
-      const lowerOutputMark = symbol.primitives.find(
-        (primitive) =>
-          primitive.kind === "line" &&
-          primitive.part === "output-polarity" &&
-          primitive.from.y === primitive.to.y &&
-          primitive.from.y > 0,
-      );
-      if (lowerInputMark?.kind !== "line" || lowerOutputMark?.kind !== "line") {
-        throw new Error("FD Amp lower polarity marks must remain line pairs");
-      }
-      expect(lowerInputMark.from.y).toBeGreaterThan(15);
-      expect(lowerInputMark.from.y).toBeLessThan(16);
-      expect(lowerOutputMark.from.y).toBeGreaterThan(15);
-      expect(lowerOutputMark.from.y).toBeLessThan(16);
-      const lowerInputCenterX =
-        (lowerInputMark.from.x + lowerInputMark.to.x) / 2;
-      const lowerOutputCenterX =
-        (lowerOutputMark.from.x + lowerOutputMark.to.x) / 2;
-      expect(lowerOutputCenterX - lowerInputCenterX).toBeGreaterThan(10);
-      const [topInput, bottomInput, topOutput, bottomOutput] =
-        symbol.primitives.slice(0, 4);
+      expect(triangle).toEqual(opampTriangle);
+      const [topInput, bottomInput, topOutput, bottomOutput] = leads;
       if (
         topInput?.kind !== "line" ||
         bottomInput?.kind !== "line" ||
@@ -561,40 +638,104 @@ describe("Razavi symbol catalog", () => {
       ) {
         throw new Error("FD Amp leads must remain line primitives");
       }
-      const triangleHalfStroke = 1.2;
-      expect(topInput.to.x - topInput.from.x).toBeCloseTo(2.0521, 6);
-      expect(bottomInput.to.x - bottomInput.from.x).toBeCloseTo(2.0521, 6);
-      expect(topInput.to.x).toBeLessThan(points.leftTop.x);
-      expect(bottomInput.to.x).toBeLessThan(points.leftBottom.x);
+      expect(topInput.to.x).toBe(bottomInput.to.x);
+      expect(topOutput.from.x).toBe(bottomOutput.from.x);
+      expect(topInput.to.y).toBe(-bottomInput.to.y);
+      expect(topOutput.from.y).toBe(-bottomOutput.from.y);
       expect(
-        topInput.to.x - (points.leftTop.x - triangleHalfStroke),
-      ).toBeCloseTo(0.05, 6);
+        symbol.primitives.filter(
+          (primitive) => primitive.part === "input-polarity",
+        ),
+      ).toHaveLength(2);
       expect(
-        bottomInput.to.x - (points.leftBottom.x - triangleHalfStroke),
-      ).toBeCloseTo(0.05, 6);
-      const topCenterX =
-        points.leftTop.x +
-        ((topOutput.from.y - points.leftTop.y) /
-          (points.apex.y - points.leftTop.y)) *
-          (points.apex.x - points.leftTop.x);
-      const bottomCenterX =
-        points.leftBottom.x +
-        ((points.leftBottom.y - bottomOutput.from.y) /
-          (points.leftBottom.y - points.apex.y)) *
-          (points.apex.x - points.leftBottom.x);
-      expect(topOutput.from.x).toBeCloseTo(topCenterX, 5);
-      expect(bottomOutput.from.x).toBeCloseTo(bottomCenterX, 5);
-      expect(
-        distanceToEdge(topOutput.from, points.leftTop, points.apex),
-      ).toBeCloseTo(0, 5);
-      expect(
-        distanceToEdge(bottomOutput.from, points.leftBottom, points.apex),
-      ).toBeCloseTo(0, 5);
+        symbol.primitives.filter(
+          (primitive) => primitive.part === "output-polarity",
+        ),
+      ).toHaveLength(2);
+    }
+  });
+
+  it("gives every Analog Block equal square polarity strokes with room inside the triangle", () => {
+    const gm = requireRazaviCatalogSymbol("differential-transconductance");
+    const reference = gm.primitives.find(
+      (primitive) => primitive.part === "input-polarity",
+    );
+    if (reference?.kind !== "line") throw new Error("gm polarity missing");
+    const markSize = Math.hypot(
+      reference.to.x - reference.from.x,
+      reference.to.y - reference.from.y,
+    );
+    const family = razaviCatalogSymbols.filter((symbol) =>
+      /^(?:opamp|comparator|differential-transconductance)(?:-|$)/u.test(
+        symbol.id,
+      ),
+    );
+    for (const symbol of family) {
+      const marks = symbol.primitives.filter((primitive) =>
+        primitive.part?.includes("polarity"),
+      );
+      expect(marks).toHaveLength(
+        symbol.id.startsWith("comparator-unmarked")
+          ? 0
+          : symbol.id.startsWith("opamp-differential")
+            ? 6
+            : 3,
+      );
+      const body = symbol.primitives.find(
+        (primitive) =>
+          primitive.kind === "path" &&
+          primitive.style?.strokeRole === "emphasis",
+      );
+      if (body?.kind !== "path") throw new Error("body missing");
+      const points = pathPoints(body.data);
+      const winding = Math.sign(
+        points.reduce((area, from, index) => {
+          const to = points[(index + 1) % points.length]!;
+          return area + from.x * to.y - to.x * from.y;
+        }, 0),
+      );
+      for (const mark of marks) {
+        if (mark.kind !== "line") throw new Error("polarity must be a stroke");
+        expect(
+          Math.hypot(mark.to.x - mark.from.x, mark.to.y - mark.from.y),
+          `${symbol.id} mark size`,
+        ).toBe(markSize);
+        expect(mark.style, `${symbol.id} mark style`).toEqual(reference.style);
+        // A signed distance into each convex outline catches marks
+        // outside the body as well as strokes crowding its heavy outline.
+        for (const point of [mark.from, mark.to])
+          for (const [index, from] of points.entries()) {
+            const to = points[(index + 1) % points.length]!;
+            const dx = to.x - from.x;
+            const dy = to.y - from.y;
+            const clearance =
+              (winding * (dx * (point.y - from.y) - dy * (point.x - from.x))) /
+              Math.hypot(dx, dy);
+            // Normal + emphasis half-widths total 2; retain at least 1 unit
+            // of painted white space, including the rounded mark caps.
+            expect(
+              clearance,
+              `${symbol.id} polarity/body clearance`,
+            ).toBeGreaterThanOrEqual(3);
+          }
+      }
+      if (symbol.id.startsWith("opamp-differential")) {
+        const columnBounds = (side: string) =>
+          marks.flatMap((mark) =>
+            mark.kind === "line" && mark.part?.includes(side)
+              ? [mark.from.x, mark.to.x]
+              : [],
+          );
+        const gap =
+          Math.min(...columnBounds("output")) -
+          Math.max(...columnBounds("input"));
+        expect(gap, `${symbol.id} column gap`).toBeGreaterThanOrEqual(4);
+      }
     }
   });
 
   it("uses reviewed catalog objects as the sole built-in product library", () => {
-    expect(razaviCatalogSymbols).toHaveLength(67);
+    expect(razaviCatalogSymbols).toHaveLength(69);
     for (const catalogSymbol of razaviProductSymbols) {
       expect(
         builtInSymbols.find((symbol) => symbol.id === catalogSymbol.id),
@@ -611,9 +752,9 @@ describe("Razavi symbol catalog", () => {
       "capacitor",
       "closed-switch",
       "comparator",
-      "comparator-unmarked",
       "current-source",
       "d-flip-flop",
+      "d-flip-flop-reset",
       "d-flip-flop-q",
       "delay-cell",
       "adder",
@@ -637,9 +778,7 @@ describe("Razavi symbol catalog", () => {
       "nor-gate",
       "npn",
       "opamp",
-      "opamp-lettered",
       "opamp-differential",
-      "opamp-differential-lettered",
       "or-gate",
       "pmos",
       "pnp",
@@ -653,7 +792,6 @@ describe("Razavi symbol catalog", () => {
       "variable-resistor",
       "vdd-port",
       "voltage-amplifier",
-      "voltage-amplifier-lettered",
       "pulse-voltage-source",
       "voltage-controlled-switch",
       "voltage-source",
@@ -826,7 +964,7 @@ describe("Razavi symbol catalog", () => {
     );
   });
 
-  it("keeps every Analog Blocks lead within one connection-grid cell", () => {
+  it("keeps Analog Blocks on-grid with deliberate triangle leads", () => {
     const analogBlocks = [
       "opamp",
       "opamp-lettered",
@@ -841,6 +979,16 @@ describe("Razavi symbol catalog", () => {
       "adc",
       "dac",
     ];
+    const triangleBlocks = new Set([
+      "opamp",
+      "opamp-lettered",
+      "opamp-differential",
+      "opamp-differential-lettered",
+      "voltage-amplifier",
+      "voltage-amplifier-lettered",
+      "comparator",
+      "comparator-unmarked",
+    ]);
 
     for (const symbolId of analogBlocks) {
       const symbol = requireRazaviCatalogSymbol(symbolId);
@@ -860,10 +1008,27 @@ describe("Razavi symbol catalog", () => {
         expect(attached, `${symbolId}.${pin.name} lead count`).toHaveLength(1);
         const line = attached[0];
         if (!line || line.kind !== "line") continue;
-        expect(
-          Math.hypot(line.to.x - line.from.x, line.to.y - line.from.y),
-          `${symbolId}.${pin.name} drawn lead`,
-        ).toBeLessThanOrEqual(10);
+        const drawnLength = Math.hypot(
+          line.to.x - line.from.x,
+          line.to.y - line.from.y,
+        );
+        if (triangleBlocks.has(symbolId)) {
+          // The base and input ports are one grid apart; the fixed output
+          // column also includes the altitude from the differential contact.
+          const expectedLength =
+            pin.direction === "east"
+              ? 60 - (30 - Math.abs(pin.at.y)) * Math.sqrt(3)
+              : 10;
+          expect(drawnLength, `${symbolId}.${pin.name} drawn lead`).toBeCloseTo(
+            expectedLength,
+            5,
+          );
+        } else {
+          expect(
+            drawnLength,
+            `${symbolId}.${pin.name} drawn lead`,
+          ).toBeLessThanOrEqual(10);
+        }
       }
     }
   });
@@ -1125,6 +1290,28 @@ describe("Razavi symbol catalog", () => {
     expect(requireRazaviCatalogSymbol("ground").labelVisibility).toBe("hidden");
   });
 
+  it.each(["port", "port-filled"])(
+    "shortens the %s stem one cell while keeping its circle and terminal joined",
+    (symbolId) => {
+      const symbol = requireRazaviCatalogSymbol(symbolId);
+      const [circle, lead] = symbol.primitives;
+      expect(circle).toMatchObject({
+        kind: "circle",
+        center: { x: -7.086614, y: 0 },
+        radius: 2.47907,
+      });
+      expect(symbol.pins).toMatchObject([
+        { name: "P", role: "port", at: { x: 0, y: 0 }, direction: "east" },
+      ]);
+      expect(lead).toMatchObject({ kind: "line", from: symbol.pins[0]!.at });
+      if (circle?.kind !== "circle" || lead?.kind !== "line") return;
+      expect(lead.to.x).toBeCloseTo(circle.center.x + circle.radius, 6);
+      expect(lead.to.y).toBe(circle.center.y);
+      expect(lead.from.x - lead.to.x).toBeCloseTo(14.607544 - 10, 6);
+      expect(symbol.viewBox).toEqual({ x: -14, y: -7, width: 18, height: 14 });
+    },
+  );
+
   it("keeps canonical MOS assets four-terminal and three-terminal mode visual-only", () => {
     for (const symbolId of ["nmos", "pmos"]) {
       const symbol = requireRazaviCatalogSymbol(symbolId);
@@ -1370,18 +1557,17 @@ describe("Razavi symbol catalog", () => {
     );
   });
 
-  it("uses the PDF-derived three-terminal op-amp geometry and polarity marks", () => {
+  it("preserves three-terminal pin contracts and polarity strokes in the equilateral op-amp", () => {
     const opamp = requireRazaviCatalogSymbol("opamp");
     expect(opamp.pins).toMatchObject([
-      { name: "IN+", at: { x: -30, y: 10 }, direction: "west" },
-      { name: "IN-", at: { x: -30, y: -10 }, direction: "west" },
+      { name: "IN+", at: { x: -40, y: 10 }, direction: "west" },
+      { name: "IN-", at: { x: -40, y: -10 }, direction: "west" },
       { name: "OUT", at: { x: 30, y: 0 }, direction: "east" },
     ]);
     expect(opamp.primitives).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           kind: "path",
-          data: "M -26.7979 -24.9983 L -26.7979 25 L 23.2021 0 Z",
           style: expect.objectContaining({
             strokeRole: "emphasis",
             lineJoin: "miter",
@@ -1389,13 +1575,13 @@ describe("Razavi symbol catalog", () => {
         }),
         expect.objectContaining({
           kind: "line",
-          from: { x: -21.796167, y: 12.5 },
-          to: { x: -14.296167, y: 12.5 },
+          from: { x: -26.75, y: 14 },
+          to: { x: -20.75, y: 14 },
         }),
         expect.objectContaining({
           kind: "line",
-          from: { x: -21.796167, y: -12.5 },
-          to: { x: -14.296167, y: -12.5 },
+          from: { x: -26.75, y: -14 },
+          to: { x: -20.75, y: -14 },
         }),
       ]),
     );
@@ -1405,23 +1591,26 @@ describe("Razavi symbol catalog", () => {
       generation: {
         kind: "razavi-pdf-vector-reference",
         converterPath: "scripts/generate-razavi-opamp-asset.mjs",
+        bodyNormalization: "equilateral-triangle",
       },
     });
   });
 
-  it("keeps the directly normalized BJT arrows and outline diode geometry", () => {
+  it("keeps BJT bodies and arrows while compacting leads to the nearest grid", () => {
     const npn = requireRazaviCatalogSymbol("npn");
     expect(npn.pins).toMatchObject([
-      { name: "C", at: { x: 0, y: -30 }, direction: "north" },
-      { name: "B", at: { x: -40, y: 0 }, direction: "west" },
-      { name: "E", at: { x: 0, y: 30 }, direction: "south" },
+      { name: "C", at: { x: 0, y: -20 }, direction: "north" },
+      { name: "B", at: { x: -30, y: 0 }, direction: "west" },
+      { name: "E", at: { x: 0, y: 20 }, direction: "south" },
     ]);
     const pnp = requireRazaviCatalogSymbol("pnp");
     expect(pnp.pins).toMatchObject([
-      { name: "C", at: { x: 0, y: 30 }, direction: "south" },
-      { name: "B", at: { x: -40, y: 0 }, direction: "west" },
-      { name: "E", at: { x: 0, y: -30 }, direction: "north" },
+      { name: "C", at: { x: 0, y: 20 }, direction: "south" },
+      { name: "B", at: { x: -30, y: 0 }, direction: "west" },
+      { name: "E", at: { x: 0, y: -20 }, direction: "north" },
     ]);
+    expect(npn.viewBox).toEqual({ x: -34, y: -24, width: 42, height: 48 });
+    expect(pnp.viewBox).toEqual(npn.viewBox);
     const arrowPoints = (symbol: typeof npn) => {
       const arrow = symbol.primitives.at(-1);
       if (arrow?.kind !== "polygon") throw new Error("missing BJT arrow");
@@ -1556,12 +1745,11 @@ describe("Razavi symbol catalog", () => {
       expect.arrayContaining([
         expect.objectContaining({
           kind: "path",
-          data: "M -23.63 -28.62 L -23.63 28.62 L 23.63 0 Z",
           style: expect.objectContaining({ strokeRole: "emphasis" }),
         }),
       ]),
     );
-    expect(voltageAmplifier.pins.map((pin) => pin.at.x)).toEqual([-30, 30]);
+    expect(voltageAmplifier.pins.map((pin) => pin.at.x)).toEqual([-40, 30]);
     const idealSwitch = requireRazaviCatalogSymbol("ideal-switch");
     expect(idealSwitch.name).toBe("Open Switch");
     expect(idealSwitch.pins.map((pin) => pin.at.x)).toEqual([-20, 20]);
@@ -1917,14 +2105,13 @@ describe("logic-gate and comparator family", () => {
     expect(
       unmarked.primitives.filter((primitive) => primitive.kind === "line"),
     ).toHaveLength(3);
-    expect(glyphCentreX).toBeCloseTo(bodyCentreX, 0);
-    expect(glyphCentreX).toBe(-10);
-    expect(markedGlyphCentreX).toBe(-7);
+    expect(glyphCentreX).toBeCloseTo(bodyCentreX, 5);
+    expect(markedGlyphCentreX).toBeCloseTo(-10.038476, 6);
   });
 
   it("keeps the hysteresis glyph clear of the body and the polarity marks", () => {
-    // The glyph is our own drawing inside a traced body: the triangle and the
-    // +/- marks come from the Figure 8.26 op-amp and may not move, so the
+    // The glyph is our own drawing inside the shared equilateral body. The
+    // normalized Figure 8.26 polarity marks still need their own space, so the
     // glyph is the only piece with freedom. Assert the conclusion — visible
     // white space on every side — rather than one position, so a later nudge
     // cannot quietly park it against the apex again. Painted half-widths sum
@@ -2083,10 +2270,10 @@ describe("logic-gate and comparator family", () => {
     expect(inputPitch * 2).toBe(resistorSpan);
   });
 
-  it("stays manual-only for netlist mapping like the op-amp", () => {
+  it("keeps semantic entries browsable and visual variants internal", () => {
     for (const symbolId of family) {
       const entry = getRazaviCatalogEntry(symbolId);
-      expect(entry?.palette).toBe(true);
+      expect(entry?.palette).toBe(symbolId !== "comparator-unmarked");
       expect(entry?.reviewStatus).toBe("reviewed");
       expect(entry?.automaticMappings).toEqual([]);
       expect(entry?.manualOnlyReason).toBeTruthy();
@@ -2123,7 +2310,7 @@ describe("logic-gate and comparator family", () => {
 
 describe("switch port leads", () => {
   /**
-   * Switches take a different normalization from the logic family. The logic
+   * Switches take a different normalization from the DFF/delay family. That
    * helper snaps the connection point outward, so a body contact on a
    * half-grid keeps a 1.5-cell lead — deliberate there, and the library is
    * full of the 15s it yields. A switch body contacts at roughly ±13, and
@@ -2176,15 +2363,10 @@ describe("switch port leads", () => {
     }
   });
 
-  it("keeps the control rail a rail, at the switch path's own width", () => {
-    // CP/CN are the two ends of ONE horizontal control line, split by the gap
-    // at ±4 that the dashed coupling crosses. #470 shortened the switched
-    // path to ±20 and left these at ±30, which is what made the symbol read
-    // as narrow on top and wide underneath. They now match the path above —
-    // the anchor AND the drawn end move together, so the line stays a rail
-    // instead of becoming the two stubs that pulling the anchors alone (to
-    // ±10, by the through-path formula) would have produced. That stub is
-    // the outcome this test exists to prevent; the reach is a means to it.
+  it("groups the differential control pins without shorting them", () => {
+    // CP and CN sense a differential control voltage. A single joined rail
+    // would be visually tidy but electrically claim a short, so both leads
+    // enter one labelled control body while remaining separate primitives.
     const symbol = requireRazaviCatalogSymbol("voltage-controlled-switch");
     const switchedReach = Math.abs(
       symbol.pins.find((candidate) => candidate.name === "P")!.at.x,
@@ -2193,25 +2375,51 @@ describe("switch port leads", () => {
       const pin = symbol.pins.find((candidate) => candidate.name === pinName);
       expect(pin, pinName).toBeDefined();
       if (!pin) continue;
-      // One envelope: the control port is as wide as the path it controls.
       expect(Math.abs(pin.at.x), `${pinName} anchor`).toBe(switchedReach);
-
-      // The rail is drawn from the anchor inward to the coupling gap, and it
-      // must stay long enough to read as a rail rather than a stub.
-      const rail = symbol.primitives.find(
+      const lead = symbol.primitives.find(
         (primitive) =>
           primitive.kind === "line" &&
+          primitive.part ===
+            (pinName === "CP"
+              ? "control-positive-lead"
+              : "control-negative-lead") &&
           primitive.from.y === pin.at.y &&
           primitive.to.y === pin.at.y &&
           (primitive.from.x === pin.at.x || primitive.to.x === pin.at.x),
       );
-      expect(rail, `${pinName} rail segment`).toBeDefined();
-      if (!rail || rail.kind !== "line") continue;
-      const drawn = Math.abs(rail.to.x - rail.from.x);
-      expect(drawn, `${pinName} rail length`).toBeGreaterThanOrEqual(12);
-      const innerEnd = Math.min(Math.abs(rail.from.x), Math.abs(rail.to.x));
-      expect(innerEnd, `${pinName} coupling gap`).toBe(4);
+      expect(lead, `${pinName} control lead`).toBeDefined();
+      if (!lead || lead.kind !== "line") continue;
+      expect(Math.abs(lead.to.x - lead.from.x), `${pinName} lead length`).toBe(
+        10,
+      );
     }
+    expect(
+      symbol.primitives.some(
+        (primitive) =>
+          primitive.kind === "path" && primitive.part === "control-body",
+      ),
+    ).toBe(true);
+    expect(
+      symbol.primitives.some(
+        (primitive) => primitive.part === "control-polarity-positive",
+      ),
+    ).toBe(true);
+    expect(
+      symbol.primitives.some(
+        (primitive) => primitive.part === "control-polarity-negative",
+      ),
+    ).toBe(true);
+    expect(
+      symbol.primitives.some(
+        (primitive) =>
+          primitive.kind === "line" &&
+          primitive.from.x === -10 &&
+          primitive.to.x === 10 &&
+          primitive.from.y === 20 &&
+          primitive.to.y === 20,
+      ),
+      "CP and CN must not be shorted by artwork",
+    ).toBe(false);
   });
 });
 
@@ -2301,19 +2509,122 @@ describe("house-drawn switch additions", () => {
   });
 });
 
-describe("logic-library port leads", () => {
-  const logicIds = [
-    "and-gate",
+describe("left-anchored digital gates", () => {
+  it.each([
     "buffer",
+    "inverter",
+    "and-gate",
+    "nand-gate",
+    "or-gate",
+    "nor-gate",
+    "xor-gate",
+    "xnor-gate",
+  ])(
+    "anchors %s without distorting the reviewed body or losing pin joins",
+    (id) => {
+      const symbol = requireRazaviCatalogSymbol(id);
+      const sourceId =
+        id === "or-gate" ? "nor-gate" : id === "xnor-gate" ? "xor-gate" : id;
+      const evidence = JSON.parse(
+        readFileSync(
+          resolve(
+            process.cwd(),
+            "fixtures/visual-reference/razavi-reference-v1",
+            sourceId === "buffer"
+              ? "buffer-vector-source.json"
+              : `logic-${sourceId}-vector-source.json`,
+          ),
+          "utf8",
+        ),
+      );
+      const source = SymbolDefinitionSchema.parse(
+        evidence.normalization.symbolDefinition,
+      );
+      const paths = symbol.primitives.filter((p) => p.kind === "path");
+      const sourcePaths = source.primitives.filter((p) => p.kind === "path");
+      expect(paths).toHaveLength(sourcePaths.length);
+      const left = Math.min(
+        ...paths.flatMap((p) => pathPoints(p.data).map((point) => point.x)),
+      );
+      expect(left).toBe(-20);
+      const dx =
+        pathPoints(paths[0]!.data)[0]!.x -
+        pathPoints(sourcePaths[0]!.data)[0]!.x;
+      for (const [index, path] of paths.entries()) {
+        const original = sourcePaths[index]!;
+        expect(path.style).toEqual(original.style);
+        const points = pathPoints(path.data);
+        const originalPoints = pathPoints(original.data);
+        expect(points).toHaveLength(originalPoints.length);
+        expect(path.bounds).toBeDefined();
+        for (const [i, point] of points.entries()) {
+          expect(point.x - originalPoints[i]!.x).toBeCloseTo(dx, 5);
+          expect(point.y).toBeCloseTo(originalPoints[i]!.y, 8);
+          const bounds = path.bounds!;
+          expect(point.x).toBeGreaterThanOrEqual(bounds.x - 0.000001);
+          expect(point.x).toBeLessThanOrEqual(
+            bounds.x + bounds.width + 0.000001,
+          );
+          expect(point.y).toBeGreaterThanOrEqual(bounds.y - 0.000001);
+          expect(point.y).toBeLessThanOrEqual(
+            bounds.y + bounds.height + 0.000001,
+          );
+        }
+      }
+      expect(getRazaviCatalogEntry(id)?.generation).toMatchObject({
+        bodyNormalization: "left-grid-anchor",
+      });
+      expect(
+        symbol.pins.map(({ name, role, at }) => [name, role, at.y]),
+      ).toEqual(source.pins.map(({ name, role, at }) => [name, role, at.y]));
+      for (const pin of symbol.pins) {
+        expect(Math.abs(pin.at.x % 10)).toBe(0);
+        expect(Math.abs(pin.at.y % 10)).toBe(0);
+        const leads = symbol.primitives.filter(
+          (p) =>
+            p.kind === "line" &&
+            ((p.from.x === pin.at.x && p.from.y === pin.at.y) ||
+              (p.to.x === pin.at.x && p.to.y === pin.at.y)),
+        );
+        expect(leads, `${id}.${pin.name}`).toHaveLength(1);
+        const lead = leads[0]!;
+        if (lead.kind !== "line") throw new Error("Missing pin lead");
+        const contact = lead.from.x === pin.at.x ? lead.to : lead.from;
+        expect(contact.y).toBe(pin.at.y);
+        if (pin.direction === "west") {
+          expect(pin.at.x).toBe(-30);
+          if (["buffer", "inverter", "and-gate", "nand-gate"].includes(id)) {
+            expect(contact.x).toBe(-20);
+            // A real vertical body segment spans the input contacts.
+            const bodyPoints = paths
+              .flatMap((p) => pathPoints(p.data))
+              .filter((p) => p.x === -20);
+            expect(Math.min(...bodyPoints.map((p) => p.y))).toBeLessThan(
+              pin.at.y,
+            );
+            expect(Math.max(...bodyPoints.map((p) => p.y))).toBeGreaterThan(
+              pin.at.y,
+            );
+          }
+        } else {
+          const bubble = symbol.primitives.find((p) => p.kind === "circle");
+          if (bubble?.kind === "circle")
+            expect(contact.x).toBeCloseTo(bubble.center.x + bubble.radius, 5);
+          const length = pin.at.x - contact.x;
+          expect(length).toBeGreaterThanOrEqual(4);
+          expect(length).toBeLessThan(14);
+        }
+      }
+    },
+  );
+});
+
+describe("DFF and delay port leads", () => {
+  const logicIds = [
     "d-flip-flop",
+    "d-flip-flop-reset",
     "d-flip-flop-q",
     "delay-cell",
-    "inverter",
-    "nand-gate",
-    "nor-gate",
-    "or-gate",
-    "xnor-gate",
-    "xor-gate",
   ];
 
   it("uses only one-cell or half-grid-adjusted 1.5-cell port leads", () => {
@@ -2333,17 +2644,28 @@ describe("logic-library port leads", () => {
           lead.from.x === pin.at.x && lead.from.y === pin.at.y
             ? lead.to
             : lead.from;
-        const outwardSign = pin.direction === "west" ? -1 : 1;
-        const nominalBodyX = Math.round(bodyContact.x / 5) * 5;
-        const oneCellOut = nominalBodyX + outwardSign * 10;
-        const expectedX =
+        const horizontal = pin.direction === "west" || pin.direction === "east";
+        const outwardSign =
+          pin.direction === "west" || pin.direction === "north" ? -1 : 1;
+        const pinCoordinate = horizontal ? pin.at.x : pin.at.y;
+        const bodyCoordinate = horizontal ? bodyContact.x : bodyContact.y;
+        const nominalBodyCoordinate = Math.round(bodyCoordinate / 5) * 5;
+        const oneCellOut = nominalBodyCoordinate + outwardSign * 10;
+        const expectedCoordinate =
           outwardSign < 0
             ? Math.floor(oneCellOut / 10) * 10
             : Math.ceil(oneCellOut / 10) * 10;
-        const nominalLeadLength = Math.abs(expectedX - nominalBodyX);
+        const nominalLeadLength = Math.abs(
+          expectedCoordinate - nominalBodyCoordinate,
+        );
 
-        expect(pin.at.x, `${symbolId}.${pin.name}`).toBe(expectedX);
-        expect(Math.abs(pin.at.x % 10), `${symbolId}.${pin.name}`).toBe(0);
+        expect(pinCoordinate, `${symbolId}.${pin.name}`).toBe(
+          expectedCoordinate,
+        );
+        expect(Math.abs(pinCoordinate % 10), `${symbolId}.${pin.name}`).toBe(0);
+        if (!horizontal) {
+          expect(pin.at.x, `${symbolId}.${pin.name}`).toBe(bodyContact.x);
+        }
         expect([10, 15], `${symbolId}.${pin.name}`).toContain(
           nominalLeadLength,
         );

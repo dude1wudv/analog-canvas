@@ -4,6 +4,7 @@ import {
   StableIdSchema,
   RichTextDocumentSchema,
   PlacementSchema,
+  InstanceSchema,
 } from "@icm/model";
 
 /** Small server-planned conveniences; results still commit as existing edits. */
@@ -15,6 +16,26 @@ const SelectionSchema = z.strictObject({
   draftingIds: z.array(StableIdSchema).max(256).default([]),
 });
 export const AgentAuthoringCommandSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("place-components"),
+    instances: z.array(InstanceSchema).min(1).max(64),
+  }),
+  z.strictObject({
+    kind: z.literal("set-instance-display"),
+    instanceIds: z.array(StableIdSchema).min(1).max(64),
+    showReference: z.boolean().optional(),
+    showValue: z.boolean().optional(),
+    showParameters: z
+      .strictObject({
+        k: z.boolean().optional(),
+        lp: z.boolean().optional(),
+        ls: z.boolean().optional(),
+        l1: z.boolean().optional(),
+        l2: z.boolean().optional(),
+        cb: z.boolean().optional(),
+      })
+      .optional(),
+  }),
   z.strictObject({
     kind: z.literal("place-cell"),
     childDocumentId: StableIdSchema,
@@ -46,7 +67,15 @@ export const AgentAuthoringCommandSchema = z.discriminatedUnion("kind", [
       z.strictObject({ kind: z.literal("translate"), delta: PointSchema }),
       z.strictObject({
         kind: z.literal("rotate"),
-        degrees: z.union([z.literal(90), z.literal(180), z.literal(270)]),
+        degrees: z.union([
+          z.literal(45),
+          z.literal(90),
+          z.literal(135),
+          z.literal(180),
+          z.literal(225),
+          z.literal(270),
+          z.literal(315),
+        ]),
         center: PointSchema.optional(),
       }),
       z.strictObject({

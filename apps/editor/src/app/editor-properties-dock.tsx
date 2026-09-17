@@ -3,14 +3,8 @@ import { Suspense, type ComponentProps, type RefObject } from "react";
 import { ToolIcon } from "../features/editor-shell/tool-icon";
 import { DocumentSettingsSection } from "../features/editor-shell/document-settings-section";
 import { PlacementTrayPanel } from "../features/component-insert/placement-tray-panel";
-import {
-  CellSymbolLayoutProperties,
-  FormalPortProperties,
-} from "../features/properties/component-structure-properties";
+import { CellSymbolLayoutProperties } from "../features/properties/component-structure-properties";
 import { ComponentIdentityProperties } from "../features/properties/component-identity-properties";
-import type { ComponentElectricalProperties } from "../features/properties/component-electrical-properties";
-import type { ComponentSignalFlowProperties } from "../features/properties/component-signal-flow-properties";
-import type { ComponentPlacementProperties } from "../features/properties/component-placement-properties";
 import { ComponentPropertyCodeEditor } from "../features/properties/component-property-code-editor";
 import { AnnotationColorProperties } from "../features/properties/annotation-color-properties";
 import { NetNameProperties } from "../features/properties/net-name-properties";
@@ -18,7 +12,7 @@ import { DraftingPropertiesPanel } from "../features/drafting/drafting-propertie
 import {
   AnnotationActionsSection,
   EndpointActionsSection,
-  GroupDisplayToggles,
+  GroupPropertiesSection,
   MosBulkConnectionSection,
   RouteActionsSection,
   RoutingGuidanceSection,
@@ -32,12 +26,12 @@ import { LazyAgentPropertiesSection } from "./lazy-editor-dialogs";
 
 interface ComponentPropertiesModel {
   code: ComponentProps<typeof ComponentPropertyCodeEditor>;
-  formalPort: ComponentProps<typeof FormalPortProperties> | null;
   cellSymbolLayout: ComponentProps<typeof CellSymbolLayoutProperties> | null;
   identity: ComponentProps<typeof ComponentIdentityProperties>;
-  signalFlow: ComponentProps<typeof ComponentSignalFlowProperties> | null;
-  electrical: ComponentProps<typeof ComponentElectricalProperties>;
-  placement: ComponentProps<typeof ComponentPlacementProperties>;
+  signalFlow: boolean;
+  parameters: NonNullable<
+    ComponentProps<typeof ComponentPropertyCodeEditor>["details"]
+  >["parameters"];
 }
 
 export interface EditorPropertiesDockProps {
@@ -50,7 +44,7 @@ export interface EditorPropertiesDockProps {
   documentSettings: ComponentProps<typeof DocumentSettingsSection> | null;
   mosBulk: ComponentProps<typeof MosBulkConnectionSection>;
   routingGuidance: ComponentProps<typeof RoutingGuidanceSection>;
-  groupDisplay: ComponentProps<typeof GroupDisplayToggles>;
+  groupProperties: ComponentProps<typeof GroupPropertiesSection>;
   component: ComponentPropertiesModel | null;
   annotationText: ComponentProps<typeof AnnotationColorProperties> | null;
   netName: ComponentProps<typeof NetNameProperties> | null;
@@ -76,7 +70,7 @@ export function EditorPropertiesDock({
   documentSettings,
   mosBulk,
   routingGuidance,
-  groupDisplay,
+  groupProperties,
   component,
   annotationText,
   netName,
@@ -127,72 +121,75 @@ export function EditorPropertiesDock({
           </span>
         </button>
         <div className="selection-panel" hidden={!open}>
-          {documentSettings ? (
-            <DocumentSettingsSection {...documentSettings} />
-          ) : null}
-          <MosBulkConnectionSection {...mosBulk} />
-          <RoutingGuidanceSection {...routingGuidance} />
-          {!hasInspectableSelection ? (
-            <p className="inspect-empty">请选择要查看的对象。</p>
-          ) : null}
-          <GroupDisplayToggles {...groupDisplay} />
-          {component ? (
-            <section
-              className="property-section component-properties"
-              aria-label="元件属性"
-            >
-              <ComponentPropertyCodeEditor
-                key={component.code.instance.id}
-                {...component.code}
-                details={{
-                  parameters: component.electrical.parameters,
-                  ...(component.identity.modelTarget
-                    ? { modelTarget: component.identity.modelTarget }
-                    : {}),
-                  signalFlow: component.signalFlow !== null,
-                }}
-              />
-              {component.formalPort ? (
-                <FormalPortProperties {...component.formalPort} />
-              ) : null}
-              {component.cellSymbolLayout ? (
-                <CellSymbolLayoutProperties {...component.cellSymbolLayout} />
-              ) : null}
-              {component.identity.portNet ||
-              component.identity.propertyTerminal ||
-              component.identity.capacitorPlateRows ? (
-                <ComponentIdentityProperties
-                  {...component.identity}
-                  fieldsMovedToCode
+          <>
+            {documentSettings ? (
+              <DocumentSettingsSection {...documentSettings} />
+            ) : null}
+            <MosBulkConnectionSection {...mosBulk} />
+            <RoutingGuidanceSection {...routingGuidance} />
+            {!hasInspectableSelection ? (
+              <p className="inspect-empty">Select an object to inspect.</p>
+            ) : null}
+            <GroupPropertiesSection {...groupProperties} />
+            {component ? (
+              <section
+                className="property-section component-properties"
+                aria-label="Component properties"
+              >
+                <ComponentPropertyCodeEditor
+                  key={component.code.instance.id}
+                  {...component.code}
+                  details={{
+                    parameters: component.parameters,
+                    ...(component.identity.modelTarget
+                      ? { modelTarget: component.identity.modelTarget }
+                      : {}),
+                    signalFlow: component.signalFlow,
+                  }}
                 />
-              ) : null}
-            </section>
-          ) : null}
-          {annotationText ? (
-            <AnnotationColorProperties
-              key={annotationText.annotation.id}
-              {...annotationText}
-            />
-          ) : null}
-          {netName ? <NetNameProperties {...netName} /> : null}
-          {drafting ? (
-            <DraftingPropertiesPanel key={drafting.object.id} {...drafting} />
-          ) : null}
-          <PlacementTrayPanel {...placementTray} />
-          <RouteActionsSection {...routeActions} />
-          <EndpointActionsSection {...endpointActions} />
-          <AnnotationActionsSection {...annotationActions} />
-          <ProjectDiagnosticsSection {...diagnostics} />
-          {netTrace ? <NetTraceSection {...netTrace} /> : null}
-          {importReview ? (
-            <section className="import-review" aria-label="导入检查">
-              <h2>导入检查</h2>
-              <SelectionInspectorDetails {...importReview} />
-            </section>
-          ) : null}
-          <Suspense fallback={null}>
-            {agent ? <LazyAgentPropertiesSection {...agent} /> : null}
-          </Suspense>
+                {component.cellSymbolLayout ? (
+                  <CellSymbolLayoutProperties {...component.cellSymbolLayout} />
+                ) : null}
+                {component.identity.propertyTerminal ? (
+                  <ComponentIdentityProperties
+                    {...component.identity}
+                    fieldsMovedToCode
+                  />
+                ) : null}
+              </section>
+            ) : null}
+            {!groupProperties.active && annotationText ? (
+              <AnnotationColorProperties
+                key={annotationText.annotation.id}
+                {...annotationText}
+              />
+            ) : null}
+            {!groupProperties.active && netName ? (
+              <NetNameProperties {...netName} />
+            ) : null}
+            {!groupProperties.active && drafting ? (
+              <DraftingPropertiesPanel key={drafting.object.id} {...drafting} />
+            ) : null}
+            <PlacementTrayPanel {...placementTray} />
+            {!groupProperties.active ? (
+              <>
+                <RouteActionsSection {...routeActions} />
+                <EndpointActionsSection {...endpointActions} />
+                <AnnotationActionsSection {...annotationActions} />
+              </>
+            ) : null}
+            <ProjectDiagnosticsSection {...diagnostics} />
+            {netTrace ? <NetTraceSection {...netTrace} /> : null}
+            {importReview ? (
+              <section className="import-review" aria-label="Import Review">
+                <h2>Import Review</h2>
+                <SelectionInspectorDetails {...importReview} />
+              </section>
+            ) : null}
+            <Suspense fallback={null}>
+              {agent ? <LazyAgentPropertiesSection {...agent} /> : null}
+            </Suspense>
+          </>
         </div>
       </section>
     </aside>
