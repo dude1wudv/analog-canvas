@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   mkdtemp,
   mkdir,
@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import { build as esbuild } from "esbuild";
 import { renderRuntimeConfig } from "./runtime-config.mjs";
 
 // The repository's regular `test:local` includes this file, while the
@@ -32,7 +32,6 @@ const { after, before, test } = testApi;
 
 const selfHostDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(selfHostDir, "../..");
-const execFileAsync = promisify(execFile);
 let bundlePath;
 const schemaPath = resolve(repoRoot, "node_modules/workerd/workerd.capnp");
 const initSecretsPath = resolve(selfHostDir, "init-secrets.mjs");
@@ -219,20 +218,15 @@ before(async () => {
   );
   projectText = await readFile(fixturePath, "utf8");
 
-  const esbuildBin = resolve(repoRoot, "node_modules/esbuild/bin/esbuild");
-  await execFileAsync(
-    process.execPath,
-    [
-      esbuildBin,
-      "worker/self-host.ts",
-      "--bundle",
-      "--format=esm",
-      "--platform=browser",
-      "--tsconfig=tsconfig.check.json",
-      `--outfile=${bundlePath}`,
-    ],
-    { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 },
-  );
+  await esbuild({
+    bundle: true,
+    entryPoints: ["worker/self-host.ts"],
+    format: "esm",
+    outfile: bundlePath,
+    platform: "browser",
+    tsconfig: resolve(repoRoot, "tsconfig.check.json"),
+    absWorkingDir: repoRoot,
+  });
 
   const initialized = await runNodeScript(initSecretsPath, secretsDir);
   assert.equal(initialized.code, 0, initialized.stderr);

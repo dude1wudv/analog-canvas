@@ -63,11 +63,16 @@ export async function awaitRecoveryStoreReady(page: Page): Promise<void> {
 }
 
 export async function openMenu(page: Page, name: string): Promise<Locator> {
+  const menuLabel =
+    {
+      Edit: "编辑",
+      File: "文件",
+    }[name] ?? name;
   const summary =
     name === "Netlist"
       ? page.locator('summary[aria-label="Netlist"]')
-      : page.locator("summary", { hasText: name }).filter({
-          hasText: new RegExp(`^${name}$`, "u"),
+      : page.locator("summary", { hasText: menuLabel }).filter({
+          hasText: new RegExp(`^${menuLabel}$`, "u"),
         });
   const details = summary.locator("..");
   if ((await details.getAttribute("open")) === null) await summary.click();
@@ -80,6 +85,20 @@ export async function clickCommand(
   button: string,
 ): Promise<void> {
   const details = await openMenu(page, menu);
+  const commandLabel =
+    {
+      Delete: "删除",
+      "Export PNG": "导出 PNG",
+      "Export PDF": "导出 PDF",
+      "Export Project File…": "导出项目文件…",
+      "Export SVG": "导出 SVG",
+      "Manage Cells…": "管理 Cell…",
+      "New Project": "新建项目",
+      Redo: "重做",
+      "Recover Local Work…": "恢复本地工作…",
+      "Refresh app": "刷新应用",
+      Undo: "撤销",
+    }[button] ?? button;
   if (menu === "File" && /^Export (?:SVG|PNG|PDF)$/u.test(button)) {
     const group = details.getByRole("button", {
       name: "Export drawing",
@@ -88,7 +107,9 @@ export async function clickCommand(
     if ((await group.getAttribute("aria-expanded")) !== "true")
       await group.click();
   }
-  await details.getByRole("button", { name: button, exact: true }).click();
+  await details
+    .getByRole("button", { name: commandLabel, exact: true })
+    .click();
 }
 
 /** Run one workflow command from the Netlist menu. */
@@ -144,7 +165,7 @@ export async function placeText(
   await clickDrawTool(page, "text");
   await page.getByTestId("schematic-canvas").click({ position });
   await expect(
-    page.getByRole("textbox", { name: "Canvas text editor" }),
+    page.getByRole("textbox", { name: "画布文本编辑器" }),
   ).toBeVisible();
 }
 
@@ -156,8 +177,8 @@ export async function chooseComponent(
   // editor bundle has mounted. Opening the Edit command also waits for the
   // editor shell and avoids dropping a shortcut during that loading window.
   await clickCommand(page, "Edit", "Insert component… (I)");
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
-  await dialog.getByLabel("Component search").fill(symbolId);
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
+  await dialog.getByLabel("搜索元件").fill(symbolId);
   // Clicking a tile starts placement immediately; the quick-pick grid has no
   // separate Apply step.
   await dialog.getByTestId(`insert-component-${symbolId}`).click();
@@ -181,9 +202,9 @@ export async function editComponentPropertyCode(
 export async function readComponentPropertyCode(page: Page): Promise<string> {
   await expect(page.getByLabel("Editable Canvas property code")).toBeVisible();
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.getByRole("button", { name: "Copy JSON", exact: true }).click();
+  await page.getByRole("button", { name: "复制 JSON", exact: true }).click();
   await expect(
-    page.getByText("JSON copied", {
+    page.getByText("已复制 JSON", {
       exact: true,
     }),
   ).toBeVisible();

@@ -21,15 +21,13 @@ test("a render crash shows the recovery screen instead of a blank page", async (
 
   const crashScreen = page.getByTestId("editor-crash-screen");
   await expect(crashScreen).toBeVisible();
-  await expect(crashScreen).toContainText(
-    "The editor hit an unexpected problem",
-  );
+  await expect(crashScreen).toContainText("编辑器遇到了意外问题");
   await expect(crashScreen).toContainText("render crashed (test hook)");
   const bugReportLink = crashScreen.getByTestId("crash-report-bug");
   await expect(bugReportLink).toBeVisible();
   await expect(bugReportLink).toHaveAttribute(
     "href",
-    /^https:\/\/github\.com\/cascode-ai\/analog-canvas\/issues\/new\?/u,
+    /^https:\/\/github\.com\/dude1wudv\/analog-canvas\/issues\/new\?/u,
   );
   const bugReportHref = await bugReportLink.getAttribute("href");
   expect(bugReportHref).not.toBeNull();
@@ -38,7 +36,7 @@ test("a render crash shows the recovery screen instead of a blank page", async (
   expect(bugReportBody).not.toContain("test hook");
 
   // Reloading brings the editor back without the transient crash flag.
-  await crashScreen.getByRole("button", { name: "Reload editor" }).click();
+  await crashScreen.getByRole("button", { name: "重新加载编辑器" }).click();
   await expect(page.getByTestId("schematic-canvas")).toBeVisible();
 });
 
@@ -54,16 +52,12 @@ test("a repeated route chunk failure is not misreported as an old build", async 
   // correctly diagnosed loading screen instead of the stale-build warning.
   const crashScreen = page.getByTestId("editor-crash-screen");
   await expect(crashScreen).toBeVisible();
-  await expect(crashScreen).toContainText(
-    "The editor could not finish loading",
-  );
-  await expect(crashScreen).toContainText("temporarily unavailable");
+  await expect(crashScreen).toContainText("编辑器未能完成加载");
+  await expect(crashScreen).toContainText("暂时不可用");
   await expect(crashScreen).not.toContainText(
     "This page is running an old version",
   );
-  await expect(
-    crashScreen.getByRole("button", { name: "Try again" }),
-  ).toBeVisible();
+  await expect(crashScreen.getByRole("button", { name: "重试" })).toBeVisible();
   await expect(crashScreen.getByTestId("crash-reload-clean")).toBeVisible();
 });
 
@@ -137,7 +131,7 @@ test("a failed dialog chunk degrades to a scoped notice, not the crash screen", 
   await expect(page.getByTestId("editor-crash-screen")).toHaveCount(0);
 
   // Closing the notice hands the intact editor back.
-  await fallback.getByRole("button", { name: "Close" }).click();
+  await fallback.getByRole("button", { name: "关闭" }).click();
   await expect(fallback).toHaveCount(0);
   await expect(page.getByTestId("hit-R1")).toBeVisible();
 

@@ -57,7 +57,7 @@ test("C copy shows alignment guides, commits the preview and clears guides on Es
   });
   // Import fits this single part tightly; leave room for both copy destinations.
   for (let step = 0; step < 7; step += 1)
-    await page.getByRole("button", { name: "Zoom out", exact: true }).click();
+    await page.getByRole("button", { name: "缩小", exact: true }).click();
   const canvas = page.getByTestId("schematic-canvas");
   const screenPoint = (x: number, y: number) =>
     canvas.evaluate(
@@ -198,8 +198,8 @@ test("blocks destructive browser refresh shortcuts and uses the stronger grid", 
   await page.getByTestId("draw-tool-document-style").click();
 
   await page.keyboard.press("i");
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
-  await dialog.getByLabel("Component search").focus();
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
+  await dialog.getByLabel("搜索元件").focus();
   await page.keyboard.press("F5");
   await expect(dialog).toBeVisible();
   await expect(page.locator("body")).toHaveAttribute(
@@ -245,14 +245,14 @@ test("the status bar toggles the grid, labelled full-width and an icon half-widt
   const toggle = page.getByRole("button", { name: "Grid", exact: true });
   const label = toggle.locator(".statusbar-grid-label");
   await expect(toggle).toHaveAttribute("aria-pressed", "true");
-  await expect(label).toHaveText("Grid On");
+  await expect(label).toHaveText("网格开启");
   await expect(label).toBeVisible();
   await expect(page.getByTestId("canvas-grid-dots")).toBeVisible();
 
   await toggle.click();
   await expect(page.getByTestId("canvas-grid-dots")).toHaveCount(0);
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
-  await expect(label).toHaveText("Grid Off");
+  await expect(label).toHaveText("网格关闭");
   // Style settings show the state the status bar set.
   expect(JSON.parse(await readDocumentStyleCode(page)).canvas.showGrid).toBe(
     false,
@@ -310,8 +310,8 @@ test("writes an Instance Reference through post-placement Properties", async ({
   await page.goto("/editor");
   await awaitEditorReady(page);
   await page.keyboard.press("i");
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
-  await dialog.getByLabel("Component search").fill("resistor");
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
+  await dialog.getByLabel("搜索元件").fill("resistor");
   await dialog.getByTestId("insert-component-resistor").click();
   await page
     .getByTestId("schematic-canvas")
@@ -428,12 +428,9 @@ test("keeps quick-start shortcuts in the upper-right corner until the first comp
   await awaitEditorReady(page);
   const quickStart = page.getByTestId("canvas-empty-state");
   await expect(quickStart).toBeVisible();
-  await expect(quickStart).toHaveAttribute(
-    "aria-label",
-    "Quick start shortcuts",
-  );
-  await expect(quickStart).toContainText("Quick start");
-  await expect(quickStart).toContainText("All shortcuts");
+  await expect(quickStart).toHaveAttribute("aria-label", "快速入门快捷键");
+  await expect(quickStart).toContainText("快速开始");
+  await expect(quickStart).toContainText("全部快捷键");
   await expect(quickStart.locator("li")).toHaveText([
     "Ctrl/CmdFSelection filter",
     "Ctrl/CmdShiftFSearch circuit",
@@ -506,7 +503,7 @@ test("keeps quick-start shortcuts in the upper-right corner until the first comp
   const quickStartBox = await quickStart.boundingBox();
   const canvasPanelBox = await page.locator(".canvas-panel").boundingBox();
   const propertiesBox = await page
-    .getByRole("complementary", { name: "Properties" })
+    .getByRole("complementary", { name: "属性" })
     .boundingBox();
   if (!quickStartBox || !canvasPanelBox || !propertiesBox) {
     throw new Error("Narrow editor chrome is not measurable");
@@ -528,11 +525,11 @@ test("keeps quick-start shortcuts in the upper-right corner until the first comp
   await page.setViewportSize(initialViewport);
 
   await page.keyboard.press("i");
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
-  const search = dialog.getByLabel("Component search");
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
+  const search = dialog.getByLabel("搜索元件");
   await expect(search).toBeFocused();
   await search.fill("not-a-real-component");
-  await expect(dialog.getByText("No matching components")).toBeVisible();
+  await expect(dialog.getByText("No matching 元件s")).toBeVisible();
   await search.fill("mos");
   const before = await search.getAttribute("aria-activedescendant");
   await page.keyboard.press("ArrowDown");
@@ -573,7 +570,7 @@ test("keeps quick-start shortcuts in the upper-right corner until the first comp
     .toContain("resistor");
 
   await page.keyboard.press("i");
-  const reopened = page.getByRole("dialog", { name: "Insert Component" });
+  const reopened = page.getByRole("dialog", { name: "插入元件" });
   await expect(reopened.locator(".insert-tile-grid")).toBeVisible();
   // The grid reads in Library order — transistors first — not recency, even
   // though a resistor was just placed.
@@ -589,7 +586,7 @@ test("category chips multi-select which kinds the quick pick shows", async ({
   await page.goto("/editor");
   await awaitEditorReady(page);
   await page.keyboard.press("i");
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
   await expect(dialog.getByTestId("insert-component-nmos")).toBeVisible();
 
   // Hiding one category removes only its tiles.
@@ -605,15 +602,15 @@ test("category chips multi-select which kinds the quick pick shows", async ({
   // Toggling back restores the tiles, and typing still filters afterwards.
   await dialog.getByTestId("insert-category-transistors").click();
   await expect(dialog.getByTestId("insert-component-nmos")).toBeVisible();
-  await dialog.getByLabel("Component search").fill("nmos");
+  await dialog.getByLabel("搜索元件").fill("nmos");
   await expect(dialog.getByTestId("insert-component-resistor")).toHaveCount(0);
   await expect(dialog.getByTestId("insert-component-nmos")).toBeVisible();
 
   // Clear all starts from zero: nothing shows until kinds are picked back.
-  await dialog.getByLabel("Component search").fill("");
+  await dialog.getByLabel("搜索元件").fill("");
   await dialog.getByTestId("insert-category-clear").click();
   await expect(dialog.getByRole("option")).toHaveCount(0);
-  await expect(dialog.getByText("No matching components")).toBeVisible();
+  await expect(dialog.getByText("No matching 元件s")).toBeVisible();
   await dialog.getByTestId("insert-category-logic-gates").click();
   await expect(dialog.getByTestId("insert-component-and-gate")).toBeVisible();
   await expect(dialog.getByTestId("insert-component-nmos")).toHaveCount(0);
@@ -635,7 +632,7 @@ test("groups and places high-voltage DMOS from Extended Devices", async ({
   await page.goto("/editor");
   await awaitEditorReady(page);
   await page.keyboard.press("i");
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
   // The flat grid tiles both DMOS variants with their full names; clicking
   // one starts placement with the catalog defaults.
   await expect(dialog.getByTestId("insert-component-ndmos")).toContainText(
@@ -692,9 +689,9 @@ test("finds and places the discrete-time integrator from Signal Flow", async ({
   await page.goto("/editor");
   await awaitEditorReady(page);
   await page.keyboard.press("i");
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
 
-  await dialog.getByLabel("Component search").fill("discrete-time-integrator");
+  await dialog.getByLabel("搜索元件").fill("discrete-time-integrator");
   const tile = dialog.getByTestId("insert-component-discrete-time-integrator");
   await expect(tile).toContainText("Discrete-Time Integrator");
   await tile.click();
@@ -769,12 +766,12 @@ test("groups drafting tools and editable polarity labels under Annotations", asy
   await expect(preview).not.toHaveAttribute("transform", /rotate/u);
 
   await canvas.click({ position: { x: 460, y: 520 } });
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await expect(editor).toBeVisible();
   await expect(editor).toHaveText("Vx");
   await expect(editor.locator("sub")).toHaveText("x");
   await expect(editor).not.toContainText("_");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   const polarity = canvas.locator('[data-polarity="both"]');
   await expect(polarity).toBeVisible();
@@ -785,7 +782,7 @@ test("groups drafting tools and editable polarity labels under Annotations", asy
   await page.getByTestId("drafting-hit-polarity-1").dblclick();
   await expect(editor).toBeVisible();
   await editor.fill("VGS");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   await expect(polarity).toBeVisible();
   await expect(polarity).not.toHaveAttribute("transform", /rotate/u);
@@ -806,7 +803,7 @@ test("groups drafting tools and editable polarity labels under Annotations", asy
   await expect(editor).toBeVisible();
   await editor.press("ControlOrMeta+a");
   await editor.press("Delete");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(polarity).toBeVisible();
   await expect(
     polarity.locator('[data-role^="polarity-positive"]'),
@@ -821,8 +818,8 @@ test("groups drafting tools and editable polarity labels under Annotations", asy
   // glyph for the character — otherwise the two are different sizes side by
   // side.
   await page.keyboard.press("i");
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
-  await dialog.getByLabel("Component search").fill("minus");
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
+  await dialog.getByLabel("搜索元件").fill("minus");
   await dialog.getByTestId("insert-component-annotation-text-minus").click();
   await canvas.hover({ position: { x: 600, y: 260 } });
   await expect(preview).toBeAttached();
@@ -936,7 +933,7 @@ test("groups drafting tools and editable polarity labels under Annotations", asy
   // the current default font's period glyph and reuses the same generic text
   // selection frame instead of a symbol-specific box.
   await page.keyboard.press("i");
-  await dialog.getByLabel("Component search").fill("three dots");
+  await dialog.getByLabel("搜索元件").fill("three dots");
   await dialog.getByTestId("insert-component-annotation-ellipsis").click();
   await canvas.hover({ position: { x: 700, y: 260 } });
   await page.keyboard.press("r");
@@ -967,8 +964,8 @@ test("places a vertical Power Rail from I and renames it on the canvas", async (
   await page.goto("/editor");
   await awaitEditorReady(page);
   await page.keyboard.press("i");
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
-  await dialog.getByLabel("Component search").fill("vdd");
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
+  await dialog.getByLabel("搜索元件").fill("vdd");
   await dialog.getByTestId("insert-component-vdd").click();
 
   const canvas = page.getByTestId("schematic-canvas");
@@ -981,9 +978,9 @@ test("places a vertical Power Rail from I and renames it on the canvas", async (
   // The quick pick always lands the default VDD name. The visible label owns
   // the formal Cell terminal, so editing it renames both the Pin and claim.
   await page.getByTestId("annotation-hit-label-VDD1").dblclick();
-  const railEditor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const railEditor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await railEditor.fill("AVDD");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("component-input-plane")).toHaveCount(0);
   await expect(page.getByTestId("instance-count")).toHaveText("0");
@@ -1045,8 +1042,8 @@ test("places the VDD power-port device as the default VDD entry", async ({
   await page.goto("/editor");
   await awaitEditorReady(page);
   await page.keyboard.press("i");
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
-  await dialog.getByLabel("Component search").fill("vdd");
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
+  await dialog.getByLabel("搜索元件").fill("vdd");
   const vddEntries = await dialog
     .locator(
       '[data-testid="insert-component-vdd-port"], [data-testid="insert-component-vdd"]',
@@ -1072,10 +1069,10 @@ test("places the VDD power-port device as the default VDD entry", async ({
   await expect(canvas.locator('[data-symbol-id="vdd-port"]')).toHaveCount(2);
   const powerLabels = canvas.locator('[data-kind="power-label"]');
   await expect(powerLabels).toHaveCount(2);
-  await expect(powerLabels).toHaveText(["Vdd", "Vdd"]);
+  await expect(powerLabels).toHaveText(["VDD", "VDD"]);
   await expect(powerLabels.locator('[data-text-run="subscript"]')).toHaveText([
-    "dd",
-    "dd",
+    "DD",
+    "DD",
   ]);
   await expect(page.getByTestId("instance-count")).toHaveText("2");
 
@@ -1194,12 +1191,12 @@ test("renames one supply marker without changing its same-name peer", async ({
   ).toContainText("AVDD");
   await expect(
     canvas.locator('[data-object-id="power-label-vdd2"]'),
-  ).toContainText("Vdd");
+  ).toContainText("VDD");
   await expect(
     canvas
       .locator('[data-object-id="power-label-vdd2"]')
       .locator('[data-text-run="subscript"]'),
-  ).toHaveText("dd");
+  ).toHaveText("DD");
 });
 
 test("reopens I and starts Copy from retained selection without stacking modes", async ({
@@ -1213,15 +1210,11 @@ test("reopens I and starts Copy from retained selection without stacking modes",
   await page.getByTestId("hit-R1").click();
 
   await page.keyboard.press("i");
-  await expect(
-    page.getByRole("dialog", { name: "Insert Component" }),
-  ).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "插入元件" })).toBeVisible();
   await page.keyboard.press("Escape");
   // Closing the dialog is a state update, so a keystroke sent in the same tick
   // still lands in its search field. Wait for it to leave before typing.
-  await expect(
-    page.getByRole("dialog", { name: "Insert Component" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "插入元件" })).toHaveCount(0);
   await page.keyboard.press("c");
   await page.keyboard.press("c");
   await canvas.hover({ position: { x: 560, y: 330 } });
@@ -1230,9 +1223,7 @@ test("reopens I and starts Copy from retained selection without stacking modes",
   await expect(page.getByTestId("copy-placement-preview")).toHaveCount(0);
 
   await page.keyboard.press("i");
-  await expect(
-    page.getByRole("dialog", { name: "Insert Component" }),
-  ).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "插入元件" })).toBeVisible();
 });
 
 test("Escape closes the Insert dialog even when focus is outside it", async ({
@@ -1240,7 +1231,7 @@ test("Escape closes the Insert dialog even when focus is outside it", async ({
 }) => {
   await page.goto("/editor");
   await awaitEditorReady(page);
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
 
   await page.keyboard.press("i");
   await expect(dialog).toBeVisible();
@@ -1349,8 +1340,8 @@ test("carries a default and manual Value through placement and Q property editin
   await page.goto("/editor");
   await awaitEditorReady(page);
   await page.keyboard.press("i");
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
-  await dialog.getByLabel("Component search").fill("resistor");
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
+  await dialog.getByLabel("搜索元件").fill("resistor");
   await dialog.getByTestId("insert-component-resistor").click();
 
   const canvas = page.getByTestId("schematic-canvas");
@@ -1415,10 +1406,7 @@ test("carries a default and manual Value through placement and Q property editin
   const componentCode = page.locator(
     '[aria-label="Component properties"] > :last-child',
   );
-  await expect(componentCode).toHaveAttribute(
-    "aria-label",
-    "Canvas property code",
-  );
+  await expect(componentCode).toHaveAttribute("aria-label", "画布属性代码");
   await expectComponentCodeField(page, "name", "R1");
   await expectComponentCodeField(page, "netlistName", "R1");
   await editComponentPropertyCode(page, (code) => {
@@ -1688,7 +1676,7 @@ test("edits independent input and output swaps with undo, named connections and 
   await expect(inputs).toHaveAttribute("aria-checked", "true");
   await expect(outputs).toHaveAttribute("aria-checked", "true");
   await expectComponentCodeField(page, "appearance.internalMark", "G");
-  await page.getByRole("button", { name: "Defaults", exact: true }).click();
+  await page.getByRole("button", { name: "默认值", exact: true }).click();
   await expect(inputs).toHaveAttribute("aria-checked", "false");
   await expect(outputs).toHaveAttribute("aria-checked", "false");
   await expect(amplifier).toHaveAttribute(
@@ -1713,11 +1701,11 @@ test("keeps the workspace inside the viewport and exposes low-interference zoom 
     })),
   ).toEqual({ horizontal: false, vertical: false });
 
-  const zoom = page.getByRole("status", { name: "Current zoom" });
+  const zoom = page.getByRole("status", { name: "当前缩放比例" });
   await expect(zoom).toHaveText("100%");
-  await page.getByRole("button", { name: "Zoom in" }).click();
+  await page.getByRole("button", { name: "放大" }).click();
   await expect(zoom).not.toHaveText("100%");
-  await page.getByRole("button", { name: "Fit view" }).click();
+  await page.getByRole("button", { name: "适合窗口" }).click();
 
   const canvas = page.getByTestId("schematic-canvas");
   await revealPropertiesShelf(page);
@@ -1736,7 +1724,7 @@ test("tiles the whole catalog into one flat quick-pick grid", async ({
   await awaitEditorReady(page);
   await page.keyboard.press("i");
 
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
   const grid = dialog.locator(".insert-tile-grid");
   await expect(grid).toBeVisible();
   expect(
@@ -1790,10 +1778,10 @@ test("widens the Insert picker and adds columns with the editor viewport", async
   page,
 }) => {
   const measurePicker = async () => {
-    const dialog = page.getByRole("dialog", { name: "Insert Component" });
+    const dialog = page.getByRole("dialog", { name: "插入元件" });
     await expect(dialog).toBeVisible();
     const box = await dialog.boundingBox();
-    if (!box) throw new Error("Insert Component dialog is not measurable");
+    if (!box) throw new Error("插入元件对话框不可测量");
     const firstTop = await dialog
       .getByRole("option")
       .first()
@@ -1839,8 +1827,8 @@ test("sets MOS parameters and orientation through the ghost and Properties", asy
   await awaitEditorReady(page);
   await page.keyboard.press("i");
 
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
-  await dialog.getByLabel("Component search").fill("nmos");
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
+  await dialog.getByLabel("搜索元件").fill("nmos");
   await dialog.getByTestId("insert-component-nmos").click();
 
   // Orientation is a ghost decision now: R rotates the placement preview.
@@ -1931,8 +1919,8 @@ test("keeps component placement active across independent canvas commits", async
   await page.goto("/editor");
   await awaitEditorReady(page);
   await page.keyboard.press("i");
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
-  await dialog.getByLabel("Component search").fill("resistor");
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
+  await dialog.getByLabel("搜索元件").fill("resistor");
   // Enter places the top match straight from the search field.
   await page.keyboard.press("Enter");
 
@@ -2295,7 +2283,7 @@ test("keeps a usable canvas while toggling Library at the narrow breakpoint", as
   const chrome = page.locator(".app-chrome-main");
   // The analytics readout lives in the statusbar now; the top bar ends
   // with Help inside the chrome bounds.
-  const help = page.getByRole("button", { name: "Help" });
+  const help = page.getByRole("button", { name: "帮助" });
   await expect(help).toBeVisible();
   const chromeBox = await chrome.boundingBox();
   const helpBox = await help.boundingBox();
@@ -2334,7 +2322,7 @@ test("keeps a usable canvas while toggling Library at the narrow breakpoint", as
 
   await page.getByTestId("library-toggle").click();
   await expect(panel).toHaveAttribute("data-open", "true");
-  await expect(panel.getByText("All", { exact: true })).toBeVisible();
+  await expect(panel.getByText("全部", { exact: true })).toBeVisible();
   // The narrow layout keeps the dragged width authoritative rather than
   // pinning the panel to one cramped column, so several chips fit per row
   // while the panel still cannot take more than its share of the window.
@@ -2383,8 +2371,8 @@ test("double-clicking a placed device reveals Properties without entering typing
   await page.goto("/editor");
   await awaitEditorReady(page);
   await page.keyboard.press("i");
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
-  await dialog.getByLabel("Component search").fill("resistor");
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
+  await dialog.getByLabel("搜索元件").fill("resistor");
   await dialog.getByTestId("insert-component-resistor").click();
   const canvas = page.getByTestId("schematic-canvas");
   await canvas.click({ position: { x: 360, y: 230 } });
@@ -2422,13 +2410,9 @@ test("Library rail folds the sidebar; Insert opens the catalog", async ({
   await expect(panel).toHaveAttribute("data-open", "true");
 
   await clickCommand(page, "Edit", "Insert component… (I)");
-  await expect(
-    page.getByRole("dialog", { name: "Insert Component" }),
-  ).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "插入元件" })).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(
-    page.getByRole("dialog", { name: "Insert Component" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "插入元件" })).toHaveCount(0);
 
   // No title banner or duplicate Insert footer competes with the shortcut.
   await expect(panel.getByRole("button", { name: /Quick place/ })).toHaveCount(
@@ -2436,9 +2420,7 @@ test("Library rail folds the sidebar; Insert opens the catalog", async ({
   );
   await expect(page.getByTestId("shapes-insert")).toHaveCount(0);
   await page.keyboard.press("i");
-  await expect(
-    page.getByRole("dialog", { name: "Insert Component" }),
-  ).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "插入元件" })).toBeVisible();
 });
 
 test("double-clicking a catalog item applies it immediately", async ({
@@ -2447,7 +2429,7 @@ test("double-clicking a catalog item applies it immediately", async ({
   await page.goto("/editor");
   await awaitEditorReady(page);
   await page.keyboard.press("i");
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
   await dialog.getByTestId("insert-component-resistor").dblclick();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByTestId("status")).toContainText(
@@ -2515,7 +2497,7 @@ test("places every Library annotation from the compact Annotation menu", async (
     await expect(page.getByTestId("text-placement-preview")).toBeAttached();
     await canvas.click({ position: { x: 160 + index * 150, y: 560 } });
     if (symbol === "polarity-both") {
-      await page.getByRole("button", { name: "Apply text changes" }).click();
+      await page.getByRole("button", { name: "应用文本更改" }).click();
     }
     await page.keyboard.press("Escape");
     await expect(canvas.locator('[data-testid^="drafting-hit-"]')).toHaveCount(
