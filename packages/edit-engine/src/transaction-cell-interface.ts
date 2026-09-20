@@ -1,4 +1,8 @@
-import { CellNetlistTerminalSchema } from "@icm/model";
+import {
+  CellNetlistTerminalSchema,
+  flattenRichText,
+  projectCellInterface,
+} from "@icm/model";
 import type { SchematicDocument } from "@icm/model";
 
 import type { EditTransaction } from "./edit-schema.js";
@@ -26,7 +30,78 @@ export interface CellInterfaceEditContext {
 
 export type CellInterfaceEditOutcome = EditMutationOutcome;
 
+/** Reconcile after all edits: deletion planners may remove annotations first. */
+export function inheritCellPortFormatting(
+  before: SchematicDocument,
+  after: SchematicDocument,
+  changedObjectIds: Set<string>,
+): void {
+  const oldPorts = projectCellInterface(before.netlist).ports;
+  for (const port of projectCellInterface(after.netlist).ports) {
+    const previous = oldPorts.find((item) => item.key === port.key);
+    if (!previous || previous.id === port.id) continue;
+    const source = before.annotations.find(
+      (item) =>
+        item.binding?.kind === "cell-terminal-name" &&
+        item.binding.terminalId === previous.id,
+    );
+    const target = after.annotations.find(
+      (item) =>
+        item.binding?.kind === "cell-terminal-name" &&
+        item.binding.terminalId === port.id,
+    );
+    // An authored surviving marker wins. Never change electrical spelling or
+    // replace an explicit annotation edit made in this same transaction.
+    if (
+      !source?.formatOverride ||
+      !target ||
+      target.formatOverride ||
+      changedObjectIds.has(target.id) ||
+      flattenRichText(source.formatOverride) !== port.name
+    )
+      continue;
+    target.formatOverride = structuredClone(source.formatOverride);
+    changedObjectIds.add(target.id);
+  }
+}
+
 export function applyCellInterfaceEdit(
+  edit: CellInterfaceEdit,
+  context: CellInterfaceEditContext,
+): CellInterfaceEditOutcome {
+  const { draft, changedObjectIds } = context;
+  const placements = draft.presentation.cellSymbol?.pinPlacements;
+  const before = projectCellInterface(draft.netlist).ports;
+  const outcome = mutateCellInterface(edit, context);
+  if (!outcome.ok || !placements?.length) return outcome;
+
+  // Layout belongs to the effective interface, not whichever marker happens
+  // to represent it. Existing names win merges; a split leaves the old layout
+  // with the surviving interface. Only a one-to-one rename follows identity.
+  const after = projectCellInterface(draft.netlist).ports;
+  const afterKeys = new Set(after.map((port) => port.key));
+  const retained = after.flatMap((port) => {
+    const previous =
+      before.find((candidate) => candidate.key === port.key) ??
+      before.find(
+        (candidate) =>
+          !afterKeys.has(candidate.key) &&
+          candidate.terminalIds.some((id) => port.terminalIds.includes(id)),
+      );
+    const placement =
+      previous && placements.find((item) => item.terminalId === previous.id);
+    return placement ? [{ ...placement, terminalId: port.id }] : [];
+  });
+  if (JSON.stringify(placements) !== JSON.stringify(retained)) {
+    if (retained.length)
+      draft.presentation.cellSymbol!.pinPlacements = retained;
+    else delete draft.presentation.cellSymbol!.pinPlacements;
+    changedObjectIds.add(draft.id);
+  }
+  return outcome;
+}
+
+function mutateCellInterface(
   edit: CellInterfaceEdit,
   context: CellInterfaceEditContext,
 ): CellInterfaceEditOutcome {
@@ -103,6 +178,21 @@ export function applyCellInterfaceEdit(
       }
       if (edit.name !== undefined) {
         terminal.name = edit.name;
+        if (terminal.interfaceAnnotationId) {
+          for (const evidence of draft.connectivityEvidence) {
+            if (
+              evidence.kind === "name-claim" &&
+              evidence.netId === terminal.netId &&
+              evidence.scope === "local" &&
+              evidence.powerDomain === "vdd" &&
+              evidence.owner.kind === "power-marker" &&
+              evidence.owner.objectId === terminal.interfaceAnnotationId
+            ) {
+              evidence.name = edit.name;
+              changedObjectIds.add(evidence.id);
+            }
+          }
+        }
         for (const annotation of draft.annotations) {
           if (
             annotation.binding?.kind === "cell-terminal-name" &&
@@ -133,22 +223,6 @@ export function applyCellInterfaceEdit(
         };
       }
       const [removedTerminal] = draft.netlist.terminals.splice(index, 1);
-      if (draft.presentation.cellSymbol?.pinPlacements) {
-        const retained = draft.presentation.cellSymbol.pinPlacements.filter(
-          (placement) => placement.terminalId !== edit.terminalId,
-        );
-        if (
-          retained.length !== draft.presentation.cellSymbol.pinPlacements.length
-        ) {
-          draft.presentation.cellSymbol = {
-            ...draft.presentation.cellSymbol,
-            ...(retained.length > 0 ? { pinPlacements: retained } : {}),
-          };
-          if (retained.length === 0) {
-            delete draft.presentation.cellSymbol.pinPlacements;
-          }
-        }
-      }
       changedObjectIds.add(edit.terminalId);
       if (removedTerminal) deferNetPrune(removedTerminal.netId);
       return { ok: true, connectivityChanged: true };

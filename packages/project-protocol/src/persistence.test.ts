@@ -1,3 +1,4 @@
+import { CURRENT_PROJECT_FILE_VERSION } from "./owned-project-file.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -107,7 +108,7 @@ describe("Project persistence", () => {
 
   it("splits schema-24 repeated markers into independent Cell Pins without changing topology", () => {
     const source = JSON.parse(
-      serializeProject(createEmptyProject("project-test", "Test Project")),
+      JSON.stringify(createEmptyProject("project-test", "Test Project")),
     ) as Record<string, any>;
     source.schemaVersion = 24;
     const document = source.documents[0];
@@ -253,7 +254,7 @@ describe("Project persistence", () => {
 
   it("allocates deterministic collision-safe terminal IDs during migration", () => {
     const source = JSON.parse(
-      serializeProject(createEmptyProject("project-test", "Test Project")),
+      JSON.stringify(createEmptyProject("project-test", "Test Project")),
     ) as Record<string, any>;
     source.schemaVersion = 24;
     const document = source.documents[0];
@@ -313,9 +314,7 @@ describe("Project persistence", () => {
 
   it("migrates schema-25 Route arrays and attachments to deterministic leg IDs", () => {
     const source = JSON.parse(
-      serializeProject(
-        createEmptyProject("route-migration", "Route migration"),
-      ),
+      JSON.stringify(createEmptyProject("route-migration", "Route migration")),
     ) as Record<string, any>;
     source.schemaVersion = 25;
     const document = source.documents[0];
@@ -404,13 +403,13 @@ describe("Project persistence", () => {
       1,
       22,
       23,
-      CURRENT_PROJECT_SCHEMA_VERSION + 1,
+      CURRENT_PROJECT_FILE_VERSION + 1,
       99,
     ]) {
       expect(() =>
         parseProject(JSON.stringify({ ...project, schemaVersion })),
       ).toThrow(
-        new RegExp(`must be between 24 and ${CURRENT_PROJECT_SCHEMA_VERSION}`),
+        new RegExp(`must be between 24 and ${CURRENT_PROJECT_FILE_VERSION}`),
       );
     }
   });

@@ -238,11 +238,17 @@ describe("simulation run evidence", () => {
   });
 
   it("accepts a no-rawfile run only when ngspice execution is visible", () => {
-    expect(
-      evaluateSimulationRun({ rawfile: "not-required" }, observation(), {
-        timeoutMs: 30_000,
-      }).outcome,
-    ).toEqual({ status: "completed" });
+    const logOnly = evaluateSimulationRun(
+      { rawfile: "not-required" },
+      observation(),
+      { timeoutMs: 30_000 },
+    );
+    expect(logOnly.outcome).toEqual({ status: "completed" });
+    expect(logOnly.data).toBeUndefined();
+    expect(logOnly.diagnostics).toContainEqual({
+      severity: "info",
+      text: expect.stringContaining("No rawfile capture was requested"),
+    });
 
     const dropped = evaluateSimulationRun(
       { rawfile: "not-required" },
@@ -255,6 +261,25 @@ describe("simulation run evidence", () => {
     expect(dropped.outcome).toEqual({
       status: "completed-with-dropped-input",
     });
+  });
+
+  it("does not confuse failed execution or readable data with unrequested capture", () => {
+    for (const overrides of [
+      { timedOut: true },
+      { signal: "SIGKILL" },
+      { rawfile: dividerRawfile, rawfileFormat: "ascii" as const },
+    ]) {
+      const evaluated = evaluateSimulationRun(
+        { rawfile: "not-required" },
+        observation(overrides),
+        { timeoutMs: 30_000 },
+      );
+      expect(
+        evaluated.diagnostics.some((d) =>
+          d.text.includes("No rawfile capture was requested"),
+        ),
+      ).toBe(false);
+    }
   });
 
   it("fails when the deck promised a rawfile but returned no vectors", () => {
@@ -363,7 +388,7 @@ describe("simulation deck assembly", () => {
     expect(deck).toContain(
       '.lib "/opt/sky130/sky130A/libs.tech/ngspice/sky130.lib.spice" tt',
     );
-    // ADR 0055: we ship no templates and infer no intent. Nothing analysis-
+    // Simulation rationale: we ship no templates and infer no intent. Nothing analysis-
     // shaped may appear that the author did not write.
     expect(deck).toContain(testbench);
     const ours = deck.replace(testbench, "").replace(netlist, "");

@@ -48,6 +48,11 @@ import { upgradeSchema52To53 } from "./transforms/rotation-steps.js";
 import { upgradeSchema53To54 } from "./transforms/parameter-annotations.js";
 import { upgradeSchema54To55 } from "./transforms/arrow-end-styles.js";
 import { upgradeSchema55To56 } from "./transforms/route-line-style.js";
+import { upgradeSchema56To57 } from "./transforms/power-rail-terminals.js";
+import {
+  CURRENT_PROJECT_FILE_VERSION,
+  decodeProjectFile,
+} from "./owned-project-file.js";
 
 /**
  * One upgrade step per historical version, oldest first: entry N carries a
@@ -90,6 +95,8 @@ const UPGRADE_CHAIN: ReadonlyArray<
   upgradeSchema53To54,
   upgradeSchema54To55,
   upgradeSchema55To56,
+  upgradeSchema56To57,
+  (raw) => ({ ...raw, schemaVersion: 58 }),
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -162,17 +169,17 @@ export function tryParseProjectWithMetadata(
   }
 
   const sourceSchemaVersion = parsed.schemaVersion as number;
-  const migrated = sourceSchemaVersion !== CURRENT_PROJECT_SCHEMA_VERSION;
+  const migrated = sourceSchemaVersion !== CURRENT_PROJECT_FILE_VERSION;
   if (
     sourceSchemaVersion < OLDEST_SUPPORTED_PROJECT_SCHEMA_VERSION ||
-    sourceSchemaVersion > CURRENT_PROJECT_SCHEMA_VERSION
+    sourceSchemaVersion > CURRENT_PROJECT_FILE_VERSION
   ) {
     return {
       ok: false,
       diagnostics: [
         {
           code: "UNSUPPORTED_SCHEMA_VERSION",
-          message: `Project schemaVersion must be between ${OLDEST_SUPPORTED_PROJECT_SCHEMA_VERSION} and ${CURRENT_PROJECT_SCHEMA_VERSION}`,
+          message: `Project schemaVersion must be between ${OLDEST_SUPPORTED_PROJECT_SCHEMA_VERSION} and ${CURRENT_PROJECT_FILE_VERSION}`,
           path: ["schemaVersion"],
         },
       ],
@@ -181,9 +188,9 @@ export function tryParseProjectWithMetadata(
 
   let current: Record<string, unknown>;
   try {
-    current = parsed;
+    current = sourceSchemaVersion >= 59 ? decodeProjectFile(parsed) : parsed;
     for (
-      let version = sourceSchemaVersion;
+      let version = current.schemaVersion as number;
       version < CURRENT_PROJECT_SCHEMA_VERSION;
       version += 1
     ) {
@@ -193,6 +200,8 @@ export function tryParseProjectWithMetadata(
         );
     }
   } catch (error) {
+    if (error instanceof ProjectFormatError)
+      return { ok: false, diagnostics: error.diagnostics };
     if (error instanceof ProjectMigrationError) {
       return {
         ok: false,
@@ -212,15 +221,58 @@ export function tryParseProjectWithMetadata(
   // overrides already written and published — restore the text instead of
   // refusing the Project, because a file that will not open is, to its
   // author, a file that is gone.
-  current = repairBoundFormatOverrides(current);
   const reviewedReferenceRepair =
     repairLegacyReviewedExternalReferences(current);
   current = reviewedReferenceRepair.project;
+  // The reviewed-reference repair can rename a legacy external instance
+  // (M1 -> XM1). Reconcile bound presentation only after that semantic rename
+  // so its format override is rewritten to the final reference as well.
+  current = repairBoundFormatOverrides(current);
   const diagnostics = invalidProjectDiagnostics(current);
   if (diagnostics.length > 0) return { ok: false, diagnostics };
+  const project = CircuitProjectSchema.parse(current);
+  if (project.componentDefinitions) {
+    const definitions = new Map(
+      project.componentDefinitions.map((definition) => [
+        definition.symbol.id,
+        definition.symbol,
+      ]),
+    );
+    for (const document of project.documents) {
+      const uses = [
+        ...document.instances.map((instance) => ({
+          id: instance.symbolId,
+          variant: instance.symbolVariantId,
+        })),
+        ...(document.drafting?.objects ?? []).flatMap((object) =>
+          object.kind === "floating-symbol"
+            ? [{ id: object.symbolId, variant: undefined }]
+            : [],
+        ),
+      ];
+      for (const use of uses) {
+        const definition = definitions.get(use.id);
+        if (
+          !definition ||
+          (use.variant &&
+            !definition.variants.some((variant) => variant.id === use.variant))
+        )
+          return {
+            ok: false,
+            diagnostics: [
+              {
+                code: "INVALID_PROJECT",
+                path: ["componentDefinitions"],
+                message: `Missing included component definition or variant: ${use.id}${use.variant ? `/${use.variant}` : ""}`,
+              },
+            ],
+          };
+      }
+    }
+  }
   return {
     ok: true,
-    project: CircuitProjectSchema.parse(current),
+    project,
     sourceSchemaVersion,
     migrated,
   };

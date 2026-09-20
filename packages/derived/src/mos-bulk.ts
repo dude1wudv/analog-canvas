@@ -7,6 +7,11 @@ import type {
   SchematicDocument,
 } from "@icm/model";
 import { routeEnd } from "@icm/model";
+import {
+  resolveDocumentLogicalNets,
+  type ResolvedDocumentLogicalNets,
+} from "./logical-net.js";
+import { supplyMarkerForSymbol, type SupplyDomain } from "./supply-marker.js";
 
 export type MosBulkKind = "nmos" | "pmos";
 export type MosBulkResolution =
@@ -138,14 +143,90 @@ export function isMosBulkRoute(
 }
 
 /**
+ * The Cell's one Net in a supply domain, or nothing.
+ *
+ * "The supply the author drew" is an explicit classification, never a guess:
+ * a placed `ground` or `vdd-port` marker, or a name claim that says which
+ * power domain a Net belongs to (a rail, a formal Cell Pin declared as a
+ * supply). Nothing here reads a Net's spelling, a device's polarity, or what
+ * a wire happens to pass near.
+ *
+ * Several candidates (AVDD beside DVDD, AGND beside DGND) is a question for
+ * the author rather than a vote, so the answer is then nothing and whoever
+ * asked has to be told to name one. A marker nobody wired yet names no Net,
+ * so it neither answers nor competes.
+ */
+export function drawnSupplyNet(
+  document: SchematicDocument,
+  domain: SupplyDomain,
+  logicalNets?: ResolvedDocumentLogicalNets,
+): Net | undefined {
+  const netIds = new Set<string>();
+  // A caller that already holds this Document's Logical Nets passes them: the
+  // fallback below runs once per MOS instance without one, and resolved the
+  // whole Document every time.
+  for (const group of (logicalNets ?? resolveDocumentLogicalNets(document))
+    .groups) {
+    if (group.powerDomain !== domain) continue;
+    // Any Base Net of the group is the same node; take a stable one so the
+    // answer does not depend on document order.
+    const [first] = [...group.baseNetIds].sort((left, right) =>
+      left.localeCompare(right, "en"),
+    );
+    if (first) netIds.add(first);
+  }
+  if (netIds.size === 0) {
+    // Logical identity needs a name claim. A marker that was placed and wired
+    // without one still says which supply it is.
+    for (const instance of document.instances) {
+      const marker = supplyMarkerForSymbol(instance.symbolId);
+      if (marker?.domain !== domain) continue;
+      const net = document.nets.find((candidate) =>
+        candidate.terminals.some(
+          (terminal) =>
+            terminal.instanceId === instance.id &&
+            terminal.pinName === marker.pinName,
+        ),
+      );
+      if (net) netIds.add(net.id);
+    }
+  }
+  if (netIds.size !== 1) return undefined;
+  const [netId] = [...netIds];
+  return document.nets.find((net) => net.id === netId);
+}
+
+/**
+ * The Net a MOS body follows when nobody has said otherwise: the supply the
+ * author already drew — ground under an NMOS body, VDD under a PMOS body,
+ * because that is what those symbols mean. The answer needs no per-Cell
+ * setting, survives copy/paste into any Cell that has the supply, and holds
+ * for drawings made before the policy existed.
+ */
+export function supplyDefaultMosBulkNet(
+  document: SchematicDocument,
+  kind: MosBulkKind,
+  logicalNets?: ResolvedDocumentLogicalNets,
+): Net | undefined {
+  return drawnSupplyNet(
+    document,
+    kind === "nmos" ? "ground" : "vdd",
+    logicalNets,
+  );
+}
+
+/**
  * Single authority for MOS body intent. Net membership remains the electrical
- * truth; this function only explains whether that truth was explicit or was
- * materialized from a configured cell default. MOS polarity never creates or
- * selects a named supply Net.
+ * truth; this function only explains where that truth came from: explicit B
+ * wiring, a configured Cell default, or — when the Cell configures nothing —
+ * the supply marker the author drew. MOS polarity never creates or selects a
+ * named supply Net; the supply fallback reads a placed marker, and stays
+ * silent when the drawing offers more than one.
  */
 export function resolveMosBulkConnection(
   document: SchematicDocument,
   instanceOrId: Instance | string,
+  logicalNets?: ResolvedDocumentLogicalNets,
 ): MosBulkResolution | undefined {
   const instance =
     typeof instanceOrId === "string"
@@ -159,7 +240,14 @@ export function resolveMosBulkConnection(
         terminal.instanceId === instance.id && terminal.pinName === "B",
     ),
   );
-  if (connectedNet) {
+  // A body alone on the Net its own policy binding named, with no geometry,
+  // no name and no Cell terminal, is what a paste or a deleted supply marker
+  // left behind — not a connection anybody drew. Reading it as one strands
+  // the body on a node nothing else reaches: the netlist writes that node
+  // once and a matched pair ends up with one body on ground and the other on
+  // nothing. Reclaim it here the way reconciliation does on an edit.
+  const residue = strandedMosBulkNet(document, instance);
+  if (connectedNet && !residue) {
     const origin = hasExplicitMosBulkRoute(document, instance.id)
       ? undefined
       : instance.mosBulkBinding;
@@ -215,12 +303,70 @@ export function resolveMosBulkConnection(
     };
   }
 
+  const supply = supplyDefaultMosBulkNet(document, kind, logicalNets);
+  if (supply) {
+    return {
+      status: "supply-default",
+      instance,
+      net: supply,
+      materialized: false,
+    };
+  }
+
   return {
     status: "unresolved",
     instance,
     net: undefined,
     materialized: false,
   };
+}
+
+/**
+ * The Net a MOS body sits on when that membership is only policy residue: a
+ * binding points at it, this one body is its only terminal, and it owns no
+ * geometry, claims no name and carries no Cell terminal, so it is not a
+ * conductor anybody authored. Copy/paste materialized Cell policy into such
+ * a Net, and deleting the supply marker that named it leaves the body
+ * stranded there, out of reach of the Cell default it should follow.
+ * Authored membership (no binding) and a body bias Net shared by several
+ * bodies are connections, never residue.
+ */
+export function strandedMosBulkNet(
+  document: SchematicDocument,
+  instanceOrId: Instance | string,
+): Net | undefined {
+  const instance =
+    typeof instanceOrId === "string"
+      ? document.instances.find((candidate) => candidate.id === instanceOrId)
+      : instanceOrId;
+  if (!instance?.mosBulkBinding || !mosBulkKind(instance)) return undefined;
+  // A legacy `supply-default` binding is the old materialized supply
+  // connection, readable compatibility data rather than something a paste or
+  // a deleted marker left behind. Residue is what this editor writes for a
+  // Cell's policy or for one instance.
+  if (instance.mosBulkBinding.origin === "supply-default") return undefined;
+  const net = document.nets.find((candidate) =>
+    candidate.terminals.some(
+      (terminal) =>
+        terminal.instanceId === instance.id && terminal.pinName === "B",
+    ),
+  );
+  if (!net || instance.mosBulkBinding.netId !== net.id) return undefined;
+  const sole =
+    net.terminals.length === 1 &&
+    net.terminals[0]!.instanceId === instance.id &&
+    net.terminals[0]!.pinName === "B";
+  return sole &&
+    !document.routes.some((route) => route.netId === net.id) &&
+    !document.junctions.some((junction) => junction.netId === net.id) &&
+    !document.connectivityEvidence.some(
+      (evidence) => evidence.netId === net.id,
+    ) &&
+    !(document.netlist?.terminals ?? []).some(
+      (terminal) => terminal.netId === net.id,
+    )
+    ? net
+    : undefined;
 }
 
 /**
@@ -289,8 +435,13 @@ export function resolveDetachedMosBulkDefault(
 export function mosBulkShouldBeVisible(
   document: SchematicDocument,
   instanceOrId: Instance | string,
+  logicalNets?: ResolvedDocumentLogicalNets,
 ): boolean {
-  const resolution = resolveMosBulkConnection(document, instanceOrId);
+  const resolution = resolveMosBulkConnection(
+    document,
+    instanceOrId,
+    logicalNets,
+  );
   if (resolution?.status !== "explicit") return false;
   // Imported fourth-node membership is electrical evidence, not a request to
   // draw a body-bias lead. The configured Cell default stays implicit unless

@@ -1,3 +1,5 @@
+import { CURRENT_PROJECT_SCHEMA_VERSION } from "@icm/model";
+import { CURRENT_PROJECT_FILE_VERSION } from "@icm/project-protocol";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
@@ -5,7 +7,6 @@ import {
   createEmptyDocument,
   createEmptyProject,
   createRoutePath,
-  CURRENT_PROJECT_SCHEMA_VERSION,
 } from "@icm/model";
 import { parseProject, serializeProject } from "@icm/project-protocol";
 import { hierarchicalSymbolId } from "@icm/symbols";
@@ -14,6 +15,7 @@ import { CLOUD_PROJECT_LIMIT as EDITOR_CLOUD_PROJECT_LIMIT } from "../apps/edito
 import { CLOUD_PROJECT_LIMIT } from "./gallery-do";
 import {
   GALLERY_DAILY_SUBMISSION_LIMIT,
+  refreshNetlistMarks,
   GALLERY_MAX_PROJECT_BYTES,
   GalleryDO,
   routeGalleryRequest,
@@ -129,8 +131,8 @@ function projectText(name = "Fixture"): string {
 }
 
 function previousVersionText(): string {
-  const raw = JSON.parse(projectText());
-  raw.schemaVersion = CURRENT_PROJECT_SCHEMA_VERSION - 1;
+  const raw = JSON.parse(JSON.stringify(parseProject(projectText())));
+  raw.schemaVersion = CURRENT_PROJECT_SCHEMA_VERSION;
   if (raw.schemaVersion < 50) {
     raw.simulationSetups = raw.simulationFolders;
     delete raw.simulationFolders;
@@ -177,8 +179,8 @@ function previousRouteVersionText(): string {
     rotation: 0,
     locked: false,
   });
-  const raw = JSON.parse(serializeProject(project)) as any;
-  raw.schemaVersion = CURRENT_PROJECT_SCHEMA_VERSION - 1;
+  const raw = JSON.parse(JSON.stringify(project)) as any;
+  raw.schemaVersion = CURRENT_PROJECT_SCHEMA_VERSION;
   if (raw.schemaVersion < 50) {
     raw.simulationSetups = raw.simulationFolders;
     delete raw.simulationFolders;
@@ -281,7 +283,7 @@ describe("gallery data migrations", () => {
       "Author",
       "",
       "2026-08-01T00:00:00.000Z",
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
       "public",
       projectText("Legacy preview"),
       '<svg viewBox="-10 -20 320 180"></svg>',
@@ -314,7 +316,7 @@ describe("gallery data migrations", () => {
       "tokenzhang",
       "",
       "2026-08-01T00:00:00.000Z",
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
       "public",
       projectText("Legacy"),
       "<svg/>",
@@ -323,7 +325,7 @@ describe("gallery data migrations", () => {
       "Other Author",
       "",
       "2026-08-01T00:00:00.000Z",
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
       "recycled",
       projectText("Other"),
       "<svg/>",
@@ -339,7 +341,7 @@ describe("gallery data migrations", () => {
       "Legacy",
       "Token Zhang",
       "",
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
       projectText("Legacy"),
       "<svg/>",
       "2026-08-01T00:00:00.000Z",
@@ -378,6 +380,85 @@ describe("gallery data migrations", () => {
     ).toBe("Token Zhang");
   });
 
+  it("renames the Magic Li byline across entries and restorable versions once", () => {
+    const state = sqliteState();
+    new GalleryDO(state);
+    state.storage.sql.exec(
+      `INSERT INTO gallery_entries
+       (id, name, author, description, created_at, schema_version, status,
+        project_text, svg_text)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      "magic-li-entry",
+      "Magic Li circuit",
+      " 3187863239-NETIZEN ",
+      "",
+      "2026-09-19T00:00:00.000Z",
+      CURRENT_PROJECT_FILE_VERSION,
+      "public",
+      projectText("Magic Li circuit"),
+      "<svg/>",
+      "unrelated-entry",
+      "Unrelated",
+      "Another Contributor",
+      "",
+      "2026-09-19T00:00:00.000Z",
+      CURRENT_PROJECT_FILE_VERSION,
+      "recycled",
+      projectText("Unrelated"),
+      "<svg/>",
+    );
+    state.storage.sql.exec(
+      `INSERT INTO gallery_entry_versions
+       (id, entry_id, version_no, name, author, description, schema_version,
+        project_text, svg_text, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      "magic-li-version",
+      "magic-li-entry",
+      1,
+      "Magic Li circuit",
+      "3187863239-netizen",
+      "",
+      CURRENT_PROJECT_FILE_VERSION,
+      projectText("Magic Li circuit"),
+      "<svg/>",
+      "2026-09-19T00:00:00.000Z",
+    );
+    state.storage.sql.exec(
+      "DELETE FROM data_migrations WHERE id LIKE '%magic-li%'",
+    );
+
+    new GalleryDO(state);
+    expect(
+      state.storage.sql
+        .exec<{ id: string; author: string }>(
+          "SELECT id, author FROM gallery_entries ORDER BY id",
+        )
+        .toArray(),
+    ).toEqual([
+      { id: "magic-li-entry", author: "Magic Li" },
+      { id: "unrelated-entry", author: "Another Contributor" },
+    ]);
+    expect(
+      state.storage.sql
+        .exec<{ author: string }>(
+          "SELECT author FROM gallery_entry_versions WHERE id = 'magic-li-version'",
+        )
+        .one().author,
+    ).toBe("Magic Li");
+
+    state.storage.sql.exec(
+      "UPDATE gallery_entries SET author = '3187863239-netizen' WHERE id = 'magic-li-entry'",
+    );
+    new GalleryDO(state);
+    expect(
+      state.storage.sql
+        .exec<{ author: string }>(
+          "SELECT author FROM gallery_entries WHERE id = 'magic-li-entry'",
+        )
+        .one().author,
+    ).toBe("3187863239-netizen");
+  });
+
   it("migrates histories to two versions and removes orphaned data", () => {
     const state = sqliteState();
     new GalleryDO(state);
@@ -392,7 +473,7 @@ describe("gallery data migrations", () => {
         "Author",
         "",
         "2026-08-01T00:00:00.000Z",
-        CURRENT_PROJECT_SCHEMA_VERSION,
+        CURRENT_PROJECT_FILE_VERSION,
         "public",
         projectText(entryId),
         "<svg/>",
@@ -419,7 +500,7 @@ describe("gallery data migrations", () => {
         `${entryId} v${versionNo}`,
         "Author",
         "",
-        CURRENT_PROJECT_SCHEMA_VERSION,
+        CURRENT_PROJECT_FILE_VERSION,
         projectText(`${entryId} v${versionNo}`),
         "<svg/>",
         `2026-08-${String(versionNo).padStart(2, "0")}T00:00:00.000Z`,
@@ -572,28 +653,35 @@ describe("newest-first gallery feed", () => {
     const env = environment();
     const ids = await wallOf(env, 6);
     env.gallerySql.exec(
-      "UPDATE gallery_entries SET author = ? WHERE id IN (?, ?)",
+      `UPDATE gallery_entries SET author = ?, owner_user_id = ?
+       WHERE id IN (?, ?)`,
       "Alice",
+      "owner-alice",
       ids[0]!,
       ids[1]!,
     );
     env.gallerySql.exec(
-      "UPDATE gallery_entries SET author = ? WHERE id = ?",
+      "UPDATE gallery_entries SET author = ?, owner_user_id = ? WHERE id = ?",
       "Chen",
+      "owner-chen",
       ids[2]!,
     );
     env.gallerySql.exec(
-      "UPDATE gallery_entries SET author = ? WHERE id = ?",
+      "UPDATE gallery_entries SET author = ?, owner_user_id = ? WHERE id = ?",
       "Bob",
+      "owner-bob",
       ids[3]!,
     );
     env.gallerySql.exec(
-      "UPDATE gallery_entries SET author = '' WHERE id = ?",
+      "UPDATE gallery_entries SET author = '', owner_user_id = ? WHERE id = ?",
+      "owner-blank",
       ids[4]!,
     );
     env.gallerySql.exec(
-      "UPDATE gallery_entries SET author = ?, status = 'rejected' WHERE id = ?",
+      `UPDATE gallery_entries
+       SET author = ?, owner_user_id = ?, status = 'rejected' WHERE id = ?`,
       "Hidden",
+      "owner-hidden",
       ids[5]!,
     );
 
@@ -604,11 +692,56 @@ describe("newest-first gallery feed", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await response.json()).toEqual({
       authors: [
-        { author: "Alice", count: 2 },
-        { author: "Bob", count: 1 },
-        { author: "Chen", count: 1 },
+        { author: "Alice", ownerUserId: "owner-alice", count: 2 },
+        { author: "Bob", ownerUserId: "owner-bob", count: 1 },
+        { author: "Chen", ownerUserId: "owner-chen", count: 1 },
       ],
     });
+  });
+
+  it("filters same-name contributors by stable owner identity", async () => {
+    const env = environment();
+    const ids = await wallOf(env, 2);
+    env.gallerySql.exec(
+      "UPDATE gallery_entries SET author = ?, owner_user_id = ? WHERE id = ?",
+      "Shared Name",
+      "owner-a",
+      ids[0]!,
+    );
+    env.gallerySql.exec(
+      "UPDATE gallery_entries SET author = ?, owner_user_id = ? WHERE id = ?",
+      "Shared Name",
+      "owner-b",
+      ids[1]!,
+    );
+
+    const legacy = (await (
+      await route(
+        env,
+        new Request(`${ORIGIN}/api/gallery?author=Shared%20Name`),
+      )
+    ).json()) as {
+      entries: Array<{ id: string; ownerUserId: string | null }>;
+      total: number;
+    };
+    expect(new Set(legacy.entries.map((entry) => entry.id))).toEqual(
+      new Set(ids),
+    );
+    expect(legacy.total).toBe(2);
+
+    const exact = (await (
+      await route(
+        env,
+        new Request(`${ORIGIN}/api/gallery?author=Shared%20Name&owner=owner-a`),
+      )
+    ).json()) as {
+      entries: Array<{ id: string; ownerUserId: string | null }>;
+      total: number;
+    };
+    expect(
+      exact.entries.map(({ id, ownerUserId }) => ({ id, ownerUserId })),
+    ).toEqual([{ id: ids[0], ownerUserId: "owner-a" }]);
+    expect(exact.total).toBe(1);
   });
 
   it("returns the same newest-first order on every read", async () => {
@@ -633,7 +766,7 @@ describe("newest-first gallery feed", () => {
   });
 });
 
-describe("stars and thumbs", () => {
+describe("netlist marks and thumbs", () => {
   function likeRequest(id: string, cookie?: string): Request {
     const headers = new Headers({ Origin: ORIGIN });
     if (cookie) headers.set("Cookie", cookie);
@@ -667,7 +800,7 @@ describe("stars and thumbs", () => {
 
     // An ideal switch has no reviewed netlist definition, so this circuit
     // does not extract. That is a legitimate schematic, not a mistake: it is
-    // published exactly like any other and simply wears no star.
+    // published exactly like any other and simply wears no mark.
     const sketch = createEmptyProject("sketch", "Sketch");
     sketch.documents[0]!.instances.push({
       id: "S1",
@@ -685,8 +818,189 @@ describe("stars and thumbs", () => {
     const byId = new Map(listed.entries.map((entry) => [entry.id, entry]));
     expect(byId.get(sketchId)!.netlistable).toBe(false);
     expect(byId.get(extractableId)!.netlistable).toBe(true);
-    // Both are on the wall; the star separates them, nothing else does.
+    // Both are on the wall; the mark separates them, nothing else does.
     expect(listed.entries).toHaveLength(2);
+  });
+
+  it("narrows the wall by mark, by like, and by the session behind it", async () => {
+    // Same two marks the tiles wear, asked of the list instead: a reader who
+    // wants the finished circuits, or their own shortlist, should not have to
+    // scroll the whole wall looking for glyphs.
+    const env = environment();
+    const cookie = await adminOf(env);
+    const sketch = createEmptyProject("sketch", "Sketch");
+    sketch.documents[0]!.instances.push({
+      id: "S1",
+      symbolId: "ideal-switch",
+      reference: "S1",
+      placement: { position: { x: 0, y: 0 }, rotation: 0, mirror: "none" },
+    });
+    const sketchId = await submitOne(env, "Sketch", {
+      cookie,
+      text: serializeProject(sketch),
+    });
+    const extractableId = await submitOne(env, "Extractable", { cookie });
+    expect((await route(env, likeRequest(sketchId, cookie))).status).toBe(200);
+
+    const list = async (query: string, viewer?: string) => {
+      const response = await route(
+        env,
+        new Request(
+          `${ORIGIN}/api/gallery?${query}`,
+          viewer ? { headers: cookieHeaders(viewer) } : undefined,
+        ),
+      );
+      return (await response.json()) as {
+        entries: { id: string }[];
+        total: number;
+      };
+    };
+
+    const marked = await list("netlistable=1", cookie);
+    expect(marked.entries.map((entry) => entry.id)).toEqual([extractableId]);
+    // The total describes the narrowed wall, so paging stays honest.
+    expect(marked.total).toBe(1);
+
+    const liked = await list("liked=1", cookie);
+    expect(liked.entries.map((entry) => entry.id)).toEqual([sketchId]);
+    expect(liked.total).toBe(1);
+
+    // The marks compose, and here nothing satisfies both.
+    const both = await list("netlistable=1&liked=1", cookie);
+    expect(both.entries).toHaveLength(0);
+    expect(both.total).toBe(0);
+
+    // A like belongs to an account: signed out, "the ones I liked" is none of
+    // them rather than all of them.
+    const anonymous = await list("liked=1");
+    expect(anonymous.entries).toHaveLength(0);
+    expect(anonymous.total).toBe(0);
+    expect((await list("", cookie)).entries).toHaveLength(2);
+  });
+
+  it("marks a circuit with missing process fields as not netlistable", async () => {
+    // Gallery marks use the same strict contract as editor export. Missing
+    // models or required values cannot be represented by a usable netlist.
+    const env = environment();
+    const cookie = await adminOf(env);
+    const unbound = createEmptyProject("unbound", "Unbound");
+    const document = unbound.documents[0]!;
+    document.instances.push({
+      id: "M1",
+      symbolId: "nmos",
+      reference: "M1",
+      netlist: { parameters: {} },
+      placement: { position: { x: 0, y: 0 }, rotation: 0, mirror: "none" },
+    });
+    document.nets.push(
+      {
+        id: "net-top",
+        terminals: [
+          { instanceId: "M1", pinName: "G" },
+          { instanceId: "M1", pinName: "D" },
+        ],
+      },
+      {
+        id: "net-bottom",
+        terminals: [
+          { instanceId: "M1", pinName: "S" },
+          { instanceId: "M1", pinName: "B" },
+        ],
+      },
+    );
+    const id = await submitOne(env, "Unbound", {
+      cookie,
+      text: serializeProject(unbound),
+    });
+    const entry = (await feed(env)).entries.find((item) => item.id === id);
+    expect(entry?.netlistable).toBe(false);
+  });
+
+  it("re-answers only the marks an older rule produced", async () => {
+    // A stored mark is only as good as the rule that produced it. Entries
+    // carry that rule's version, so a deployed change leaves exactly the
+    // stale rows to find: no cursor to carry between batches, and no work
+    // repeated over answers that are already current.
+    const env = environment();
+    const cookie = await adminOf(env);
+    const first = await submitOne(env, "Batch one", { cookie });
+    const second = await submitOne(env, "Batch two", { cookie });
+    // Publishing stamped the current rule, so the pass has nothing to do.
+    const refresh = async (limit: number) => {
+      const response = await route(
+        env,
+        new Request(`${ORIGIN}/api/gallery/maintenance/netlist-badges`, {
+          method: "POST",
+          headers: {
+            ...cookieHeaders(cookie),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ limit }),
+        }),
+      );
+      expect(response.status).toBe(200);
+      return (await response.json()) as {
+        scanned: number;
+        changed: number;
+        unreadable: number;
+        ruleVersion: number;
+        remaining: number;
+      };
+    };
+    expect(await refresh(50)).toMatchObject({ scanned: 0, remaining: 0 });
+
+    // Now the rule has moved: both marks came from an older answer.
+    env.gallerySql.exec(
+      "UPDATE gallery_entries SET netlistable = 0, netlistable_version = 0",
+    );
+    expect((await feed(env)).entries.every((entry) => !entry.netlistable)).toBe(
+      true,
+    );
+
+    const firstBatch = await refresh(1);
+    expect(firstBatch).toMatchObject({ scanned: 1, changed: 1, remaining: 1 });
+    expect(firstBatch.ruleVersion).toBeGreaterThan(0);
+    expect(await refresh(1)).toMatchObject({
+      scanned: 1,
+      changed: 1,
+      remaining: 0,
+    });
+    // Idempotent: a further pass finds nothing, with no cursor to remember.
+    expect(await refresh(50)).toMatchObject({ scanned: 0, remaining: 0 });
+
+    const marked = (await feed(env)).entries;
+    expect(marked.map((entry) => entry.netlistable)).toEqual([true, true]);
+    expect(new Set(marked.map((entry) => entry.id))).toEqual(
+      new Set([first, second]),
+    );
+  });
+
+  it("re-answers stale marks from the schedule, with nobody signed in", async () => {
+    // The scheduled tick calls the pass directly: there is no session behind
+    // it, and there should not have to be.
+    const env = environment();
+    await submitOne(env, "Scheduled", { cookie: await adminOf(env) });
+    env.gallerySql.exec(
+      "UPDATE gallery_entries SET netlistable = 0, netlistable_version = 0",
+    );
+
+    const { status, payload } = await refreshNetlistMarks(env, 50);
+    expect(status).toBe(200);
+    expect(payload).toMatchObject({ scanned: 1, changed: 1, remaining: 0 });
+    expect((await feed(env)).entries[0]!.netlistable).toBe(true);
+  });
+
+  it("keeps the mark pass behind the admin check", async () => {
+    const env = environment();
+    const response = await route(
+      env,
+      new Request(`${ORIGIN}/api/gallery/maintenance/netlist-badges`, {
+        method: "POST",
+        headers: { Origin: ORIGIN, "content-type": "application/json" },
+        body: "{}",
+      }),
+    );
+    expect(response.status).toBe(401);
   });
 
   it("counts one thumb per account and takes it back on a second press", async () => {
@@ -765,7 +1079,7 @@ describe("circuit addresses", () => {
       "Someone",
       "",
       new Date().toISOString(),
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
       projectText("Old Link"),
     );
     const served = await route(
@@ -1081,7 +1395,7 @@ describe("gallery submissions", () => {
     expect(listed.entries.map((entry) => entry.id)).toEqual([id]);
     expect(listed.entries[0]).toMatchObject({
       name: "Ring Oscillator",
-      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      schemaVersion: CURRENT_PROJECT_FILE_VERSION,
     });
     expect(listed.entries[0]!.previewRevision).toMatch(/^[a-f0-9]{64}$/u);
     expect(listed.entries[0]!.previewWidth).toBeGreaterThan(0);
@@ -1090,7 +1404,7 @@ describe("gallery submissions", () => {
     const detail = await route(env, new Request(`${ORIGIN}/api/gallery/${id}`));
     const payload = (await detail.json()) as { projectText: string };
     expect(JSON.parse(payload.projectText)).toMatchObject({
-      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      schemaVersion: CURRENT_PROJECT_FILE_VERSION,
       name: "Ring Oscillator",
     });
 
@@ -1227,7 +1541,7 @@ describe("gallery submissions", () => {
     const detail = await route(env, new Request(`${ORIGIN}/api/gallery/${id}`));
     const payload = (await detail.json()) as { projectText: string };
     expect(JSON.parse(payload.projectText).schemaVersion).toBe(
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
     );
   });
 
@@ -1238,7 +1552,7 @@ describe("gallery submissions", () => {
     });
     const detail = await route(env, new Request(`${ORIGIN}/api/gallery/${id}`));
     const payload = (await detail.json()) as { projectText: string };
-    const stored = JSON.parse(payload.projectText) as any;
+    const stored = parseProject(payload.projectText) as any;
     const storedRoute = stored.documents[0].routes[0];
     expect(storedRoute.start).toEqual({
       kind: "junction",
@@ -1531,7 +1845,7 @@ describe("the daily publish quota", () => {
             author: "",
             description: "",
             created_at: `${day}T00:00:00.000Z`,
-            schema_version: CURRENT_PROJECT_SCHEMA_VERSION,
+            schema_version: CURRENT_PROJECT_FILE_VERSION,
             owner_user_id: ownerUserId,
             project_text: projectText(),
             svg_text: "<svg/>",
@@ -2356,6 +2670,232 @@ describe("gallery admin sessions", () => {
   });
 });
 
+describe("administrator duplicate cleanup", () => {
+  function ref(env: Harness, id: string) {
+    return {
+      id,
+      previewRevision:
+        env.gallerySql
+          .exec<{ preview_revision: string }>(
+            "SELECT preview_revision FROM gallery_entries WHERE id = ?",
+            id,
+          )
+          .one().preview_revision || "legacy",
+    };
+  }
+  function cleanup(body: unknown, cookie = "", origin = ORIGIN) {
+    return new Request(`${ORIGIN}/api/gallery/duplicates/recycle`, {
+      method: "POST",
+      headers: {
+        Origin: origin,
+        Cookie: cookie,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+  }
+  function states(env: Harness) {
+    return env.gallerySql
+      .exec<{ id: string; status: string }>(
+        "SELECT id, status FROM gallery_entries ORDER BY id",
+      )
+      .toArray();
+  }
+  async function fixture() {
+    const env = environment();
+    const cookie = await adminOf(env);
+    const ids: string[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      ids.push(
+        await submitOne(env, `Copy ${index}`, {
+          cookie,
+          text: wiredProjectText(`Copy ${index}`, 200 + index * 10),
+        }),
+      );
+    }
+    return {
+      env,
+      cookie,
+      ids,
+      body: {
+        keep: ref(env, ids[0]!),
+        remove: ids.slice(1).map((id) => ref(env, id)),
+      },
+    };
+  }
+
+  it("requires an admin and same-origin request, even when a member owns the group", async () => {
+    const { env, cookie, ids, body } = await fixture();
+    const member = await makerOf(env);
+    const memberProfile = await env.authDurable.fetch(
+      new Request(`${ORIGIN}/api/auth/me`, { headers: { Cookie: member } }),
+    );
+    const memberId = (await memberProfile.json()).user.id;
+    env.gallerySql.exec(
+      "UPDATE gallery_entries SET owner_user_id = ?",
+      memberId,
+    );
+    const before = states(env);
+    expect((await route(env, cleanup(body))).status).toBe(401);
+    expect((await route(env, cleanup(body, member))).status).toBe(401);
+    await env.authDurable.fetch(
+      new Request(`${ORIGIN}/api/auth/users/role`, {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          Origin: ORIGIN,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ email: "maker@example.com", role: "moderator" }),
+      }),
+    );
+    expect((await route(env, cleanup(body, member))).status).toBe(401);
+    expect(
+      (await route(env, cleanup(body, cookie, "https://stranger.test"))).status,
+    ).toBe(403);
+    for (const malformed of [
+      null,
+      {},
+      { keep: body.keep, remove: [] },
+      { keep: body.keep, remove: [body.keep] },
+      { keep: body.keep, remove: Array(50).fill(ref(env, ids[1]!)) },
+    ]) {
+      expect((await route(env, cleanup(malformed, cookie))).status).toBe(400);
+    }
+    expect(states(env)).toEqual(before);
+  });
+
+  it.each(["preview", "hidden parameter", "missing survivor", "uncheckable"])(
+    "leaves the whole group unchanged when %s changed since the scan",
+    async (change) => {
+      const { env, cookie, ids, body } = await fixture();
+      if (change === "preview")
+        env.gallerySql.exec(
+          "UPDATE gallery_entries SET preview_revision = 'changed' WHERE id = ?",
+          ids[2]!,
+        );
+      if (change === "missing survivor")
+        env.gallerySql.exec(
+          "UPDATE gallery_entries SET status = 'recycled' WHERE id = ?",
+          ids[0]!,
+        );
+      if (change === "hidden parameter") {
+        const project = parseProject(wiredProjectText());
+        project.documents[0]!.instances[0]!.netlist!.parameters.value = "2k";
+        // Deliberately leave preview_revision identical: it isn't an electrical revision.
+        env.gallerySql.exec(
+          "UPDATE gallery_entries SET project_text = ? WHERE id = ?",
+          serializeProject(project),
+          ids[2]!,
+        );
+      }
+      if (change === "uncheckable")
+        env.gallerySql.exec(
+          "UPDATE gallery_entries SET project_text = ? WHERE id = ?",
+          projectText(),
+          ids[2]!,
+        );
+      const before = states(env);
+      expect((await route(env, cleanup(body, cookie))).status).toBe(409);
+      expect(states(env)).toEqual(before);
+    },
+  );
+
+  it("keeps the chosen survivor, preserves history/likes, survives later retention sweeps and restores", async () => {
+    const { env, cookie, ids } = await fixture();
+    const extra = ids[0]!;
+    const keep = ids[1]!;
+    const updated = await route(
+      env,
+      new Request(`${ORIGIN}/api/gallery/${extra}`, {
+        method: "PUT",
+        headers: {
+          Cookie: cookie,
+          Origin: ORIGIN,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Extra v2",
+          projectText: wiredProjectText("Extra v2", 400),
+        }),
+      }),
+    );
+    expect(updated.status).toBe(200);
+    const liked = await route(
+      env,
+      new Request(`${ORIGIN}/api/gallery/${extra}/like`, {
+        method: "POST",
+        headers: { Cookie: cookie, Origin: ORIGIN },
+      }),
+    );
+    expect(liked.status).toBe(200);
+    const history = () =>
+      env.gallerySql
+        .exec("SELECT * FROM gallery_entry_versions WHERE entry_id = ?", extra)
+        .toArray();
+    const likes = () =>
+      env.gallerySql
+        .exec("SELECT * FROM gallery_likes WHERE entry_id = ?", extra)
+        .toArray();
+    const beforeHistory = history();
+    const beforeLikes = likes();
+    expect(beforeHistory.length).toBeGreaterThan(0);
+    const response = await route(
+      env,
+      cleanup(
+        { keep: ref(env, keep), remove: [ref(env, extra), ref(env, ids[2]!)] },
+        cookie,
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      kept: keep,
+      recycled: [extra, ids[2]],
+    });
+    expect(states(env).find((row) => row.id === keep)?.status).toBe("public");
+    // A second admin choosing the opposite survivor cannot remove the last copy.
+    expect(
+      (
+        await route(
+          env,
+          cleanup({ keep: ref(env, extra), remove: [ref(env, keep)] }, cookie),
+        )
+      ).status,
+    ).toBe(409);
+    for (let index = 0; index < 27; index += 1) {
+      env.gallerySql.exec(
+        `INSERT INTO gallery_entries
+        (id, name, author, description, created_at, schema_version, status, recycled_at, owner_user_id, project_text, svg_text)
+        SELECT ?, name, author, description, created_at, schema_version, 'recycled', '2099-01-01', owner_user_id, project_text, svg_text
+        FROM gallery_entries WHERE id = ?`,
+        `overflow-${index}`,
+        keep,
+      );
+    }
+    await submitOne(env, "Trigger author retention", { cookie });
+    expect(states(env).filter((row) => row.status === "recycled")).toHaveLength(
+      27,
+    ); // 25 author rows plus two curated copies.
+    expect(history()).toEqual(beforeHistory);
+    expect(likes()).toEqual(beforeLikes);
+    const restored = await route(
+      env,
+      new Request(`${ORIGIN}/api/gallery/${extra}/restore`, {
+        method: "POST",
+        headers: { Cookie: cookie, Origin: ORIGIN },
+      }),
+    );
+    expect(restored.status).toBe(200);
+    const detail = await route(
+      env,
+      new Request(`${ORIGIN}/api/gallery/${extra}`),
+    );
+    expect((await detail.json()).projectText).toContain("Extra v2");
+    expect(history()).toEqual(beforeHistory);
+    expect(likes()).toEqual(beforeLikes);
+  });
+});
+
 describe("gallery administration", () => {
   it("requires an admin session for every admin operation", async () => {
     const env = environment();
@@ -2696,7 +3236,7 @@ describe("gallery administration", () => {
         body: JSON.stringify({
           id,
           projectText: previousVersionText(),
-          schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION - 1,
+          schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
           svgText: "<svg/>",
         }),
       },
@@ -2717,7 +3257,7 @@ describe("gallery administration", () => {
       applied: true,
       ready: 1,
       failures: [],
-      targetSchemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      targetSchemaVersion: CURRENT_PROJECT_FILE_VERSION,
     });
 
     const detail = await route(env, new Request(`${ORIGIN}/api/gallery/${id}`));
@@ -2725,9 +3265,9 @@ describe("gallery administration", () => {
       entry: { schemaVersion: number };
       projectText: string;
     };
-    expect(payload.entry.schemaVersion).toBe(CURRENT_PROJECT_SCHEMA_VERSION);
+    expect(payload.entry.schemaVersion).toBe(CURRENT_PROJECT_FILE_VERSION);
     expect(JSON.parse(payload.projectText).schemaVersion).toBe(
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
     );
     const preview = await route(
       env,
@@ -2737,7 +3277,9 @@ describe("gallery administration", () => {
   });
 
   function legacy25RouteText(): string {
-    const raw = JSON.parse(projectText("Legacy 25")) as any;
+    const raw = JSON.parse(
+      JSON.stringify(parseProject(projectText("Legacy 25"))),
+    ) as any;
     raw.schemaVersion = 25;
     const document = raw.documents[0];
     document.nets.push({ id: "net-route", terminals: [] });
@@ -2794,7 +3336,7 @@ describe("gallery administration", () => {
     });
     const detail = await route(env, new Request(`${ORIGIN}/api/gallery/${id}`));
     const payload = (await detail.json()) as { projectText: string };
-    const stored = JSON.parse(payload.projectText) as any;
+    const stored = parseProject(payload.projectText) as any;
     expect(stored.schemaVersion).toBe(CURRENT_PROJECT_SCHEMA_VERSION);
     expect(stored.documents[0].routes[0].legs).toHaveLength(2);
   });
@@ -2835,7 +3377,7 @@ describe("gallery administration", () => {
     });
     const detail = await route(env, new Request(`${ORIGIN}/api/gallery/${id}`));
     const payload = (await detail.json()) as { projectText: string };
-    const stored = JSON.parse(payload.projectText) as any;
+    const stored = parseProject(payload.projectText) as any;
     expect(stored.schemaVersion).toBe(CURRENT_PROJECT_SCHEMA_VERSION);
     expect(stored.documents[0].routes[0].legs).toHaveLength(2);
   });
@@ -2852,7 +3394,7 @@ describe("gallery administration", () => {
         body: JSON.stringify({
           id,
           projectText: previousRouteVersionText(),
-          schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION - 1,
+          schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
           svgText: "<svg/>",
         }),
       },
@@ -2873,12 +3415,12 @@ describe("gallery administration", () => {
       applied: true,
       ready: 1,
       failures: [],
-      targetSchemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      targetSchemaVersion: CURRENT_PROJECT_FILE_VERSION,
     });
 
     const detail = await route(env, new Request(`${ORIGIN}/api/gallery/${id}`));
     const payload = (await detail.json()) as { projectText: string };
-    const stored = JSON.parse(payload.projectText) as any;
+    const stored = parseProject(payload.projectText) as any;
     expect(stored.documents[0].routes[0]).toMatchObject({
       start: { kind: "junction", junctionId: "J1" },
       legs: expect.any(Array),
@@ -2919,13 +3461,13 @@ describe("gallery administration", () => {
       .one().id;
     env.gallerySql.exec(
       "UPDATE gallery_entries SET schema_version = ?, project_text = ? WHERE id = ?",
-      CURRENT_PROJECT_SCHEMA_VERSION - 1,
+      CURRENT_PROJECT_SCHEMA_VERSION,
       previousVersionText(),
       id,
     );
     env.gallerySql.exec(
       "UPDATE gallery_entry_versions SET schema_version = ?, project_text = ? WHERE id = ?",
-      CURRENT_PROJECT_SCHEMA_VERSION - 1,
+      CURRENT_PROJECT_SCHEMA_VERSION,
       previousRouteVersionText(),
       versionId,
     );
@@ -2940,7 +3482,7 @@ describe("gallery administration", () => {
       "2026-08-24T00:00:00.000Z",
       "2026-08-24T00:00:00.000Z",
       1,
-      CURRENT_PROJECT_SCHEMA_VERSION - 1,
+      CURRENT_PROJECT_SCHEMA_VERSION,
       previousRouteVersionText(),
     );
 
@@ -2974,13 +3516,13 @@ describe("gallery administration", () => {
       failures: [],
       inventory: {
         gallery_entries: {
-          [String(CURRENT_PROJECT_SCHEMA_VERSION - 1)]: 1,
+          [String(CURRENT_PROJECT_SCHEMA_VERSION)]: 1,
         },
         gallery_entry_versions: {
-          [String(CURRENT_PROJECT_SCHEMA_VERSION - 1)]: 1,
+          [String(CURRENT_PROJECT_SCHEMA_VERSION)]: 1,
         },
         cloud_projects: {
-          [String(CURRENT_PROJECT_SCHEMA_VERSION - 1)]: 1,
+          [String(CURRENT_PROJECT_SCHEMA_VERSION)]: 1,
         },
       },
       migrationReports: [],
@@ -2992,7 +3534,7 @@ describe("gallery administration", () => {
           id,
         )
         .one().schema_version,
-    ).toBe(CURRENT_PROJECT_SCHEMA_VERSION - 1);
+    ).toBe(CURRENT_PROJECT_SCHEMA_VERSION);
 
     const applied = await route(
       env,
@@ -3022,14 +3564,14 @@ describe("gallery administration", () => {
           project_text: string;
         }>(`SELECT id, schema_version, project_text FROM ${table}`)
         .one();
-      expect(row.schema_version).toBe(CURRENT_PROJECT_SCHEMA_VERSION);
+      expect(row.schema_version).toBe(CURRENT_PROJECT_FILE_VERSION);
       expect(parseProject(row.project_text).schemaVersion).toBe(
         CURRENT_PROJECT_SCHEMA_VERSION,
       );
       const stored = JSON.parse(row.project_text) as any;
       for (const document of stored.documents) {
         for (const net of document.nets) {
-          expect(Object.keys(net).sort()).toEqual(["id", "terminals"]);
+          expect(Object.keys(net).sort()).toEqual(["at", "id"]);
         }
       }
     }
@@ -3065,8 +3607,206 @@ describe("gallery administration", () => {
             `SELECT schema_version FROM ${table}`,
           )
           .one().schema_version,
-      ).toBe(CURRENT_PROJECT_SCHEMA_VERSION - 1);
+      ).toBe(CURRENT_PROJECT_SCHEMA_VERSION);
     }
+  });
+
+  it("migrates one Gallery row with optimistic comparison while preserving all metadata and versions", async () => {
+    const env = environment();
+    const cookie = await adminOf(env);
+    const id = await submitOne(env, "Portable migration", { cookie });
+    await route(
+      env,
+      new Request(`${ORIGIN}/api/gallery/${id}`, {
+        method: "PUT",
+        headers: {
+          ...cookieHeaders(cookie),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Second",
+          projectText: projectText("Second"),
+        }),
+      }),
+    );
+    env.gallerySql.exec(
+      "INSERT INTO gallery_likes VALUES (?, ?, ?)",
+      id,
+      "visitor",
+      "2026-09-20",
+    );
+    const endpoint = `${ORIGIN}/api/gallery/maintenance/project-format`;
+    const send = (body: unknown, headers = cookieHeaders(cookie)) =>
+      route(
+        env,
+        new Request(endpoint, {
+          method: "POST",
+          headers: { ...headers, "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+    for (const [table, sqlTable] of [
+      ["galleryEntries", "gallery_entries"],
+      ["galleryEntryVersions", "gallery_entry_versions"],
+    ]) {
+      const row = env.gallerySql
+        .exec<Record<string, any>>(`SELECT * FROM ${sqlTable}`)
+        .one();
+      const originalProjectText = JSON.stringify(
+        parseProject(row.project_text),
+      );
+      env.gallerySql.exec(
+        `UPDATE ${sqlTable} SET project_text = ?, schema_version = ? WHERE id = ?`,
+        originalProjectText,
+        CURRENT_PROJECT_SCHEMA_VERSION,
+        row.id,
+      );
+      const before = env.gallerySql
+        .exec<Record<string, any>>(`SELECT * FROM ${sqlTable}`)
+        .one();
+      const projectText = serializeProject(parseProject(originalProjectText));
+      const body = { table, id: row.id, originalProjectText, projectText };
+      expect((await send(body, { Origin: ORIGIN })).status).toBe(401);
+      expect(
+        (
+          await send(body, {
+            ...cookieHeaders(cookie),
+            Origin: "https://untrusted.example",
+          })
+        ).status,
+      ).toBe(403);
+      expect(
+        (await send({ ...body, originalProjectText: "outdated" })).status,
+      ).toBe(409);
+      expect(
+        (
+          await send({
+            ...body,
+            projectText: serializeProject(
+              createEmptyProject("different", "Altered"),
+            ),
+          })
+        ).status,
+      ).toBe(422);
+      expect(env.gallerySql.exec(`SELECT * FROM ${sqlTable}`).one()).toEqual(
+        before,
+      );
+      const migrated = await send(body);
+      expect(migrated.status).toBe(200);
+      expect(await migrated.json()).toMatchObject({
+        changed: true,
+        schemaVersion: CURRENT_PROJECT_FILE_VERSION,
+      });
+      expect(env.gallerySql.exec(`SELECT * FROM ${sqlTable}`).one()).toEqual({
+        ...before,
+        project_text: projectText,
+        schema_version: CURRENT_PROJECT_FILE_VERSION,
+      });
+      expect(await (await send(body)).json()).toMatchObject({ changed: false });
+    }
+    expect(
+      (
+        await send({
+          table: "cloudProjects",
+          id,
+          originalProjectText: "",
+          projectText: "",
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      env.gallerySql.exec("SELECT * FROM gallery_likes").toArray(),
+    ).toEqual([{ entry_id: id, user_id: "visitor", liked_at: "2026-09-20" }]);
+    expect(
+      env.gallerySql.exec("SELECT id FROM gallery_entries").toArray(),
+    ).toHaveLength(1);
+    expect(
+      env.gallerySql.exec("SELECT id FROM gallery_entry_versions").toArray(),
+    ).toHaveLength(1);
+  });
+
+  it("backs up every raw row through bounded admin-only pages, including likes", async () => {
+    const env = environment();
+    const cookie = await adminOf(env);
+    const id = await submitOne(env, "Paged backup", { cookie });
+    await route(
+      env,
+      new Request(`${ORIGIN}/api/gallery/${id}`, {
+        method: "PUT",
+        headers: {
+          ...cookieHeaders(cookie),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Updated",
+          projectText: projectText("Updated"),
+        }),
+      }),
+    );
+    env.gallerySql.exec(
+      "INSERT INTO gallery_likes VALUES (?, ?, ?)",
+      id,
+      "u1",
+      "2026-09-20",
+    );
+    env.gallerySql.exec(
+      "INSERT INTO gallery_likes VALUES (?, ?, ?)",
+      id,
+      "u2",
+      "2026-09-20",
+    );
+    const endpoint = `${ORIGIN}/api/gallery/maintenance/schema-backup`;
+    const denied = await route(env, new Request(`${endpoint}?table=inventory`));
+    expect(denied.status).toBe(401);
+    const get = (query: string) =>
+      route(
+        env,
+        new Request(`${endpoint}?${query}`, { headers: cookieHeaders(cookie) }),
+      );
+    const inventory = (await (await get("table=inventory")).json()) as any;
+    expect(inventory.tables).toEqual({
+      galleryEntries: 1,
+      galleryEntryVersions: 1,
+      cloudProjects: 0,
+      galleryLikes: 2,
+    });
+    for (const [key, name] of Object.entries({
+      galleryEntries: "gallery_entries",
+      galleryEntryVersions: "gallery_entry_versions",
+      cloudProjects: "cloud_projects",
+      galleryLikes: "gallery_likes",
+    })) {
+      const expected = env.gallerySql
+        .exec(
+          `SELECT * FROM ${name} ORDER BY ${key === "galleryLikes" ? "entry_id, user_id" : "id"}`,
+        )
+        .toArray();
+      const rows = [];
+      let cursor = null;
+      env.galleryQueries.length = 0;
+      do {
+        const response = await get(
+          `table=${key}${cursor ? `&after=${encodeURIComponent(cursor)}` : ""}`,
+        );
+        expect(response.status).toBe(200);
+        const page = (await response.json()) as any;
+        expect(page.rows.length).toBeLessThanOrEqual(1);
+        rows.push(...page.rows);
+        cursor = page.nextCursor;
+      } while (cursor);
+      expect(rows).toEqual(expected);
+      expect(
+        env.galleryQueries.filter((q) => q.startsWith("SELECT * FROM")),
+      ).toSatisfy((queries: string[]) =>
+        queries.every((q) => q.endsWith("LIMIT 1")),
+      );
+    }
+    expect((await get("table=not-a-table")).status).toBe(400);
+    expect((await get("table=galleryEntries&after=bad-json")).status).toBe(400);
+    expect(
+      (await get(`table=galleryLikes&after=${encodeURIComponent('["one"]')}`))
+        .status,
+    ).toBe(400);
   });
 
   it("reapplies two-version retention when restoring a legacy backup", async () => {
@@ -3319,6 +4059,144 @@ describe("gallery owner lifecycle (withdrawal and history)", () => {
   });
 });
 
+describe("gallery contributor renames", () => {
+  it("moves every current and historical byline by owner id", async () => {
+    const env = environment();
+    for (const [id, status, ownerUserId] of [
+      ["owned-public", "public", "owner-1"],
+      ["owned-recycled", "recycled", "owner-1"],
+      ["same-name-other-owner", "public", "owner-2"],
+    ] as const) {
+      env.gallerySql.exec(
+        `INSERT INTO gallery_entries
+         (id, name, author, description, created_at, schema_version, status,
+          owner_user_id, project_text, svg_text)
+         VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, '<svg/>')`,
+        id,
+        id,
+        "Old Public Name",
+        "2026-09-19T00:00:00.000Z",
+        CURRENT_PROJECT_FILE_VERSION,
+        status,
+        ownerUserId,
+        projectText(id),
+      );
+      env.gallerySql.exec(
+        `INSERT INTO gallery_entry_versions
+         (id, entry_id, version_no, name, author, description, schema_version,
+          project_text, svg_text, created_at)
+         VALUES (?, ?, 1, ?, ?, '', ?, ?, '<svg/>', ?)`,
+        `${id}-version`,
+        id,
+        id,
+        "Old Public Name",
+        CURRENT_PROJECT_FILE_VERSION,
+        projectText(id),
+        "2026-09-19T00:00:00.000Z",
+      );
+    }
+
+    const response = await env.GALLERY.getByName("gallery").fetch(
+      "https://gallery/rename-owner",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ownerUserId: "owner-1",
+          displayName: "Current Public Name",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ownerUserId: "owner-1",
+      displayName: "Current Public Name",
+      entries: 2,
+      versions: 2,
+    });
+    expect(
+      env.gallerySql
+        .exec<{ id: string; author: string }>(
+          "SELECT id, author FROM gallery_entries ORDER BY id",
+        )
+        .toArray(),
+    ).toEqual([
+      { id: "owned-public", author: "Current Public Name" },
+      { id: "owned-recycled", author: "Current Public Name" },
+      { id: "same-name-other-owner", author: "Old Public Name" },
+    ]);
+    expect(
+      env.gallerySql
+        .exec<{ entry_id: string; author: string }>(
+          `SELECT entry_id, author FROM gallery_entry_versions
+           ORDER BY entry_id`,
+        )
+        .toArray(),
+    ).toEqual([
+      { entry_id: "owned-public", author: "Current Public Name" },
+      { entry_id: "owned-recycled", author: "Current Public Name" },
+      { entry_id: "same-name-other-owner", author: "Old Public Name" },
+    ]);
+  });
+
+  it("restores historical content without restoring its stale byline", async () => {
+    const env = environment();
+    env.gallerySql.exec(
+      `INSERT INTO gallery_entries
+       (id, name, author, description, created_at, schema_version, status,
+        owner_user_id, project_text, svg_text)
+       VALUES (?, ?, ?, '', ?, ?, 'public', ?, ?, '<svg/>')`,
+      "restore-current-byline",
+      "Current",
+      "Current Public Name",
+      "2026-09-19T00:00:00.000Z",
+      CURRENT_PROJECT_FILE_VERSION,
+      "owner-1",
+      projectText("Current"),
+    );
+    env.gallerySql.exec(
+      `INSERT INTO gallery_entry_versions
+       (id, entry_id, version_no, name, author, description, schema_version,
+        project_text, svg_text, created_at)
+       VALUES (?, ?, 1, ?, ?, '', ?, ?, '<svg/>', ?)`,
+      "stale-byline-version",
+      "restore-current-byline",
+      "Historical Content",
+      "Old Public Name",
+      CURRENT_PROJECT_FILE_VERSION,
+      projectText("Historical Content"),
+      "2026-09-18T00:00:00.000Z",
+    );
+
+    const response = await env.GALLERY.getByName("gallery").fetch(
+      "https://gallery/restore-version",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          entryId: "restore-current-byline",
+          versionId: "stale-byline-version",
+          at: "2026-09-19T01:00:00.000Z",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      env.gallerySql
+        .exec<{ name: string; author: string }>(
+          `SELECT name, author FROM gallery_entries
+           WHERE id = 'restore-current-byline'`,
+        )
+        .one(),
+    ).toEqual({
+      name: "Historical Content",
+      author: "Current Public Name",
+    });
+  });
+});
+
 describe("recycle bin retention", () => {
   function seedRecycled(
     env: Harness,
@@ -3336,7 +4214,7 @@ describe("recycle bin retention", () => {
       id,
       `Binned ${id}`,
       recycledAt,
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
       recycledAt,
       ownerUserId,
       projectText(),
@@ -3374,7 +4252,7 @@ describe("recycle bin retention", () => {
             author: "",
             description: "",
             created_at: `${day}T00:00:00.000Z`,
-            schema_version: CURRENT_PROJECT_SCHEMA_VERSION,
+            schema_version: CURRENT_PROJECT_FILE_VERSION,
             owner_user_id: ownerUserId,
             project_text: projectText(),
             svg_text: "<svg/>",

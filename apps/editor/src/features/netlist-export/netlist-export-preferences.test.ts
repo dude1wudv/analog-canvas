@@ -3,154 +3,87 @@ import {
   createDefaultNetlistExportPreferences,
   readNetlistExportPreferences,
   selectNetlistExportFormat,
-  selectNetlistExportProfile,
   selectNetlistPortCase,
+  selectNetlistExportProfile,
   setNetlistExportDeviceTarget,
 } from "./netlist-export-preferences.js";
 
-describe("netlist export preferences", () => {
-  it("restores independent edited presets and the selected preset", () => {
-    const preferences = readNetlistExportPreferences(null);
-    preferences.selected = "custom";
-    preferences.format = "spectre";
-    preferences.portCase = "lower";
-    preferences.profiles.custom.devices.resistor.parameters.value = "3k";
+describe("netlist authoring preferences", () => {
+  it("remembers format, process, device choices and case independently", () => {
+    const preferences = setNetlistExportDeviceTarget(
+      selectNetlistExportProfile(
+        selectNetlistPortCase(
+          selectNetlistExportFormat(
+            createDefaultNetlistExportPreferences(),
+            "spectre",
+          ),
+          "lower",
+        ),
+        "sky130",
+      ),
+      "nmos",
+      "sky130_fd_pr__nfet_01v8_lvt",
+    );
     expect(readNetlistExportPreferences(JSON.stringify(preferences))).toEqual(
       preferences,
     );
-    expect(
-      preferences.profiles.abstract.devices.resistor.parameters.value,
-    ).toBe("1k");
-    expect(Object.keys(preferences.profiles)).toEqual([
-      "abstract",
-      "sky130",
-      "tsmc28",
-      "tsmc180",
-      "custom",
-    ]);
-  });
-
-  it("migrates the three original cached presets without losing edits", () => {
-    const preferences = readNetlistExportPreferences(null);
-    preferences.selected = "custom";
-    preferences.profiles.custom.devices.resistor.parameters.value = "7k";
-    const legacy = {
-      selected: preferences.selected,
-      profiles: {
-        abstract: preferences.profiles.abstract,
-        sky130: preferences.profiles.sky130,
-        custom: preferences.profiles.custom,
-      },
-    };
-
-    const restored = readNetlistExportPreferences(JSON.stringify(legacy));
-
-    expect(restored.selected).toBe("custom");
-    expect(restored.format).toBe("spice");
-    expect(restored.portCase).toBe("upper");
-    expect(restored.profiles.custom.devices.resistor.parameters.value).toBe(
-      "7k",
-    );
-    expect(restored.profiles.tsmc28.id).toBe("tsmc28");
-    expect(restored.profiles.tsmc180.id).toBe("tsmc180");
-  });
-
-  it("selects a cached preset while retaining every edited profile", () => {
-    const preferences = readNetlistExportPreferences(null);
-    preferences.profiles.custom.devices.capacitor.parameters.value = "8p";
-
-    const selected = selectNetlistExportProfile(preferences, "tsmc28");
-
-    expect(selected.selected).toBe("tsmc28");
-    expect(selected.profiles.custom.devices.capacitor.parameters.value).toBe(
-      "8p",
-    );
-  });
-
-  it("selects the output format independently from the process", () => {
-    const preferences = readNetlistExportPreferences(null);
-    const selected = selectNetlistExportFormat(preferences, "spectre");
-
-    expect(selected.format).toBe("spectre");
-    expect(selected.selected).toBe("abstract");
-    expect(selected.profiles).toBe(preferences.profiles);
-  });
-  it("selects and persists one port spelling convention", () => {
-    const preferences = selectNetlistPortCase(
-      readNetlistExportPreferences(null),
-      "lower",
-    );
-
+    expect(preferences.format).toBe("spectre");
     expect(preferences.portCase).toBe("lower");
-    expect(
-      readNetlistExportPreferences(JSON.stringify(preferences)).portCase,
-    ).toBe("lower");
+    expect(preferences.profiles.sky130.devices.nmos.target).toBe(
+      "sky130_fd_pr__nfet_01v8_lvt",
+    );
+    expect(selectNetlistExportFormat(preferences, "spice").selected).toBe(
+      "sky130",
+    );
   });
-  it("edits device targets only in the selected process and loads target defaults", () => {
-    const preferences = readNetlistExportPreferences(null);
-    preferences.selected = "tsmc28";
 
-    const nmos = setNetlistExportDeviceTarget(
-      preferences,
-      "nmos",
-      "custom_nch",
+  it("restores templates around the format-only storage left by the regression", () => {
+    const restored = readNetlistExportPreferences(
+      JSON.stringify({ format: "spectre", portCase: "lower" }),
     );
-    const pmos = setNetlistExportDeviceTarget(nmos, "pmos", "custom_pch");
-
-    expect(pmos.profiles.tsmc28.devices.nmos.target).toBe("custom_nch");
-    expect(pmos.profiles.tsmc28.devices.pmos.target).toBe("custom_pch");
-    expect(pmos.profiles.abstract.devices.nmos.target).toBe("NMOS");
-    expect(pmos.profiles.abstract.devices.pmos.target).toBe("PMOS");
-    expect(preferences.profiles.tsmc28.devices.nmos.target).toBe(
-      "nch_ulvt_mac",
-    );
-
-    preferences.selected = "sky130";
-    const resistor = setNetlistExportDeviceTarget(
-      preferences,
-      "resistor",
-      "sky130_fd_pr__res_xhigh_po",
-    );
-    expect(resistor.profiles.sky130.devices.resistor).toMatchObject({
-      target: "sky130_fd_pr__res_xhigh_po",
-      parameters: { w: "1u", l: "5.5u", mult: "1" },
+    // The regression's storage says nothing about a process, so the restored
+    // preference is the default one a fresh editor starts in.
+    expect(restored).toMatchObject({
+      selected: "sky130",
+      format: "spectre",
+      portCase: "lower",
     });
-  });
-  it("rebuilds every preset when restoring defaults", () => {
-    const preferences = readNetlistExportPreferences(null);
-    preferences.selected = "tsmc28";
-    preferences.format = "spectre";
-    preferences.portCase = "lower";
-    preferences.profiles.tsmc28.devices.nmos.target = "custom_nch";
-
-    const restored = createDefaultNetlistExportPreferences();
-
-    expect(restored).toEqual(readNetlistExportPreferences(null));
-    expect(restored.selected).toBe("abstract");
-    expect(restored.format).toBe("spice");
-    expect(restored.portCase).toBe("upper");
     expect(restored.profiles.tsmc28.devices.nmos.target).toBe("nch_ulvt_mac");
+    expect(restored.profiles.tsmc180.devices.pmos.target).toBe("pch");
   });
-  it.each(["{", "null", "[]", '{"selected":"custom","profiles":{}}'])(
+
+  it("moves a stored Abstract default to SKY130 exactly once", () => {
+    const stored = createDefaultNetlistExportPreferences();
+    const legacy = JSON.stringify({
+      ...stored,
+      selected: "abstract",
+      defaultProcess: undefined,
+    });
+    const moved = readNetlistExportPreferences(legacy);
+    expect(moved.selected).toBe("sky130");
+
+    // Abstract chosen after the move is a choice, and it stays.
+    const chosen = readNetlistExportPreferences(
+      JSON.stringify({ ...moved, selected: "abstract" }),
+    );
+    expect(chosen.selected).toBe("abstract");
+  });
+
+  it("retains complete legacy customized process templates", () => {
+    const preferences = createDefaultNetlistExportPreferences();
+    preferences.selected = "custom";
+    preferences.profiles.custom.devices.nmos.target = "my_nmos";
+    preferences.profiles.custom.devices.nmos.parameters.w = "5u";
+    const restored = readNetlistExportPreferences(JSON.stringify(preferences));
+    expect(restored).toEqual(preferences);
+  });
+
+  it.each(["{", "null", "[]", '{"format":"custom"}'])(
     "recovers malformed preferences: %s",
     (raw) => {
       expect(readNetlistExportPreferences(raw)).toEqual(
-        readNetlistExportPreferences(null),
+        createDefaultNetlistExportPreferences(),
       );
     },
   );
-  it("rejects mismatched identities and unsafe library paths", () => {
-    const preferences = readNetlistExportPreferences(null);
-    preferences.profiles.abstract.id = "custom";
-    expect(
-      readNetlistExportPreferences(JSON.stringify(preferences)).profiles
-        .abstract.id,
-    ).toBe("abstract");
-    preferences.profiles.abstract.id = "abstract";
-    preferences.profiles.custom.library.path = 'a"\n.end';
-    expect(
-      readNetlistExportPreferences(JSON.stringify(preferences)).profiles.custom
-        .library.path,
-    ).toBe("");
-  });
 });

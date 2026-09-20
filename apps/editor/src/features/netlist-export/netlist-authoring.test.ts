@@ -5,6 +5,7 @@ import {
   bindingForEditedModel,
   initialInstanceNetlist,
   instanceIdPrefix,
+  nextCellPinName,
   nextInstanceId,
   nextInstanceReference,
 } from "./netlist-authoring";
@@ -46,6 +47,35 @@ describe("netlist authoring", () => {
     expect(nextInstanceReference(document, "nmos")).toBe("M1");
     expect(nextInstanceId(document, "ground")).toBe("GND1");
     expect(instanceIdPrefix("inductor")).toBe("L");
+  });
+
+  it("allocates hollow and filled Cell Pin names from separate sequences", () => {
+    const document = createEmptyDocument("main", "Main");
+    document.netlist = {
+      name: "Main",
+      formalParameters: [],
+      terminals: [],
+    };
+
+    expect(nextCellPinName(document)).toBe("Vin");
+    document.netlist.terminals.push({
+      id: "terminal-in",
+      name: "Vin",
+      netId: "net-in",
+      direction: "input",
+      interfaceInstanceIds: ["P1"],
+    });
+    expect(nextCellPinName(document)).toBe("Vout");
+    document.netlist.terminals.push({
+      id: "terminal-out",
+      name: "Vout",
+      netId: "net-out",
+      direction: "output",
+      interfaceInstanceIds: ["P2"],
+    });
+    expect(nextCellPinName(document)).toBe("Vin2");
+    expect(nextCellPinName(document, new Set(), "filled")).toBe("VB1");
+    expect(nextCellPinName(document, new Set(["vb1"]), "filled")).toBe("VB2");
   });
 
   it("creates typed netlist facts without duplicating Reference", () => {

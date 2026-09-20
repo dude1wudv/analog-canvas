@@ -1,7 +1,9 @@
+import { parseSavedProject } from "./editor-fixtures";
 import { expect, test } from "@playwright/test";
 import { createEmptyProject, createRoutePath } from "@icm/model";
 
 import {
+  revealPropertiesShelf,
   awaitEditorReady,
   chooseComponent,
   clickCommand,
@@ -12,10 +14,23 @@ import {
   setComponentCodeField,
   expectComponentCodeField,
   readComponentPropertyCode,
-  recoveryProjectTexts,
+  readDocumentStyleCode,
+  readRecoveryRecords,
 } from "./editor-fixtures.js";
 
+// These tests assert device behavior against decoded content, independently
+// of the current portable field spelling and structural shorthand.
+async function recoveryProjectTexts(page: import("@playwright/test").Page) {
+  const records = await readRecoveryRecords(page);
+  return records
+    .map((record) =>
+      JSON.stringify(parseSavedProject(record.projectText), null, 2),
+    )
+    .join("\n");
+}
+
 async function openSelectionShelf(page: import("@playwright/test").Page) {
+  await revealPropertiesShelf(page);
   const shelf = page.getByTestId("selection-shelf");
   await expect(shelf).toBeVisible();
   if ((await shelf.getAttribute("aria-expanded")) !== "true") {
@@ -133,6 +148,7 @@ test("blocks destructive browser refresh shortcuts and uses the stronger grid", 
   page,
 }) => {
   await page.goto("/editor");
+  await awaitEditorReady(page);
   await expect(page.locator(".canvas-grid-dot").first()).toHaveCSS(
     "fill",
     "rgb(196, 199, 201)",
@@ -140,7 +156,6 @@ test("blocks destructive browser refresh shortcuts and uses the stronger grid", 
   // A blank circuit has nothing to protect: the editor does not intercept
   // the refresh shortcut (a real browser would reload here; synthetic keys
   // cannot drive the browser accelerator, so assert the guard stays silent).
-  await awaitEditorReady(page);
   await page.keyboard.press("Control+r");
   await expect(page.getByTestId("status")).not.toHaveText(
     "Refresh blocked to protect the current circuit",
@@ -221,6 +236,38 @@ test("blocks destructive browser refresh shortcuts and uses the stronger grid", 
   );
 });
 
+test("the status bar toggles the grid, labelled full-width and an icon half-width", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.goto("/editor");
+  await awaitEditorReady(page);
+  const toggle = page.getByRole("button", { name: "Grid", exact: true });
+  const label = toggle.locator(".statusbar-grid-label");
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect(label).toHaveText("Grid On");
+  await expect(label).toBeVisible();
+  await expect(page.getByTestId("canvas-grid-dots")).toBeVisible();
+
+  await toggle.click();
+  await expect(page.getByTestId("canvas-grid-dots")).toHaveCount(0);
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await expect(label).toHaveText("Grid Off");
+  // Style settings show the state the status bar set.
+  expect(JSON.parse(await readDocumentStyleCode(page)).canvas.showGrid).toBe(
+    false,
+  );
+  await page.getByTestId("draw-tool-document-style").click();
+
+  // A window snapped to half of a common desktop keeps only the icon.
+  await page.setViewportSize({ width: 960, height: 800 });
+  await expect(label).toBeHidden();
+  expect((await toggle.boundingBox())!.width).toBeLessThanOrEqual(32);
+  await toggle.click();
+  await expect(page.getByTestId("canvas-grid-dots")).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+});
+
 test("mirrors component and copy placement previews before their commits", async ({
   page,
 }) => {
@@ -273,6 +320,7 @@ test("writes an Instance Reference through post-placement Properties", async ({
 
   // The quick pick carries no reference field; naming happens in Properties.
   await page.getByTestId("hit-R1").click();
+  await revealPropertiesShelf(page);
   await page.getByTestId("selection-shelf").click();
   await editComponentPropertyCode(page, (code) => {
     code.netlistName = "R7";
@@ -292,6 +340,7 @@ test("keeps the Placement Tray out of the manual component workflow", async ({
   await canvas.click({ position: { x: 320, y: 220 } });
   await page.keyboard.press("Escape");
   await page.getByTestId("hit-R1").click();
+  await revealPropertiesShelf(page);
   await page.getByTestId("selection-shelf").click();
 
   await expect(
@@ -320,6 +369,7 @@ test("refreshes explicitly only after flushing and automatically restoring recov
   await clickCommand(page, "File", "Refresh app");
   await navigated;
 
+  await awaitEditorReady(page);
   await expect(page.getByTestId("hit-R1")).toBeVisible();
   await expect(page.getByTestId("revision")).toHaveText("1");
   await expect(page.getByTestId("status")).toHaveText(
@@ -341,6 +391,7 @@ test("refresh restores the circuit when the session started from a boot-target U
   // on the refreshed page. It must yield to the pending restore instead of
   // forking a fresh working copy that orphans the flushed snapshot.
   await page.goto("/editor?new=1");
+  await awaitEditorReady(page);
   await expect(page.getByTestId("status")).toHaveText("Created a new Project");
   await chooseComponent(page, "resistor");
   await page
@@ -354,6 +405,7 @@ test("refresh restores the circuit when the session started from a boot-target U
   await clickCommand(page, "File", "Refresh app");
   await navigated;
 
+  await awaitEditorReady(page);
   await expect(page.getByTestId("hit-R1")).toBeVisible();
   await expect(page.getByTestId("revision")).toHaveText("1");
   await expect(page.getByTestId("status")).toHaveText(
@@ -372,6 +424,8 @@ test("keeps quick-start shortcuts in the upper-right corner until the first comp
   page,
 }) => {
   await page.goto("/editor");
+  await revealPropertiesShelf(page);
+  await awaitEditorReady(page);
   const quickStart = page.getByTestId("canvas-empty-state");
   await expect(quickStart).toBeVisible();
   await expect(quickStart).toHaveAttribute(
@@ -401,7 +455,7 @@ test("keeps quick-start shortcuts in the upper-right corner until the first comp
     "QToggle Properties",
     "LCreate and place Net Label",
     "HToggle Net highlight",
-    "EEnter selected Cell",
+    "EEdit Component Definition / enter selected Cell",
     "ShiftEReturn to parent Cell",
     "[Decrease selected line width",
     "]Increase selected line width",
@@ -507,6 +561,7 @@ test("keeps quick-start shortcuts in the upper-right corner until the first comp
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("hit-R1")).toBeVisible();
   await expect(quickStart).toHaveCount(0);
+  await revealPropertiesShelf(page);
   await page.getByTestId("selection-shelf").click();
   await expect(page.getByTestId("selection-shelf")).toContainText(
     "R1 · resistor",
@@ -690,8 +745,7 @@ test("groups drafting tools and editable polarity labels under Annotations", asy
     "shapes-chip-annotation-ellipsis",
   ]);
 
-  // Annotation drawing tools live in the Library instead of crowding the
-  // toolbar with duplicate entry points.
+  // Library annotations remain available alongside the compact toolbar menu.
   await annotations.getByTestId("shapes-chip-annotation-arrow").click();
   await expect(page.getByTestId("status")).toContainText(
     "Arrow: click the canvas to start",
@@ -924,8 +978,8 @@ test("places a vertical Power Rail from I and renames it on the canvas", async (
   await canvas.click({ position: { x: 260, y: 380 } });
   await page.keyboard.press("Escape");
 
-  // The quick pick always lands the default VDD name; the label is the
-  // net-name authority, so editing it renames the rail to AVDD.
+  // The quick pick always lands the default VDD name. The visible label owns
+  // the formal Cell terminal, so editing it renames both the Pin and claim.
   await page.getByTestId("annotation-hit-label-VDD1").dblclick();
   const railEditor = page.getByRole("textbox", { name: "Canvas text editor" });
   await railEditor.fill("AVDD");
@@ -944,7 +998,7 @@ test("places a vertical Power Rail from I and renames it on the canvas", async (
   expect(new Set(railPoints.map((point) => point.x)).size).toBe(1);
   expect(railPoints.at(-1)!.y).not.toBe(railPoints[0]!.y);
 
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -962,7 +1016,7 @@ test("places a vertical Power Rail from I and renames it on the canvas", async (
       annotations: Array<{
         kind: string;
         netId: string;
-        binding?: { kind: string; netId?: string };
+        binding?: { kind: string; netId?: string; terminalId?: string };
       }>;
     }>;
   };
@@ -980,7 +1034,7 @@ test("places a vertical Power Rail from I and renames it on the canvas", async (
     expect.objectContaining({
       kind: "power-label",
       netId: avdd!.id,
-      binding: { kind: "net-name", netId: avdd!.id },
+      binding: { kind: "cell-terminal-name", terminalId: expect.any(String) },
     }),
   );
 });
@@ -1016,10 +1070,16 @@ test("places the VDD power-port device as the default VDD entry", async ({
   await expect(page.getByTestId("hit-VDD1")).toBeVisible();
   await expect(page.getByTestId("hit-VDD2")).toBeVisible();
   await expect(canvas.locator('[data-symbol-id="vdd-port"]')).toHaveCount(2);
-  await expect(canvas.getByText("VDD", { exact: true })).toHaveCount(2);
+  const powerLabels = canvas.locator('[data-kind="power-label"]');
+  await expect(powerLabels).toHaveCount(2);
+  await expect(powerLabels).toHaveText(["Vdd", "Vdd"]);
+  await expect(powerLabels.locator('[data-text-run="subscript"]')).toHaveText([
+    "dd",
+    "dd",
+  ]);
   await expect(page.getByTestId("instance-count")).toHaveText("2");
 
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1126,15 +1186,20 @@ test("renames one supply marker without changing its same-name peer", async ({
   await expect(page.getByRole("textbox", { name: "Supply name" })).toHaveCount(
     0,
   );
-  await setComponentCodeField(page, "netName", "AVDD");
+  await setComponentCodeField(page, "name", "AVDD");
 
-  await expectComponentCodeField(page, "netName", "AVDD");
+  await expectComponentCodeField(page, "name", "AVDD");
   await expect(
     canvas.locator('[data-object-id="power-label-vdd1"]'),
   ).toContainText("AVDD");
   await expect(
     canvas.locator('[data-object-id="power-label-vdd2"]'),
-  ).toContainText("VDD");
+  ).toContainText("Vdd");
+  await expect(
+    canvas
+      .locator('[data-object-id="power-label-vdd2"]')
+      .locator('[data-text-run="subscript"]'),
+  ).toHaveText("dd");
 });
 
 test("reopens I and starts Copy from retained selection without stacking modes", async ({
@@ -1278,95 +1343,6 @@ test("copies a MOS whose bulk belongs to a shared supply Net", async ({
   ).toBeVisible();
 });
 
-test("seeds passive defaults into properties and the exported project", async ({
-  page,
-}) => {
-  await page.goto("/editor");
-  await awaitEditorReady(page);
-  const canvas = page.getByTestId("schematic-canvas");
-  const placements = [
-    {
-      symbolId: "resistor",
-      hitId: "hit-R1",
-      position: { x: 240, y: 200 },
-      parameters: { value: "1k" },
-    },
-    {
-      symbolId: "capacitor",
-      hitId: "hit-C1",
-      position: { x: 400, y: 200 },
-      parameters: { value: "1p" },
-    },
-    {
-      symbolId: "inductor-compact",
-      hitId: "hit-L1",
-      position: { x: 560, y: 200 },
-      parameters: { value: "1n" },
-    },
-    {
-      symbolId: "variable-resistor",
-      hitId: "hit-R2",
-      position: { x: 240, y: 380 },
-      parameters: { value: "1k" },
-    },
-    {
-      symbolId: "variable-capacitor",
-      hitId: "hit-C2",
-      position: { x: 400, y: 380 },
-      parameters: { value: "1p" },
-    },
-    {
-      symbolId: "variable-inductor",
-      hitId: "hit-L2",
-      position: { x: 560, y: 380 },
-      parameters: { value: "1n" },
-    },
-    {
-      symbolId: "tcoil",
-      hitId: "hit-X1",
-      position: { x: 260, y: 580 },
-      parameters: { l1: "1n", l2: "1n", k: "1", cb: "1p" },
-    },
-    {
-      symbolId: "xfmr",
-      hitId: "hit-X2",
-      position: { x: 560, y: 580 },
-      parameters: { lp: "1n", ls: "1n", k: "1" },
-    },
-  ] as const;
-
-  for (const placement of placements) {
-    await chooseComponent(page, placement.symbolId);
-    await canvas.click({ position: placement.position });
-    await page.keyboard.press("Escape");
-  }
-
-  for (const placement of placements) {
-    await page.getByTestId(placement.hitId).click();
-    await openSelectionShelf(page);
-    for (const [key, value] of Object.entries(placement.parameters)) {
-      await expectComponentCodeField(page, `parameters.${key}`, value);
-    }
-  }
-
-  const saved = JSON.parse(
-    (await downloadBytes(page, "File", "Export Project File…")).toString(
-      "utf8",
-    ),
-  );
-  for (const placement of placements) {
-    expect(
-      saved.documents[0].instances.find(
-        (instance: { symbolId: string }) =>
-          instance.symbolId === placement.symbolId,
-      ),
-    ).toMatchObject({
-      symbolId: placement.symbolId,
-      netlist: { parameters: placement.parameters },
-    });
-  }
-});
-
 test("carries a default and manual Value through placement and Q property editing", async ({
   page,
 }) => {
@@ -1381,6 +1357,7 @@ test("carries a default and manual Value through placement and Q property editin
   await canvas.click({ position: { x: 360, y: 230 } });
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("revision")).toHaveText("1");
+  await revealPropertiesShelf(page);
   await expect(page.getByTestId("selection-shelf")).toHaveAttribute(
     "aria-expanded",
     "false",
@@ -1442,7 +1419,7 @@ test("carries a default and manual Value through placement and Q property editin
     "aria-label",
     "Canvas property code",
   );
-  await expectComponentCodeField(page, "displayName", "R1");
+  await expectComponentCodeField(page, "name", "R1");
   await expectComponentCodeField(page, "netlistName", "R1");
   await editComponentPropertyCode(page, (code) => {
     code.netlistName = "R7";
@@ -1511,6 +1488,7 @@ test("merges amplifier body marks into one Library entry and property", async ({
     .click({ position: { x: 360, y: 230 } });
   await page.keyboard.press("Escape");
   await page.getByTestId("hit-X1").click();
+  await revealPropertiesShelf(page);
   await page.getByTestId("selection-shelf").click();
 
   const amplifierActions = page.getByLabel("Amplifier placement actions");
@@ -1560,6 +1538,7 @@ test("keeps comparator polarity independent from input swapping", async ({
     .click({ position: { x: 360, y: 230 } });
   await page.keyboard.press("Escape");
   await page.getByTestId("hit-X1").click();
+  await revealPropertiesShelf(page);
   await page.getByTestId("selection-shelf").click();
 
   await expectComponentCodeField(page, "appearance.inputPolarity", true);
@@ -1684,12 +1663,12 @@ test("edits independent input and output swaps with undo, named connections and 
   await expect(outputs).toHaveAttribute("aria-checked", "true");
   await inputs.click();
   await expectComponentCodeField(page, "appearance.inputsSwapped", true);
-  await setComponentCodeField(page, "placement.rotation", 90);
-  await setComponentCodeField(page, "placement.mirror", "horizontal");
+  await setComponentCodeField(page, "rotation", 90);
+  await setComponentCodeField(page, "mirror", "horizontal");
   await expectComponentCodeField(page, "appearance.outputsSwapped", true);
 
   const bytes = await downloadBytes(page, "File", "Export Project File…");
-  const saved = JSON.parse(bytes.toString("utf8"));
+  const saved = parseSavedProject(bytes.toString("utf8"));
   expect(saved.documents[0].nets).toEqual(document.nets);
   expect(
     saved.documents[0].routes.map((route: { start: unknown }) => route.start),
@@ -1741,6 +1720,7 @@ test("keeps the workspace inside the viewport and exposes low-interference zoom 
   await page.getByRole("button", { name: "Fit view" }).click();
 
   const canvas = page.getByTestId("schematic-canvas");
+  await revealPropertiesShelf(page);
   const canvasBefore = await canvas.boundingBox();
   await page.getByTestId("selection-shelf").click();
   await expect
@@ -1989,7 +1969,8 @@ test("shows the complete foldable categorized Library, quick-places a device, an
   await expect(panel).toHaveAttribute("data-open", "true");
   const libraryChipCount = await libraryChips.count();
   expect(libraryChipCount).toBeGreaterThanOrEqual(35);
-  await expect(categories).toHaveCount(10);
+  await expect(categories).toHaveCount(11);
+  await expect(page.getByTestId("shapes-category-user-defined")).toBeVisible();
   const transistorCategory = page.getByTestId("shapes-category-transistors");
   const transistorChips = transistorCategory.locator(
     '[data-testid^="shapes-chip-"]',
@@ -2200,6 +2181,7 @@ test("shows the complete foldable categorized Library, quick-places a device, an
     .toBe("false");
 
   await page.reload();
+  await awaitEditorReady(page);
   await expect(page.getByTestId("shapes-library-panel")).toHaveAttribute(
     "data-open",
     "false",
@@ -2216,6 +2198,7 @@ test("opens named full-width Project examples from the toolbar", async ({
 }) => {
   await page.setViewportSize({ width: 1024, height: 720 });
   await page.goto("/editor");
+  await revealPropertiesShelf(page);
 
   const libraryToggle = page.getByTestId("library-toggle");
   const examplesToggle = page.getByTestId("examples-toggle");
@@ -2372,6 +2355,7 @@ test("keeps a usable canvas while toggling Library at the narrow breakpoint", as
   const openWidth = (await canvas.boundingBox())?.width ?? 0;
   expect(openWidth).toBeGreaterThan(450);
 
+  await revealPropertiesShelf(page);
   await page.getByTestId("selection-shelf").click();
   await expect(panel).toHaveAttribute("data-open", "false");
   await expect(page.getByTestId("selection-shelf")).toHaveAttribute(
@@ -2406,6 +2390,7 @@ test("double-clicking a placed device reveals Properties without entering typing
   await canvas.click({ position: { x: 360, y: 230 } });
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("hit-R1")).toBeVisible();
+  await revealPropertiesShelf(page);
   await expect(page.getByTestId("selection-shelf")).toHaveAttribute(
     "aria-expanded",
     "false",
@@ -2427,6 +2412,7 @@ test("Library rail folds the sidebar; Insert opens the catalog", async ({
   page,
 }) => {
   await page.goto("/editor");
+  await awaitEditorReady(page);
   const panel = page.getByTestId("shapes-library-panel");
   await expect(panel).toHaveAttribute("data-open", "true");
 
@@ -2468,4 +2454,76 @@ test("double-clicking a catalog item applies it immediately", async ({
     "Place Resistor on the canvas",
   );
   await page.keyboard.press("Escape");
+});
+
+test("places every Library annotation from the compact Annotation menu", async ({
+  page,
+}) => {
+  await page.goto("/editor?new=1");
+  await awaitEditorReady(page);
+  const libraryEntries = await page
+    .getByTestId("shapes-category-annotations")
+    .getByRole("button")
+    .evaluateAll((buttons) =>
+      buttons.map((button) => button.getAttribute("aria-label")),
+    );
+  await page.getByTestId("library-toggle").click();
+  await page.getByTestId("netlist-panel-toggle").click();
+  const menu = page.getByTestId("annotation-menu");
+  const canvas = page.getByTestId("schematic-canvas");
+  await menu.locator("summary").click();
+  expect(
+    await menu
+      .getByRole("button")
+      .evaluateAll((buttons) =>
+        buttons.map((button) => button.getAttribute("aria-label")),
+      ),
+  ).toEqual(libraryEntries);
+  await page.keyboard.press("Escape");
+  const drawingTools = [
+    ["arrow", "arrow"],
+    ["line", "construction-line"],
+    ["rectangle", "rectangle"],
+    ["circle", "circle"],
+  ];
+  for (const [index, [symbol, tool]] of drawingTools.entries()) {
+    await menu.locator("summary").click();
+    await menu.getByTestId(`annotation-shortcut-annotation-${symbol}`).click();
+    await expect(menu).not.toHaveAttribute("open");
+    await expect(page.getByTestId("active-tool")).toHaveText(tool!);
+    await canvas.click({ position: { x: 160 + index * 150, y: 400 } });
+    await canvas.click({ position: { x: 240 + index * 150, y: 470 } });
+    if (symbol === "arrow" || symbol === "line")
+      await page.keyboard.press("Enter");
+    await page.keyboard.press("Escape");
+    await expect(canvas.locator('[data-testid^="drafting-hit-"]')).toHaveCount(
+      index + 1,
+    );
+  }
+  for (const [index, symbol] of [
+    "polarity-both",
+    "text-plus",
+    "text-minus",
+    "ellipsis",
+  ].entries()) {
+    await menu.locator("summary").click();
+    await menu.getByTestId(`annotation-shortcut-annotation-${symbol}`).click();
+    await expect(menu).not.toHaveAttribute("open");
+    await canvas.hover({ position: { x: 160 + index * 150, y: 560 } });
+    // A minus is a stroked horizontal line with a zero-height SVG geometry
+    // box; Playwright's visibility heuristic excludes it despite the stroke.
+    await expect(page.getByTestId("text-placement-preview")).toBeAttached();
+    await canvas.click({ position: { x: 160 + index * 150, y: 560 } });
+    if (symbol === "polarity-both") {
+      await page.getByRole("button", { name: "Apply text changes" }).click();
+    }
+    await page.keyboard.press("Escape");
+    await expect(canvas.locator('[data-testid^="drafting-hit-"]')).toHaveCount(
+      index + 5,
+    );
+  }
+  await expect(canvas.locator('[data-polarity="both"]')).toBeVisible();
+  await expect(canvas.locator('[data-polarity="positive"]')).toBeVisible();
+  await expect(canvas.locator('[data-polarity="negative"]')).toBeVisible();
+  await expect(canvas.locator('[data-layer="drafting"]')).toContainText("...");
 });

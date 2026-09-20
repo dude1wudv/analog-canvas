@@ -1,13 +1,18 @@
 import {
   defaultInstanceLabelPlacement,
   displayableInstanceValue,
+  endpointKey,
   measureRichTextDocument,
+  resolveDocumentLogicalNets,
   richTextMetrics,
   resolveAnnotationPresentation,
   resolveAnnotationText,
   resolveRouteAttachment,
 } from "@icm/derived";
 import type {
+  EndpointObjectLookup,
+  ResolvedDocumentLogicalNets,
+  ResolvedDocumentRoutingGeometry,
   ResolvedRouteGeometry,
   SchematicStyleProfile,
 } from "@icm/derived";
@@ -118,10 +123,65 @@ export const ROUTED_MARKER_MAX_NORMAL_OFFSET = 40;
 export const NET_LABEL_MIN_NORMAL_OFFSET = 8;
 export const NET_LABEL_MAX_NORMAL_OFFSET = 200;
 
+/**
+ * Per-revision object index for endpoint resolution.
+ *
+ * `document.instances.find`, `document.junctions.find` and `document.nets.find`
+ * are each linear in the Document, so resolving one endpoint per pin per
+ * instance made the wiring projection quadratic in Net count. Object ids are
+ * unique by schema, so a Map lookup returns the element the scan would have
+ * returned and identity cannot change: the index only removes the scan.
+ */
+export interface EndpointObjectIndex extends EndpointObjectLookup {
+  readonly netIdByTerminalKey: ReadonlyMap<string, string | null>;
+  readonly netIdByJunctionId: ReadonlyMap<string, string | null>;
+}
+
+export function buildEndpointObjectIndex(
+  document: SchematicDocument,
+): EndpointObjectIndex {
+  const netIdByJunctionId = new Map<string, string | null>();
+  for (const junction of document.junctions) {
+    netIdByJunctionId.set(junction.id, junction.netId ?? null);
+  }
+  // A terminal may appear under more than one Net; the first Net in document
+  // order wins, which is what `document.nets.find` reported before.
+  const netIdByTerminalKey = new Map<string, string | null>();
+  for (const net of document.nets) {
+    for (const terminal of net.terminals) {
+      const key = endpointKey({
+        kind: "terminal",
+        instanceId: terminal.instanceId,
+        pinName: terminal.pinName,
+      });
+      if (!netIdByTerminalKey.has(key)) netIdByTerminalKey.set(key, net.id);
+    }
+  }
+  return {
+    instancesById: new Map(
+      document.instances.map((item) => [item.id, item] as const),
+    ),
+    junctionsById: new Map(
+      document.junctions.map((item) => [item.id, item] as const),
+    ),
+    netIdByTerminalKey,
+    netIdByJunctionId,
+    // Resolved once for the index rather than once per endpoint that asks the
+    // MOS bulk policy whether a hidden body lead is visible.
+    logicalNets: resolveDocumentLogicalNets(document),
+  };
+}
+
 export function endpointNetId(
   document: SchematicDocument,
   endpoint: RouteEndpoint,
+  index?: EndpointObjectIndex,
 ): string | null {
+  if (index) {
+    return endpoint.kind === "junction"
+      ? (index.netIdByJunctionId.get(endpoint.junctionId) ?? null)
+      : (index.netIdByTerminalKey.get(endpointKey(endpoint)) ?? null);
+  }
   if (endpoint.kind === "junction") {
     return (
       document.junctions.find((junction) => junction.id === endpoint.junctionId)
@@ -492,16 +552,23 @@ export function annotationHitBox(
   annotation: Annotation,
   routeGeometryRecords: readonly RouteGeometryRecord[],
   styleProfile: SchematicStyleProfile,
+  routingGeometry?: ResolvedDocumentRoutingGeometry,
+  logicalNets?: ResolvedDocumentLogicalNets,
 ): Rect {
   // Ordinary text uses the same bounds as rendering/export, including the
   // extra ascent of a stacked W/L numerator. Only current markers need the
   // editor's additional arrow/route hit geometry below.
   if (!isRoutedMarker(annotation)) {
+    // Passing no geometry leaves `resolveAnnotationPresentation` to derive it,
+    // which is what it did before; a caller that holds the Document's geometry
+    // passes it so a per-Annotation hit box does not re-resolve every Route.
     return resolveAnnotationPresentation(
       document,
       resolver,
       annotation,
       styleProfile,
+      routingGeometry,
+      logicalNets,
     ).bounds;
   }
   const anchor = annotationAnchor(

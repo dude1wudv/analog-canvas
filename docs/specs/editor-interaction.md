@@ -193,16 +193,26 @@ document edits. Filled foreground interiors remain selectable, while a
 background shape uses its border as the hit target so it cannot block circuit
 editing above it.
 
-The **Placement Tray** is the only retained-unplaced presentation surface. A
-tray item may be dragged, entered into the ordinary placement cursor, or placed
-with **Place all** into a deterministic starter grid in the current view.
-**Return to tray** and **Return all** use the same lifecycle planner and retain
-electrical facts; permanent Delete remains a separate action. Object-anchored
-labels are retained with an unplaced Instance but are neither rendered nor
-hit-testable until re-placement. Cell Pins use the same return path:
-the Cell interface remains present while the Port is retained in the Tray.
-Definition-level pin placement data remains compatible, while
-new interfaces use deterministic direction-aware automatic layout.
+A schematic is what it shows. Every Instance a Cell carries is drawn: SPICE
+import lays its devices and Cell Pins out on a deterministic shelf rather than
+staging them off-sheet, and opening a Project draws any Instance a legacy
+Document still hides, with the same default designator and value projections an
+ordinary placement writes. No editor command takes a drawn device off the sheet
+— the component property code refuses a null `placement`, and permanent Delete
+remains the way to remove a device with its electrical facts.
+
+The **Placement Tray** is the repair surface for the Instances that can still
+reach a session without a placement (an older in-session document, an Agent
+`unplace`/`reset-placement` edit). An Instance no surface lists is one nobody
+can place or delete while it still holds its reference, its Net terminals and
+its netlist cards, so the tray lists them, the Check Report counts them
+(`ERC_INSTANCE_NOT_DRAWN`), and it disappears once the drawing shows
+everything. A tray item may be dragged, entered into the ordinary placement
+cursor, or placed with **Place all** into a deterministic starter grid in the
+current view. Object-anchored labels are retained with an unplaced Instance but
+are neither rendered nor hit-testable until placement. Definition-level pin
+placement data remains compatible, while new interfaces use deterministic
+direction-aware automatic layout.
 
 Canonical `nmos`/`pmos` use the asset's `textbook-3terminal` visual variant by
 default while retaining D/G/S/B electrically. A manual MOS uses explicit B
@@ -210,7 +220,7 @@ membership first, then an explicitly configured cell default; otherwise bulk
 remains unresolved in the authored connectivity graph. Strict netlist and
 simulation extraction use actual B membership or explicit NoConnect; otherwise
 they report `MISSING_PIN_NET`, without a polarity-based supply default. User-facing
-export presets follow the same connectivity rule and do not repair missing Bulk.
+export and simulation follow the same connectivity rule and do not repair missing Bulk.
 Drawing the visible `bulk-dashed` connection
 clears any configured default binding and connects B to the selected Net in the
 same transaction. Imported MOS instances retain their authored fourth node;
@@ -251,63 +261,23 @@ Ground is the `ground` component connected through pin `0`; placement reuses an
 existing global ground supply Net. VDD Power is placed as a local formal Cell
 Pin by default; Properties can switch its unchanged artwork and physical Net to
 an explicit Global declaration. Power Rail is a virtual Library item presented
-through the same I-dialog, Library, and placement input plane as components.
+through the same I-dialog, Library, and placement input plane as components. A
+new local Power Rail authors a formal Cell Pin directly from its visible rail
+label; no hidden interface Instance or exporter-generated Pin is introduced.
 Its editor-local VDD artwork is preview-only and is not registered with the
 product Symbol Resolver. Before the first click the artwork follows the
 pointer; after the first click the preview becomes a straight horizontal or
 vertical rail, selected by the pointer's dominant axis. The second click
 creates a Base Net with the selected local supply claim, creates two route-anchor
-Junctions and one `power-rail` Route, and persists one net-name-bound RichText
-power-label annotation. Same-name supply claims resolve to one Logical Net
+Junctions and one `power-rail` Route, persists one net-name-bound RichText
+power-label annotation, and makes that annotation the formal terminal owner.
+Same-name supply claims resolve to one Logical Net
 without a physical merge. The Route is the only rail geometry: the annotation adds no
 supply bar or terminal stub, and the semantic name uses the shared Razavi
 schematic-math style. It creates no VDD Instance and exits placement after the
 commit. A rail explicitly drawn onto an existing Global supply retains that
 electrical connection. Deleting the rail also deletes its power label and rail-only Junctions;
 an otherwise-unused local Net follows the ordinary orphan lifecycle.
-
-## Project sessions
-
-New, Open, SPICE import, Gallery/built-in example open, and recovery restore are
-Project-session transitions rather than Document edits. A dirty current Project
-always requires an explicit discard or cancel decision before one of these
-transitions commits; a successful browser-recovery write is safety evidence,
-not authorization to replace the foreground Project. Candidate files and
-gallery/recovery payloads are parsed and validated before that decision.
-
-The editor has no Previous Project stack: replacing a live session does not
-retain the outgoing Project in memory for a later swap, and the File menu
-offers no **Previous Project** command.
-
-Project dirty detection covers `structureRevision` and every Document revision,
-not only the active Cell, and compares the content with the last acknowledged
-Cloud baseline so Undo can return to clean. **New Project** creates a new canonical Project with
-one empty Main Cell, no SPICE source manifest entries, and no external
-subcircuit definitions; it does not mutate the previous Project into an empty
-shell. Opening a Cloud Project binds its stable id and revision to the runtime
-session; importing a file does not. After a Cloud Save, **Revert to Last Saved**
-restores that acknowledged content through the same guard. Export and backup
-never establish or advance this baseline.
-
-## Cell reset lifecycle
-
-Cell reset commands are Document transactions and therefore use Document Undo.
-Each command previews an exact affected-object count before commit:
-
-- **Clear Drawing** removes authored Route geometry and drafting objects while
-  retaining Instances, Nets, Junction topology, ports, and semantic
-  annotations.
-- **Reset Cell Placement** returns every placed Instance to the Placement Tray,
-  removes Route geometry and placement constraints/groups, and retains the
-  devices, Nets, Junction topology, and formal interface.
-- **Reset Cell Body** removes non-interface electrical and drawing content but
-  retains formal terminals, their interface Port markers, their Nets, and
-  terminal annotations. Existing parent callers therefore keep the same pin
-  contract.
-
-**Delete Cell** remains a Project-structure transaction and is legal only for
-a non-top Cell with no callers. That precondition is checked by the hierarchy
-planner before the transaction is submitted.
 
 ## Interaction states
 
@@ -331,6 +301,15 @@ Before that click, neither the document nor undo history changes; Escape or
 choosing another tool discards the preview. Fixed catalog text presets keep their
 existing placement behavior.
 
+Drawn objects place on the annotation pitch (1, 5 or 10; Canvas settings, 5 by
+default), which is deliberately free of the Document's electrical grid so a
+label or an arrow head can sit where it is wanted. A rectangle is the
+exception: its corners, moves and handle drags round to the Document's
+electrical grid. A rectangle is the shape people draw as a block outline and
+then wire to, and a wire endpoint can only land on the electrical grid — an
+edge half a cell away from it cannot be met at all, leaving a visible stub of
+wire inside the outline.
+
 `M` and `Shift+M` enter SelectionMove, which previews at the pointer and
 commits on one click. Box selection, pointer-drag selection move, pan, and
 text-edit sessions remain bounded gesture owners, but every reset boundary
@@ -343,15 +322,39 @@ observe the first transition even when React batches the next render.
 
 Wire defaults to orthogonal. While Wire is active, a middle-button click
 switches only the unresolved leg between orthogonal, 45-degree octilinear, and
-any angle ([ADR 0014](../adr/0014-resolved-route-geometry.md));
+any angle ([Routing rationale](../adr/routing.md));
 a middle-button drag pans as usual. F3 opens Wire options including corner
 order. Existing authored legs are immutable under mode switches; Backspace
 removes the latest authored step rather than an automatically compiled elbow.
-A fresh automatic orthogonal connection compares both right-angle corners and
-simple one-grid-clear corridors around symbol ink, then uses the shortest path
-that does not cross a component. A visible pin on the original path remains an
-intentional electrical contact. Any fixed point, explicit corner order,
-45-degree mode, or free-angle mode bypasses this assistance.
+A wire is the gesture that drew it: the compiled legs run between the points
+the pointer fixed. A pin never pushes the wire out along its own direction —
+reaching a downward pin from the side is an ordinary drawing, not a mistake to
+correct — and a run that passes over an unrelated symbol stays as drawn. A
+visible pin on the path remains an intentional electrical contact.
+
+Where the drawer has not ordered the corner, a fresh orthogonal connection
+refuses only the shapes that draw something untrue: a leg lying inside the
+conductor the wire just tapped, which hides both, and a leg running over
+another pin of a component the wire is attaching to, which the planner never
+joins, so the drawing would show a meeting the netlist does not have. The
+editor takes the compiled corner when it draws neither, else the opposite
+corner — the same two legs in the other order, preferring the one that stays
+off the bodies it lands on — and only when both corners would draw an untrue
+shape does it turn once between the two ends instead. A wire continued from a
+Junction already on the sheet keeps the leg it grew from.
+
+Wire hover and primary clicks on Pins, Routes, and the canvas use one electrical
+target resolver. Capture follows the drawing at seven document units, bounded
+to a radius of 6–24 screen pixels through the live SVG transform. The smaller
+visible endpoint circles are indicators, not a separate electrical hit policy.
+Route capture and ranking use the closest point on the actual conductor;
+grid/arrival quantization happens only after selecting it. A captured target
+has a distinct preview marker and one click completes the connection. A free
+canvas click fixes a step; double-click or Enter finishes a free end. Alt
+suppresses electrical capture, and ambiguous coincident Nets require a clearer
+target instead of an arbitrary connection. A Junction and every Route arm that
+meets it, including two collinear arms, are one target, so a wire starts or
+ends on an existing Junction dot.
 
 Activating the same tool is idempotent: repeated C, W, or selection of the
 same Library item preserves the active session. Activating a different creation
@@ -359,8 +362,11 @@ tool replaces the current interaction atomically after drag and snap cleanup.
 During component or Copy Placement, `R` turns the transient preview by 90 degrees;
 `Shift+R` mirrors it left/right and `Ctrl/Cmd+R` mirrors it top/bottom. Every
 subsequent committed copy receives the same transient orientation, while the
-source selection remains unchanged. The background grid-dot button changes
-only the editor-local canvas paint. Instance reference labels use the first active Document grid line one interval beyond
+source selection remains unchanged. The status bar's grid button, beside the
+zoom controls, shows and hides the background grid dots in one click; it reads
+**Grid On** / **Grid Off** in wide windows and collapses to its icon at
+half-window widths (1100px and below). It is the same editor-local state as
+`canvas.showGrid` in Style settings and changes only the canvas paint. Instance reference labels use the first active Document grid line one interval beyond
 the drawn symbol ink. The padded interaction envelope never contributes to
 that clearance, and placement uses nearest-grid normalization for calibrated
 finite-decimal ink edges rather than directional outward snapping. A 45-degree
@@ -377,98 +383,6 @@ rotate, mirror, and marker editing cannot act on a stale selection underneath
 another active interaction. Undo/Redo may mutate the Document and therefore
 cancel a snapshot-dependent active interaction. Shortcut key assignments are
 independent of this state policy and remain unchanged.
-
-## Coordinate normalization
-
-Pointer and drag previews may retain finite float positions. Before an editor
-gesture creates or changes a Project point, it explicitly snaps to the active
-Document grid; preview or SVG geometry is never committed directly. Camera is
-also grid-aligned: Fit expands derived visual bounds outward to the grid, and
-zoom, pan, focus, Document activation, replacement, and Agent semantic focus
-all pass through the same camera normalizer. The viewport remains transient,
-but it cannot carry derived float bounds into the renderer's integer grid
-camera contract.
-
-Frame-zoom is one camera gesture with two entry buttons: right-drag from
-empty canvas, or Alt+left-drag for environments where system software
-(screenshot tools, mouse-driver gestures) hooks the right button before the
-browser receives the drag. A webpage cannot block system-level mouse hooks,
-so the Alt alias is the portable entry. Both draw the same transient frame
-preview and fit the camera to the framed region without touching the
-Document revision; a press that never exceeded one grid cell stays an
-ordinary click.
-
-Escape cancels the active preview without mutation. A committed gesture is one
-atomic transaction. Hover, geometric crossing, selection, and preview never
-change connectivity. A wire endpoint, explicit segment tap, or a moved Route
-segment landing exactly on a visible endpoint creates contact, whether that
-endpoint is a device pin or a Junction at the end of another wire. Two Route
-interiors crossing still do not connect.
-
-## Movement closure
-
-Every direct-manipulation selection move first derives one transient stable-ID
-routing closure. The editor keeps only gesture state; the Edit Engine's
-`planRoutingTransform()` is the shared authority for the semantic preview and
-the typed edits committed on pointer release. Neither object is Project data or
-an Agent API payload, and no pointer handler invents an independent follow set.
-
-Schematic movement follows the Virtuoso pairing. Plain `M` translates the
-selection while internal conductors follow and boundary Routes stretch without
-changing connectivity. `Shift+M` (and its Ctrl/Cmd-drag direct gesture) moves
-the selected Instances without their wires: every routed terminal is first
-replaced by an open Junction stub at the original landing, then the existing
-`disconnect_endpoint` edit removes that terminal from the old Base Net. The
-wire geometry remains byte-for-byte in place and the moved pin is electrically
-open. Both gestures use the same selection-move controller and existing typed
-edits; detached move is not a persisted mode or a second mutation protocol.
-
-The visual marquee is the user's explicit intent. Electrical closure then
-classifies that intent without changing connectivity:
-
-- selected Instances translate together;
-- a Route/Junction component whose terminal endpoints are all selected is
-  internal and translates intact;
-- a Route with exactly one selected Instance endpoint is a boundary Route and
-  is stretched while preserving its external endpoint;
-- an explicitly selected loose Route may translate only together with both of
-  its loose Junction anchors;
-- an ordinary connected Route or Junction that does not meet one of those
-  conditions is fixed for a group move. It is edited through the explicit
-  segment/branch tools, never silently detached or reconnected;
-- object- and route-anchored annotations follow their resolved target; free
-  annotations and free drafting objects translate only when explicitly
-  selected.
-
-The same boundary applies to `C` and Delete. `C` remains the existing modal
-copy-placement gesture (not Ctrl+C/Paste): its preview and commit use one
-preallocated clone mapping, internal routing is copied, and ordinary boundary
-pins are left open. Delete converts the complete visual selection to one graph
-deletion plan, so Route/Junction/attachment cleanup does not require a second
-Delete press. Formal Cell Pins retain their Project-level interface update,
-but its Document edits come from that same deletion plan.
-
-A copied Cell Pin always receives a fresh Instance and terminal identity. Its
-name and direction are preserved; an equal name is legal and affects only the
-read-only Formal Port projection. Copying a completely selected physical Net
-may clone that Net and its internal Routes. A selection boundary never creates
-shared identity from text and never guesses a new electrical connection.
-
-The planner authors the resulting geometry for every planned Route in the
-same transaction. Engine instance-follow remains the safe single-instance
-fallback, not a second progressive planner for a group gesture. Marquee Route
-selection tests actual polyline segments against the rectangle, rather than
-selecting a distant bend solely because its bounding box overlaps the gesture.
-
-The marquee is directional, following the classic drafting-tool pairing. A
-left-to-right drag is a window: an object joins the selection only when its
-geometry is fully contained (an outline rectangle needs all four corners; a
-Route needs its whole centerline). A right-to-left drag is a crossing: any
-geometric overlap selects, which preserves the previous behavior. A Junction
-is its point in both directions. The live preview distinguishes the modes
-(solid window, dashed crossing). Membership is decided by document geometry
-alone: the canvas suppresses native browser text selection, so a drag can
-never highlight or select labels outside the dragged rectangle.
 
 ## Selection alignment
 
@@ -518,6 +432,69 @@ complete alignment commits as one transaction and therefore one Undo step.
 The legacy `align_instances` typed edit remains a compatibility boundary for
 external callers; the GUI does not call it.
 
+## Movement closure
+
+Every direct-manipulation selection move first derives one transient stable-ID
+routing closure. The editor keeps only gesture state; the Edit Engine's
+`planRoutingTransform()` is the shared authority for the semantic preview and
+the typed edits committed on pointer release. Neither object is Project data or
+an Agent API payload, and no pointer handler invents an independent follow set.
+
+Schematic movement follows the Virtuoso pairing. Plain `M` translates the
+selection while internal conductors follow and boundary Routes stretch without
+changing connectivity. `Shift+M` (and its Ctrl/Cmd-drag direct gesture) moves
+the selected Instances without their wires: every routed terminal is first
+replaced by an open Junction stub at the original landing, then the existing
+`disconnect_endpoint` edit removes that terminal from the old Base Net. The
+wire geometry remains byte-for-byte in place and the moved pin is electrically
+open. Both gestures use the same selection-move controller and existing typed
+edits; detached move is not a persisted mode or a second mutation protocol.
+
+The visual marquee is the user's explicit intent. Electrical closure then
+classifies that intent without changing connectivity:
+
+- selected Instances translate together;
+- a Route/Junction component whose terminal endpoints are all selected is
+  internal and translates intact;
+- a Route with exactly one selected Instance endpoint is a boundary Route and
+  is stretched while preserving its external endpoint;
+- an explicitly selected loose Route may translate only together with both of
+  its loose Junction anchors;
+- an ordinary connected Route or Junction that does not meet one of those
+  conditions is fixed for a group move. It is edited through the explicit
+  segment/branch tools, never silently detached or reconnected;
+- object- and route-anchored annotations follow their resolved target; free
+  annotations and free drafting objects translate only when explicitly
+  selected.
+
+The same boundary applies to `C` and Delete. `C` remains the existing modal
+copy-placement gesture (not Ctrl+C/Paste): its preview and commit use one
+preallocated clone mapping, internal routing is copied, and ordinary boundary
+pins are left open. Delete converts the complete visual selection to one graph
+deletion plan, so Route/Junction/attachment cleanup does not require a second
+Delete press. Formal Cell Pins retain their Project-level interface update,
+but its Document edits come from that same deletion plan.
+
+[Project-aware copy](#project-aware-copy) owns cloned identity, dependencies
+and name semantics, including formal Cell Pins. Movement does not define a
+second copy protocol.
+
+The planner authors the resulting geometry for every planned Route in the
+same transaction. Engine instance-follow remains the safe single-instance
+fallback, not a second progressive planner for a group gesture. Marquee Route
+selection tests actual polyline segments against the rectangle, rather than
+selecting a distant bend solely because its bounding box overlaps the gesture.
+
+The marquee is directional, following the classic drafting-tool pairing. A
+left-to-right drag is a window: an object joins the selection only when its
+geometry is fully contained (an outline rectangle needs all four corners; a
+Route needs its whole centerline). A right-to-left drag is a crossing: any
+geometric overlap selects, which preserves the previous behavior. A Junction
+is its point in both directions. The live preview distinguishes the modes
+(solid window, dashed crossing). Membership is decided by document geometry
+alone: the canvas suppresses native browser text selection, so a drag can
+never highlight or select labels outside the dragged rectangle.
+
 ## No-reroute movement boundary
 
 The editor's finite direct-manipulation vocabulary is transient only:
@@ -530,8 +507,17 @@ an ordinary Route offer a resize grip, including one anchored to a pin.
 No movement intent searches for a new path. An internal Route translates every
 point by one common delta. A boundary stretch may alter only geometry adjacent
 to the moved endpoint (or add one local orthogonal elbow); remote waypoints
-remain untouched. A protected adjacent `locked` or `trunk` segment rejects the
-gesture rather than being rerouted. Power rails use their explicit translate
+remain untouched. A dragged 45-degree segment never moves diagonally: it
+translates horizontally or vertically, whichever way the pointer mainly
+travels. A leg along that axis lengthens or shortens (it may shrink away but
+never folds back), and a leg across it travels with the segment. A Junction at
+the end of that run travels too; a pin is reached by a jog along the axis.
+Slanted segments are never bent by a drag: a slanted neighbor of a dragged
+segment, orthogonal or 45-degree, travels with it in the same run. A move that
+would double the wire back on itself is refused. A drag that ends with nothing
+moved, including a refused one, records no edit and no undo step. A protected
+adjacent `locked` or `trunk` segment rejects the gesture rather than being
+rerouted. Power rails use their explicit translate
 and endpoint-resize intents, never an inferred route search. Endpoint resize is
 limited to the rail's current axis. Whole-rail translation includes its tap
 Junctions and incident geometry, so a connected rail does not fragment.
@@ -542,6 +528,75 @@ individually selectable when it is the only hit, and Alt cycling deliberately
 selects an overlapping label. A deliberate double-click is an editing intent,
 not a movement intent: it resolves an overlapping editable annotation directly
 without requiring an Alt cycle.
+
+## Coordinate normalization
+
+Pointer and drag previews may retain finite float positions. Before an editor
+gesture creates or changes a Project point, it explicitly snaps to the active
+Document grid; preview or SVG geometry is never committed directly. Camera is
+also grid-aligned: Fit expands derived visual bounds outward to the grid, and
+zoom, pan, focus, Document activation, replacement, and Agent semantic focus
+all pass through the same camera normalizer. The viewport remains transient,
+but it cannot carry derived float bounds into the renderer's integer grid
+camera contract.
+
+Frame-zoom is one camera gesture with two entry buttons: right-drag from
+empty canvas, or Alt+left-drag for environments where system software
+(screenshot tools, mouse-driver gestures) hooks the right button before the
+browser receives the drag. A webpage cannot block system-level mouse hooks,
+so the Alt alias is the portable entry. Both draw the same transient frame
+preview and fit the camera to the framed region without touching the
+Document revision; a press that never exceeded one grid cell stays an
+ordinary click.
+
+Escape cancels the active preview without mutation. A committed gesture is one
+atomic transaction. Contact acquisition follows the
+[connectivity authoring rules](connectivity-and-routing.md#authoring-rules);
+hover and preview are not electrical mutations.
+
+## Project-aware copy
+
+Internal `C`, Gallery canvas insertion, and the existing Agent copy command
+use the same Project-aware copy planner. C retains its pointer-following ghost,
+rotation/reflection shortcuts, repeated click placement, and Escape cancellation.
+Gallery selects the source top Cell body; referenced child Cells remain hierarchy
+and are imported as dependencies. Inserting a nonempty hierarchical Gallery entry
+does not replace the current Project.
+
+A transient copy capsule carries the selected objects, Cell parameter context,
+referenced external interfaces, child-Cell closure, symbol-library identity, and
+referenced source-file records. It is not persisted or added to the Agent API.
+Source-file records are provenance, not bundled PDK model contents. Simulation
+folders, simulator configuration, run results and unrelated Cells are not copied.
+
+Every placement allocates new canvas object IDs and collision-free References.
+Compatible external definitions are reused by validated interface and presentation,
+not by coincident source IDs. Incompatible same-name definitions or Cell parameter
+defaults reject before placement. Child imports share one immutable source snapshot;
+a changed source receives a new snapshot identity. A previously imported child that
+was edited in the destination cannot silently substitute for the captured source.
+
+Internal wires of a selected component group travel with the group. A single
+component does not automatically carry its unselected dangling wires. Explicitly
+selected wires can travel alone: unselected terminal endpoints become local free
+wire ends, without bringing the external devices. Route markers remap both Route
+and Leg identity. External visual anchors on copied drafting resolve to free
+positions; bound component labels require their component. Bulk connections are
+materialized as instance-owned connections rather than adopting target defaults.
+Necessary Net names whose original owners were outside the selection receive
+copy-owned labels. Name equality in the target Cell retains its ordinary electrical
+meaning; copying does not introduce an invisible Net namespace.
+
+Source and target must have compatible grid geometry and matching document style
+defaults. The current model cannot represent all symbol-stroke and junction-radius
+defaults per object, so incompatible defaults produce an explicit refusal instead
+of silently changing the drawing or overwriting target presentation.
+
+Dependency planning and preview do not write to the Project. Preview resolves
+symbols using the planned definitions, and placement rechecks the current target.
+Dependencies, instances, wires and interface updates commit as one existing Project
+transaction and one undo unit. Cancelled or rejected copies leave no definitions
+behind. Repeated placements share definitions but own separate canvas objects.
 
 ## Text and presentation
 
@@ -556,23 +611,24 @@ deliberately customized literal content remains custom. A Cell Pin receives only
 and displayable.
 Properties exposes **Netlist Reference** for explicit electrical renaming:
 case-insensitive Document uniqueness and device-prefix validation still apply.
-The canvas exposes **Visual annotation**. Changing its characters or inserting
-a formula replaces `binding`/`formatOverride` with literal RichText `content`
-on the same Annotation, preserving ID, anchor, size, alignment, color, and
-visibility. Even another valid Reference such as `R2` is a visual edit, never
-an electrical rename. Formatting-only changes retain the live binding when
-their plain characters are unchanged. Custom text stays custom even if the
-author later types the current Netlist Reference.
+The canvas exposes **Visual annotation**. Instance labels follow
+`Instance.reference` by default. Editing an unaliased name changes that
+Reference through the same prefix and uniqueness validation as Properties and
+the editable netlist; its Annotation ID, anchor and presentation stay intact.
 
-**Edit annotation** in Properties opens the same floating rich editor; there
-is no second optional Label field. Bold, italic, scripts, overbar, symbols,
-alignment, the existing multiline shortcut (Shift+Enter), and formula tool are available.
-**Use netlist name** restores the live binding and default content styling
-within the editing session; the editor's normal finish action commits it. This
-preserves position and other presentation properties. Copy allocates a unique
-Netlist Reference: following annotations update, custom content copies exactly.
-Old additional annotations are retained as user-authored content rather than
-silently deleted; new edits never generate a hidden/default plus custom pair.
+**Use display alias** is an explicit checkbox in the floating label editor.
+Checking it keeps literal RichText on the same Annotation, independent of the
+netlist name. Existing literal annotations open with it checked. Alias mode
+supports bold, italic, scripts, overbar, symbols, alignment, Shift+Enter and
+formulas. Plain synchronized names do not accept arbitrary formatted aliases.
+Unchecking immediately restores the live Reference binding and default content
+styling, retaining position, size, alignment, color and visibility. The toggle
+is undoable; Cancel discards subsequent text edits, not a toggle already made.
+Typing the Reference into a checked alias does not implicitly disable alias mode.
+Copy allocates a unique Reference: following annotations update, aliases copy
+exactly. Old additional annotations remain user-authored content; no hidden
+second label is created.
+
 For a Cell Pin, a character edit renames the terminal while a formatting-only
 edit persists a same-text annotation `formatOverride`. Its name is edited on
 the canvas and its interface direction is managed in Cell Manager; Properties
@@ -652,14 +708,62 @@ Net and Cell terminal names refuse a non-equivalent formula in
 the Formula panel. Ordinary character edits and formatting commands do not use
 this formula-only decision path.
 
+## Project sessions
+
+New, Open, SPICE import, Gallery/built-in example open, and recovery restore are
+Project-session transitions rather than Document edits. A dirty current Project
+always requires an explicit discard or cancel decision before one of these
+transitions commits; a successful browser-recovery write is safety evidence,
+not authorization to replace the foreground Project. Candidate files and
+gallery/recovery payloads are parsed and validated before that decision.
+
+The editor has no Previous Project stack: replacing a live session does not
+retain the outgoing Project in memory for a later swap, and the File menu
+offers no **Previous Project** command.
+
+Project dirty detection covers `structureRevision` and every Document revision,
+not only the active Cell, and compares the content with the last acknowledged
+Cloud baseline so Undo can return to clean. **New Project** creates a new canonical Project with
+one empty Main Cell, no SPICE source manifest entries, and no external
+subcircuit definitions; it does not mutate the previous Project into an empty
+shell. Opening a Cloud Project binds its stable id and revision to the runtime
+session; importing a file does not. After a Cloud Save, **Revert to Last Saved**
+restores that acknowledged content through the same guard. Export and backup
+never establish or advance this baseline.
+
+## Cell reset lifecycle
+
+Cell reset commands live in the selected definition's **Cell Manager → Reset
+Cell** section. The Manager submits the existing Document edit through the
+Project `transact_document` boundary so an inactive Cell can be reset without
+opening it first; one Undo restores the atomic Project transaction. Each command
+previews an exact affected-object count before commit:
+
+- **Clear Drawing** removes authored Route geometry and drafting objects while
+  retaining Instances, Nets, Junction topology, ports, and semantic
+  annotations.
+- **Reset Cell Placement** (Agent authoring only) returns every placed Instance
+  to the Placement Tray, removes Route geometry and placement
+  constraints/groups, and retains the devices, Nets, Junction topology, and
+  formal interface. The next open of that Project draws the returned Instances
+  again, so the reset is a redraw step, not a lasting off-sheet state.
+- **Reset Cell Body** removes non-interface electrical and drawing content but
+  retains formal terminals, their interface Port markers, their Nets, and
+  terminal annotations. Existing parent callers therefore keep the same pin
+  contract.
+
+**Delete Cell** remains a Project-structure transaction and is legal only for
+a non-top Cell with no callers. That precondition is checked by the hierarchy
+planner before the transaction is submitted.
+
 ## Files, recovery, and replacement
 
-Open, demo load, restore, and human-approved staged import replace the entire
+Open, example load, restore, and human-approved staged import replace the entire
 Project through one replacement boundary; they are not Edit Engine
 transactions. Replacement cancels pending recovery for the outgoing Project
 and terminates its Agent session. A complete Project covered by the schema
-24→56 upgrade chain may be upgraded at the read boundary and then enters the
-editor only as schema-56; migrated files are marked as needing save.
+24→57 upgrade chain may be upgraded at the read boundary and then enters the
+editor only as schema-58; migrated files are marked as needing save.
 
 Selection, viewport, active tool, previews, Agent tokens, and approval UI are
 transient and never enter Project JSON. Recovery is scheduled only after a

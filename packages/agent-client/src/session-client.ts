@@ -100,8 +100,9 @@ export interface ApplyActionsReport {
   projectStructure?: AgentTransactResponse["projectStructure"];
   semantic?: AgentTransactResponse["semantic"];
   resolvedRoutes?: AgentTransactResponse["resolvedRoutes"];
+  terminalConnectivityChanged?: boolean;
   ok: boolean;
-  stage: "compile" | "dry-run" | "commit" | "done";
+  stage: "compile" | "commit" | "done";
   /** Machine code for a failure (`STATE_CHANGED`, engine code, ...). */
   code?: string;
   message?: string;
@@ -123,7 +124,7 @@ function baseRequest(requestId: string): {
 }
 
 /**
- * Unified Agent-side Helper (ADR 0020). Owns claim/resume, token and session
+ * Unified Agent-side Helper (Agent rationale). Owns claim/resume, token and session
  * state, capabilities/revision caches, exact-payload request-ID retry, the
  * Snapshot cache, and compilation-plus-execution of high-level actions.
  * Bearer tokens remain process-local and are sent only in Authorization
@@ -469,8 +470,9 @@ export class AgentSessionClient {
 
   /**
    * Compile high-level actions against a fresh Snapshot, require one atomic
-   * transaction, dry-run it, then commit it. A concurrent human edit surfaces
-   * as `STATE_CHANGED` with the objects that moved, never as a blind overwrite.
+   * transaction, then commit it in a single request. The commit validates
+   * atomically, so a concurrent human edit surfaces as `STATE_CHANGED` with
+   * the objects that moved, never as a blind overwrite.
    */
   async applyActions(
     actions: readonly unknown[],
@@ -500,6 +502,18 @@ export class AgentSessionClient {
         revision: entry.revision,
       };
     }
+    if (
+      compiled.length > 1 &&
+      compiled.every((item) => item.form === "wire-intent")
+    ) {
+      return this.submitTransaction(
+        entry,
+        { wireIntent: compiled.map((item) => item.wireIntent!) },
+        {
+          dryRun: options.dryRunOnly ?? false,
+        },
+      );
+    }
     if (compiled.length !== 1)
       return {
         ok: false,
@@ -521,7 +535,6 @@ export class AgentSessionClient {
             : { wireIntent: transaction.wireIntent };
     return this.submitTransaction(entry, payload, {
       dryRun: options.dryRunOnly ?? false,
-      preview: true,
     });
   }
 
@@ -579,7 +592,7 @@ export class AgentSessionClient {
   private async submitTransaction(
     entry: CachedSnapshot,
     payload: unknown,
-    options: { dryRun?: boolean; preview?: boolean },
+    options: { dryRun?: boolean },
   ): Promise<ApplyActionsReport> {
     const parsed = AgentTransactionPayloadSchema.safeParse(payload);
     if (!parsed.success)
@@ -599,24 +612,9 @@ export class AgentSessionClient {
       dryRun,
       ...parsed.data,
     });
-    if (options.preview && !options.dryRun && !parsed.data.semanticIntent) {
-      const preview = await this.send(request(true));
-      if (!preview.ok) {
-        if (
-          preview.error.code === "STALE_REVISION" ||
-          preview.error.code === "STALE_STRUCTURE_REVISION"
-        )
-          return this.stateChangedReport(entry, preview.error.message);
-        return {
-          ok: false,
-          stage: "dry-run",
-          code: preview.error.code,
-          message: preview.error.message,
-          diagnostics: preview.diagnostics,
-          revision: entry.revision,
-        };
-      }
-    }
+    // One request, no client-side dry-run pass: the commit validates the
+    // whole transaction atomically and returns the same diagnostics a
+    // dry-run would, without the extra relayed round trip per edit.
     const response = await this.send(request(options.dryRun ?? false));
     if (!response.ok) {
       if (
@@ -661,6 +659,9 @@ export class AgentSessionClient {
       proposedRevision: response.proposedRevision,
       dryRun: options.dryRun ?? false,
       changedObjectIds: response.diff.changedObjectIds,
+      ...(response.terminalConnectivityChanged !== undefined
+        ? { terminalConnectivityChanged: response.terminalConnectivityChanged }
+        : {}),
       editKinds: response.diff.editKinds,
       diagnostics: response.diagnostics,
       errors: response.diagnostics.filter((item) => item.severity === "error")

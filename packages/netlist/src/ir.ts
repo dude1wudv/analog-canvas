@@ -23,7 +23,7 @@ export interface DesignNetlistFormalParameter {
 export interface DesignNetlistInstance {
   id: StableId;
   reference: string;
-  /** Card family must agree with the persisted ngspice Reference designator. */
+  /** The binding determines invocation kind, independently of the canvas name. */
   invocationKind: "primitive" | "subcircuit";
   reviewedExternalBindingId?: ReviewedExternalBindingId;
   deviceClass: DesignNetlistDeviceClass;
@@ -74,6 +74,7 @@ export interface NetlistDiagnostic {
   objectIds: StableId[];
   /** Canonical evidence for the preflight and other consumers to navigate. */
   primary: ObjectLocator;
+  parameter?: string;
   message: string;
 }
 

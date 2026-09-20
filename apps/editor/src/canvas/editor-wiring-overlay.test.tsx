@@ -1,12 +1,16 @@
 import type { Flightline } from "@icm/derived";
+import { semanticTextDocument } from "@icm/model";
 import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { EditorWiringOverlay } from "./editor-wiring-overlay";
+import {
+  EditorWiringOverlay,
+  NetLabelEditorOverlay,
+} from "./editor-wiring-overlay";
 
 describe("editor wiring overlay", () => {
-  it("renders net editing, guidance, and a bulk wire preview in layer order", () => {
+  it("keeps the naming editor separate from wiring guidance and previews", () => {
     const flightline = {
       id: "guide-1",
       netId: "net-1",
@@ -21,11 +25,12 @@ describe("editor wiring overlay", () => {
           viewBox={{ x: 0, y: 0, width: 960, height: 640 }}
           netLabelPlacement={{
             phase: "naming",
-            draft: "OUT",
+            content: semanticTextDocument("OUT", "net-label"),
+            sizeScale: 1,
+            alignment: "start",
             position: { x: 50, y: 20 },
           }}
-          netLabelEditorInputRef={createRef<HTMLInputElement>()}
-          onNetLabelDraftChange={vi.fn()}
+          onNetLabelTextChange={vi.fn()}
           onNetLabelSubmit={vi.fn()}
           onNetLabelEscape={vi.fn()}
           flightlines={[flightline]}
@@ -44,8 +49,7 @@ describe("editor wiring overlay", () => {
       </svg>,
     );
 
-    expect(markup).toContain('data-testid="net-label-editor"');
-    expect(markup).toContain('value="OUT"');
+    expect(markup).not.toContain('data-testid="net-label-editor"');
     expect(markup).toContain('data-testid="flightline-hit"');
     expect(markup).toContain('class="wire-preview bulk-route-preview"');
     // A pass-through contact is drawn, so a wire crossing a pin looks the way
@@ -55,6 +59,32 @@ describe("editor wiring overlay", () => {
     expect(markup).toContain('data-layer="snap-guides"');
   });
 
+  it("renders Net Label naming as its own interactive top overlay", () => {
+    const markup = renderToStaticMarkup(
+      <svg>
+        <NetLabelEditorOverlay
+          viewBox={{ x: 0, y: 0, width: 960, height: 640 }}
+          netLabelPlacement={{
+            phase: "naming",
+            content: semanticTextDocument("OUT", "net-label"),
+            sizeScale: 1,
+            alignment: "start",
+            position: { x: 50, y: 20 },
+          }}
+          onNetLabelTextChange={vi.fn()}
+          onNetLabelSubmit={vi.fn()}
+          onNetLabelEscape={vi.fn()}
+        />
+      </svg>,
+    );
+
+    expect(markup).toContain('data-testid="net-label-editor"');
+    expect(markup).toContain('data-layer="net-label-editor-overlay"');
+    expect(markup).toContain('data-testid="canvas-text-editor"');
+    expect(markup).toContain('aria-label="斜体"');
+    expect(markup).toContain("font-style:italic");
+  });
+
   it("renders a floating Net Label ghost after naming", () => {
     const markup = renderToStaticMarkup(
       <svg>
@@ -62,11 +92,12 @@ describe("editor wiring overlay", () => {
           viewBox={{ x: 0, y: 0, width: 960, height: 640 }}
           netLabelPlacement={{
             phase: "placing",
-            draft: "SIGNAL",
+            content: semanticTextDocument("SIGNAL", "net-label"),
+            sizeScale: 1.2,
+            alignment: "end",
             position: { x: 80, y: 40 },
           }}
-          netLabelEditorInputRef={createRef<HTMLInputElement>()}
-          onNetLabelDraftChange={vi.fn()}
+          onNetLabelTextChange={vi.fn()}
           onNetLabelSubmit={vi.fn()}
           onNetLabelEscape={vi.fn()}
           flightlines={[]}
@@ -81,6 +112,7 @@ describe("editor wiring overlay", () => {
     expect(markup).not.toContain('data-testid="net-label-editor"');
     expect(markup).toContain('data-testid="net-label-placement-preview"');
     expect(markup).toContain("SIGNAL");
+    expect(markup).toContain('text-anchor="end"');
     expect(markup).toContain('x="80"');
     expect(markup).toContain('y="40"');
   });

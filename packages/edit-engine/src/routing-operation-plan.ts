@@ -417,24 +417,20 @@ function existingEndpointKeys(document: SchematicDocument): readonly string[] {
 }
 
 /**
- * The Net joins an edit list performs, read off the edits themselves.
- *
- * Two primitives join Nets, and both say so in their own shape rather than
- * needing the caller to remember: `connect_endpoints` names the two endpoints
- * it bonds, and `attach_endpoint_to_route` makes an endpoint the common node
- * of two Route halves, so it ends up sharing that conductor's Net.
- *
- * Deriving this here — instead of asking each planner to hand-write a
- * declaration — is what keeps the guard honest as new operations appear. A
- * planner that emits either primitive is declared correctly with no further
- * work; one that joins Nets by some other means must supply its own
- * `expectedElectricalEffect`, because nothing in its edits says what it did.
+ * Read requested connections from the final path endpoints or explicit
+ * logical/attachment edits. A Wire needs no separate merge declaration.
  */
 function mergeGroupsFromEdits(
   document: SchematicDocument,
   edits: readonly SchematicEdit[],
 ): readonly (readonly string[])[] {
   return edits.flatMap((edit) => {
+    if (edit.kind === "set_route_path") {
+      return [routeEndpoints(edit.route).map(endpointKey)];
+    }
+    if (edit.kind === "route_orthogonal") {
+      return [[endpointKey(edit.from), endpointKey(edit.to)]];
+    }
     if (edit.kind === "connect_endpoints") {
       return [[endpointKey(edit.from), endpointKey(edit.to)]];
     }
@@ -669,12 +665,4 @@ export function evaluateRoutingOperationPlan(
       diagnostics: result.diagnostics,
     },
   };
-}
-
-export function emptyRoutingAffectedClosure(): RoutingAffectedClosure {
-  return EMPTY_CLOSURE;
-}
-
-export function emptyOperationIdRemap(): OperationIdRemap {
-  return EMPTY_ID_REMAP;
 }

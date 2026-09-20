@@ -1,7 +1,7 @@
 import { useReducer, useRef } from "react";
 import type { SetStateAction } from "react";
 
-import type { Mirror, Point, Rotation } from "@icm/model";
+import type { ComponentDefinition, Mirror, Point, Rotation } from "@icm/model";
 import type {
   WireCornerOrder,
   WireDraftStep,
@@ -16,6 +16,8 @@ import {
 } from "./shortcut-orientation";
 
 export type { WireSource } from "@icm/edit-engine";
+
+export type RoutingGuidanceView = "focused" | "all" | "hidden";
 
 /**
  * Where the far end of an in-flight wire draft currently rests.
@@ -58,6 +60,7 @@ export type DrawingTool = Extract<
 export type InteractionMode = InteractionState<unknown>["kind"];
 
 export interface PendingComponentPlacement {
+  componentDefinition?: ComponentDefinition;
   kind:
     | "symbol"
     | "cell"

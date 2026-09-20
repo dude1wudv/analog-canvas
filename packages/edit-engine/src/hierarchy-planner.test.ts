@@ -1,4 +1,4 @@
-import { createRoutePath } from "@icm/model";
+import { canonicalPortTextDocument, createRoutePath } from "@icm/model";
 import { describe, expect, it } from "vitest";
 
 import { createEmptyDocument, createEmptyProject } from "@icm/model";
@@ -8,17 +8,117 @@ import {
   createHierarchyInstance,
   planCreateCellPin,
   planDeleteCell,
+  planFormatCellTerminalAnnotations,
   planPlaceCellInstance,
   planRemoveCellTerminal,
+  planReorderCellPort,
   planReorderCellTerminal,
   planRenameCellTerminal,
   planSetDeviceModelTarget,
-  planSetMosModelTarget,
   planSetVddConnectionMode,
+  planUpdateCellPortDirection,
 } from "./hierarchy-planner.js";
 import { executeProjectTransaction } from "./project-transaction.js";
 
 describe("hierarchy domain planners", () => {
+  it("formats every ordinary and power Cell Port label in one transaction", () => {
+    const project = createEmptyProject("project", "Project");
+    const document = project.documents[0]!;
+    document.netlist!.terminals.push(
+      {
+        id: "terminal-in",
+        name: "IN",
+        netId: "net-in",
+        direction: "input",
+        interfaceInstanceIds: ["P1"],
+      },
+      {
+        id: "terminal-vdd",
+        name: "VDD",
+        netId: "net-vdd",
+        direction: "inout",
+        interfaceInstanceIds: [],
+        interfaceAnnotationId: "label-vdd",
+      },
+    );
+    document.annotations.push(
+      {
+        id: "label-in",
+        kind: "instance-label",
+        binding: { kind: "cell-terminal-name", terminalId: "terminal-in" },
+        formatOverride: { runs: [{ kind: "text", value: "IN" }] },
+        anchor: {
+          kind: "object",
+          objectId: "P1",
+          localOffset: { x: 2, y: 3 },
+          fallbackPosition: { x: 4, y: 5 },
+        },
+        alignment: "end",
+        rotation: 90,
+        locked: false,
+      },
+      {
+        id: "label-vdd",
+        kind: "power-label",
+        binding: {
+          kind: "cell-terminal-name",
+          terminalId: "terminal-vdd",
+        },
+        netId: "net-vdd",
+        anchor: {
+          kind: "object",
+          objectId: "VDD1",
+          localOffset: { x: 0, y: -10 },
+          fallbackPosition: { x: 0, y: -10 },
+        },
+        alignment: "middle",
+        rotation: 0,
+        locked: false,
+      },
+    );
+
+    const edits = planFormatCellTerminalAnnotations(project, document.id);
+
+    expect(edits).toEqual([
+      {
+        kind: "transact_document",
+        documentId: document.id,
+        expectedRevision: document.revision,
+        edits: [
+          {
+            kind: "upsert_schematic_annotation",
+            annotation: {
+              ...document.annotations[0],
+              formatOverride: canonicalPortTextDocument("IN"),
+            },
+          },
+          {
+            kind: "upsert_schematic_annotation",
+            annotation: {
+              ...document.annotations[1],
+              formatOverride: canonicalPortTextDocument("VDD"),
+            },
+          },
+        ],
+      },
+    ]);
+    expect(
+      document.netlist!.terminals.map((terminal) => terminal.name),
+    ).toEqual(["IN", "VDD"]);
+    expect(document.annotations[0]?.anchor).toEqual({
+      kind: "object",
+      objectId: "P1",
+      localOffset: { x: 2, y: 3 },
+      fallbackPosition: { x: 4, y: 5 },
+    });
+
+    document.annotations = document.annotations.map((annotation, index) => ({
+      ...annotation,
+      formatOverride: canonicalPortTextDocument(index === 0 ? "IN" : "VDD"),
+    }));
+    expect(planFormatCellTerminalAnnotations(project, document.id)).toEqual([]);
+  });
+
   it("rejects deleting a referenced Cell before Project commit", () => {
     const project = createEmptyProject("project", "Project", "top");
     const child = createEmptyDocument("child", "Child");
@@ -435,6 +535,113 @@ describe("hierarchy domain planners", () => {
     ).toEqual([]);
   });
 
+  it("updates and reorders a projected Port as one group", () => {
+    const project = createEmptyProject("project", "Project");
+    const document = project.documents[0]!;
+    document.instances.push(
+      { id: "P1", symbolId: "port", placement: null },
+      { id: "P2", symbolId: "port", placement: null },
+      { id: "P3", symbolId: "port", placement: null },
+    );
+    document.nets.push(
+      {
+        id: "net-out",
+        terminals: [
+          { instanceId: "P1", pinName: "P" },
+          { instanceId: "P3", pinName: "P" },
+        ],
+      },
+      {
+        id: "net-in",
+        terminals: [{ instanceId: "P2", pinName: "P" }],
+      },
+    );
+    document.netlist!.terminals.push(
+      {
+        id: "terminal-out-a",
+        name: "OUT",
+        netId: "net-out",
+        direction: "passive",
+        interfaceInstanceIds: ["P1"],
+      },
+      {
+        id: "terminal-in",
+        name: "IN",
+        netId: "net-in",
+        direction: "input",
+        interfaceInstanceIds: ["P2"],
+      },
+      {
+        id: "terminal-out-b",
+        name: "out",
+        netId: "net-out",
+        direction: "passive",
+        interfaceInstanceIds: ["P3"],
+      },
+    );
+
+    const directionEdits = planUpdateCellPortDirection(
+      project,
+      document.id,
+      "terminal-out-a",
+      "output",
+    );
+    expect(directionEdits).toEqual([
+      expect.objectContaining({
+        kind: "transact_document",
+        edits: [
+          expect.objectContaining({ terminalId: "terminal-out-a" }),
+          expect.objectContaining({ terminalId: "terminal-out-b" }),
+        ],
+      }),
+    ]);
+    const directionResult = executeProjectTransaction(project, {
+      transactionId: "set-port-direction",
+      projectId: project.id,
+      expectedStructureRevision: project.structureRevision,
+      actor: { kind: "human", id: "test" },
+      edits: directionEdits,
+    });
+    expect(directionResult.ok).toBe(true);
+    expect(directionResult.project.documents[0]!.netlist!.terminals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "terminal-out-a", direction: "output" }),
+        expect.objectContaining({ id: "terminal-out-b", direction: "output" }),
+      ]),
+    );
+
+    const reorderEdits = planReorderCellPort(
+      project,
+      document.id,
+      "terminal-in",
+      -1,
+    );
+    expect(reorderEdits).toEqual([
+      expect.objectContaining({
+        kind: "transact_document",
+        edits: [
+          {
+            kind: "reorder_cell_terminals",
+            terminalIds: ["terminal-in", "terminal-out-a", "terminal-out-b"],
+          },
+        ],
+      }),
+    ]);
+    const reorderResult = executeProjectTransaction(project, {
+      transactionId: "reorder-port",
+      projectId: project.id,
+      expectedStructureRevision: project.structureRevision,
+      actor: { kind: "human", id: "test" },
+      edits: reorderEdits,
+    });
+    expect(reorderResult.ok).toBe(true);
+    expect(
+      reorderResult.project.documents[0]!.netlist!.terminals.map(
+        (terminal) => terminal.id,
+      ),
+    ).toEqual(["terminal-in", "terminal-out-a", "terminal-out-b"]);
+  });
+
   it("renames a Cell Pin to an existing name without merging identity or Net", () => {
     const project = createEmptyProject("project", "Project");
     const document = project.documents[0]!;
@@ -567,7 +774,7 @@ describe("reviewed external MOS model targets", () => {
 
   it("creates a SKY130 interface and atomically adopts its ngspice X reference", () => {
     const project = projectWithNmos();
-    const edits = planSetMosModelTarget(
+    const edits = planSetDeviceModelTarget(
       project,
       project.topDocumentId,
       "M1",
@@ -596,7 +803,7 @@ describe("reviewed external MOS model targets", () => {
     });
     expect(instance).toMatchObject({
       symbolId: "nmos",
-      reference: "XM1",
+      reference: "M1",
       netlist: {
         parameters: { w: "2u", l: "150n", m: "2" },
         binding: { kind: "external-subcircuit" },
@@ -624,7 +831,7 @@ describe("reviewed external MOS model targets", () => {
       projectId: project.id,
       expectedStructureRevision: project.structureRevision,
       actor: { kind: "human", id: "test" },
-      edits: planSetMosModelTarget(
+      edits: planSetDeviceModelTarget(
         project,
         project.topDocumentId,
         "M1",
@@ -659,7 +866,7 @@ describe("reviewed external MOS model targets", () => {
       projectId: source.id,
       expectedStructureRevision: source.structureRevision,
       actor: { kind: "human", id: "test" },
-      edits: planSetMosModelTarget(
+      edits: planSetDeviceModelTarget(
         source,
         source.topDocumentId,
         "M1",
@@ -674,7 +881,7 @@ describe("reviewed external MOS model targets", () => {
       projectId: project.id,
       expectedStructureRevision: project.structureRevision,
       actor: { kind: "human", id: "test" },
-      edits: planSetMosModelTarget(
+      edits: planSetDeviceModelTarget(
         project,
         project.topDocumentId,
         "M1",
@@ -697,7 +904,7 @@ describe("reviewed external MOS model targets", () => {
   it("rejects a PFET master on an NMOS symbol", () => {
     const project = projectWithNmos();
     expect(() =>
-      planSetMosModelTarget(
+      planSetDeviceModelTarget(
         project,
         project.topDocumentId,
         "M1",
@@ -753,7 +960,7 @@ describe("reviewed external MOS model targets", () => {
       if (!result.ok) continue;
       expect(result.project.documents[0]!.instances[0]).toMatchObject({
         symbolId: fixture.symbolId,
-        reference: `X${fixture.reference}`,
+        reference: fixture.reference,
         netlist: {
           binding: { kind: "external-subcircuit" },
           parameters: fixture.parameters,
@@ -818,7 +1025,7 @@ describe("reviewed external MOS model targets", () => {
     if (!external.ok) return;
     expect(external.project.documents[0]!.instances[0]).toMatchObject({
       symbolId: "pnp",
-      reference: "XQ1",
+      reference: "Q1",
       netlist: {
         binding: { kind: "external-subcircuit" },
         parameters: {},
@@ -853,7 +1060,7 @@ describe("reviewed external MOS model targets", () => {
     });
   });
 
-  it("refuses a Model transition when its canonical X reference is occupied", () => {
+  it("does not rename devices when an exported X reference would be occupied", () => {
     const project = projectWithNmos();
     project.documents[0]!.instances.push({
       id: "existing-external",
@@ -862,14 +1069,23 @@ describe("reviewed external MOS model targets", () => {
       reference: "XM1",
       netlist: { parameters: {} },
     });
-
-    expect(() =>
-      planSetMosModelTarget(
-        project,
-        project.topDocumentId,
-        "M1",
-        "sky130_fd_pr__nfet_01v8",
-      ),
-    ).toThrow(/Reference XM1 is already used/u);
+    const edits = planSetDeviceModelTarget(
+      project,
+      project.topDocumentId,
+      "M1",
+      "sky130_fd_pr__nfet_01v8",
+    );
+    const result = executeProjectTransaction(project, {
+      transactionId: "preserve-names",
+      projectId: project.id,
+      expectedStructureRevision: project.structureRevision,
+      actor: { kind: "human", id: "test" },
+      edits,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(
+        result.project.documents[0]!.instances.map((i) => i.reference),
+      ).toEqual(["M1", "XM1"]);
   });
 });

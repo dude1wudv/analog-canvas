@@ -1,5 +1,50 @@
 /* Editor dialog owner: modal editor workflows and their responsive layout contracts. */
 
+.cell-parameter-popover {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(17rem, calc(100vw - 1rem));
+  max-height: calc(100dvh - 1rem);
+  overflow: auto;
+  padding: 0.65rem;
+  border: 1px solid var(--icm-border-strong);
+  border-radius: var(--icm-radius-md);
+  background: var(--icm-surface);
+  color: var(--icm-text);
+  box-shadow: var(--icm-shadow-lg);
+  font-size: var(--icm-font-sm);
+}
+.cell-parameter-popover form {
+  display: grid;
+  gap: 0.5rem;
+}
+.cell-parameter-popover header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.cell-parameter-popover header button {
+  margin-left: auto;
+}
+.cell-parameter-popover label {
+  display: grid;
+  grid-template-columns: 3.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.35rem;
+}
+.cell-parameter-popover input {
+  width: 100%;
+  min-width: 0;
+}
+.cell-parameter-popover p {
+  margin: 0;
+}
+.cell-parameter-popover footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .insert-dialog-backdrop {
   position: fixed;
   z-index: 80;
@@ -9,106 +54,6 @@
   padding: 1.25rem;
   background: rgb(55 53 47 / 28%);
   backdrop-filter: blur(4px);
-}
-
-.port-setup-backdrop {
-  position: fixed;
-  z-index: 80;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 1.25rem;
-  background: rgb(55 53 47 / 28%);
-  backdrop-filter: blur(4px);
-}
-
-.port-setup-dialog {
-  display: grid;
-  gap: 1rem;
-  width: min(23rem, calc(100vw - 2.5rem));
-  max-height: calc(100dvh - 2.5rem);
-  padding: 1rem;
-  overflow: auto;
-  border: 1px solid var(--icm-border-strong);
-  border-radius: var(--icm-radius-lg);
-  color: var(--icm-text);
-  background: var(--icm-surface);
-  box-shadow: var(--icm-shadow-lg);
-}
-
-.port-setup-dialog header p,
-.port-setup-dialog header h2,
-.port-setup-error {
-  margin: 0;
-}
-
-.port-setup-dialog header p {
-  color: var(--icm-text-muted);
-  font-size: var(--icm-font-xs);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.port-setup-dialog header h2 {
-  margin-top: 0.15rem;
-  font-size: 16px;
-}
-
-.port-setup-fields {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.port-setup-fields fieldset {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.55rem 0.9rem;
-  margin: 0;
-  padding: 0.65rem;
-  border: 1px solid var(--icm-border);
-  border-radius: var(--icm-radius-md);
-}
-
-.port-setup-fields legend,
-.port-setup-fields label > span {
-  color: var(--icm-text-muted);
-  font-size: var(--icm-font-sm);
-}
-
-.port-setup-fields fieldset label {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: var(--icm-font-sm);
-}
-
-.port-setup-fields > label {
-  display: grid;
-  gap: 0.3rem;
-}
-
-.port-setup-fields input:not([type="radio"]),
-.port-setup-fields select {
-  min-width: 0;
-  min-height: var(--icm-control-h-lg);
-  padding: 0.4rem 0.5rem;
-  border: 1px solid var(--icm-border);
-  border-radius: var(--icm-radius-sm);
-  color: var(--icm-text);
-  background: var(--icm-surface);
-  font: inherit;
-}
-
-.port-setup-error {
-  color: var(--icm-error);
-  font-size: var(--icm-font-sm);
-}
-
-.port-setup-dialog footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
 }
 
 /* The Insert dialog is a one-glance speed picker: every candidate tiles into
@@ -130,6 +75,27 @@
   color: var(--icm-text);
   background: var(--icm-surface);
   box-shadow: var(--icm-shadow-lg);
+}
+
+/* Cell placement shares picker behavior, not the Library's wide layout. */
+.insert-cell-dialog {
+  width: min(57.6rem, calc(60vw - 1.5rem));
+  min-width: min(22rem, calc(100vw - 2.5rem));
+  height: min(36rem, calc(100dvh - 2.5rem));
+}
+
+.insert-cell-dialog .insert-tile-grid {
+  grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+  grid-auto-rows: max-content;
+}
+
+.insert-cell-dialog .insert-tile {
+  gap: 0.375rem;
+  padding: 0.625rem 0.4375rem 0.5625rem;
+}
+
+.insert-cell-dialog .insert-tile .insert-symbol-artwork {
+  height: 4.25rem;
 }
 
 .insert-dialog-header,
@@ -285,7 +251,7 @@
 .cell-manager-dialog {
   position: relative;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   width: min(64rem, calc(100vw - 2.5rem));
   height: min(34rem, calc(100dvh - 2.5rem));
   overflow: hidden;
@@ -332,6 +298,18 @@
   font-size: var(--icm-font-lg);
 }
 
+.cell-manager-resource-tabs {
+  display: flex;
+  gap: var(--icm-space-2);
+  padding: var(--icm-space-2) var(--icm-space-4);
+  border-bottom: 1px solid var(--icm-border);
+}
+
+.cell-manager-resource-tabs button[aria-pressed="true"] {
+  background: var(--icm-surface-muted);
+  font-weight: 700;
+}
+
 .cell-manager-body {
   display: grid;
   grid-template-columns: 15rem minmax(0, 1fr);
@@ -339,8 +317,8 @@
 }
 
 .cell-manager-list {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   border-right: 1px solid var(--icm-border);
   background: var(--icm-surface-muted);
@@ -360,6 +338,7 @@
 }
 
 .cell-manager-list-scroll {
+  flex: 1 1 0;
   min-height: 0;
   padding: 0 var(--icm-space-2);
   overflow-y: auto;
@@ -419,6 +398,7 @@
 }
 
 .cell-manager-new {
+  flex: 0 0 auto;
   margin: var(--icm-space-2);
 }
 
@@ -436,10 +416,16 @@
 
 .cell-manager-title-row,
 .cell-manager-actions,
+.cell-interface-header-actions,
 .cell-interface-order-actions {
   display: flex;
   align-items: center;
   gap: var(--icm-space-1);
+}
+
+.cell-interface-header-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .cell-manager-title-row h3 {
@@ -471,8 +457,11 @@
   gap: var(--icm-space-3);
 }
 
+.cell-interface-grid:not(:has(.cell-parameter-list)) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .cell-interface-section,
-.cell-external-interface,
 .cell-manager-callers {
   min-width: 0;
   border: 1px solid var(--icm-border);
@@ -519,6 +508,23 @@
   gap: 4px;
 }
 
+.cell-interface-port-name {
+  display: grid;
+  min-width: 0;
+  line-height: var(--icm-line);
+}
+
+.cell-interface-port-name strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell-interface-port-name small {
+  color: var(--icm-text-muted);
+  font-size: var(--icm-font-xs);
+}
+
 .cell-interface-order {
   color: var(--icm-text-muted);
   font-size: var(--icm-font-xs);
@@ -553,10 +559,72 @@
   padding: 0;
 }
 
+.cell-hierarchy-tree ul {
+  list-style: none;
+  padding-left: 12px;
+  margin: 4px 0;
+}
+
+.cell-hierarchy-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cell-hierarchy-row button {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 3px 5px;
+}
+
 .cell-parameter-row {
   display: grid;
-  grid-template-columns: minmax(5rem, 1fr) minmax(5rem, 1fr) 28px;
+  grid-template-columns: minmax(4rem, 1fr) minmax(4rem, 1fr) 28px;
+  align-items: center;
   gap: 4px;
+}
+
+.cell-manager-name {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-weight: 600;
+  border: 1px solid transparent;
+  background: transparent;
+}
+.cell-manager-name:hover,
+.cell-manager-name:focus {
+  border-color: var(--icm-border-strong);
+}
+.cell-manager-entry {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-top: 2px solid transparent;
+}
+.cell-manager-entry .cell-manager-list-item {
+  flex: 1;
+  min-width: 0;
+}
+.cell-manager-entry[data-drop="active"] {
+  border-color: var(--icm-accent);
+  background: var(--icm-accent-soft);
+}
+.cell-drop-hint {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  background: var(--icm-surface);
+  color: var(--icm-accent);
+}
+.cell-manager-drop-end {
+  min-height: 1.6rem;
+  color: var(--icm-text-muted);
+  font-size: var(--icm-font-xs);
+  text-align: center;
 }
 
 .cell-inline-action {
@@ -568,8 +636,8 @@
   margin-top: auto;
 }
 
-.cell-external-interface summary,
-.cell-manager-callers summary {
+.cell-manager-callers summary,
+.cell-manager-danger-zone summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -581,15 +649,9 @@
   font-weight: 600;
 }
 
-.cell-external-interface summary::-webkit-details-marker,
-.cell-manager-callers summary::-webkit-details-marker {
+.cell-manager-callers summary::-webkit-details-marker,
+.cell-manager-danger-zone summary::-webkit-details-marker {
   display: none;
-}
-
-.cell-external-interface summary small {
-  color: var(--icm-text-muted);
-  font-size: var(--icm-font-xs);
-  font-weight: 500;
 }
 
 .cell-external-grid {
@@ -615,6 +677,27 @@
 
 .cell-manager-callers {
   margin-top: var(--icm-space-3);
+}
+
+.cell-manager-danger-zone {
+  margin-top: var(--icm-space-3);
+  border: 1px solid var(--icm-danger);
+  border-radius: var(--icm-radius-md);
+  background: var(--icm-surface);
+}
+
+.cell-manager-danger-zone > p {
+  margin: 0;
+  padding: 0 var(--icm-space-3) var(--icm-space-2);
+  color: var(--icm-text-muted);
+  font-size: var(--icm-font-xs);
+}
+
+.cell-manager-reset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--icm-space-2);
+  padding: 0 var(--icm-space-3) var(--icm-space-3);
 }
 
 .cell-manager-callers ul {
@@ -726,125 +809,6 @@
   border-color: var(--icm-danger, #b42318);
   color: #fff;
   background: var(--icm-danger, #b42318);
-}
-
-/* Document style knobs: one settings row per knob, sharing the publish
-   dialog's card so the two modals read as one family. */
-.style-dialog {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-  width: min(30rem, 100%);
-  max-height: 100%;
-  overflow-y: auto;
-  padding: 1.5rem;
-  border: 1px solid var(--icm-border);
-  border-radius: 14px;
-  background: var(--icm-surface);
-  box-shadow: 0 24px 48px rgb(15 15 15 / 18%);
-}
-
-.style-dialog-header p {
-  margin: 0;
-  color: var(--icm-text-muted);
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.style-dialog-header h2 {
-  margin: 0.3rem 0 0;
-  font-size: 1.3rem;
-}
-
-.style-dialog-knobs {
-  display: flex;
-  flex-direction: column;
-}
-
-.style-dialog-knob {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.7rem 0;
-  border-top: 1px solid var(--icm-border);
-}
-
-.style-dialog-knob:last-child {
-  border-bottom: 1px solid var(--icm-border);
-}
-
-.style-dialog-knob-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  min-width: 0;
-}
-
-.style-dialog-knob-label {
-  color: var(--icm-text);
-  font-size: 0.85rem;
-  font-weight: 500;
-}
-
-.style-dialog-knob-description {
-  color: var(--icm-text-muted);
-  font-size: 0.75rem;
-  line-height: 1.35;
-}
-
-.style-dialog-knob-control select {
-  min-width: 8.5rem;
-  padding: 0.4rem 0.6rem;
-  border: 1px solid var(--icm-border);
-  border-radius: 8px;
-  color: var(--icm-text);
-  background: var(--icm-surface);
-  font: inherit;
-  font-size: 0.85rem;
-}
-
-.style-dialog-knob-control select[data-changed="true"] {
-  border-color: var(--icm-accent);
-  color: var(--icm-accent);
-  font-weight: 600;
-}
-
-.style-dialog-knob-control select:focus-visible {
-  border-color: var(--icm-accent);
-  outline: none;
-  box-shadow: 0 0 0 3px var(--icm-accent-soft);
-}
-
-.style-dialog-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.style-dialog-reset,
-.style-dialog-primary {
-  padding: 0.5rem 0.9rem;
-  border: 1px solid var(--icm-border);
-  border-radius: 8px;
-  background: var(--icm-surface);
-  font: inherit;
-  font-size: 0.85rem;
-}
-
-.style-dialog-reset:disabled {
-  color: var(--icm-text-disabled);
-  cursor: default;
-}
-
-.style-dialog-primary {
-  border-color: transparent;
-  color: #fff;
-  background: var(--icm-accent);
-  font-weight: 600;
 }
 
 .netlist-preview {

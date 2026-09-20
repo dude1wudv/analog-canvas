@@ -3,6 +3,7 @@
   "ignoredPaths": [
     ".pnpm-store/**",
     ".worktrees/**",
+    ".claude/worktrees/**",
     "node_modules/**",
     "output/**",
     "test-results/**",
@@ -23,6 +24,8 @@
       "apps/editor/src/features/instance-display/**",
       "apps/editor/src/features/search/**",
       "apps/editor/src/features/text-editing/**",
+      "apps/editor/src/styles/editor-dialogs.css",
+      "apps/editor/src/styles/editor-workspace.css",
       "apps/editor/e2e/bound-label-mirror.spec.ts",
       "apps/editor/e2e/drafting.spec.ts",
       "apps/editor/e2e/instance-table.spec.ts",
@@ -72,16 +75,18 @@
       "apps/editor/src/canvas/canvas-viewport*",
       "apps/editor/src/canvas/editor-canvas-surface.tsx",
       "apps/editor/src/canvas/fit-view*",
-      "apps/editor/e2e/wheel-behavior.spec.ts"
+      "apps/editor/e2e/wheel-behavior.spec.ts",
+      "apps/editor/e2e/performance.spec.ts",
+      "apps/editor/e2e/performance-fixture.ts"
     ],
     "editorWiring": [
       "apps/editor/src/canvas/editor-wiring-overlay*",
       "apps/editor/src/features/wiring/**",
+      "packages/derived/src/contact-target*",
       "apps/editor/e2e/wiring-semantics.spec.ts"
     ],
     "placementNearMiss": [
-      "apps/editor/src/features/component-insert/placement-near-miss*",
-      "apps/editor/e2e/placement-near-miss.spec.ts"
+      "apps/editor/src/features/component-insert/placement-near-miss*"
     ],
     "thinTargetHit": [
       "apps/editor/src/canvas/canvas-hit-controller.ts",
@@ -91,7 +96,6 @@
     ],
     "emptyLabelGhost": [
       "packages/derived/src/annotation-presentation.ts",
-      "packages/devices/src/descriptors/*switch*",
       "apps/editor/e2e/empty-label-ghost.spec.ts"
     ],
     "symbolBodyText": [
@@ -102,6 +106,12 @@
       "apps/editor/src/features/component-insert/**",
       "apps/editor/e2e/component-insert.spec.ts",
       "apps/editor/e2e/component-properties-catalog.spec.ts"
+    ],
+    "userComponents": [
+      "apps/editor/src/features/user-components/**",
+      "apps/editor/src/features/editor-shell/shapes-panel.tsx",
+      "worker/component-library*",
+      "apps/editor/e2e/user-components.spec.ts"
     ],
     "hierarchy": [
       "apps/editor/src/features/hierarchy/**",
@@ -119,7 +129,8 @@
       "apps/editor/e2e/recovery-dialog.spec.ts",
       "apps/editor/e2e/recovery-hardening.spec.ts",
       "packages/model/**",
-      "packages/project-protocol/**"
+      "packages/project-protocol/**",
+      "apps/editor/e2e/project-source-format.spec.ts"
     ],
     "gallery": [
       "worker/auth.ts",
@@ -142,8 +153,6 @@
       "apps/editor/src/features/editor-shell/gallery-publish.test.ts",
       "apps/editor/src/features/editor-shell/publish-gallery-dialog.tsx",
       "apps/editor/src/features/editor-shell/publish-gallery-dialog.test.tsx",
-      "apps/editor/src/features/editor-shell/workspace-shelf.ts",
-      "apps/editor/src/features/editor-shell/workspace-shelf.test.ts",
       "apps/editor/e2e/gallery.spec.ts"
     ],
     "agent": [
@@ -166,6 +175,8 @@
       "apps/editor/e2e/simulation-setup.spec.ts",
       "apps/editor/e2e/simulation-workspace.spec.ts",
       "packages/simulation-service/**",
+      "packages/spice/src/simulation-language.ts",
+      "packages/spice/src/syntax.ts",
       "packages/spice-run/**",
       "packages/netlist/src/simulation-compile*",
       "packages/netlist/src/source-waveform*",
@@ -202,6 +213,9 @@
     ],
     "gateContract": [
       ".github/workflows/**",
+      ".github/actions/**",
+      "scripts/release-route.mjs",
+      "scripts/lib/release-route*.mjs",
       "AGENTS.md",
       "package.json",
       "pnpm-lock.yaml",
@@ -249,6 +263,17 @@
       "apps/editor/src/features/selection/**",
       "apps/editor/src/features/text-editing/**",
       "apps/editor/src/document/**",
+      "apps/editor/src/examples/*.icproj.json",
+      "apps/editor/src/features/editor-shell/gallery-example-commands.ts",
+      "apps/editor/src/features/project-code/project-text-editor.tsx",
+      "packages/spice/src/syntax.ts",
+      "packages/netlist/src/extract.ts",
+      "packages/netlist/src/export.ts",
+      "packages/netlist/src/printed-netlist.ts",
+      "packages/netlist/src/printers.ts",
+      "packages/derived/src/mos-bulk.ts",
+      "apps/editor/e2e/editor-fixtures.ts",
+      "apps/editor/e2e/netlist-code-edit.spec.ts",
       "apps/editor/e2e/netlist-workflows.spec.ts",
       "apps/editor/e2e/netlist-conversion.spec.ts",
       "apps/editor/e2e/manual-editor-fixtures.ts"
@@ -286,7 +311,7 @@
     {
       "id": "component-insert-browser",
       "stage": "affected",
-      "groups": ["componentInsert"],
+      "groups": ["componentInsert", "placementNearMiss"],
       "description": "Validate component catalog and placement workflows.",
       "command": [
         "pnpm",
@@ -302,6 +327,20 @@
       }
     },
     {
+      "id": "user-components-browser",
+      "stage": "affected",
+      "groups": ["userComponents"],
+      "description": "Validate shared component creation, isolated editing, insertion and administration.",
+      "command": [
+        "pnpm",
+        "test:e2e:local",
+        "apps/editor/e2e/user-components.spec.ts"
+      ],
+      "ci": {
+        "e2eArgs": ["apps/editor/e2e/user-components.spec.ts"]
+      }
+    },
+    {
       "id": "hierarchy-browser",
       "stage": "affected",
       "groups": ["hierarchy"],
@@ -311,7 +350,9 @@
         "test:e2e:local",
         "apps/editor/e2e/hierarchy.spec.ts"
       ],
-      "ci": { "e2eArgs": ["apps/editor/e2e/hierarchy.spec.ts"] }
+      "ci": {
+        "e2eArgs": ["apps/editor/e2e/hierarchy.spec.ts"]
+      }
     },
     {
       "id": "project-file-browser",
@@ -328,7 +369,8 @@
           "apps/editor/e2e/auto-fit.spec.ts",
           "apps/editor/e2e/project-file.spec.ts",
           "apps/editor/e2e/recovery-dialog.spec.ts",
-          "apps/editor/e2e/recovery-hardening.spec.ts"
+          "apps/editor/e2e/recovery-hardening.spec.ts",
+          "apps/editor/e2e/project-source-format.spec.ts"
         ]
       }
     },
@@ -338,7 +380,9 @@
       "groups": ["gallery"],
       "description": "Validate Gallery, account, submission, moderation, and workspace workflows.",
       "command": ["pnpm", "test:e2e:local", "apps/editor/e2e/gallery.spec.ts"],
-      "ci": { "e2eArgs": ["apps/editor/e2e/gallery.spec.ts"] }
+      "ci": {
+        "e2eArgs": ["apps/editor/e2e/gallery.spec.ts"]
+      }
     },
     {
       "id": "agent-browser",
@@ -421,11 +465,13 @@
       "command": [
         "pnpm",
         "test:e2e:local",
+        "apps/editor/e2e/netlist-code-edit.spec.ts",
         "apps/editor/e2e/netlist-workflows.spec.ts",
         "apps/editor/e2e/netlist-conversion.spec.ts"
       ],
       "ci": {
         "e2eArgs": [
+          "apps/editor/e2e/netlist-code-edit.spec.ts",
           "apps/editor/e2e/netlist-workflows.spec.ts",
           "apps/editor/e2e/netlist-conversion.spec.ts"
         ]
@@ -525,9 +571,15 @@
       "command": [
         "pnpm",
         "test:e2e:local",
-        "apps/editor/e2e/wheel-behavior.spec.ts"
+        "apps/editor/e2e/wheel-behavior.spec.ts",
+        "apps/editor/e2e/performance.spec.ts"
       ],
-      "ci": { "e2eArgs": ["apps/editor/e2e/wheel-behavior.spec.ts"] }
+      "ci": {
+        "e2eArgs": [
+          "apps/editor/e2e/wheel-behavior.spec.ts",
+          "apps/editor/e2e/performance.spec.ts"
+        ]
+      }
     },
     {
       "id": "editor-wiring-browser",
@@ -539,19 +591,9 @@
         "test:e2e:local",
         "apps/editor/e2e/wiring-semantics.spec.ts"
       ],
-      "ci": { "e2eArgs": ["apps/editor/e2e/wiring-semantics.spec.ts"] }
-    },
-    {
-      "id": "placement-near-miss-browser",
-      "stage": "affected",
-      "groups": ["placementNearMiss"],
-      "description": "Validate near-miss feedback for component placement.",
-      "command": [
-        "pnpm",
-        "test:e2e:local",
-        "apps/editor/e2e/placement-near-miss.spec.ts"
-      ],
-      "ci": { "e2eArgs": ["apps/editor/e2e/placement-near-miss.spec.ts"] }
+      "ci": {
+        "e2eArgs": ["apps/editor/e2e/wiring-semantics.spec.ts"]
+      }
     },
     {
       "id": "thin-target-hit-browser",
@@ -581,7 +623,9 @@
         "test:e2e:local",
         "apps/editor/e2e/empty-label-ghost.spec.ts"
       ],
-      "ci": { "e2eArgs": ["apps/editor/e2e/empty-label-ghost.spec.ts"] }
+      "ci": {
+        "e2eArgs": ["apps/editor/e2e/empty-label-ghost.spec.ts"]
+      }
     },
     {
       "id": "symbol-body-text-browser",
@@ -593,7 +637,9 @@
         "test:e2e:local",
         "apps/editor/e2e/symbol-body-text.spec.ts"
       ],
-      "ci": { "e2eArgs": ["apps/editor/e2e/symbol-body-text.spec.ts"] }
+      "ci": {
+        "e2eArgs": ["apps/editor/e2e/symbol-body-text.spec.ts"]
+      }
     },
     {
       "id": "release-verification",
@@ -621,6 +667,7 @@
         "static-contracts",
         "workspace-unit",
         "component-insert-browser",
+        "user-components-browser",
         "hierarchy-browser",
         "project-file-browser",
         "gallery-browser",
@@ -633,7 +680,6 @@
         "editor-selection-browser",
         "editor-viewport-browser",
         "editor-wiring-browser",
-        "placement-near-miss-browser",
         "thin-target-hit-browser",
         "empty-label-ghost-browser",
         "symbol-body-text-browser",

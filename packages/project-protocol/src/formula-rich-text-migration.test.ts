@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { createEmptyProject } from "@icm/model";
 
-import { serializeProject } from "./save.js";
 import {
   upgradeSchema29To30,
   upgradeSchema29To30WithReport,
@@ -11,7 +10,7 @@ import {
 describe("schema 29 to 30 migration (formula RichText)", () => {
   it("changes only the version stamp", () => {
     const current = JSON.parse(
-      serializeProject(createEmptyProject("formula", "Formula")),
+      JSON.stringify(createEmptyProject("formula", "Formula")),
     ) as Record<string, unknown>;
     const previous = { ...current, schemaVersion: 29 };
 

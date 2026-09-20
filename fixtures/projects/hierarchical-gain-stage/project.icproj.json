@@ -1,0 +1,509 @@
+{
+  "componentDefinitions": [
+    {
+      "generatedFrom": {
+        "name": "GainStage",
+        "terminals": [
+          {
+            "direction": "input",
+            "id": "cell-terminal-vin",
+            "name": "VIN",
+            "nameContent": {
+              "runs": [
+                {
+                  "children": [
+                    {
+                      "children": [
+                        {
+                          "kind": "text",
+                          "value": "VIN"
+                        }
+                      ],
+                      "kind": "span",
+                      "style": "bold"
+                    }
+                  ],
+                  "kind": "span",
+                  "style": "italic"
+                }
+              ]
+            }
+          },
+          {
+            "direction": "output",
+            "id": "cell-terminal-vout",
+            "name": "VOUT",
+            "nameContent": {
+              "runs": [
+                {
+                  "children": [
+                    {
+                      "children": [
+                        {
+                          "kind": "text",
+                          "value": "VOUT"
+                        }
+                      ],
+                      "kind": "span",
+                      "style": "bold"
+                    }
+                  ],
+                  "kind": "span",
+                  "style": "italic"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "symbol": {
+        "hierarchicalBlock": true,
+        "id": "hierarchical-symbol-a9810aa8736f5be5",
+        "name": "GainStage",
+        "pins": [
+          {"at": {"x": -60, "y": 0}, "direction": "west", "name": "VIN", "presentation": {"leadLength": 10, "nameContent": {"runs": [{"children": [{"children": [{"kind": "text", "value": "VIN"}], "kind": "span", "style": "bold"}], "kind": "span", "style": "italic"}]}, "showName": true, "visibility": "visible"}, "role": "hierarchical-port"},
+          {"at": {"x": 60, "y": 0}, "direction": "east", "name": "VOUT", "presentation": {"leadLength": 10, "nameContent": {"runs": [{"children": [{"children": [{"kind": "text", "value": "VOUT"}], "kind": "span", "style": "bold"}], "kind": "span", "style": "italic"}]}, "showName": true, "visibility": "visible"}, "role": "hierarchical-port"}
+        ],
+        "primitives": [
+          {"fill": "none", "kind": "polygon", "points": [{"x": -50, "y": -20}, {"x": 50, "y": -20}, {"x": 50, "y": 20}, {"x": -50, "y": 20}], "stroke": "foreground"},
+          {"from": {"x": -60, "y": 0}, "kind": "line", "to": {"x": -50, "y": 0}},
+          {"from": {"x": 60, "y": 0}, "kind": "line", "to": {"x": 50, "y": 0}}
+        ],
+        "schemaVersion": 1,
+        "variants": [],
+        "viewBox": {"height": 60, "width": 120, "x": -60, "y": -30}
+      }
+    },
+    {
+      "electrical": {
+        "capabilities": {
+          "supportsBulkBinding": true,
+          "supportsModel": true,
+          "supportsValueAnnotation": true
+        },
+        "deviceClass": "mos",
+        "dialects": [
+          "spice",
+          "spectre"
+        ],
+        "id": "nmos",
+        "mosBulkClass": "nmos",
+        "parameters": [
+          {"defaultValue": "1u", "displayRole": "width", "editor": "text", "help": "Total channel width", "label": "W", "name": "w", "placeholder": "1u", "required": true, "unitHint": "m"},
+          {"defaultValue": "150n", "displayRole": "length", "editor": "text", "help": "Channel length", "label": "L", "name": "l", "placeholder": "150n", "required": true, "unitHint": "m"},
+          {"defaultValue": "1", "displayRole": "finger-count", "editor": "decimal", "help": "Finger count, so finger width is W / NF", "label": "NF", "name": "nf", "placeholder": "1", "required": false},
+          {"defaultValue": "1", "displayRole": "multiplier", "editor": "decimal", "help": "Parallel multiplier", "label": "M", "name": "m", "placeholder": "1", "required": false}
+        ],
+        "pinOrder": [
+          "D",
+          "G",
+          "S",
+          "B"
+        ],
+        "referencePrefix": "M",
+        "seriesInsertionPinPair": [
+          "D",
+          "S"
+        ],
+        "symbolId": "nmos",
+        "targetPolicy": "required-model"
+      },
+      "symbol": {
+        "defaultVariantId": "textbook-3terminal",
+        "id": "nmos",
+        "name": "NMOS",
+        "pins": [
+          {"at": {"x": 10, "y": -20}, "direction": "north", "name": "D", "presentation": {"leadLength": 10, "visibility": "visible"}, "role": "drain"},
+          {"at": {"x": -20, "y": 0}, "direction": "west", "name": "G", "presentation": {"leadLength": 10, "visibility": "visible"}, "role": "gate"},
+          {"at": {"x": 10, "y": 20}, "direction": "south", "name": "S", "presentation": {"leadLength": 10, "visibility": "visible"}, "role": "source"},
+          {"at": {"x": 20, "y": 0}, "direction": "east", "name": "B", "presentation": {"leadLength": 10, "visibility": "visible"}, "role": "bulk"}
+        ],
+        "primitives": [
+          {"kind": "polyline", "points": [{"x": -4.244186, "y": -6.976744}, {"x": 10, "y": -6.976744}, {"x": 10, "y": -20}], "style": {"lineCap": "butt", "lineJoin": "miter", "strokeRole": "normal"}},
+          {"kind": "polyline", "part": "source-arrow-host", "points": [{"x": -4.244186, "y": 6.976744}, {"x": 10, "y": 6.976744}, {"x": 10, "y": 20}], "style": {"lineCap": "butt", "lineJoin": "miter", "strokeRole": "normal"}},
+          {"fill": "foreground", "kind": "polygon", "part": "gate-bar", "points": [{"x": -11.802326, "y": -9.593023}, {"x": -11.802326, "y": 9.593023}, {"x": -8.895349, "y": 9.593023}, {"x": -8.895349, "y": -9.593023}], "stroke": "none"},
+          {"fill": "foreground", "kind": "polygon", "part": "gate-bar", "points": [{"x": -6.569767, "y": -12.5}, {"x": -6.569767, "y": 12.5}, {"x": -3.662791, "y": 12.5}, {"x": -3.662791, "y": -12.5}], "stroke": "none"},
+          {"from": {"x": -8.895349, "y": 0}, "kind": "line", "style": {"lineCap": "butt", "lineJoin": "miter", "strokeRole": "normal"}, "to": {"x": -20, "y": 0}},
+          {"from": {"x": -3.662791, "y": 0}, "kind": "line", "part": "bulk-lead", "style": {"lineCap": "butt", "lineJoin": "miter", "strokeRole": "normal"}, "to": {"x": 10, "y": 0}},
+          {"from": {"x": 16.395349, "y": 0}, "kind": "line", "part": "bulk-lead", "style": {"lineCap": "butt", "lineJoin": "miter", "strokeRole": "normal"}, "to": {"x": 20, "y": 0}},
+          {"fill": "foreground", "kind": "polygon", "part": "bulk-lead", "points": [{"x": 10, "y": 0}, {"x": 16.395349, "y": -3.488372}, {"x": 16.395349, "y": 3.488372}], "stroke": "none"}
+        ],
+        "schemaVersion": 1,
+        "variants": [
+          {
+            "additionalPrimitives": [
+              {"kind": "polyline", "part": "source-arrow", "points": [{"x": -3.662791, "y": 6.976744}, {"x": 10, "y": 6.976744}, {"x": 10, "y": 20}], "style": {"lineCap": "butt", "lineJoin": "miter", "strokeRole": "normal"}},
+              {"fill": "foreground", "kind": "polygon", "part": "source-arrow", "points": [{"x": 10.581395, "y": 6.976744}, {"x": 1.27907, "y": 2.906977}, {"x": 1.27907, "y": 11.046512}], "stroke": "none"}
+            ],
+            "auxiliaryPins": [
+              {
+                "at": {"x": -4, "y": 0},
+                "direction": "east",
+                "name": "B",
+                "routing": {
+                  "escape": "outward",
+                  "preferredLanding": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              }
+            ],
+            "hiddenPinNames": [
+              "B"
+            ],
+            "hiddenPrimitiveParts": [
+              "bulk-lead",
+              "source-arrow-host"
+            ],
+            "id": "textbook-3terminal"
+          }
+        ],
+        "viewBox": {"height": 48, "width": 48, "x": -24, "y": -24}
+      }
+    },
+    {
+      "symbol": {
+        "id": "port",
+        "name": "Port",
+        "pins": [
+          {"at": {"x": 0, "y": 0}, "direction": "east", "name": "P", "presentation": {"leadLength": 10, "visibility": "visible"}, "role": "port"}
+        ],
+        "primitives": [
+          {"center": {"x": -7.086614, "y": 0}, "fill": "none", "kind": "circle", "radius": 2.47907, "stroke": "foreground", "style": {"lineCap": "butt", "lineJoin": "miter", "strokeRole": "normal"}},
+          {"from": {"x": 0, "y": 0}, "kind": "line", "style": {"lineCap": "butt", "lineJoin": "miter", "strokeRole": "normal"}, "to": {"x": -4.607544, "y": 0}}
+        ],
+        "schemaVersion": 1,
+        "variants": [],
+        "viewBox": {"height": 14, "width": 18, "x": -14, "y": -7}
+      }
+    },
+    {
+      "electrical": {
+        "capabilities": {
+          "supportsBulkBinding": false,
+          "supportsModel": false,
+          "supportsValueAnnotation": true
+        },
+        "deviceClass": "resistor",
+        "dialects": [
+          "spice",
+          "spectre"
+        ],
+        "id": "resistor",
+        "parameters": [
+          {"defaultValue": "1k", "displayRole": "value", "editor": "text", "help": "Resistance", "label": "Value", "name": "value", "placeholder": "1k", "required": true, "unitHint": "Ohm"}
+        ],
+        "pinOrder": [
+          "1",
+          "2"
+        ],
+        "referencePrefix": "R",
+        "symbolId": "resistor",
+        "targetPolicy": "builtin"
+      },
+      "symbol": {
+        "id": "resistor",
+        "name": "Resistor",
+        "pins": [
+          {"at": {"x": 0, "y": -20}, "direction": "north", "name": "1", "presentation": {"leadLength": 10, "visibility": "visible"}, "role": "passive"},
+          {"at": {"x": 0, "y": 20}, "direction": "south", "name": "2", "presentation": {"leadLength": 10, "visibility": "visible"}, "role": "passive"}
+        ],
+        "primitives": [
+          {"bounds": {"height": 40, "width": 10.360465, "x": -4.988372, "y": -20}, "data": "M 0 -20 L 0 -8.72093 L 5.372093 -6.395349 L -4.604651 -4.069767 L 5.372093 -1.162791 L -4.988372 1.744186 L 5.372093 4.651163 L -4.604651 7.55814 L 0 8.72093 L 0 20", "kind": "path", "style": {"lineCap": "butt", "lineJoin": "miter", "miterLimit": 12, "strokeRole": "normal"}}
+        ],
+        "schemaVersion": 1,
+        "variants": [],
+        "viewBox": {"height": 48, "width": 20, "x": -10, "y": -24}
+      }
+    }
+  ],
+  "documents": [
+    {
+      "annotations": [],
+      "connectivityEvidence": [],
+      "constraints": [],
+      "drafting": {
+        "objects": []
+      },
+      "id": "document-top",
+      "instances": [
+        {
+          "id": "X1",
+          "importProvenance": {
+            "kind": "subcircuit",
+            "sourceMasterName": "GainStage",
+            "sourceTarget": "cell:document-gain-stage",
+            "terminalMapping": [
+              {
+                "pinName": "VIN",
+                "sourcePosition": 0
+              },
+              {
+                "pinName": "VOUT",
+                "sourcePosition": 1
+              }
+            ]
+          },
+          "netlist": {
+            "binding": {
+              "childDocumentId": "document-gain-stage",
+              "kind": "subcircuit"
+            },
+            "parameters": {}
+          },
+          "placement": {
+            "mirror": "none",
+            "position": {
+              "x": 200,
+              "y": 240
+            },
+            "rotation": 0
+          },
+          "reference": "X1",
+          "symbolId": "hierarchical-symbol-a9810aa8736f5be5"
+        },
+        {
+          "id": "X2",
+          "importProvenance": {
+            "kind": "subcircuit",
+            "sourceMasterName": "GainStage",
+            "sourceTarget": "cell:document-gain-stage",
+            "terminalMapping": [
+              {
+                "pinName": "VIN",
+                "sourcePosition": 0
+              },
+              {
+                "pinName": "VOUT",
+                "sourcePosition": 1
+              }
+            ]
+          },
+          "netlist": {
+            "binding": {
+              "childDocumentId": "document-gain-stage",
+              "kind": "subcircuit"
+            },
+            "parameters": {}
+          },
+          "placement": {
+            "mirror": "none",
+            "position": {
+              "x": 620,
+              "y": 240
+            },
+            "rotation": 0
+          },
+          "reference": "X2",
+          "symbolId": "hierarchical-symbol-a9810aa8736f5be5"
+        }
+      ],
+      "junctions": [],
+      "layoutGroups": [],
+      "name": "GainStagePair",
+      "netlist": {
+        "formalParameters": [],
+        "name": "GainStagePair",
+        "terminals": []
+      },
+      "nets": [
+        {
+          "id": "net-top-in",
+          "terminals": [
+            {
+              "instanceId": "X1",
+              "pinName": "VIN"
+            },
+            {
+              "instanceId": "X2",
+              "pinName": "VIN"
+            }
+          ]
+        },
+        {
+          "id": "net-top-out",
+          "terminals": [
+            {
+              "instanceId": "X1",
+              "pinName": "VOUT"
+            },
+            {
+              "instanceId": "X2",
+              "pinName": "VOUT"
+            }
+          ]
+        }
+      ],
+      "noConnects": [],
+      "presentation": {
+        "compactness": "normal",
+        "grid": 10,
+        "styleProfileId": "razavi-textbook-v1"
+      },
+      "revision": 0,
+      "routes": [],
+      "sourceStatus": "in-sync"
+    },
+    {
+      "annotations": [],
+      "connectivityEvidence": [],
+      "constraints": [],
+      "drafting": {
+        "objects": []
+      },
+      "id": "document-gain-stage",
+      "instances": [
+        {
+          "id": "P1",
+          "placement": {
+            "mirror": "none",
+            "position": {
+              "x": 120,
+              "y": 120
+            },
+            "rotation": 0
+          },
+          "symbolId": "port"
+        },
+        {
+          "id": "P2",
+          "placement": {
+            "mirror": "none",
+            "position": {
+              "x": 400,
+              "y": 120
+            },
+            "rotation": 180
+          },
+          "symbolId": "port"
+        },
+        {
+          "id": "M1",
+          "placement": {
+            "mirror": "none",
+            "position": {
+              "x": 260,
+              "y": 180
+            },
+            "rotation": 0
+          },
+          "reference": "M1",
+          "symbolId": "nmos"
+        },
+        {
+          "id": "R1",
+          "placement": {
+            "mirror": "none",
+            "position": {
+              "x": 260,
+              "y": 300
+            },
+            "rotation": 0
+          },
+          "reference": "R1",
+          "symbolId": "resistor"
+        }
+      ],
+      "junctions": [],
+      "layoutGroups": [],
+      "name": "GainStage",
+      "netlist": {
+        "formalParameters": [],
+        "name": "GainStage",
+        "terminals": [
+          {
+            "direction": "input",
+            "id": "cell-terminal-vin",
+            "interfaceInstanceIds": [
+              "P1"
+            ],
+            "name": "VIN",
+            "netId": "net-in"
+          },
+          {
+            "direction": "output",
+            "id": "cell-terminal-vout",
+            "interfaceInstanceIds": [
+              "P2"
+            ],
+            "name": "VOUT",
+            "netId": "net-out"
+          }
+        ]
+      },
+      "nets": [
+        {
+          "id": "net-in",
+          "terminals": [
+            {
+              "instanceId": "P1",
+              "pinName": "P"
+            },
+            {
+              "instanceId": "M1",
+              "pinName": "G"
+            }
+          ]
+        },
+        {
+          "id": "net-out",
+          "terminals": [
+            {
+              "instanceId": "P2",
+              "pinName": "P"
+            },
+            {
+              "instanceId": "M1",
+              "pinName": "D"
+            },
+            {
+              "instanceId": "R1",
+              "pinName": "1"
+            }
+          ]
+        },
+        {
+          "id": "net-common",
+          "terminals": [
+            {
+              "instanceId": "M1",
+              "pinName": "S"
+            },
+            {
+              "instanceId": "R1",
+              "pinName": "2"
+            }
+          ]
+        }
+      ],
+      "noConnects": [],
+      "presentation": {
+        "compactness": "normal",
+        "grid": 10,
+        "styleProfileId": "razavi-textbook-v1"
+      },
+      "revision": 0,
+      "routes": [],
+      "sourceStatus": "in-sync"
+    }
+  ],
+  "externalSubcircuitDefinitions": [],
+  "id": "project-hierarchical-gain-stage",
+  "name": "Hierarchical Gain Stage",
+  "schemaVersion": 58,
+  "simulationFolders": [],
+  "source": {
+    "dialect": "none",
+    "entry": null,
+    "files": [],
+    "sourcePolicy": "copy"
+  },
+  "structureRevision": 0,
+  "symbolLibrary": {
+    "hash": "razavi-reference-v1",
+    "id": "razavi-symbols",
+    "version": "1"
+  },
+  "topDocumentId": "document-top"
+}

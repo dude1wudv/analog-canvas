@@ -38,22 +38,30 @@ export interface TextEditingSession {
   alignment: "start" | "middle" | "end";
   /** Object default while editing; authored content records explicit weights. */
   defaultBold?: boolean;
+  defaultItalic?: boolean;
   contentEdited?: boolean;
+  /** True once the user explicitly changes presentation rather than text. */
+  formatEdited?: boolean;
   /** Net/terminal/value displays edit their source; Instance labels edit presentation. */
   bound: boolean;
   bindingKind?: AnnotationTextBinding["kind"];
-  /** Electrical identifiers use a compact single-line editor on the canvas. */
-  plainTextKind?: "net-label" | "route-marker";
-  /** Instance whose visual annotation is being edited; never a rename target. */
+  /** Route markers are literal single-line fields, not semantic name bindings. */
+  plainTextKind?: "route-marker";
+  /** Instance whose name or explicit display alias is being edited. */
   visualInstanceId?: string;
-  /** Explicit restoration requested within the session, committed by Apply. */
-  restoreReference?: boolean;
+  /** False follows/edits the electrical Reference; true owns display text. */
+  displayAlias?: boolean;
   /** Symbol body text only: what the Symbol draws with no override. */
   defaultFormula?: string;
 }
 
 export type TextEditingCommitProposal =
-  | { kind: "update"; edit: SchematicEdit; id: string }
+  | {
+      kind: "update";
+      edit: SchematicEdit;
+      beforeEdits?: SchematicEdit[];
+      id: string;
+    }
   | { kind: "delete"; edit: SchematicEdit; id: string }
   | { kind: "unchanged" }
   | { kind: "blocked" };
@@ -65,6 +73,16 @@ export function createTextEditingSession(
   if (target.owner === "annotation") {
     const annotation = target.object;
     const anchor = annotation.anchor;
+    const content = document
+      ? resolveAnnotationText(document, annotation)
+      : (annotation.content ?? { runs: [] });
+    const automaticTerminalOverride =
+      annotation.binding?.kind === "cell-terminal-name" &&
+      annotation.formatOverride !== undefined &&
+      richTextEqual(
+        annotation.formatOverride,
+        semanticTextDocument(flattenRichText(content), "formal-port"),
+      );
     const instanceId =
       annotation.binding?.kind === "instance-reference"
         ? annotation.binding.instanceId
@@ -74,27 +92,25 @@ export function createTextEditingSession(
     return {
       owner: "annotation",
       id: annotation.id,
-      content: document
-        ? resolveAnnotationText(document, annotation)
-        : (annotation.content ?? { runs: [] }),
+      content,
       sizeScale: annotation.sizeScale ?? 1,
       alignment: annotation.alignment,
       bound:
         annotation.binding !== undefined &&
         annotation.binding.kind !== "instance-reference",
       ...(annotation.binding ? { bindingKind: annotation.binding.kind } : {}),
-      ...(annotation.kind === "net-label" &&
-      annotation.binding?.kind === "net-name"
-        ? { plainTextKind: "net-label" as const }
-        : annotation.kind === "route-marker"
-          ? { plainTextKind: "route-marker" as const }
-          : {}),
+      ...(annotation.formatOverride && !automaticTerminalOverride
+        ? { formatEdited: true }
+        : {}),
+      ...(annotation.kind === "route-marker"
+        ? { plainTextKind: "route-marker" as const }
+        : {}),
       ...(annotation.kind === "instance-label" &&
       document?.instances.some(
         (instance) => instance.id === instanceId && instance.reference,
       ) &&
       (!annotation.binding || annotation.binding.kind === "instance-reference")
-        ? { visualInstanceId: instanceId! }
+        ? { visualInstanceId: instanceId!, displayAlias: !annotation.binding }
         : {}),
     };
   }
@@ -131,18 +147,16 @@ export function updateTextEditingSession(
     Pick<TextEditingSession, "content" | "sizeScale" | "alignment">
   >,
 ): TextEditingSession {
+  const formatEdited =
+    session.formatEdited ||
+    (change.content !== undefined &&
+      flattenRichText(change.content) === flattenRichText(session.content) &&
+      !richTextEqual(change.content, session.content));
   return {
     ...session,
     ...change,
     ...(change.content ? { contentEdited: true } : {}),
-    ...(change.content && session.restoreReference
-      ? {
-          restoreReference:
-            isNamePresentation(change.content.runs) &&
-            flattenRichText(change.content) ===
-              flattenRichText(session.content),
-        }
-      : {}),
+    ...(formatEdited ? { formatEdited: true } : {}),
   };
 }
 
@@ -253,6 +267,8 @@ export function proposeTextEditingCommit(
     emptyTarget?.owner === "drafting" &&
     emptyTarget.object.kind === "text" &&
     Boolean(emptyTarget.object.polarity);
+  if (emptied && session.visualInstanceId && !session.displayAlias)
+    return { kind: "blocked" };
   if (emptied && !polarityKeepsObject) {
     return {
       kind: "delete",
@@ -271,7 +287,7 @@ export function proposeTextEditingCommit(
     const annotation = target.object;
     if (
       annotation.binding?.kind === "instance-reference" ||
-      session.restoreReference
+      session.visualInstanceId
     ) {
       const instanceId =
         annotation.binding?.kind === "instance-reference"
@@ -287,11 +303,19 @@ export function proposeTextEditingCommit(
         formatOverride: _format,
         ...rest
       } = annotation;
-      const follows =
-        session.restoreReference ||
-        (isNamePresentation(session.content.runs) &&
-          flattenRichText(session.content) === reference);
-      const defaultContent = semanticTextDocument(reference, "instance-label");
+      const follows = !session.displayAlias;
+      const name = flattenRichText(session.content).trim();
+      if (
+        follows &&
+        (!isNamePresentation(session.content.runs) ||
+          !/^[A-Za-z][A-Za-z0-9_]*$/u.test(name))
+      )
+        return { kind: "blocked" };
+      const beforeEdits: SchematicEdit[] =
+        follows && name !== reference
+          ? [{ kind: "set_instance_reference", instanceId, reference: name }]
+          : [];
+      const defaultContent = semanticTextDocument(name, "instance-label");
       const next: Annotation = {
         ...rest,
         sizeScale: session.sizeScale,
@@ -306,6 +330,7 @@ export function proposeTextEditingCommit(
           : { content: session.content }),
       };
       if (
+        beforeEdits.length === 0 &&
         (annotation.sizeScale ?? 1) === next.sizeScale &&
         annotation.alignment === next.alignment &&
         JSON.stringify(annotation.binding) === JSON.stringify(next.binding) &&
@@ -317,6 +342,7 @@ export function proposeTextEditingCommit(
       return {
         kind: "update",
         id: annotation.id,
+        ...(beforeEdits.length ? { beforeEdits } : {}),
         edit: { kind: "upsert_schematic_annotation", annotation: next },
       };
     }

@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { createEmptyProject, createSimulationFolder } from "@icm/model";
-import { serializeProject } from "@icm/project-protocol";
+import { hierarchicalSymbolId } from "@icm/symbols";
+import { serializeProject, parseProject } from "@icm/project-protocol";
 import { EditTransactionSchema } from "@icm/edit-engine";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -98,7 +99,7 @@ describe("editor shell", () => {
     const project = createEmptyProject("project-smoke", "Smoke Project");
     const markup = renderToStaticMarkup(<App project={project} />);
     expect(markup).toContain("Smoke Project");
-    expect(markup).toContain("Schematic canvas");
+    expect(markup).toContain('aria-label="原理图画布"');
     expect(markup).not.toContain("Cell netlist interface");
     expect(markup).not.toContain("网表位号");
     expect(markup).not.toContain("Component model");
@@ -108,8 +109,10 @@ describe("editor shell", () => {
     expect(markup).not.toContain('data-testid="cell-navigation"');
     expect(markup).toContain('data-testid="edit-manage-cells"');
     expect(markup).not.toContain('data-testid="cell-command-menu"');
-    expect(markup).toContain("Manage Cells…");
-    expect(markup).toContain("New Testbench Cell…");
+    expect(markup).toContain("管理 Cell…");
+    expect(markup).not.toContain("New Testbench Cell…");
+    expect(markup).not.toContain("Reset Cell Placement");
+    expect(markup).not.toContain("Reset Cell Body");
     expect(markup).toContain("Instances…");
     const netlistStart = markup.indexOf('aria-label="Netlist"');
     const netlistEnd = markup.indexOf("</details>", netlistStart);
@@ -161,7 +164,7 @@ describe("editor shell", () => {
     };
     topDocument.instances.push({
       id: "X1",
-      symbolId: "hierarchical-child",
+      symbolId: hierarchicalSymbolId("child"),
       placement: null,
       reference: "X1",
       netlist: {
@@ -273,15 +276,18 @@ describe("editor shell", () => {
     expect(markup.indexOf('href="/analytics"')).toBeGreaterThan(statusbar);
   });
 
-  it("keeps Properties docked with shapes quick-place, not a searchable catalog", () => {
+  it("opens Netlist beside shapes quick-place without a searchable catalog", () => {
     const project = createEmptyProject("selection-shelf", "Selection Shelf");
     const markup = renderToStaticMarkup(<App project={project} />);
 
     expect(markup).toContain(
-      '<section class="selection-shelf" aria-label="选择">',
+      '<section class="selection-shelf" aria-label="Project tools">',
     );
-    expect(markup).toContain('data-testid="selection-shelf"');
-    expect(markup).toContain('aria-label="属性"');
+    expect(markup).toContain('aria-label="Live netlist"');
+    // The toolbar button that opens a panel is the one that closes it.
+    expect(markup).not.toContain('aria-label="Close project tools"');
+    expect(markup).not.toContain('data-testid="selection-shelf"');
+    expect(markup).not.toContain('aria-label="Properties"');
     // The panel toggles live in the horizontal toolbar; there is no rail.
     expect(markup).not.toContain('aria-label="Tool rail"');
     expect(markup).toContain('aria-label="图形"');
@@ -294,7 +300,8 @@ describe("editor shell", () => {
     expect(markup).not.toContain("Common-Source Amplifier");
     expect(markup).not.toContain("Two-Stage Op Amp");
     expect(markup).toContain('data-open="true"');
-    expect(markup).toContain(">元件库</span>");
+    expect(markup).toContain(">Library</span>");
+    expect(markup).toContain("所有器件");
     expect(markup).toContain('class="app-statusbar"');
     expect(markup).toContain("Insert component… (I)");
     expect(markup).not.toContain('data-testid="draw-tool-insert"');
@@ -389,22 +396,23 @@ describe("editor shell", () => {
     const fixture = readFileSync(
       resolve(
         process.cwd(),
-        "fixtures/projects/phase-1-manual/project.icproj.json",
+        "fixtures/projects/manual-basics/project.icproj.json",
       ),
       "utf8",
     );
-    expect(serializeProject(createDemoProject())).toBe(fixture);
+    expect(serializeProject(createDemoProject())).toBe(
+      serializeProject(parseProject(fixture)),
+    );
     expect(fixture).not.toMatch(/selection|viewport|dragPreview/u);
   });
 
   it("keeps the routing demo equal to its canonical Project fixture", () => {
     const fixture = readFileSync(
-      resolve(
-        process.cwd(),
-        "fixtures/projects/phase-3-routing/project.icproj.json",
-      ),
+      resolve(process.cwd(), "fixtures/projects/port-nets/project.icproj.json"),
       "utf8",
     );
-    expect(serializeProject(createRoutingDemoProject())).toBe(fixture);
+    expect(serializeProject(createRoutingDemoProject())).toBe(
+      serializeProject(parseProject(fixture)),
+    );
   });
 });

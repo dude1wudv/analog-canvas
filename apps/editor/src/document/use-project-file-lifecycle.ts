@@ -2,11 +2,14 @@ import { useEffect, useRef, useState } from "react";
 
 import { createEmptyProject, createId } from "@icm/model";
 import type { CircuitProject, GridRect, SchematicDocument } from "@icm/model";
-import { serializeProject } from "@icm/project-protocol";
+import {
+  CURRENT_PROJECT_FILE_VERSION,
+  serializeProject,
+} from "@icm/project-protocol";
 import {
   builtInSymbols,
   findUnsupportedProjectSymbolIds,
-  InMemorySymbolResolver,
+  createProjectSymbolResolver,
 } from "@icm/symbols";
 
 import { materializeRazaviProjectBulkConnections } from "../presentation/razavi-presentation";
@@ -25,7 +28,7 @@ import {
 } from "./project-file-service";
 import { projectChangeToken } from "./project-session-lifecycle";
 import { projectHasMeaningfulContent } from "./project-content";
-import { normalizeImportedProjectConductors } from "./project-conductor-normalization";
+import { normalizeImportedProject } from "./project-import-normalization";
 import {
   CLOUD_PROJECT_LIMIT,
   openCloudProject,
@@ -42,8 +45,6 @@ import {
 import type { ProjectStoreCopy } from "./release-channel";
 
 export const REFRESH_RESTORE_STORAGE_KEY = "icm.restore-after-refresh.v1";
-
-const projectImportSymbolResolver = new InMemorySymbolResolver(builtInSymbols);
 
 export interface SavedProjectBaseline {
   project: CircuitProject;
@@ -599,12 +600,17 @@ export function useProjectFileLifecycle({
       );
       return;
     }
-    const normalized = normalizeImportedProjectConductors(
+    const normalized = normalizeImportedProject(
       staged.project,
-      projectImportSymbolResolver,
+      createProjectSymbolResolver(staged.project, builtInSymbols),
     );
     const openedProject = normalized.project;
     const normalizedDocumentCount = normalized.changedDocumentIds.length;
+    const drawn = normalized.drawnInstanceCount;
+    const drawnNote =
+      drawn > 0
+        ? `, drew ${drawn} ${drawn === 1 ? "Instance" : "Instances"} the file kept off the sheet`
+        : "";
     const performOpen = () => {
       replaceActiveProject(openedProject, defaultViewBox, {
         source: "opened-file",
@@ -614,9 +620,9 @@ export function useProjectFileLifecycle({
       });
       setStatus(
         staged.migrated
-          ? `Imported and upgraded ${staged.fileName} from schema ${staged.sourceSchemaVersion} to schema ${openedProject.schemaVersion}${normalizedDocumentCount > 0 ? ` and normalized connectivity and Wire topology in ${normalizedDocumentCount} Cell${normalizedDocumentCount === 1 ? "" : "s"}` : ""} — save to Cloud or export to keep the upgrade`
+          ? `Imported and upgraded ${staged.fileName} from schema ${staged.sourceSchemaVersion} to schema ${CURRENT_PROJECT_FILE_VERSION}${normalizedDocumentCount > 0 ? ` and normalized connectivity and Wire topology in ${normalizedDocumentCount} Cell${normalizedDocumentCount === 1 ? "" : "s"}${drawnNote}` : ""} — save to Cloud or export to keep the upgrade`
           : normalizedDocumentCount > 0
-            ? `Opened ${staged.fileName} and normalized connectivity and Wire topology in ${normalizedDocumentCount} Cell${normalizedDocumentCount === 1 ? "" : "s"} — save to Cloud or export to keep the repair`
+            ? `Opened ${staged.fileName} and normalized connectivity and Wire topology in ${normalizedDocumentCount} Cell${normalizedDocumentCount === 1 ? "" : "s"}${drawnNote} — save to Cloud or export to keep the repair`
             : `Opened ${staged.fileName} at revision ${staged.topDocumentRevision}`,
       );
     };

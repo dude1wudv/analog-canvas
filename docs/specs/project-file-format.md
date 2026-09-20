@@ -2,16 +2,164 @@
 
 Status: `accepted`
 
-Project schema: `56`
+Portable file schema: `60`; normalized editor model schema: `58`.
 
-Primary owners: `packages/model` (current shape) and
-`packages/project-protocol` (file boundary)
+Primary owner: `packages/project-protocol` (portable source and codec).
+`packages/model` validates the normalized editor indexes used by rendering,
+connectivity and transactions. The normalized indexes are decoded working data;
+serialization always writes the one schema-60 authoring representation.
 
-An `.icproj.json` file is canonical JSON for one complete `CircuitProject`.
-The current-only model validates schema 56. The public `parseProject` boundary
-accepts schemas 24 through 56, runs the explicit contiguous upgrade chain, and
-returns only the current shape. Serialization writes only schema 56.
-Versions outside that range are rejected.
+An `.icproj.json` file contains a complete Project. The public `parseProject`
+boundary reads file schemas 24 through 60. Historical schemas pass through the
+existing explicit upgrades; schemas 59 and 60 decode through the owned-object codec. Schema 60 derives
+network membership from connection facts. Both return the same validated editor model. File/envelope metadata must
+use `CURRENT_PROJECT_FILE_VERSION`, not the internal model version.
+
+## Instance-owned source
+
+A Document's `instances` array contains complete device objects. `type` names
+an included component class, `name` is the authored netlist reference, and `id`
+is stable identity. `coordinate` is `[x, y]` or `null` for an unplaced instance;
+`rotation`, `mirror`, `color` and optional `backgroundColor` describe placement
+and paint. `parameters` and `target` hold netlist values and binding. Provenance,
+body connection policy, variants and schematic formulas remain on the instance.
+
+Attached name, value, parameter and literal labels live in that same instance's
+`labels` array. A label's `bind: "name"`, `bind: "value"`, or
+`bind: { "parameter": "w" }` inherits its instance identity, eliminating repeated
+owner IDs. An anchor `{ "offset": [25, 0], "fallback": [225, 200] }` likewise
+inherits that owner. Unusual cross-object, free and route anchors stay explicit;
+conversion never guesses that a visual attachment changes a text binding.
+Literal `text` and formatting `format` accept plain strings or complete RichText
+objects, retaining fractions, formulas, spans and line breaks. Every label has
+an `order` preserving the original annotation sequence across owned and free
+labels. IDs, visibility, colors, rotations and fallback positions are retained.
+Independent labels remain in `Document.annotations`.
+
+The file owns its `defaults.instance` (rotation and mirror) and `defaults.label`
+(alignment, rotation and lock) values. Missing per-object fields inherit these
+explicit values; they do not depend on mutable website defaults. Changing a
+file default updates inheriting objects. The writer canonicalizes equivalent
+inheritance without discarding resulting values. Absence of instance color
+inherits the Document style; `color: "auto"` records an explicit empty paint
+override. Empty label collections may be omitted.
+
+## One connection source
+
+Routes contain only endpoint references and geometry; they never contain a
+`netId`. Junctions contain geometry without network membership. `nets` is an
+identity/metadata directory: `{ "id": "signal", "at": { "terminal": ["M1", "D"] } }`
+keeps a stable name for the connected component containing that anchor. It
+cannot join disconnected wires. An empty metadata-only network uses `at: null`.
+
+`connections.contacts` contains explicit endpoint contacts absent from the
+route graph. They conduct only while the endpoints remain coincident.
+`connections.unrouted` contains intentional links without drawn wires, such as
+unrouted imported connections. Each link is an array of terminal/junction
+endpoints. Interior wire crossings alone do not imply a connection. Net labels,
+Cell terminals and power claims keep their existing explicit logical semantics;
+visual text placement never silently rewires a historical label.
+
+The shared connection graph computes connected components after all wire facts
+are known. Runtime `nets.terminals` and route/junction `netId` are derived
+indexes, never a second editable source. Adding, deleting or repointing routes
+in Project Code does not require editing membership. Splits allocate stable
+unused IDs; merged identities retarget their metadata. Direct Project Code
+commits and Agent/file replacement use this same reader. Runtime terminal-array
+order is canonical, not authored information.
+
+Endpoints use `{ "terminal": ["M1", "D"] }` or `{ "junction": "J1" }`.
+A single straight route has `start`, `end`, and `legId`. A multi-leg route has
+`start` and `legs`; a bend records `id`, `bend`, `coordinate` and optional `mode`.
+The two forms cannot be mixed. `defaults.routeLeg.mode` is explicit in the file.
+Every route/leg/bend ID, leg order and mode survives conversion.
+
+`defaults.instancesByType` stores complete shared parameter, target, color and
+variant values for repeated device classes. Instance overrides replace whole
+values without hidden merges. Styled RichText runs use strings and ordered
+`styles` arrays instead of one wrapper per style; fractions and formula source
+remain explicit. Symbol primitive points use coordinate pairs. All shortcuts
+expand to the same complete model, with no external defaults or compressed data.
+
+The reader rejects mixed legacy/current field names, conflicting endpoints,
+unknown fields and missing used component definitions. It does not delete
+unplaced or overlapping instances. Q still edits the same decoded instance;
+Project Code, file export, Agent file replacement, Cloud Save and recovery use
+the same public reader/writer. A full source edit remains one undoable commit.
+
+## Offline migration
+
+`node scripts/convert-project-format.mjs INPUT_JSON NEW_OUTPUT_DIRECTORY`
+converts an individual Project or a Gallery backup after workspace packages
+are built. It never contacts the service or overwrites its input. For every
+record it compares the complete decoded model, exact rendered SVG and netlist
+analysis before/after, and checks save/load idempotence. Existing electrical
+errors remain errors; this is a structural migration, not circuit repair.
+Statistics record expanded source/model line counts and the actual editable
+output line count, as well as JSON payload bytes. Model equality ignores only
+the derived terminal-index ordering. Project Code keeps complete objects in
+blocks with descriptive keys; only short property values and coordinate or
+terminal pairs stay on one line. It never stores compressed or encoded source.
+
+A Gallery conversion preserves row metadata and cached previews, replacing only
+`project_text` and `schema_version`. If any record fails, the command writes a
+located report and emits no applyable combined backup. The source backup stays
+untouched. Bulk online migration is a separate explicit operation, performed
+only after complete backup and compatible readers/writers are available.
+
+Administrator backup supports `GET /api/gallery/maintenance/schema-backup` with
+`table=inventory`, or one of `galleryEntries`, `galleryEntryVersions`,
+`galleryLikes`, `cloudProjects` and an optional opaque `after` cursor. Each page
+returns at most one raw row, avoiding Cloudflare's SQL result-set memory limit.
+A Gallery-only backup is `analog-canvas-gallery-backup-v2`: it includes all
+statuses, all retained versions and like relationships, excludes private Cloud
+Projects and must never be sent to the older full-store `schema-restore` route.
+A paginated export records its capture interval rather than claiming a single
+atomic database snapshot. Separate local and private remote copies are retained.
+
+## Included component definitions
+
+Schemas 58 through 60 save each referenced Symbol once in `componentDefinitions`.
+Portable `Instance.type` (decoded as `Instance.symbolId`) and drafting
+`floating-symbol.symbolId` reference these local classes. Each class contains
+the complete Symbol geometry, pins,
+variants, formula presentation, and its primitive electrical or black-box
+subcircuit contract when applicable. Instance parameters and placement remain
+on the Instance. An included definition takes precedence over the website's
+built-in library. Editing its geometry updates every instance of that class;
+copy the class to a new `symbol.id` (and matching electrical `symbolId`) and
+change selected instances' `type` to customize only those instances.
+
+Custom component internals are authored through Project Code or the
+code-and-preview definition workspace (E / Edit Component Definition), not
+through mouse-drawn shapes. The definition workspace publishes every save to
+the public User Defined library and forks a new class for the selected
+instance. Shared library revisions have versioned Symbol IDs; a Project keeps
+its embedded definition even if the public entry is updated or removed.
+Canvas transforms
+edit Instance placement and never rewrite a shared class. Component definition
+changes use the existing validated, undoable Project commit. Future graphical
+definition editing must write this same representation rather than introduce
+a second geometry authority. Visual pin-coordinate changes do not implicitly
+rename pins or reorder the electrical interface.
+
+Serialization collects references across **all** Project Documents and removes
+only unused classes. It never deletes a Document, Instance, parameter, or
+setting to shorten the code. Editor undo retains deleted classes with its
+history snapshots. Deleting the last use removes the live class; a later fresh
+library insertion uses the current built-in definition.
+
+Generated hierarchical artwork also carries its small `generatedFrom` input
+record. Stable Cell interfaces preserve captured artwork; an intentional
+interface or Cell-symbol presentation edit regenerates that class. These
+records are ordinary source data, with no content-hash checks.
+
+Older Projects without included definitions remain readable and capture the
+available library on entry/save. They cannot recover artwork from an earlier
+website version that was never stored. When a file supplies a definition
+collection, missing referenced classes or variants are an error rather than a
+silent fallback. Custom definitions must follow the supported primitive and
+electrical schemas; they are data, not executable scripts or model libraries.
 
 [The loader](../../packages/project-protocol/src/load.ts) and its adjacent
 transforms/tests own individual migration steps. Adapters preserve authored
@@ -22,11 +170,29 @@ setups become source folders. A failed import leaves the live Project unchanged.
 Compatibility does not create legacy runtime writers or authorize bulk rewriting
 of stored Gallery or Cloud data.
 
-## Current authorities
+## Compatibility floor
+
+The supported floor bounds maintained adapters; it is not a rolling expiry
+window. Raising it is a deliberate contract change requiring evidence that the
+retired versions were never distributed, or a verified store inventory plus an
+available conversion path and an adequate conversion period. Schema velocity
+and chain length alone do not justify refusing existing user files. Where the
+evidence is uncertain, retain the adapters. No load or ordinary save performs
+an unsolicited bulk conversion of Gallery, Cloud or recovery data.
+
+## Decoded model authorities
+
+The following names describe the normalized editor model. At the file boundary,
+`Instance.reference` is `name`, `symbolId` is `type`, `placement` becomes
+`coordinate`/`rotation`/`mirror`, and `netlist` becomes `parameters`/`target`.
+Instance-owned annotations become `labels` with `bind`, `text` and `format`.
+These are two representations of the same facts, never independently editable
+sources of truth.
 
 - `Document.netlist.terminals` defines ordered authored Cell-Pin declarations
-  with stable identity, direction, Net binding, and exactly one ordinary Cell
-  Pin Instance. Equal case-folded names identify one Logical Net without
+  with stable identity, direction, Net binding, and exactly one interface owner:
+  either an ordinary Cell Pin Instance or a visible Power Rail annotation. Equal
+  case-folded names identify one Logical Net without
   physically merging their independently authored Base Nets.
 - `Document.netlist.formalParameters` and project-level
   `externalSubcircuitDefinitions` define exact nonlocal netlist interfaces.
@@ -34,9 +200,14 @@ of stored Gallery or Cloud data.
   terminals, raw formal defaults, interface status and optional block
   presentation. It has no internal Document body.
 - `Instance.reference` is the sole authored Reference for an ordinary
-  referenced Instance and is both displayed and emitted. Its stored prefix is
-  the ngspice invocation designator, including `X` for external subcircuit
-  calls. Cell Pins use `CellTerminal.name` and never display a `P#` reference.
+  referenced Instance and is displayed by default. Process/model selection
+  preserves it. SPICE extraction adds the required invocation prefix when
+  needed (for example, `M1` becomes `XM1` for a PDK subcircuit); Spectre
+  preserves the authored name. Derived names reserve existing legal names and
+  add a numeric suffix on collision. Export and simulation share this mapping;
+  code-editor renames edit the authored portion. Imported `X` references remain
+  valid through model transitions. Cell Pins use `CellTerminal.name` and never
+  display a `P#` reference.
   `Instance.netlist` contains only binding and typed parameter values for
   emitting Instances.
   Import source
@@ -53,7 +224,8 @@ of stored Gallery or Cloud data.
   terminal `P`. A `vdd-port` Instance may use the same formal-terminal protocol
   or, mutually exclusively, own a Global VDD name claim. Their connectivity is
   stored in `Net.terminals` and ordinary terminal Route endpoints.
-- Base `Net.terminals` is the physical membership authority.
+- Base `Net.terminals` is a derived physical membership index. Connection facts
+  in portable source are authoritative.
 - `Document.connectivityEvidence` records owner-addressed name claims, explicit
   imported global declarations, non-electrical source-name hints, and
   SPICE-source assertions for one Base Net at a time. The shared Logical-Net
@@ -63,8 +235,8 @@ of stored Gallery or Cloud data.
 - A marker claim may classify its Logical Net as `vdd` or `ground`; role never
   substitutes for name identity.
 - A named Power Rail uses an ordinary Base Net, Route/Junction geometry, a
-  local VDD name claim by default, and a bound RichText annotation. Explicitly
-  targeting an existing Global Net retains that Net's scope.
+  local VDD name claim by default, and a bound RichText annotation that owns a
+  formal Cell terminal. An explicitly Global Rail has no formal terminal.
 - Every visible editable label is a RichText annotation. `instance-reference`
   projects only `Instance.reference`; `instance-value`, `net-name`, and
   `cell-terminal-name` project their own typed facts. Other attached labels,
@@ -81,16 +253,19 @@ of stored Gallery or Cloud data.
   Device visual annotations customized on the canvas use literal `content`
   instead, on the same Annotation ID and anchor, without `binding` or
   `formatOverride`. They do not rename or duplicate `Instance.reference`.
-  Save/open and copy preserve this exclusive choice; only explicit **Use
-  netlist name** returns a custom annotation to following. The JSON field
-  remains `Instance.reference` (UI: **Netlist Reference**), with no schema bump.
+  Save/open and copy preserve this exclusive choice; clearing **Use display
+  alias** returns a custom annotation to following. The JSON field
+  is `Instance.name` in portable source and `Instance.reference` in the decoded
+  model (UI: **Netlist Reference**).
 - A RichText document is either ordinary styled text runs or one atomic
   formula run containing bounded LaTeX source and `inline`/`block` display
   intent. Typeset SVG paths and metrics are derived artifacts, never Project
   content.
 - `Document.presentation.cellSymbol` is optional definition-level block intent:
   a minimum body size and stable formal-terminal side/offset placements.
-  Symbol geometry remains derived and caller Instances never persist a copy.
+  The shared generated class is included in `componentDefinitions`; its source
+  interface and presentation record determine when to regenerate the artwork.
+  Caller Instances reference that class rather than persisting their own copy.
 - MOS assets are canonical `nmos`/`pmos`; visual variant selection does not
   change persisted terminal connectivity.
 - `Project.simulationFolders` is the named version-4 source collection defined
@@ -104,9 +279,9 @@ of stored Gallery or Cloud data.
 ## Read and write
 
 ```text
-import text -> parse JSON -> require Project schema 24 through 56
--> converge to schema 56 -> strict schema-56 validation -> install unbound
-export -> strict validation -> canonical key ordering -> Blob download
+import text -> parse JSON -> require Project file schema 24 through 60
+-> migrate old files or decode 59/60 -> strict model validation -> install unbound
+export -> validate -> encode file schema 60 -> readable canonical JSON -> download
 ```
 
 An invalid candidate never replaces the current browser Project. File Resource
@@ -129,7 +304,7 @@ open, and recovery remain exact.
 Canonical serialization ends with one newline and is byte-stable across
 serialize/parse/serialize. The current corpus is listed in
 `fixtures/projects/compatibility-corpus.json`; its `current` entries must all be
-already canonical Project schema 56. Explicit `migrated` witnesses retain their
+already canonical Project file schema 60. Explicit `migrated` witnesses retain their
 source bytes and declared source version; loading and saving must produce a
 byte-stable current Project. The rejected corpus names expected validation
 failures. These are test inventory categories, not new Project fields.
@@ -137,3 +312,26 @@ failures. These are test inventory categories, not new Project fields.
 Viewport, selection, undo history, canvas overlays, Agent credentials,
 recovery envelopes, generated renders, and derived diagnostics are not part of
 the Project file.
+
+## Bounded Gallery migration
+
+`node scripts/prepare-gallery-format-migration.mjs GALLERY_BACKUP NEW_DIRECTORY`
+verifies the Gallery-only backup using the lossless converter and creates one
+request file per current/historical row plus the complete expected readback.
+Keep this sensitive operational output outside Git. Refresh both the local and
+private remote backup before applying requests after compatible code is deployed.
+
+The administrator-only, same-origin `POST /api/gallery/maintenance/project-format`
+accepts `{table, id, originalProjectText, projectText}` for `galleryEntries` or
+`galleryEntryVersions`. It compares original text literally and independently
+reproduces the conversion. A concurrent author edit returns 409; back up and
+reconvert the new row instead of overwriting it. Already-converted rows are
+idempotent. Each synchronous write replaces only `project_text` and
+`schema_version`, preserving previews, timestamps, attribution, moderation,
+likes and retained version identities. Private Cloud Projects are never accepted.
+
+Read back all affected rows and compare against the expected backup, including
+all other columns, before declaring migration complete. A worker rollback does
+not reverse database writes: use the retained original rows and a separately
+reviewed, equally bounded recovery operation if data restoration is needed.
+Do not invoke the legacy whole-store restore on a Gallery-only backup.

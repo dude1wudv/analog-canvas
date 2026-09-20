@@ -1,151 +1,179 @@
 import { describe, expect, it } from "vitest";
-
 import { flattenRichText } from "./rich-text.js";
 import {
+  canonicalPortTextDocument,
   defaultDraftTextDocument,
   semanticTextDocument,
+  voltageNodeTextDocument,
 } from "./semantic-text.js";
 
-describe("semantic formal-Port text", () => {
-  it("derives a Razavi voltage base and subscript from the electrical name", () => {
-    const content = semanticTextDocument("Vout", "formal-port");
+describe("canonical Port text", () => {
+  it.each(["IN", "out", "VDD", "VND"])(
+    "formats %s without changing its visible or electrical spelling",
+    (name) => {
+      const content = canonicalPortTextDocument(name);
 
-    expect(flattenRichText(content)).toBe("Vout");
-    expect(content).toMatchObject({
-      runs: [
-        { kind: "span", style: "italic", children: [{ kind: "span" }] },
-        { kind: "span", style: "subscript", children: [{ kind: "span" }] },
-      ],
-    });
-    expect(content.runs[0]).toMatchObject({
-      children: [{ children: [{ value: "V" }] }],
-    });
-    expect(content.runs[1]).toMatchObject({
-      children: [{ children: [{ value: "out" }] }],
-    });
-  });
+      expect(flattenRichText(content)).toBe(name);
+      expect(content.runs[0]).toEqual({
+        kind: "span",
+        style: "italic",
+        children: [
+          {
+            kind: "span",
+            style: "bold",
+            children: [{ kind: "text", value: name.slice(0, 1) }],
+          },
+        ],
+      });
+      expect(content.runs[1]).toEqual({
+        kind: "span",
+        style: "subscript",
+        children: [
+          {
+            kind: "span",
+            style: "bold",
+            children: [{ kind: "text", value: name.slice(1) }],
+          },
+        ],
+      });
+      expect(JSON.stringify(content)).not.toMatch(/uppercase|lowercase/u);
+    },
+  );
 
-  it("preserves punctuation without applying implicit Net Label markup", () => {
-    const port = semanticTextDocument("V_{in,cm}", "formal-port");
-    const net = semanticTextDocument("V_{in,cm}", "net-label");
+  it("formats a one-character Port without an empty subscript", () => {
+    const content = canonicalPortTextDocument("a");
 
-    expect(port).not.toEqual(net);
-    expect(flattenRichText(port)).toBe("V_{in,cm}");
-    expect(flattenRichText(net)).toBe("V_{in,cm}");
-    expect(port.runs[1]).toMatchObject({
+    expect(flattenRichText(content)).toBe("a");
+    expect(content.runs).toHaveLength(1);
+    expect(content.runs[0]).toEqual({
       kind: "span",
-      style: "subscript",
-      children: [{ children: [{ value: "_{in,cm}" }] }],
-    });
-    expect(net.runs).toEqual([
-      {
-        kind: "span",
-        style: "italic",
-        children: [
-          {
-            kind: "span",
-            style: "bold",
-            children: [{ kind: "text", value: "V_{in,cm}" }],
-          },
-        ],
-      },
-    ]);
-  });
-
-  it("keeps the Port convention but gives a Net Label no implicit subscript", () => {
-    const port = semanticTextDocument("CLK", "formal-port");
-    const net = semanticTextDocument("NET1", "net-label");
-
-    expect(port).toEqual({
-      runs: [
+      style: "italic",
+      children: [
         {
           kind: "span",
-          style: "italic",
-          children: [
-            {
-              kind: "span",
-              style: "bold",
-              children: [{ kind: "text", value: "C" }],
-            },
-          ],
-        },
-        {
-          kind: "span",
-          style: "subscript",
-          children: [
-            {
-              kind: "span",
-              style: "bold",
-              children: [{ kind: "text", value: "LK" }],
-            },
-          ],
+          style: "bold",
+          children: [{ kind: "text", value: "a" }],
         },
       ],
     });
-    expect(net.runs).toEqual([
-      {
-        kind: "span",
-        style: "italic",
-        children: [
-          {
-            kind: "span",
-            style: "bold",
-            children: [{ kind: "text", value: "NET1" }],
-          },
-        ],
-      },
-    ]);
-    expect(flattenRichText(net)).toBe("NET1");
   });
 });
 
-describe("house text style", () => {
-  it("keeps a supply subscript italic while ordinary subscripts stay upright", () => {
-    const supply = semanticTextDocument("VDD", "power-label");
-    const signal = semanticTextDocument("Vin", "formal-port");
+describe("semantic formal-Port text", () => {
+  it.each(["IN", "OUT", "CLK"])(
+    "keeps non-voltage name %s whole without guessing scripts",
+    (name) => {
+      const content = semanticTextDocument(name, "formal-port");
+      expect(flattenRichText(content)).toBe(name);
+      expect(content).toEqual(semanticTextDocument(name, "net-label"));
+      expect(JSON.stringify(content)).not.toContain('"subscript"');
+      expect(content.runs).toHaveLength(1);
+    },
+  );
 
-    expect(flattenRichText(supply)).toBe("VDD");
-    // Scripts render upright by default, so the supply exception is carried
-    // as a nested italic span inside the subscript.
-    expect(supply.runs[1]).toMatchObject({
-      kind: "span",
-      style: "subscript",
-      children: [{ kind: "span", style: "italic" }],
-    });
-    expect(signal.runs[1]).toMatchObject({
-      kind: "span",
-      style: "subscript",
-      children: [{ kind: "span", style: "bold" }],
-    });
-  });
+  it.each(["Vout", "vOUT", "V_{in,cm}"])(
+    "uses the voltage-node default for %s without changing its identity",
+    (name) => {
+      const content = semanticTextDocument(name, "formal-port");
+      expect(flattenRichText(content)).toBe(name);
+      expect(content).toEqual(voltageNodeTextDocument(name));
+      expect(JSON.stringify(content)).toContain('"subscript"');
+    },
+  );
 
-  it("preserves the leading symbol case while subscripting a Formal Port", () => {
-    const content = semanticTextDocument("vout", "formal-port");
-
-    expect(flattenRichText(content)).toBe("vout");
-    expect(content.runs[0]).toMatchObject({
-      style: "italic",
-      children: [{ children: [{ value: "v" }] }],
-    });
-    expect(content.runs[1]).toMatchObject({
-      style: "subscript",
-      children: [{ children: [{ value: "out" }] }],
-    });
-  });
-
-  it("keeps a trailing polarity sign outside the subscript", () => {
+  it("keeps a polarity sign outside the complete name", () => {
     const content = semanticTextDocument("Vout+", "formal-port");
-
     expect(flattenRichText(content)).toBe("Vout+");
     expect(content.runs).toHaveLength(3);
     expect(content.runs[2]).toEqual({ kind: "text", value: "+" });
+    expect(JSON.stringify(content)).toContain('"subscript"');
+  });
+});
+
+describe("other semantic text remains unchanged", () => {
+  it("keeps device designators and supply indices", () => {
+    expect(semanticTextDocument("M1", "instance-label").runs[1]).toMatchObject({
+      style: "subscript",
+    });
+    expect(semanticTextDocument("VDD", "power-label").runs[1]).toMatchObject({
+      style: "subscript",
+      children: [{ style: "italic" }],
+    });
+  });
+});
+
+describe("generated voltage-node text", () => {
+  it.each(["Vin", "Vout", "VB1", "VB2", "VND"])(
+    "renders %s as an italic V with a case-preserving upright subscript",
+    (name) => {
+      const content = voltageNodeTextDocument(name);
+
+      expect(flattenRichText(content)).toBe(name);
+      expect(content).toEqual({
+        runs: [
+          {
+            kind: "span",
+            style: "italic",
+            children: [
+              {
+                kind: "span",
+                style: "bold",
+                children: [{ kind: "text", value: "V" }],
+              },
+            ],
+          },
+          {
+            kind: "span",
+            style: "subscript",
+            children: [
+              {
+                kind: "span",
+                style: "bold",
+                children: [{ kind: "text", value: name.slice(1) }],
+              },
+            ],
+          },
+        ],
+      });
+      expect(JSON.stringify(content)).not.toMatch(/uppercase|lowercase/u);
+      expect(JSON.stringify(content).match(/"bold"/gu)).toHaveLength(2);
+    },
+  );
+
+  it("keeps a lowercase leading v visible when the user authored it", () => {
+    const content = voltageNodeTextDocument("vBIAS");
+
+    expect(flattenRichText(content)).toBe("vBIAS");
+    expect(content.runs[0]).toEqual({
+      kind: "span",
+      style: "italic",
+      children: [
+        {
+          kind: "span",
+          style: "bold",
+          children: [{ kind: "text", value: "v" }],
+        },
+      ],
+    });
+    expect(content.runs[1]).toEqual({
+      kind: "span",
+      style: "subscript",
+      children: [
+        {
+          kind: "span",
+          style: "bold",
+          children: [{ kind: "text", value: "BIAS" }],
+        },
+      ],
+    });
   });
 
-  it("leaves a single-character name as a bare italic symbol", () => {
-    const content = semanticTextDocument("A", "net-label");
+  it("keeps a lone V italic without inventing an empty subscript", () => {
+    const content = voltageNodeTextDocument("V");
 
+    expect(flattenRichText(content)).toBe("V");
     expect(content.runs).toHaveLength(1);
-    expect(flattenRichText(content)).toBe("A");
+    expect(content.runs[0]).toMatchObject({ style: "italic" });
   });
 });
 

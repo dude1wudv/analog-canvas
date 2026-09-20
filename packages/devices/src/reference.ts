@@ -1,4 +1,4 @@
-import type { Instance, SchematicDocument } from "@icm/model";
+import type { CircuitProject, Instance, SchematicDocument } from "@icm/model";
 
 import { deviceDescriptor, subcircuitDescriptor } from "./registry.js";
 
@@ -35,17 +35,19 @@ export interface ReferenceAllocationOptions {
 
 export function referencePolicyForInstance(
   instance: Instance,
+  project?: Pick<CircuitProject, "componentDefinitions">,
 ): ReferencePolicy {
   const binding = instance.netlist?.binding;
   if (
     binding?.kind === "subcircuit" ||
     binding?.kind === "unresolved-subcircuit" ||
-    binding?.kind === "external-subcircuit" ||
-    subcircuitDescriptor(instance.symbolId)
+    (binding?.kind === "external-subcircuit" &&
+      !deviceDescriptor(instance.symbolId, project)?.referencePrefix) ||
+    subcircuitDescriptor(instance.symbolId, project)
   ) {
     return hierarchyReferencePolicy;
   }
-  const prefix = deviceDescriptor(instance.symbolId)?.referencePrefix;
+  const prefix = deviceDescriptor(instance.symbolId, project)?.referencePrefix;
   return prefix ? { kind: "required", prefix } : { kind: "none" };
 }
 
@@ -73,13 +75,14 @@ function suffixForPrefix(reference: string, prefix: string): number | null {
 /** One per-Cell, case-folded reference authority for allocation and diagnosis. */
 export function createReferenceIndex(
   document: SchematicDocument,
+  project?: Pick<CircuitProject, "componentDefinitions">,
 ): ReferenceIndex {
   const policyByInstanceId = new Map<string, ReferencePolicy>();
   const byReference = new Map<string, string[]>();
   const occupiedSuffixesByPrefix = new Map<string, Set<number>>();
   const issues: ReferenceIssue[] = [];
   for (const instance of document.instances) {
-    const policy = referencePolicyForInstance(instance);
+    const policy = referencePolicyForInstance(instance, project);
     policyByInstanceId.set(instance.id, policy);
     const reference = instance.reference;
     if (reference) {
@@ -95,7 +98,15 @@ export function createReferenceIndex(
       issues.push({ code: "MISSING_REFERENCE", instanceId: instance.id });
       continue;
     }
-    if (!reference.toUpperCase().startsWith(policy.prefix.toUpperCase())) {
+    // Keep imported/previously authored X references across model transitions.
+    // New native devices, including PDK wrappers, still allocate M/R/C/etc.
+    const retainedExternalReference =
+      Boolean(deviceDescriptor(instance.symbolId, project)?.referencePrefix) &&
+      /^x/iu.test(reference);
+    if (
+      !reference.toUpperCase().startsWith(policy.prefix.toUpperCase()) &&
+      !retainedExternalReference
+    ) {
       issues.push({
         code: "WRONG_REFERENCE_PREFIX",
         instanceId: instance.id,

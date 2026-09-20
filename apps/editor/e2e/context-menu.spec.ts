@@ -1,3 +1,4 @@
+import { parseSavedProject } from "./editor-fixtures";
 import { expect, test, type Page } from "@playwright/test";
 import { createEmptyProject, type CircuitProject } from "@icm/model";
 
@@ -57,6 +58,7 @@ test("right-click on a device only offers direct selection actions", async ({
   const menu = page.getByTestId("canvas-context-menu");
   await expect(menu).toBeVisible();
   await expect(menu.getByRole("menuitem")).toHaveText([
+    "Edit Component Definition (E)",
     "Properties (Q)",
     "Duplicate (C)",
     "Rotate 90° (R)",
@@ -231,7 +233,7 @@ for (const grid of [5, 10]) {
     expect(await labelRects()).toEqual(after);
 
     const bytes = await downloadBytes(page, "File", "Export Project File…");
-    const saved = JSON.parse(bytes.toString("utf8")) as CircuitProject;
+    const saved = parseSavedProject(bytes.toString("utf8")) as CircuitProject;
     expect(
       saved.documents[0]!.instances.map((instance) => instance.placement),
     ).toEqual(document.instances.map((instance) => instance.placement));
@@ -767,12 +769,16 @@ test("Netlist keeps format selection in the project panel while File keeps drawi
       exact: true,
     }),
   ).toHaveCount(0);
-  await page.getByTestId("netlist-panel-toggle").click();
+  if (
+    (await page
+      .getByTestId("netlist-panel-toggle")
+      .getAttribute("aria-pressed")) !== "true"
+  )
+    await page.getByTestId("netlist-panel-toggle").click();
   const projectPanel = page.getByRole("region", {
     name: "Live netlist",
     exact: true,
   });
-  await expect(projectPanel.getByLabel("Netlist process")).toBeVisible();
   await expect(projectPanel.getByLabel("Netlist format")).toBeVisible();
   await expect(projectPanel.getByRole("heading")).toHaveCount(0);
   expect(

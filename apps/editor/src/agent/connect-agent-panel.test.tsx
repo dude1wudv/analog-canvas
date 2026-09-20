@@ -34,6 +34,18 @@ function baseProps(
 // Secrets remain props-only and are never persisted here.
 
 describe("ConnectAgentPanel", () => {
+  it("serializes claims without evaluating replacement tokens", () => {
+    const claimCode = 'quote" newline\n {{origin}} $&';
+    const instructions = agentConnectionInstructions(
+      "https://editor.example",
+      claimCode,
+    );
+    const claimLine = instructions
+      .split("\n")
+      .find((line) => line.startsWith("Claim: "))!;
+    expect(JSON.parse(claimLine.slice(7))).toEqual({ claimCode });
+    expect(instructions).toContain("https://editor.example/api/agent/kit");
+  });
   it("provides one complete golden-path lifecycle without a bearer value", () => {
     const instructions = agentConnectionInstructions(
       "https://editor.example",
@@ -77,7 +89,7 @@ describe("ConnectAgentPanel", () => {
       <ConnectAgentPanel {...baseProps({ status: "idle" })} />,
     );
     expect(markup).toContain("Connect Agent");
-    expect(markup).toContain("Not connected");
+    expect(markup).toContain("未连接");
     expect(markup).toContain('data-testid="agent-connect"');
     expect(markup).not.toContain("agent-preset");
     expect(markup).not.toContain("Choose what the Agent");
@@ -123,7 +135,7 @@ describe("ConnectAgentPanel", () => {
     expect(markup).not.toContain("Scopes:");
     expect(markup).toContain('data-testid="agent-pause"');
     expect(markup).toContain('data-testid="agent-revoke"');
-    expect(markup).toContain('aria-label="复制连接设置"');
+    expect(markup).toContain('aria-label="Copy connection setup"');
     // No grant presets after connecting.
     expect(markup).not.toContain('data-testid="agent-grant"');
   });

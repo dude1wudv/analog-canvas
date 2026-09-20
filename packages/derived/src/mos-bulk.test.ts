@@ -8,7 +8,9 @@ import {
   isMosBulkTerminal,
   mosBulkKind,
   mosBulkShouldBeVisible,
+  drawnSupplyNet,
   resolveMosBulkConnection,
+  supplyDefaultMosBulkNet,
 } from "./mos-bulk.js";
 
 function mos(id: string, symbolId: "nmos" | "pmos" | "ndmos" | "pdmos") {
@@ -40,6 +42,174 @@ describe("MOS bulk resolution", () => {
       expect(JSON.stringify(document)).toBe(before);
     },
   );
+  /** A Cell with one ground marker, one VDD marker, and one MOS of each kind. */
+  function withSupplyMarkers() {
+    const document = createEmptyDocument("main", "Main");
+    document.instances.push(
+      mos("M1", "nmos"),
+      mos("M2", "pmos"),
+      { id: "GND1", symbolId: "ground", placement: null },
+      { id: "VDD1", symbolId: "vdd-port", placement: null },
+    );
+    document.nets.push(
+      {
+        id: "net-gnd",
+        terminals: [
+          { instanceId: "GND1", pinName: "0" },
+          { instanceId: "M1", pinName: "S" },
+        ],
+      },
+      {
+        id: "net-vdd",
+        terminals: [
+          { instanceId: "VDD1", pinName: "P" },
+          { instanceId: "M2", pinName: "S" },
+        ],
+      },
+    );
+    return document;
+  }
+
+  it("follows the supply the author drew when the Cell configures nothing", () => {
+    // No per-Cell setting, no button: the marker on the page is the answer,
+    // so a pasted copy and a drawing made before the policy existed behave
+    // like one drawn today.
+    const document = withSupplyMarkers();
+    const nmos = resolveMosBulkConnection(document, "M1");
+    expect(nmos?.status).toBe("supply-default");
+    expect(nmos?.net?.id).toBe("net-gnd");
+    const pmos = resolveMosBulkConnection(document, "M2");
+    expect(pmos?.status).toBe("supply-default");
+    expect(pmos?.net?.id).toBe("net-vdd");
+    // Policy explains membership; it never writes it, and it draws no lead.
+    expect(nmos?.materialized).toBe(false);
+    expect(mosBulkShouldBeVisible(document, "M1")).toBe(false);
+  });
+
+  it("follows a supply the author named rather than marked", () => {
+    // A rail or a formal Cell Pin declared as the positive supply is the same
+    // statement as a placed marker: it says which power domain the Net is.
+    // Plenty of drawings express their supplies only this way.
+    const document = createEmptyDocument("main", "Main");
+    document.instances.push(mos("M1", "pmos"));
+    document.nets.push(
+      { id: "net-rail", terminals: [{ instanceId: "M1", pinName: "S" }] },
+      { id: "net-out", terminals: [{ instanceId: "M1", pinName: "D" }] },
+    );
+    document.connectivityEvidence.push({
+      id: "rail-claim",
+      kind: "name-claim",
+      netId: "net-rail",
+      name: "VDD",
+      scope: "global",
+      powerDomain: "vdd",
+      owner: { kind: "power-marker", objectId: "M1" },
+    });
+    expect(drawnSupplyNet(document, "vdd")?.id).toBe("net-rail");
+    expect(resolveMosBulkConnection(document, "M1")?.net?.id).toBe("net-rail");
+    // The other domain was never drawn, so there is nothing to follow.
+    expect(drawnSupplyNet(document, "ground")).toBeUndefined();
+  });
+
+  it("lets the Cell's own default outrank the marker", () => {
+    const document = withSupplyMarkers();
+    document.nets.push({ id: "net-bias", terminals: [] });
+    document.mosBulkDefaults = { nmosNetId: "net-bias" };
+    const resolution = resolveMosBulkConnection(document, "M1");
+    expect(resolution?.status).toBe("cell-default");
+    expect(resolution?.net?.id).toBe("net-bias");
+    // The other polarity is unconfigured, so it still follows its marker.
+    expect(resolveMosBulkConnection(document, "M2")?.net?.id).toBe("net-vdd");
+  });
+
+  it("reclaims a body left alone on the Net its own binding named", () => {
+    // What a paste or a deleted supply marker leaves behind: the body sits on
+    // a Net nothing else reaches, named by its own policy binding. Read as a
+    // connection it strands the body — a matched pair ends up with one body
+    // on ground and the other on a node the netlist writes exactly once.
+    const document = withSupplyMarkers();
+    document.nets.push({
+      id: "net-residue",
+      terminals: [{ instanceId: "M1", pinName: "B" }],
+    });
+    document.instances[0] = {
+      ...document.instances[0]!,
+      mosBulkBinding: { origin: "cell-default", netId: "net-residue" },
+    };
+
+    const resolution = resolveMosBulkConnection(document, "M1");
+    expect(resolution?.status).toBe("supply-default");
+    expect(resolution?.net?.id).toBe("net-gnd");
+    // Nothing is rewritten: reclaiming is a reading, and the Document still
+    // holds the Net until an edit prunes it.
+    expect(document.nets.some((net) => net.id === "net-residue")).toBe(true);
+  });
+
+  it("keeps a body bias Net that more than one body shares", () => {
+    // Two bodies on one Net is a bias node somebody authored, not residue,
+    // even when a binding names it.
+    const document = withSupplyMarkers();
+    document.nets.push({
+      id: "net-bias",
+      terminals: [
+        { instanceId: "M1", pinName: "B" },
+        { instanceId: "M2", pinName: "B" },
+      ],
+    });
+    document.instances[0] = {
+      ...document.instances[0]!,
+      mosBulkBinding: { origin: "cell-default", netId: "net-bias" },
+    };
+    expect(resolveMosBulkConnection(document, "M1")?.net?.id).toBe("net-bias");
+  });
+
+  it("stays silent when the drawing offers more than one supply", () => {
+    // AVDD beside VDD is a question for the author. Guessing between them
+    // would be exactly the inference this policy refuses to make.
+    const document = withSupplyMarkers();
+    document.instances.push({
+      id: "VDD2",
+      symbolId: "vdd-port",
+      placement: null,
+    });
+    document.nets.push({
+      id: "net-avdd",
+      terminals: [{ instanceId: "VDD2", pinName: "P" }],
+    });
+    expect(supplyDefaultMosBulkNet(document, "pmos")).toBeUndefined();
+    expect(resolveMosBulkConnection(document, "M2")?.status).toBe("unresolved");
+    // The single ground marker is unaffected by the supply ambiguity.
+    expect(resolveMosBulkConnection(document, "M1")?.status).toBe(
+      "supply-default",
+    );
+  });
+
+  it("ignores a marker nobody has wired yet", () => {
+    // An unwired marker names no Net, so it neither answers nor competes.
+    const document = withSupplyMarkers();
+    document.instances.push({
+      id: "GND2",
+      symbolId: "ground",
+      placement: null,
+    });
+    expect(supplyDefaultMosBulkNet(document, "nmos")?.id).toBe("net-gnd");
+  });
+
+  it("never repairs an imported instance's missing fourth node", () => {
+    // Imported source must carry its own body; inventing one would rewrite
+    // what the file said.
+    const document = withSupplyMarkers();
+    document.instances[0] = {
+      ...document.instances[0]!,
+      importProvenance: {
+        kind: "model",
+        sourceMasterName: "nch",
+        sourceTarget: "nch",
+      },
+    };
+    expect(resolveMosBulkConnection(document, "M1")?.status).toBe("unresolved");
+  });
+
   it("maps expanded DMOS artwork to the existing N/P bulk domains", () => {
     expect(mosBulkKind(mos("M1", "ndmos"))).toBe("nmos");
     expect(mosBulkKind(mos("M2", "pdmos"))).toBe("pmos");

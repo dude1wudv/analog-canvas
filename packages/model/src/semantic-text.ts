@@ -24,6 +24,10 @@ function mathBase(value: string): RichTextRun {
   return span([span([{ kind: "text", value }], "bold")], "italic");
 }
 
+function uprightMathSubscript(value: string): RichTextRun {
+  return span([span([{ kind: "text", value }], "bold")], "subscript");
+}
+
 /**
  * Supply designators keep an italic subscript; every other subscript is
  * upright. The renderer draws scripts upright by default and treats a nested
@@ -84,18 +88,72 @@ export function plainNameDocument(value: string): RichTextDocument {
   return { runs: [span([{ kind: "text", value }], "bold")] };
 }
 
+/**
+ * Presentation for generated voltage-node names such as Vin, Vout and VB1.
+ *
+ * The electrical name stays ordinary identifier text. Only its visual
+ * projection follows the conventional math spelling: a bold italic leading V
+ * followed by a smaller bold upright subscript. Both use the same established
+ * Razavi house typeface as other schematic labels. Letter case is authored
+ * content, not presentation, so both halves preserve it exactly.
+ */
+export function voltageNodeTextDocument(value: string): RichTextDocument {
+  if (value.length === 0) return { runs: [{ kind: "line-break" }] };
+  const head = value.slice(0, 1);
+  const tail = value.slice(1);
+  if (head.toLowerCase() !== "v" || /\s/u.test(value)) {
+    return { runs: [{ kind: "text", value }] };
+  }
+  return {
+    runs: [
+      mathBase(head),
+      ...(tail.length > 0 ? [uprightMathSubscript(tail)] : []),
+    ],
+  };
+}
+
+/**
+ * Canonical presentation applied by the explicit "format all Ports" action.
+ *
+ * Unlike the automatic formal-Port default, this applies to every Port name:
+ * its first character uses the established bold italic face, while the
+ * remaining characters use the same bold face upright and subscripted. Letter
+ * case is authored content and stays visible exactly as entered, along with
+ * the electrical identity and netlist spelling.
+ */
+export function canonicalPortTextDocument(value: string): RichTextDocument {
+  if (value.length === 0) return { runs: [{ kind: "line-break" }] };
+  const [head, ...tailCharacters] = Array.from(value);
+  const tail = tailCharacters.join("");
+  return {
+    runs: [
+      mathBase(head!),
+      ...(tail.length > 0 ? [uprightMathSubscript(tail)] : []),
+    ],
+  };
+}
+
 /** Construct current-authoring RichText for a conventional semantic label. */
 export function semanticTextDocument(
   value: string,
   kind: SemanticTextKind,
 ): RichTextDocument {
   if (value.length === 0) return { runs: [{ kind: "line-break" }] };
-  // A Net Label is a complete authored name, not an instance designator or a
+  // A Net Label or formal Port is a complete authored name, not a designator or a
   // symbolic variable with an implicit index. Keep the Razavi bold-italic
   // face, but require an explicit RichText edit for subscript semantics.
   // A trailing polarity sign still qualifies the whole name.
   const signed = /^(.+?)([+-])$/u.exec(value);
-  if (kind === "net-label") {
+  if (kind === "formal-port" && value.slice(0, 1).toLowerCase() === "v") {
+    if (!signed) return voltageNodeTextDocument(value);
+    return {
+      runs: [
+        ...voltageNodeTextDocument(signed[1]!).runs,
+        { kind: "text", value: signed[2]! },
+      ],
+    };
+  }
+  if (kind === "net-label" || kind === "formal-port") {
     return {
       runs: signed
         ? [mathBase(signed[1]!), { kind: "text", value: signed[2]! }]

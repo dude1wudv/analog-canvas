@@ -1,50 +1,42 @@
 {
+  "schemaVersion": 60,
+  "id": "project-minimal",
+  "name": "Minimal Project",
+  "topDocumentId": "document-main",
+  "defaults": {
+    "instance": { "mirror": "none", "rotation": 0 },
+    "instancesByType": {},
+    "label": { "alignment": "middle", "locked": false, "rotation": 0 },
+    "routeLeg": { "mode": "manual" }
+  },
   "documents": [
     {
-      "annotations": [],
-      "connectivityEvidence": [],
-      "constraints": [],
-      "drafting": {
-        "objects": []
-      },
       "id": "document-main",
-      "instances": [],
-      "junctions": [],
-      "layoutGroups": [],
       "name": "Main",
-      "netlist": {
-        "formalParameters": [],
-        "name": "Main",
-        "terminals": []
-      },
-      "nets": [],
-      "noConnects": [],
+      "netlist": { "formalParameters": [], "name": "Main", "terminals": [] },
       "presentation": {
         "compactness": "normal",
         "grid": 10,
         "styleProfileId": "razavi-textbook-v1"
       },
-      "revision": 0,
+      "instances": [],
       "routes": [],
-      "sourceStatus": "in-sync"
+      "connections": { "contacts": [], "unrouted": [] },
+      "nets": [],
+      "junctions": [],
+      "annotations": [],
+      "drafting": { "objects": [] },
+      "connectivityEvidence": [],
+      "layoutGroups": [],
+      "constraints": [],
+      "sourceStatus": "in-sync",
+      "revision": 0,
+      "noConnects": []
     }
   ],
   "externalSubcircuitDefinitions": [],
-  "id": "project-minimal",
-  "name": "Minimal Project",
-  "schemaVersion": 56,
   "simulationFolders": [],
-  "source": {
-    "dialect": "none",
-    "entry": null,
-    "files": [],
-    "sourcePolicy": "copy"
-  },
-  "structureRevision": 0,
-  "symbolLibrary": {
-    "hash": "development",
-    "id": "builtin-analog",
-    "version": "0.0.0"
-  },
-  "topDocumentId": "document-main"
+  "source": { "dialect": "none", "entry": null, "files": [], "sourcePolicy": "copy" },
+  "symbolLibrary": { "hash": "development", "id": "builtin-analog", "version": "0.0.0" },
+  "structureRevision": 0
 }

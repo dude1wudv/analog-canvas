@@ -23,6 +23,7 @@ export * from "./net-highlight.js";
 export * from "./net-label.js";
 export * from "./net-name-projection.js";
 export * from "./mos-bulk.js";
+export * from "./supply-marker.js";
 export * from "./object-locator.js";
 export * from "./project-search.js";
 export * from "./project-instance-index.js";
@@ -43,3 +44,6 @@ export * from "./topology-hash.js";
 export * from "./visual.js";
 export * from "./simulatability.js";
 export * from "./arrow-artwork.js";
+export * from "./master-names.js";
+
+export { ConnectionGraph } from "./connection-graph.js";

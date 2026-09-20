@@ -1,10 +1,12 @@
-import { createDesignNetlistExport } from "@icm/netlist";
+import {
+  createDesignNetlistExport,
+  unfinishedDrawingDiagnostics,
+} from "@icm/netlist";
 import type { Diagnostic } from "@icm/derived";
 import type {
   NetlistDiagnostic,
   NetlistFormat,
   NetlistNamingProfile,
-  NetlistExportProfile,
   NetlistPortCase,
 } from "@icm/netlist";
 import type { CircuitProject } from "@icm/model";
@@ -19,15 +21,15 @@ export function NetlistPreflightDialog({
   onNavigate,
   onNavigateElectrical,
   onExport,
-  profile,
   format,
   portCase,
+  rootDocumentId,
 }: {
   open: boolean;
   project: CircuitProject;
-  profile?: NetlistExportProfile;
   format: NetlistFormat;
   portCase?: NetlistPortCase;
+  rootDocumentId?: string | undefined;
   electricalDiagnostics: readonly Diagnostic[];
   onClose(): void;
   onNavigate(diagnostic: NetlistDiagnostic): void;
@@ -41,10 +43,10 @@ export function NetlistPreflightDialog({
       createDesignNetlistExport(project, {
         format,
         namingProfile,
-        ...(profile ? { profile } : {}),
+        ...(rootDocumentId ? { rootDocumentId } : {}),
         ...(portCase ? { portCase } : {}),
       }),
-    [format, namingProfile, portCase, project, profile],
+    [format, namingProfile, portCase, project, rootDocumentId],
   );
   // The same finding repeated once per object says nothing many times over;
   // count it instead. Seven identical lines was most of what the report said.
@@ -78,6 +80,16 @@ export function NetlistPreflightDialog({
   const errors = result.diagnostics.filter(
     (diagnostic) => diagnostic.severity === "error",
   );
+  // A drawing with a node only one pin reaches prints, but handing that out
+  // as a netlist would pass off an unfinished schematic as a finished one.
+  const unfinished = unfinishedDrawingDiagnostics(result.diagnostics);
+  const exportable = result.status === "ready" && unfinished.length === 0;
+  const blocking = unfinished.length > 0 ? unfinished.length : errors.length;
+  const readiness = !exportable
+    ? `${blocking} blocking issue${blocking === 1 ? "" : "s"}`
+    : electricalDiagnostics.length > 0
+      ? "Structure ready; review electrical findings"
+      : "Ready to export";
   const hasDiagnostics =
     result.diagnostics.length > 0 || electricalDiagnostics.length > 0;
   return (
@@ -100,16 +112,8 @@ export function NetlistPreflightDialog({
           </div>
         </header>
         <section className="netlist-preflight-summary" aria-label="就绪状态">
-          <h3>
-            {result.status === "ready"
-              ? result.placeholders.length > 0
-                ? `Incomplete netlist: ${result.placeholders.length} TODO field${result.placeholders.length === 1 ? "" : "s"}`
-                : electricalDiagnostics.length > 0
-                  ? "Structure ready; review electrical findings"
-                  : "Ready to export"
-              : `${errors.length} blocking issue${errors.length === 1 ? "" : "s"}`}
-          </h3>
-          {result.status === "ready" ? (
+          <h3>{readiness}</h3>
+          {exportable && result.status === "ready" ? (
             <p>
               {result.cellCount} internal Cell
               {result.cellCount === 1 ? "" : "s"}; {result.externalMasterCount}{" "}
@@ -120,18 +124,12 @@ export function NetlistPreflightDialog({
             <p>Resolve the structural findings before copying a netlist.</p>
           )}
         </section>
-        {result.status === "ready" && result.placeholders.length > 0 ? (
-          <p>
-            Missing values and models are marked TODO in the netlist. Complete
-            them before simulation.
-          </p>
-        ) : null}
         <div
           className="netlist-preflight-body"
-          data-has-preview={result.status === "ready" ? "true" : "false"}
+          data-has-preview={exportable ? "true" : "false"}
           data-has-diagnostics={hasDiagnostics ? "true" : "false"}
         >
-          {result.status === "ready" ? (
+          {exportable && result.status === "ready" ? (
             <section
               className="netlist-preflight-export"
               aria-label="结构化网表"

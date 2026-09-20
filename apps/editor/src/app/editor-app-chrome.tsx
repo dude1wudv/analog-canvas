@@ -1,4 +1,3 @@
-import { NETLIST_PROFILE_LABELS, type NetlistProfileId } from "@icm/netlist";
 import { type ComponentProps, type RefObject } from "react";
 
 import { AccountMenu } from "../components/account";
@@ -17,12 +16,6 @@ interface CommandAction {
   execute: () => void;
 }
 
-interface ResetAction {
-  label: string;
-  enabled: boolean;
-  execute: () => void;
-}
-
 interface LabeledCommandAction extends CommandAction {
   label: string;
 }
@@ -34,6 +27,10 @@ interface AlignmentAction extends CommandAction {
 
 export interface EditorAppChromeProps {
   projectName: string;
+  galleryEntryMetadata: {
+    author: string;
+    description: string;
+  } | null;
   projectSchemaVersion: number;
   projectNameDraft: string | null;
   hasUnsavedWork: boolean;
@@ -46,7 +43,6 @@ export interface EditorAppChromeProps {
   searchOpen: boolean;
   onInsertComponent: () => void;
   onManageCells: () => void;
-  onNewTestbench?: () => void;
   placeProjectCell: CommandAction;
   selectionFilterOpen: boolean;
   onOpenSelectionFilter: () => void;
@@ -55,7 +51,6 @@ export interface EditorAppChromeProps {
   redo: CommandAction;
   deleteSelection: CommandAction;
   copySelectionImages: readonly LabeledCommandAction[];
-  resets: readonly ResetAction[];
   rotate: CommandAction;
   mirrorLeftRight: CommandAction;
   mirrorTopBottom: CommandAction;
@@ -66,7 +61,6 @@ export interface EditorAppChromeProps {
   onOpenInstanceCode: () => void;
   onOpenNetlistPreflight: () => void;
   onOpenNetlistConfiguration: () => void;
-  netlistProfileId: NetlistProfileId;
   netlistFormat: "spice" | "spectre";
   onExportNetlist: (format: "spice" | "spectre") => void;
   agentAction: { label: string; execute: () => void } | null;
@@ -99,6 +93,7 @@ export function ReleaseChannelBadge({
 /** Persistent command chrome above the document workspace. */
 export function EditorAppChrome({
   projectName,
+  galleryEntryMetadata,
   projectSchemaVersion,
   projectNameDraft,
   hasUnsavedWork,
@@ -111,7 +106,6 @@ export function EditorAppChrome({
   searchOpen,
   onInsertComponent,
   onManageCells,
-  onNewTestbench,
   placeProjectCell,
   selectionFilterOpen,
   onOpenSelectionFilter,
@@ -120,7 +114,6 @@ export function EditorAppChrome({
   redo,
   deleteSelection,
   copySelectionImages,
-  resets,
   rotate,
   mirrorLeftRight,
   mirrorTopBottom,
@@ -130,7 +123,6 @@ export function EditorAppChrome({
   checkAndSave,
   onOpenInstanceCode,
   onOpenNetlistPreflight,
-  netlistProfileId,
   netlistFormat,
   onOpenNetlistConfiguration,
   onExportNetlist,
@@ -148,6 +140,9 @@ export function EditorAppChrome({
   releaseChannel,
 }: EditorAppChromeProps) {
   const displayedProjectName = projectNameDraft ?? projectName;
+  const galleryContributor =
+    galleryEntryMetadata?.author.trim() || "Unknown contributor";
+  const galleryNotes = galleryEntryMetadata?.description.trim() ?? "";
   const copyNetlist = (format: "spice" | "spectre") => {
     dismissOpenCommandMenus();
     onExportNetlist(format);
@@ -207,6 +202,49 @@ export function EditorAppChrome({
               ) : null}{" "}
               / <span data-testid="active-document-name">{documentName}</span>
             </p>
+            {galleryEntryMetadata ? (
+              <details
+                className="app-gallery-entry-details"
+                data-testid="gallery-entry-details"
+              >
+                <summary
+                  data-testid="gallery-entry-summary"
+                  title={
+                    galleryNotes
+                      ? `Contributor: ${galleryContributor}\nNotes: ${galleryNotes}`
+                      : `Contributor: ${galleryContributor}`
+                  }
+                >
+                  <span className="app-gallery-entry-author">
+                    by {galleryContributor}
+                  </span>
+                  {galleryNotes ? (
+                    <span className="app-gallery-entry-description">
+                      {" · "}
+                      {galleryNotes}
+                    </span>
+                  ) : null}
+                </summary>
+                <div
+                  className="app-gallery-entry-popover"
+                  data-testid="gallery-entry-popover"
+                  aria-label="Gallery entry information"
+                >
+                  <dl>
+                    <div>
+                      <dt>Contributor</dt>
+                      <dd>{galleryContributor}</dd>
+                    </div>
+                    {galleryNotes ? (
+                      <div>
+                        <dt>Notes</dt>
+                        <dd>{galleryNotes}</dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                </div>
+              </details>
+            ) : null}
           </div>
         </div>
         <nav
@@ -237,11 +275,6 @@ export function EditorAppChrome({
                 >
                   管理 Cell…
                 </button>
-                {onNewTestbench ? (
-                  <button type="button" onClick={onNewTestbench}>
-                    New Testbench Cell…
-                  </button>
-                ) : null}
                 <button
                   type="button"
                   onClick={placeProjectCell.execute}
@@ -299,16 +332,6 @@ export function EditorAppChrome({
                     {action.label}
                   </button>
                 ))}
-                {resets.map((action) => (
-                  <button
-                    key={action.label}
-                    type="button"
-                    onClick={action.execute}
-                    disabled={!action.enabled}
-                  >
-                    {action.label}
-                  </button>
-                ))}
                 <button
                   type="button"
                   onClick={rotate.execute}
@@ -354,7 +377,7 @@ export function EditorAppChrome({
                 className="toolbar-button netlist-copy"
                 data-testid="copy-netlist"
                 aria-label="Copy netlist"
-                title={`Copy ${NETLIST_PROFILE_LABELS[netlistProfileId]} ${netlistFormat === "spice" ? "SPICE (.spi)" : "Spectre (.scs)"} netlist`}
+                title={`Copy as-authored ${netlistFormat === "spice" ? "SPICE (.spi)" : "Spectre (.scs)"} netlist`}
                 onClick={() => copyNetlist(netlistFormat)}
               >
                 <svg

@@ -3,6 +3,7 @@ import { readdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 import {
+  browserShardMatrix,
   formatCiValidationPlan,
   planCiValidation,
 } from "./ci-validation-plan.mjs";
@@ -15,6 +16,22 @@ function ciPlan(paths, options) {
 }
 
 describe("CI validation planning", () => {
+  it("uses two shards for bounded changes and four for broad affected coverage", () => {
+    expect(browserShardMatrix(ciPlan(["worker/gallery.ts"]))).toEqual([
+      "1/2",
+      "2/2",
+    ]);
+    const broad = ciPlan([
+      "apps/editor/src/app/App.tsx",
+      "apps/editor/src/features/simulation/spice-simulation-surface.tsx",
+    ]);
+    expect(broad.mode).toBe("focused");
+    expect(browserShardMatrix(broad)).toEqual(["1/4", "2/4", "3/4", "4/4"]);
+    expect(
+      browserShardMatrix(ciPlan(["apps/editor/src/lib/unmapped.ts"])),
+    ).toEqual(["1/2", "2/2"]);
+  });
+
   it("skips implementation jobs for documentation-only work", () => {
     expect(ciPlan(["docs/user/getting-started.md"])).toMatchObject({
       heavy: false,
@@ -96,10 +113,12 @@ describe("CI validation planning", () => {
     });
   });
 
-  it("keeps wire editing on its dedicated browser contract", () => {
-    const plan = ciPlan([
-      "apps/editor/src/features/wiring/wire-edit-controller.ts",
-    ]);
+  it.each([
+    "apps/editor/src/features/wiring/wire-edit-controller.ts",
+    // The contact resolver decides which conductor a wire click captures.
+    "packages/derived/src/contact-target.ts",
+  ])("keeps wire editing on its dedicated browser contract (%s)", (path) => {
+    const plan = ciPlan([path]);
     expect(plan.mode).toBe("focused");
     expect(plan.e2eArgs).toEqual(["apps/editor/e2e/wiring-semantics.spec.ts"]);
   });
@@ -151,6 +170,27 @@ describe("CI validation planning", () => {
     }
   });
 
+  it("keeps editable netlists and bundled examples on their browser regressions", () => {
+    const spec = "apps/editor/e2e/netlist-code-edit.spec.ts";
+    const paths = [
+      spec,
+      "apps/editor/e2e/editor-fixtures.ts",
+      "apps/editor/src/examples/two-stage-op-amp.icproj.json",
+      "apps/editor/src/features/project-code/project-text-editor.tsx",
+      "packages/netlist/src/export.ts",
+      "packages/netlist/src/printed-netlist.ts",
+      "packages/netlist/src/printers.ts",
+    ];
+    for (const changed of [...paths.map((path) => [path]), paths]) {
+      const plan = ciPlan(changed);
+      expect(plan.mode, changed.join(", ")).toBe("focused");
+      expect(plan.e2eArgs).toContain(spec);
+      expect(plan.e2eArgs).toContain(
+        "apps/editor/e2e/netlist-workflows.spec.ts",
+      );
+    }
+  });
+
   it("keeps shared model changes on their mapped browser contracts", () => {
     const plan = ciPlan(["packages/model/src/schema/document.ts"]);
     expect(plan).toMatchObject({
@@ -162,6 +202,29 @@ describe("CI validation planning", () => {
       expect.arrayContaining([
         "apps/editor/e2e/hierarchy.spec.ts",
         "apps/editor/e2e/project-file.spec.ts",
+      ]),
+    );
+  });
+
+  it("routes shared dialog styles and SPICE language sources to their owning browser contracts", () => {
+    const dialogPlan = ciPlan(["apps/editor/src/styles/editor-dialogs.css"]);
+    expect(dialogPlan.mode).toBe("focused");
+    expect(dialogPlan.e2eArgs).toContain(
+      "apps/editor/e2e/manual-editor.spec.ts",
+    );
+
+    const languagePlan = ciPlan(["packages/spice/src/simulation-language.ts"]);
+    expect(languagePlan.mode).toBe("focused");
+    expect(languagePlan.e2eArgs).toContain(
+      "apps/editor/e2e/simulation-code-editor.spec.ts",
+    );
+
+    const syntaxPlan = ciPlan(["packages/spice/src/syntax.ts"]);
+    expect(syntaxPlan.mode).toBe("focused");
+    expect(syntaxPlan.e2eArgs).toEqual(
+      expect.arrayContaining([
+        "apps/editor/e2e/netlist-conversion.spec.ts",
+        "apps/editor/e2e/simulation-code-editor.spec.ts",
       ]),
     );
   });

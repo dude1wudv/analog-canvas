@@ -1,13 +1,40 @@
-import type { MosBulkResolution } from "@icm/derived";
+import { lazy, Suspense } from "react";
+import { resolveEndpointPoint, type MosBulkResolution } from "@icm/derived";
+import type { WireSource } from "@icm/edit-engine";
+import type { ItemPropertyIdentity } from "../properties/item-property-code";
 import type { Annotation, SchematicDocument } from "@icm/model";
+import type { SymbolResolver } from "@icm/symbols";
+import type { RoutingGuidanceView } from "../../interaction/interaction-state";
 
-import {
-  GroupPropertyCodeEditor,
-  type GroupPropertyCodeEditorProps,
-} from "../properties/group-property-code-editor";
-import { RoutePropertyCodeEditor } from "../properties/route-property-code-editor";
+import type { GroupPropertyCodeEditorProps } from "../properties/group-property-code-editor";
 import type { RoutePropertyCodeValue } from "../properties/route-property-code";
 import { ToolIcon } from "../editor-shell/tool-icon";
+
+const GroupPropertyCodeEditor = lazy(() =>
+  import("../properties/property-editors").then((module) => ({
+    default: module.GroupPropertyCodeEditor,
+  })),
+);
+const RoutePropertyCodeEditor = lazy(() =>
+  import("../properties/property-editors").then((module) => ({
+    default: module.RoutePropertyCodeEditor,
+  })),
+);
+const LazyItemPropertySummary = lazy(() =>
+  import("../properties/property-editors").then((module) => ({
+    default: module.ItemPropertySummary,
+  })),
+);
+function ItemPropertySummary(props: {
+  item: ItemPropertyIdentity;
+  color: string;
+}) {
+  return (
+    <Suspense fallback={<p role="status">Loading properties…</p>}>
+      <LazyItemPropertySummary {...props} />
+    </Suspense>
+  );
+}
 
 export function MosBulkConnectionSection({
   connection,
@@ -72,8 +99,6 @@ export function MosBulkConnectionSection({
   );
 }
 
-export type RoutingGuidanceView = "focused" | "all" | "hidden";
-
 export function RoutingGuidanceSection({
   total,
   displayed,
@@ -121,7 +146,9 @@ export function GroupPropertiesSection({
 }: { active: boolean } & GroupPropertyCodeEditorProps) {
   if (!active) return null;
   return (
-    <GroupPropertyCodeEditor key={properties.selectionKey} {...properties} />
+    <Suspense fallback={<p role="status">Loading properties…</p>}>
+      <GroupPropertyCodeEditor key={properties.selectionKey} {...properties} />
+    </Suspense>
   );
 }
 
@@ -129,6 +156,7 @@ export function RouteActionsSection({
   active,
   document,
   route,
+  resolver,
   netLabel,
   bulkOwnerLabel,
   defaultColor,
@@ -140,6 +168,7 @@ export function RouteActionsSection({
   active: boolean;
   document: SchematicDocument;
   route: SchematicDocument["routes"][number] | null;
+  resolver?: SymbolResolver;
   netLabel: Annotation | null;
   bulkOwnerLabel?: string | null;
   defaultColor: string;
@@ -153,6 +182,19 @@ export function RouteActionsSection({
     return (
       <section className="context-actions" aria-label="MOS bulk route actions">
         <h2>Bulk connection</h2>
+        <ItemPropertySummary
+          item={{
+            type: "bulk-wire",
+            name: route.id,
+            coordinate: (() => {
+              const point = resolver
+                ? resolveEndpointPoint(document, resolver, route.start)
+                : null;
+              return point ? [point.x, point.y] : null;
+            })(),
+          }}
+          color={defaultColor}
+        />
         <p>
           Follows <strong>{bulkOwnerLabel}</strong> line color.
         </p>
@@ -164,31 +206,36 @@ export function RouteActionsSection({
   }
   return (
     <section className="context-actions" aria-label="Route actions">
-      <RoutePropertyCodeEditor
-        key={route.id}
-        document={document}
-        route={route}
-        netLabel={netLabel}
-        defaultColor={defaultColor}
-        onApply={onApply}
-        actions={
-          <div className="route-property-code-actions">
-            <button type="button" onClick={onToggleHighlight}>
-              {highlightActive
-                ? "Clear Net highlight (H)"
-                : "Highlight Net (H)"}
-            </button>
-            <button type="button" onClick={onDeleteWire}>
-              Delete wire
-            </button>
-          </div>
-        }
-      />
+      <Suspense fallback={<p role="status">Loading properties…</p>}>
+        <RoutePropertyCodeEditor
+          {...(resolver ? { resolver } : {})}
+          key={route.id}
+          document={document}
+          route={route}
+          netLabel={netLabel}
+          defaultColor={defaultColor}
+          onApply={onApply}
+          actions={
+            <div className="route-property-code-actions">
+              <button type="button" onClick={onToggleHighlight}>
+                {highlightActive
+                  ? "Clear Net highlight (H)"
+                  : "Highlight Net (H)"}
+              </button>
+              <button type="button" onClick={onDeleteWire}>
+                Delete wire
+              </button>
+            </div>
+          }
+        />
+      </Suspense>
     </section>
   );
 }
 
 export function EndpointActionsSection({
+  item,
+  color = "auto",
   kind,
   noConnect,
   endpointNetId,
@@ -197,6 +244,8 @@ export function EndpointActionsSection({
   onToggleNoConnect,
   onDeleteJunction,
 }: {
+  item?: WireSource | null;
+  color?: string;
   kind: "terminal" | "junction" | null;
   noConnect: boolean;
   endpointNetId: string | null;
@@ -209,6 +258,22 @@ export function EndpointActionsSection({
     return (
       <section className="context-actions" aria-label="连接点操作">
         <h2>连接点</h2>
+        {item && (
+          <ItemPropertySummary
+            item={{
+              type: "junction",
+              name:
+                item.endpoint.kind === "junction"
+                  ? item.endpoint.junctionId
+                  : "",
+              coordinate: [
+                item.connection.contactPoint.x,
+                item.connection.contactPoint.y,
+              ],
+            }}
+            color={color}
+          />
+        )}
         <button type="button" onClick={onDeleteJunction}>
           Delete junction and attached wires
         </button>
@@ -218,6 +283,22 @@ export function EndpointActionsSection({
   return (
     <section className="context-actions" aria-label="端点操作">
       <h2>端点</h2>
+      {item && (
+        <ItemPropertySummary
+          item={{
+            type: "terminal",
+            name:
+              item.endpoint.kind === "terminal"
+                ? `${item.endpoint.instanceId}.${item.endpoint.pinName}`
+                : "",
+            coordinate: [
+              item.connection.contactPoint.x,
+              item.connection.contactPoint.y,
+            ],
+          }}
+          color={color}
+        />
+      )}
       <button type="button" onClick={onDisconnect}>
         Disconnect endpoint
       </button>

@@ -989,7 +989,18 @@ describe("instance value fraction rendering", () => {
     expect(svg).toContain('data-role="fraction-bar"');
     expect(svg).toContain(">10um<");
     expect(svg).toContain(">150nm<");
-    // W/L stays compact beside the device while retaining the same bold face:
+    // W/L stays compact beside the device while retaining the same bold face,
+    // but SVG must not squeeze the glyph outlines to an estimated width.
+    const numerator = svg.match(
+      /<text data-role="fraction-numerator"[^>]*>/u,
+    )?.[0];
+    const denominator = svg.match(
+      /<text data-role="fraction-denominator"[^>]*>/u,
+    )?.[0];
+    expect(numerator).not.toContain("textLength");
+    expect(numerator).not.toContain("lengthAdjust");
+    expect(denominator).not.toContain("textLength");
+    expect(denominator).not.toContain("lengthAdjust");
     // 15.116 × (0.76 × 1.1) ≈ 12.64px.
     expect(svg).toContain('font-size="12.64"');
   });
@@ -1042,6 +1053,11 @@ describe("instance value fraction rendering", () => {
       svg.match(/<text x="([^"]+)"[^>]*><tspan[^>]*> ×4<\/tspan>/u)?.[1],
     );
     expect(multiplierStart).toBeCloseTo(barEnd, 5);
+    const multiplier = svg.match(
+      /<text[^>]*><tspan[^>]*> ×4<\/tspan><\/text>/u,
+    )?.[0];
+    expect(multiplier).not.toContain("textLength");
+    expect(multiplier).not.toContain("lengthAdjust");
   });
 });
 

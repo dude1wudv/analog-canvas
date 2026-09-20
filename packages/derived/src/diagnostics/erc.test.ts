@@ -1,4 +1,8 @@
-import { createEmptyProject, type CircuitProject } from "@icm/model";
+import {
+  createEmptyProject,
+  createRoutePath,
+  type CircuitProject,
+} from "@icm/model";
 import { builtInSymbols, InMemorySymbolResolver } from "@icm/symbols";
 import { describe, expect, it } from "vitest";
 
@@ -130,7 +134,36 @@ function connectDrainAndSource(project: CircuitProject): void {
 }
 
 describe("ERC engine", () => {
-  it("does not group independent same-name Cell Pins for live ERC", () => {
+  it("says how many Instances the Cell holds but the sheet does not draw", () => {
+    const project = emptyProject();
+    const document = project.documents[0]!;
+    document.instances.push(
+      { id: "M9", reference: "M9", symbolId: "mos", placement: null },
+      { id: "M10", reference: "M10", symbolId: "mos", placement: null },
+    );
+    const finding = run(project).find(
+      (diagnostic) => diagnostic.code === "ERC_INSTANCE_NOT_DRAWN",
+    );
+    expect(finding?.severity).toBe("warning");
+    expect(finding?.message).toContain("2 Instances");
+    expect(finding?.message).toContain("M9, M10");
+    expect(finding?.related).toHaveLength(1);
+
+    // Drawn Instances are not the tray's business.
+    document.instances[0]!.placement = {
+      position: { x: 0, y: 0 },
+      rotation: 0,
+      mirror: "none",
+    };
+    document.instances[1]!.placement = {
+      position: { x: 40, y: 0 },
+      rotation: 0,
+      mirror: "none",
+    };
+    expect(codes(project)).not.toContain("ERC_INSTANCE_NOT_DRAWN");
+  });
+
+  it("reports effective Port direction conflicts without rewriting independent markers", () => {
     const project = emptyProject();
     const document = project.documents[0]!;
     document.instances.push(
@@ -160,11 +193,34 @@ describe("ERC engine", () => {
     const before = structuredClone(project);
 
     expect(
-      run(project).some(
+      run(project).filter(
         (diagnostic) => diagnostic.code === "ERC_CELL_PORT_DIRECTION_CONFLICT",
       ),
-    ).toBe(false);
+    ).toEqual([
+      expect.objectContaining({
+        severity: "error",
+        gateEligible: true,
+        primary: expect.objectContaining({
+          documentId: document.id,
+          kind: "instance",
+          objectId: "P1",
+        }),
+        related: [
+          expect.objectContaining({
+            documentId: document.id,
+            kind: "instance",
+            objectId: "P2",
+          }),
+        ],
+      }),
+    ]);
     expect(project).toEqual(before);
+    document.netlist!.terminals[1]!.direction = "input";
+    expect(
+      run(project).some(
+        (item) => item.code === "ERC_CELL_PORT_DIRECTION_CONFLICT",
+      ),
+    ).toBe(false);
   });
 
   it("is silent on a clean project where every pin is connected", () => {
@@ -182,6 +238,83 @@ describe("ERC engine", () => {
       },
     ];
     expect(run(project)).toEqual([]);
+  });
+
+  it("reports a pin a wire of another Net passes straight through", () => {
+    // Geometry never makes a connection and a Crossing is not a Junction, so
+    // nothing repairs this: the author sees a wire reaching the pin and the
+    // netlist sees a pin on a different Net. Nothing else says so.
+    const project = emptyProject();
+    const document = project.documents[0]!;
+    // I1 sits at the origin: L at (-20, 0), R at (20, 0).
+    document.instances = [
+      instance("I1", "M1"),
+      {
+        id: "I2",
+        symbolId: "dual",
+        reference: "M2",
+        netlist: { parameters: {} },
+        placement: {
+          position: { x: 0, y: -40 },
+          rotation: 0 as const,
+          mirror: "none" as const,
+        },
+      },
+    ];
+    document.nets = [
+      {
+        id: "net-pins",
+        terminals: [
+          { instanceId: "I1", pinName: "L" },
+          { instanceId: "I1", pinName: "R" },
+        ],
+      },
+      {
+        id: "net-wire",
+        terminals: [
+          { instanceId: "I2", pinName: "L" },
+          { instanceId: "I2", pinName: "R" },
+        ],
+      },
+    ];
+    // A wire of net-wire that detours down through both of I1's pins.
+    document.routes = [
+      createRoutePath({
+        id: "route-through",
+        netId: "net-wire",
+        start: { kind: "terminal", instanceId: "I2", pinName: "L" },
+        end: { kind: "terminal", instanceId: "I2", pinName: "R" },
+        bends: [
+          { x: -20, y: 0 },
+          { x: 20, y: 0 },
+        ],
+        modes: ["manual", "manual", "manual"],
+      }),
+    ];
+
+    const findings = run(project).filter(
+      (diagnostic) => diagnostic.code === "ERC_TOUCHING_NOT_CONNECTED",
+    );
+    expect(
+      findings.map((diagnostic) => diagnostic.parameters?.["pinName"]),
+    ).toEqual(["L", "R"]);
+    expect(findings[0]!.message).toContain("belongs to a different Net");
+    expect(findings[0]!.parameters?.["routeId"]).toBe("route-through");
+
+    // The same wire on the same Net is the ordinary connected case.
+    document.nets[0]!.id = "net-wire-2";
+    document.routes[0]!.netId = "net-wire-2";
+    document.nets[1]!.terminals.push(
+      { instanceId: "I1", pinName: "L" },
+      { instanceId: "I1", pinName: "R" },
+    );
+    document.nets = [document.nets[1]!];
+    document.routes[0]!.netId = document.nets[0]!.id;
+    expect(
+      run(project).filter(
+        (diagnostic) => diagnostic.code === "ERC_TOUCHING_NOT_CONNECTED",
+      ),
+    ).toEqual([]);
   });
 
   it("flags unconnected visible pins and suppresses them via NoConnect", () => {

@@ -6,9 +6,15 @@ import {
 } from "@icm/model";
 import {
   deriveProjectNetNameProjection,
+  portableCellIdentifier,
+  findExternalMasterCollisions,
   directObjectLocator,
+  drawnSupplyNet,
+  mosBulkKind,
+  resolveMosBulkConnection,
   resolveDocumentLogicalNets,
   type ProjectedNetName,
+  type ResolvedDocumentLogicalNets,
   type ResolvedLogicalNet,
 } from "@icm/derived";
 import type {
@@ -45,6 +51,7 @@ import {
   type NetlistNamingProfile,
 } from "./net-name-codec.js";
 import { normalizeIndependentSource } from "./source-waveform.js";
+import { withImplicitMosSupplies } from "./implicit-mos-supplies.js";
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const MAX_CELLS = 1024;
@@ -66,6 +73,7 @@ function diagnostic(
   message: string,
   objectIds: StableId[] = [],
   severity: "error" | "warning" = "error",
+  parameter?: string,
 ): void {
   diagnostics.push({
     code,
@@ -74,6 +82,7 @@ function diagnostic(
     objectIds,
     primary: directObjectLocator(documentId, "document", documentId),
     message,
+    ...(parameter === undefined ? {} : { parameter }),
   });
 }
 
@@ -186,6 +195,12 @@ interface CellNetContext {
   netByTerminal: Map<string, ResolvedLogicalNet>;
   noConnectNameByTerminal: Map<string, string>;
   nets: DesignNetlistCell["nets"];
+  /**
+   * This Cell's resolved Logical Nets. A body with no explicit wiring asks the
+   * bulk policy per pin, and that policy resolves the whole Document when it
+   * is not handed this — once per terminal of every MOS.
+   */
+  logicalNets: ResolvedDocumentLogicalNets;
 }
 
 export interface DesignNetlistAnalysisOptions {
@@ -193,7 +208,43 @@ export interface DesignNetlistAnalysisOptions {
   namingProfile?: NetlistNamingProfile;
   /** Read-only analysis root. Omission preserves structural-export behavior. */
   rootDocumentId?: StableId;
+  /**
+   * Whether the root Cell is printed as the deck's own top-level cards rather
+   * than as a `.subckt`. It decides one thing about ground, and only one: a
+   * Cell printed as a subcircuit states its reference as a `VSS` pin, because
+   * whoever instantiates it owns that reference; the Cell printed as the deck
+   * itself keeps SPICE's node `0`, because there the deck is the outside and
+   * a call passing `0` for a child's `VSS` is what ties the two together.
+   */
+  rootAsTopLevel?: boolean;
+  /**
+   * Whether a Cell printed as a `.subckt` states its ground as a `VSS` pin.
+   *
+   * A block handed to somebody else should say where its reference comes
+   * from: `"pin"` gives every such Cell that reaches ground a `VSS` pin
+   * beside its supplies, and the one Cell printed as the deck itself keeps
+   * node `0`, so its calls tie the two together. `"global"` — the default —
+   * leaves SPICE's global node where it was, which is what an imported deck
+   * must round-trip to and what a Snapshot reads.
+   */
+  groundPin?: GroundPinPolicy;
 }
+
+/** Ground as the Cell's own pin, or as SPICE's global node. */
+export type GroundPinPolicy = "pin" | "global";
+
+/**
+ * What a deck this editor runs shares with the netlist it hands out: the same
+ * subcircuits, each stating ground as a pin, and one flat root whose node `0`
+ * is what ties them to the reference.
+ */
+export const SIMULATION_DECK_GROUND = {
+  groundPin: "pin",
+  rootAsTopLevel: true,
+} as const satisfies DesignNetlistAnalysisOptions;
+
+/** The formal pin name a Cell's ground takes, matching the Block libraries. */
+export const GROUND_PORT_NAME = "VSS";
 
 type ResolvedDesignNetlistAnalysisOptions =
   Required<DesignNetlistAnalysisOptions>;
@@ -214,6 +265,7 @@ function encodeCandidate(
  */
 function withNetlistPowerMarkerClaims(
   document: SchematicDocument,
+  project?: CircuitProject,
 ): SchematicDocument {
   const logicalNets = resolveDocumentLogicalNets(document);
   const claimedMarkers = new Set(
@@ -231,7 +283,7 @@ function withNetlistPowerMarkerClaims(
       claimedMarkers.has(instance.id)
     )
       continue;
-    const pinName = deviceDescriptor(instance.symbolId)?.pinOrder[0];
+    const pinName = deviceDescriptor(instance.symbolId, project)?.pinOrder[0];
     if (!pinName) continue;
     const nets = document.nets.filter((net) =>
       net.terminals.some(
@@ -272,6 +324,7 @@ function withNetlistPowerMarkerClaims(
 }
 
 function buildNetContext(
+  project: CircuitProject,
   sourceDocument: SchematicDocument,
   documentsById: Map<string, SchematicDocument>,
   externalDefinitionsById: ReadonlyMap<string, ExternalSubcircuitDefinition>,
@@ -279,7 +332,7 @@ function buildNetContext(
   options: ResolvedDesignNetlistAnalysisOptions,
   diagnostics: NetlistDiagnostic[],
 ): CellNetContext {
-  const document = withNetlistPowerMarkerClaims(sourceDocument);
+  const document = withNetlistPowerMarkerClaims(sourceDocument, project);
   if (document.nets.length > MAX_NETS_PER_CELL) {
     diagnostic(
       diagnostics,
@@ -575,7 +628,7 @@ function buildNetContext(
             ? reviewed.terminals.map((terminal) => terminal.pinName)
             : externalDefinition
               ? externalDefinition.terminals.map((terminal) => terminal.name)
-              : deviceDescriptor(instance.symbolId)?.pinOrder;
+              : deviceDescriptor(instance.symbolId, project)?.pinOrder;
         if (allowedPins && !allowedPins.includes(terminal.pinName)) {
           diagnostic(
             diagnostics,
@@ -646,6 +699,7 @@ function buildNetContext(
     ),
     netByTerminal,
     noConnectNameByTerminal,
+    logicalNets,
     nets: [
       ...logicalNets.groups.flatMap((logicalNet) => {
         const name = nameByNetId.get(logicalNet.baseNetIds[0]!);
@@ -666,6 +720,52 @@ function buildNetContext(
   };
 }
 
+/**
+ * The node a built-in Block's declared supply exports to when the Cell drew
+ * no supply of that domain at all — a Block used at the abstract level with
+ * nothing above it yet.
+ *
+ * The Block's library interface states that it needs this node; declaring it
+ * as a global of the same name says exactly that and nothing more. It adds no
+ * Cell port, claims no Net in the Document, and changes no membership: the
+ * drawing is unchanged and a warning records what the netlist declared. When
+ * the Cell already spells that name for a local Net, the declaration would be
+ * two different nodes under one token, so the supply stays missing instead.
+ */
+function declaredBlockSupplyName(
+  document: SchematicDocument,
+  instance: Instance,
+  supply: "VDD" | "VSS",
+  context: CellNetContext,
+  options: ResolvedDesignNetlistAnalysisOptions,
+  diagnostics: NetlistDiagnostic[],
+): string | undefined {
+  const encoded = encodeCandidate(supply, "global", options);
+  if (!encoded.ok) return undefined;
+  const taken = context.nets.find(
+    (net) =>
+      encodedNetNameCollisionKey(net.name, options.format) ===
+      encoded.collisionKey,
+  );
+  if (taken && taken.scope !== "global") return undefined;
+  if (!taken) {
+    context.nets.push({
+      id: deriveStableId("netlist", "block-supply", document.id, supply),
+      name: encoded.token,
+      scope: "global",
+    });
+  }
+  diagnostic(
+    diagnostics,
+    document.id,
+    "DECLARED_BLOCK_SUPPLY",
+    `Analog Block ${instance.reference ?? instance.id} has no ${supply} Net in this Cell; its declared supply exports as global node ${encoded.token}`,
+    [instance.id],
+    "warning",
+  );
+  return encoded.token;
+}
+
 function terminalNetName(
   document: SchematicDocument,
   instance: Instance,
@@ -673,7 +773,17 @@ function terminalNetName(
   context: CellNetContext,
   diagnostics: NetlistDiagnostic[],
 ): string | null {
-  const net = context.netByTerminal.get(`${instance.id}\u0000${pinName}`);
+  // A MOS body has one authority, and membership is not always it: a body
+  // left alone on the Net its own policy binding named is residue from a
+  // paste or a deleted marker, and writing that node would strand the body
+  // where nothing else reaches it. Ask the authority first; for an explicitly
+  // wired body it answers the same Net membership does.
+  const bodyNet =
+    pinName === "B" && mosBulkKind(instance)
+      ? resolveMosBulkConnection(document, instance, context.logicalNets)?.net
+      : undefined;
+  const net =
+    bodyNet ?? context.netByTerminal.get(`${instance.id}\u0000${pinName}`);
   const name = net ? context.nameByNetId.get(net.id) : undefined;
   const noConnectName = context.noConnectNameByTerminal.get(
     `${instance.id}\u0000${pinName}`,
@@ -683,11 +793,16 @@ function terminalNetName(
   // Missing connectivity is an error, not permission to infer a supply from
   // device polarity or a matching Net name elsewhere in the Cell.
   if (!name) {
+    const body = pinName === "B" && mosBulkKind(instance);
     diagnostic(
       diagnostics,
       document.id,
       "MISSING_PIN_NET",
-      `Required pin ${instance.reference ?? instance.id}.${pinName} is not connected to an exportable Net`,
+      body
+        ? // The fourth node has two authored answers; name both so the
+          // report is actionable instead of only true.
+          `Required pin ${instance.reference ?? instance.id}.B has no body Net: connect B, or set this Cell's MOS body default`
+        : `Required pin ${instance.reference ?? instance.id}.${pinName} is not connected to an exportable Net`,
       [instance.id],
     );
     return null;
@@ -699,7 +814,9 @@ function extractHierarchyInstance(
   document: SchematicDocument,
   instance: Instance,
   documentsById: Map<string, SchematicDocument>,
+  cellNameByDocumentId: ReadonlyMap<string, string>,
   context: CellNetContext,
+  options: ResolvedDesignNetlistAnalysisOptions,
   diagnostics: NetlistDiagnostic[],
 ): DesignNetlistInstance | null {
   const netlist = instance.netlist;
@@ -743,7 +860,8 @@ function extractHierarchyInstance(
     diagnostics,
   );
   // Callers and definitions share the authored interface, including its order.
-  const nodes = projectCellInterface(child.netlist).ports.flatMap((port) => {
+  const childPorts = projectCellInterface(child.netlist).ports;
+  const nodes = childPorts.map((port) => {
     const netName = terminalNetName(
       document,
       instance,
@@ -751,14 +869,35 @@ function extractHierarchyInstance(
       context,
       diagnostics,
     );
-    return netName ? [{ pinName: port.name, netName }] : [];
+    // Strict extraction rejects the accompanying error. Authoring keeps an
+    // explicit non-executable slot rather than shifting positional arguments.
+    return {
+      pinName: port.name,
+      netName: netName ?? `<unconnected:${port.name}>`,
+    };
   });
+  // The child's ground pin is not in its authored interface; both sides
+  // derive it from the Documents, so the call carries this Cell's own ground
+  // node at the position the child's definition puts it.
+  if (options.groundPin === "pin" && cellReachesGround(child, documentsById)) {
+    const callerGround = context.nameByAuthoredName.get(foldNetName("0"));
+    if (callerGround) {
+      nodes.splice(
+        groundPortIndex(
+          child,
+          childPorts.map((port) => ({ id: port.netIds[0]!, name: port.name })),
+        ),
+        0,
+        { pinName: GROUND_PORT_NAME, netName: callerGround },
+      );
+    }
+  }
   return {
     id: instance.id,
     reference: instance.reference!,
     invocationKind: "subcircuit",
     deviceClass: "hierarchical",
-    target: child.netlist.name,
+    target: cellNameByDocumentId.get(child.id) ?? child.netlist.name,
     nodes,
     parameters: Object.entries(netlist.parameters)
       .sort(([a], [b]) => compareText(a, b))
@@ -917,7 +1056,7 @@ function extractExternalSubcircuitInstance(
       );
     }
   }
-  const nodes = terminalBindings.flatMap((terminal) => {
+  const nodes = terminalBindings.map((terminal) => {
     const netName = terminalNetName(
       document,
       instance,
@@ -925,7 +1064,10 @@ function extractExternalSubcircuitInstance(
       context,
       diagnostics,
     );
-    return netName ? [{ pinName: terminal.targetName, netName }] : [];
+    return {
+      pinName: terminal.targetName,
+      netName: netName ?? `<unconnected:${terminal.targetName}>`,
+    };
   });
   const parameters = Object.entries(netlist.parameters);
   const projectedParameters = reviewed
@@ -986,6 +1128,7 @@ function extractBuiltInSubcircuitInstance(
   definition: BuiltInSubcircuitDescriptor,
   reference: string,
   context: CellNetContext,
+  options: ResolvedDesignNetlistAnalysisOptions,
   diagnostics: NetlistDiagnostic[],
 ): DesignNetlistInstance | null {
   const netlist = instance.netlist;
@@ -1030,14 +1173,36 @@ function extractBuiltInSubcircuitInstance(
       // a Net or a Cell interface. Resolve authored identity before encoding.
       const netName = context.nameByAuthoredName.get(foldNetName(port.supply));
       if (netName) return [{ pinName: port.name, netName }];
+      // Failing that, the supply the author drew: a Block's VSS sits on the
+      // Cell's ground and its VDD on the Cell's positive supply, the same
+      // reading a MOS body uses for its fourth node. Nobody names a Net
+      // "VSS" when they have drawn a ground symbol, and the Block asking for
+      // one by spelling was never an electrical requirement.
+      const drawn = drawnSupplyNet(
+        document,
+        port.supply === "VDD" ? "vdd" : "ground",
+      );
+      const drawnName = drawn ? context.nameByNetId.get(drawn.id) : undefined;
+      if (drawnName) return [{ pinName: port.name, netName: drawnName }];
+      // Nothing of that domain is drawn: declare the node the Block's own
+      // interface asks for, as a global, and say so.
+      const declared = declaredBlockSupplyName(
+        document,
+        instance,
+        port.supply,
+        context,
+        options,
+        diagnostics,
+      );
+      if (declared) return [{ pinName: port.name, netName: declared }];
       diagnostic(
         diagnostics,
         document.id,
         "MISSING_BLOCK_SUPPLY",
-        `Analog Block ${reference} requires an authored ${port.supply} Net; declare its supply explicitly or use an external definition with the intended interface`,
+        `Analog Block ${reference} requires a ${port.supply} Net; the Cell already spells ${port.supply} for a local Net, so draw the ${port.supply === "VDD" ? "positive supply" : "ground"} or rename that Net`,
         [instance.id],
       );
-      return [];
+      return [{ pinName: port.name, netName: `<unconnected:${port.name}>` }];
     }
     const netName = terminalNetName(
       document,
@@ -1046,7 +1211,9 @@ function extractBuiltInSubcircuitInstance(
       context,
       diagnostics,
     );
-    return netName ? [{ pinName: port.name, netName }] : [];
+    return [
+      { pinName: port.name, netName: netName ?? `<unconnected:${port.name}>` },
+    ];
   });
   return {
     id: instance.id,
@@ -1062,12 +1229,13 @@ function extractBuiltInSubcircuitInstance(
 }
 
 function extractDeviceInstance(
+  project: CircuitProject,
   document: SchematicDocument,
   instance: Instance,
   context: CellNetContext,
   diagnostics: NetlistDiagnostic[],
 ): DesignNetlistInstance | null {
-  const definition = deviceDescriptor(instance.symbolId);
+  const definition = deviceDescriptor(instance.symbolId, project);
   if (!definition) {
     diagnostic(
       diagnostics,
@@ -1130,17 +1298,11 @@ function extractDeviceInstance(
     );
     return null;
   }
-  const netlist = instance.netlist;
-  if (!netlist) {
-    diagnostic(
-      diagnostics,
-      document.id,
-      "MISSING_INSTANCE_NETLIST",
-      `Instance ${instance.id} has no netlist data`,
-      [instance.id],
-    );
-    return null;
-  }
+  // A device whose authoring data was never written binds nothing and sets no
+  // parameter — which is what an empty record says. Older Projects, imports
+  // and Agent-authored instances reach here without one. Reading that state as
+  // empty lets extraction report the specific missing model and parameters.
+  const netlist = instance.netlist ?? { parameters: {} };
   if (!isIdentifier(instance.reference!)) {
     diagnostic(
       diagnostics,
@@ -1209,6 +1371,8 @@ function extractDeviceInstance(
         "MISSING_REQUIRED_PARAMETER",
         `Instance ${instance.reference!} requires parameter ${parameter}`,
         [instance.id],
+        "error",
+        parameter,
       );
     }
   }
@@ -1231,7 +1395,7 @@ function extractDeviceInstance(
       context,
       diagnostics,
     );
-    return netName ? [{ pinName, netName }] : [];
+    return [{ pinName, netName: netName ?? `<unconnected:${pinName}>` }];
   });
   const target =
     netlist.binding?.kind === "model" ? netlist.binding.name : null;
@@ -1277,10 +1441,103 @@ function extractDeviceInstance(
   };
 }
 
+/**
+ * Whether a Cell meets ground at all — its own node `0`, or any Cell it
+ * instantiates that does.
+ *
+ * The answer has to be the same on both sides of a hierarchy call, and both
+ * sides compute it from the Documents alone rather than from whichever cell
+ * happened to be extracted first. A Cell that only passes ground through to a
+ * child still needs the pin: otherwise the child's reference would have
+ * nowhere to come from.
+ */
+function cellReachesGround(
+  document: SchematicDocument,
+  documentsById: Map<string, SchematicDocument>,
+  seen: Set<string> = new Set(),
+): boolean {
+  if (seen.has(document.id)) return false;
+  seen.add(document.id);
+  // Read the same Document the node names come from: a drawn Ground marker
+  // that predates the persisted claim record is recovered by the export view,
+  // and most drawings are exactly that. Asking the unrecovered Document would
+  // answer "no ground" for a Cell whose nodes are about to be named `0`.
+  const groundOfItsOwn = resolveDocumentLogicalNets(
+    withNetlistPowerMarkerClaims(document),
+  ).groups.some((group) => group.powerDomain === "ground");
+  if (groundOfItsOwn) return true;
+  return document.instances.some((instance) => {
+    const binding = instance.netlist?.binding;
+    if (binding?.kind !== "subcircuit") return false;
+    const child = documentsById.get(binding.childDocumentId);
+    return child ? cellReachesGround(child, documentsById, seen) : false;
+  });
+}
+
+/**
+ * Where the ground pin sits in a Cell's interface: after the supplies the
+ * author declared, so every Cell reads `VDD VSS …` the way the Block library
+ * already writes it, and before the first signal.
+ */
+function groundPortIndex(
+  document: SchematicDocument,
+  ports: readonly { id: string; name?: string }[],
+): number {
+  const logicalNets = resolveDocumentLogicalNets(document);
+  let index = 0;
+  for (const [position, port] of ports.entries()) {
+    const domain = logicalNets.byBaseNetId.get(port.id)?.powerDomain;
+    if (domain === "vdd" || port.name?.toUpperCase() === "VDD")
+      index = position + 1;
+  }
+  return index;
+}
+
+/** Allocate dialect names without changing authored references. Reserve existing
+ * legal names first so M1 and an imported XM1 remain two distinct devices.
+ * The shared IR supplies both exported cards and simulator signal paths.
+ */
+function projectSpiceReferences(cell: DesignNetlistCell): void {
+  const prefixes: Record<DesignNetlistInstance["deviceClass"], string> = {
+    mos: "M",
+    resistor: "R",
+    capacitor: "C",
+    inductor: "L",
+    diode: "D",
+    bjt: "Q",
+    "voltage-source": "V",
+    "current-source": "I",
+    switch: "S",
+    hierarchical: "X",
+    "net-marker": "",
+  };
+  const prefixFor = (instance: DesignNetlistInstance) =>
+    instance.invocationKind === "subcircuit"
+      ? "X"
+      : prefixes[instance.deviceClass];
+  const needsPrefix = (instance: DesignNetlistInstance) =>
+    !instance.reference.toUpperCase().startsWith(prefixFor(instance));
+  const used = new Set(
+    cell.instances
+      .filter((instance) => !needsPrefix(instance))
+      .map((instance) => instance.reference.toLowerCase()),
+  );
+  for (const instance of cell.instances) {
+    if (!needsPrefix(instance)) continue;
+    const base = `${prefixFor(instance)}${instance.reference}`;
+    let reference = base;
+    for (let suffix = 2; used.has(reference.toLowerCase()); suffix++)
+      reference = `${base}_${suffix}`;
+    used.add(reference.toLowerCase());
+    instance.reference = reference;
+  }
+}
+
 function extractCell(
   project: CircuitProject,
   document: SchematicDocument,
   documentsById: Map<string, SchematicDocument>,
+  cellNameByDocumentId: ReadonlyMap<string, string>,
   projectedNames: ReadonlyMap<string, ProjectedNetName>,
   options: ResolvedDesignNetlistAnalysisOptions,
   diagnostics: NetlistDiagnostic[],
@@ -1293,14 +1550,6 @@ function extractCell(
       `Document ${document.id} has no netlist interface`,
     );
     return null;
-  }
-  if (!isIdentifier(document.netlist.name)) {
-    diagnostic(
-      diagnostics,
-      document.id,
-      "INVALID_CELL_NAME",
-      `Cell name is outside the portable identifier subset: ${document.netlist.name}`,
-    );
   }
   for (const formal of document.netlist.formalParameters) {
     if (formal.defaultValue !== undefined) continue;
@@ -1320,6 +1569,7 @@ function extractCell(
     );
   }
   const context = buildNetContext(
+    project,
     document,
     documentsById,
     new Map(
@@ -1333,6 +1583,15 @@ function extractCell(
     diagnostics,
   );
   const interfaceProjection = projectCellInterface(document.netlist);
+  for (const issue of interfaceProjection.issues) {
+    diagnostic(
+      diagnostics,
+      document.id,
+      issue.code,
+      `Port ${issue.portName} has conflicting directions: ${issue.directions.join(", ")}`,
+      [...issue.terminalIds],
+    );
+  }
   const ports: DesignNetlistCell["ports"] = interfaceProjection.ports.flatMap(
     (port) => {
       let hasMissingNet = false;
@@ -1371,14 +1630,79 @@ function extractCell(
       return [{ id: representativeNetId, name: encodedPort.token, netName }];
     },
   );
-  const referenceIndex = createReferenceIndex(document);
+  // Ground becomes this Cell's own pin: the node inside is named for it, and
+  // the pin joins the interface beside the supplies. A Cell that only passes
+  // ground to a child gets the node anyway, so the child's reference has
+  // somewhere to come from.
+  const printedAsSubcircuit = !(
+    options.rootAsTopLevel && document.id === options.rootDocumentId
+  );
+  if (
+    options.groundPin === "pin" &&
+    printedAsSubcircuit &&
+    cellReachesGround(document, documentsById)
+  ) {
+    const encodedGround = encodeCandidate(GROUND_PORT_NAME, "local", options);
+    const groundNet = context.nets.find((net) => net.name === "0");
+    const groundToken = encodedGround.ok
+      ? encodedGround.token
+      : GROUND_PORT_NAME;
+    // An author who already gave ground a pin of their own keeps it: the
+    // policy states a reference, it does not duplicate one. The node then
+    // takes that pin's name, so no Cell printed as a subcircuit is left
+    // reaching for the global reference under a different name.
+    const authoredPin = groundNet
+      ? ports.find((port) => port.netName === groundNet.name)
+      : undefined;
+    if (authoredPin && groundNet) {
+      for (const [netId, name] of context.nameByNetId)
+        if (name === groundNet.name)
+          context.nameByNetId.set(netId, authoredPin.name);
+      context.nameByAuthoredName.set(foldNetName("0"), authoredPin.name);
+      groundNet.name = authoredPin.name;
+      groundNet.scope = "local";
+      authoredPin.netName = authoredPin.name;
+    } else if (groundNet) {
+      for (const [netId, name] of context.nameByNetId)
+        if (name === "0") context.nameByNetId.set(netId, groundToken);
+      context.nameByAuthoredName.set(foldNetName("0"), groundToken);
+      groundNet.name = groundToken;
+      groundNet.scope = "local";
+      ports.splice(groundPortIndex(document, ports), 0, {
+        id: groundNet.id,
+        name: groundToken,
+        netName: groundToken,
+      });
+    } else {
+      // Nothing in this Cell touches ground; it exists only to carry the
+      // reference down to a child that does.
+      const passThroughId = deriveStableId(
+        "netlist",
+        "ground-port",
+        document.id,
+        GROUND_PORT_NAME,
+      );
+      context.nets.push({
+        id: passThroughId,
+        name: groundToken,
+        scope: "local",
+      });
+      context.nameByNetId.set(passThroughId, groundToken);
+      context.nameByAuthoredName.set(foldNetName("0"), groundToken);
+      ports.splice(groundPortIndex(document, ports), 0, {
+        id: passThroughId,
+        name: groundToken,
+        netName: groundToken,
+      });
+    }
+  }
+  const referenceIndex = createReferenceIndex(document, project);
   const syntheticReferences = new Map<string, string>();
   const reservedReferences = new Set(referenceIndex.byReference.keys());
   for (const instance of [...document.instances].sort((left, right) =>
     left.id.localeCompare(right.id),
   )) {
-    if (instance.reference || !subcircuitDescriptor(instance.symbolId))
-      continue;
+    if (instance.reference) continue;
     const policy = referenceIndex.policyByInstanceId.get(instance.id);
     if (!policy) continue;
     const reference = nextReference(referenceIndex, policy, {
@@ -1426,14 +1750,20 @@ function extractCell(
   const cellPinInstanceIds = new Set(
     interfaceProjection.ports.flatMap((port) => port.interfaceInstanceIds),
   );
-  for (const instance of [...document.instances].sort((a, b) => {
+  for (const source of [...document.instances].sort((a, b) => {
     const left = a.reference ?? syntheticReferences.get(a.id) ?? a.id;
     const right = b.reference ?? syntheticReferences.get(b.id) ?? b.id;
     return compareText(left, right) || a.id.localeCompare(b.id);
   })) {
+    // Older/Agent-authored drawings can omit references on primitive devices
+    // too. Allocate only in this read-only projection, before dialect prefixes.
+    const generatedReference = syntheticReferences.get(source.id);
+    const instance = generatedReference
+      ? { ...source, reference: generatedReference }
+      : source;
     if (cellPinInstanceIds.has(instance.id)) continue;
     const binding = instance.netlist?.binding;
-    const builtInSubcircuit = subcircuitDescriptor(instance.symbolId);
+    const builtInSubcircuit = subcircuitDescriptor(instance.symbolId, project);
     const extracted = builtInSubcircuit
       ? extractBuiltInSubcircuitInstance(
           document,
@@ -1441,6 +1771,7 @@ function extractCell(
           builtInSubcircuit,
           instance.reference ?? syntheticReferences.get(instance.id)!,
           context,
+          options,
           diagnostics,
         )
       : binding?.kind === "subcircuit"
@@ -1448,7 +1779,9 @@ function extractCell(
             document,
             instance,
             documentsById,
+            cellNameByDocumentId,
             context,
+            options,
             diagnostics,
           )
         : binding?.kind === "external-subcircuit"
@@ -1461,12 +1794,20 @@ function extractCell(
               context,
               diagnostics,
             )
-          : extractDeviceInstance(document, instance, context, diagnostics);
+          : extractDeviceInstance(
+              project,
+              document,
+              instance,
+              context,
+              diagnostics,
+            );
     if (extracted) instances.push(extracted);
   }
   return {
     id: document.id,
-    name: document.netlist.name,
+    name:
+      cellNameByDocumentId.get(document.id) ??
+      portableCellIdentifier(document.netlist.name, document.id),
     ports,
     nets: context.nets,
     instances,
@@ -1503,7 +1844,10 @@ function analyzeDesign(
     format: options.format ?? "spice",
     namingProfile: options.namingProfile ?? "native",
     rootDocumentId: options.rootDocumentId ?? project.topDocumentId,
+    rootAsTopLevel: options.rootAsTopLevel ?? false,
+    groundPin: options.groundPin ?? "global",
   };
+  project = withImplicitMosSupplies(project, resolvedOptions);
   const diagnostics: NetlistDiagnostic[] = [];
   const documents = reachableDocuments(
     project,
@@ -1518,34 +1862,119 @@ function analyzeDesign(
   const documentsById = new Map(
     project.documents.map((document) => [document.id, document]),
   );
-  const cellNames = new Map<string, string>();
-  const cells: DesignNetlistCell[] = [];
+  const cellNameByDocumentId = new Map<string, string>();
+  const cellNames = new Map<
+    string,
+    { documentId: string; authoredName: string }
+  >();
   for (const document of documents) {
-    const name = document.netlist?.name;
-    if (name) {
-      const folded = name.toLowerCase();
-      const prior = cellNames.get(folded);
-      if (prior) {
-        diagnostic(
-          diagnostics,
-          document.id,
-          "DUPLICATE_CELL_NAME",
-          `Cell name ${name} duplicates Document ${prior} under case folding`,
-          [prior, document.id],
-        );
-      } else {
-        cellNames.set(folded, document.id);
-      }
+    const authoredName = document.netlist?.name;
+    if (!authoredName) continue;
+    const exportName = portableCellIdentifier(authoredName, document.id);
+    cellNameByDocumentId.set(document.id, exportName);
+    if (exportName !== authoredName) {
+      diagnostic(
+        diagnostics,
+        document.id,
+        "CELL_NAME_NORMALIZED",
+        `Cell name ${authoredName} exports as ${exportName}`,
+        [document.id],
+        "warning",
+      );
     }
+    const folded = exportName.toLowerCase();
+    const prior = cellNames.get(folded);
+    if (prior) {
+      diagnostic(
+        diagnostics,
+        document.id,
+        "DUPLICATE_CELL_NAME",
+        `Cell names ${prior.authoredName} and ${authoredName} both export as ${exportName} under case folding`,
+        [prior.documentId, document.id],
+      );
+    } else {
+      cellNames.set(folded, { documentId: document.id, authoredName });
+    }
+  }
+  const cells: DesignNetlistCell[] = [];
+  for (const collision of findExternalMasterCollisions(project, documents)) {
+    diagnostic(
+      diagnostics,
+      collision.documentId,
+      "MASTER_NAME_COLLISION",
+      `External master ${collision.masterName} conflicts with local Cell ${collision.localName}; choose distinct exported master names`,
+      [collision.instanceId],
+    );
+  }
+  for (const document of documents) {
     const cell = extractCell(
       project,
       document,
       documentsById,
+      cellNameByDocumentId,
       nameProjection.byDocumentId.get(document.id) ?? new Map(),
       resolvedOptions,
       diagnostics,
     );
-    if (cell) cells.push(cell);
+    if (cell) {
+      if (resolvedOptions.format === "spice") projectSpiceReferences(cell);
+      cells.push(cell);
+    }
+  }
+  if (resolvedOptions.groundPin === "pin") {
+    // Supply markers share identity inside the drawing. Once that supply is
+    // exposed by a module pin, its exported node belongs to that module:
+    // callers pass it explicitly instead of also reaching for a global.
+    for (const cell of cells) {
+      if (
+        resolvedOptions.rootAsTopLevel &&
+        cell.id === resolvedOptions.rootDocumentId
+      )
+        continue;
+      const logical = resolveDocumentLogicalNets(
+        withNetlistPowerMarkerClaims(documentsById.get(cell.id)!),
+      );
+      const rank = (port: DesignNetlistCell["ports"][number]) => {
+        const domain = logical.byBaseNetId.get(port.id)?.powerDomain;
+        if (domain === "vdd" || port.name.toUpperCase() === "VDD") return 0;
+        if (domain === "ground" || port.name.toUpperCase() === "VSS") return 1;
+        return 2;
+      };
+      for (const port of cell.ports) {
+        if (rank(port) === 2) continue;
+        const net = cell.nets.find(
+          (candidate) => candidate.name === port.netName,
+        );
+        if (net) net.scope = "local";
+      }
+      cell.ports.sort((left, right) => rank(left) - rank(right));
+    }
+    // Port order is positional in both SPICE and Spectre. Reorder internal
+    // calls from the final child interface; external PDK pin order is untouched.
+    const cellsById = new Map(cells.map((cell) => [cell.id, cell]));
+    for (const cell of cells) {
+      const document = documentsById.get(cell.id)!;
+      const bindings = new Map(
+        document.instances.map((instance) => [
+          instance.id,
+          instance.netlist?.binding,
+        ]),
+      );
+      for (const instance of cell.instances) {
+        const binding = bindings.get(instance.id);
+        if (binding?.kind !== "subcircuit") continue;
+        const child = cellsById.get(binding.childDocumentId);
+        if (!child) continue;
+        const order = new Map(
+          child.ports.map((port, index) => [port.name, index]),
+        );
+        instance.nodes.sort(
+          (left, right) =>
+            (order.get(left.pinName) ?? Infinity) -
+            (order.get(right.pinName) ?? Infinity),
+        );
+      }
+    }
   }
   diagnostics.sort(
     (left, right) =>
@@ -1593,7 +2022,7 @@ function analyzeDesign(
         });
       }
     }
-    const descriptor = subcircuitDescriptor(instance.symbolId);
+    const descriptor = subcircuitDescriptor(instance.symbolId, project);
     if (!descriptor) continue;
     const target =
       binding?.kind === "unresolved-subcircuit"

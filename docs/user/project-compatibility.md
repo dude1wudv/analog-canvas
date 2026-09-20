@@ -1,6 +1,8 @@
 # Project File Compatibility
 
-The current Project schema version is `56`. It retains schematic-only
+The current portable Project schema version is `60`. Each instance owns its
+parameters, placement, paint and attached labels; the file includes referenced
+component definitions. The normalized editor model remains schema 58. It retains schematic-only
 hierarchy integrity, a Project structural revision, stable formal Cell ports,
 and definition-level Cell symbol presentation. It also has one typed Instance
 netlist authority, formal Cell parameters, and Project-local external
@@ -38,10 +40,10 @@ An Instance may also carry optional schematic-only `signalFlowParameters`
 netlist/SPICE parameters. Width and height are optional 10-unit-grid minimums:
 the shared Transfer Function renderer expands beyond them when 12-unit formula
 text, a fraction, or a coefficient needs more room, and never clips or shrinks
-the formula to satisfy an undersized request. A canonical v56 file can be
+the formula to satisfy an undersized request. A canonical v59 file can be
 opened, saved, reopened, and saved again without byte drift.
 
-Schemas v24 through v55 are accepted through the explicit chained upgrades.
+Schemas v24 through v56 are accepted through the explicit chained upgrades.
 Schema v32 adds optional `Annotation.textColor`; schema v33 removes the
 ownerless `explicit-equivalence` record. A v32 file without that record changes
 only its version stamp. A file containing it is rejected at the exact evidence
@@ -77,7 +79,7 @@ arrowheads, dots, no head, and legacy open arrowheads. Unset ends preserve the
 previous head style, placement, and scale; v54 content changes only its stamp.
 These additions do not invent intent while upgrading an older Project.
 The original file is never overwritten silently. Schemas older than v24 and
-versions newer than v56 are rejected by the project-file boundary.
+versions newer than v59 are rejected by the project-file boundary.
 
 The canonical-current corpus at
 [`fixtures/projects/compatibility-corpus.json`](../../fixtures/projects/compatibility-corpus.json)
@@ -90,7 +92,7 @@ Retired fields such as first-class
 
 An incompatible Project is rejected before it can replace the current browser
 Project. Conversion, when needed, is an explicit external operation that must
-produce and validate a complete v56 candidate before a human chooses to load it.
+produce and validate a complete v59 candidate before a human chooses to load it.
 
 Equal visible Label, Port, power-marker, and explicit global-declaration names
 resolve to one Logical Net without erasing their separate Base Net identities.
@@ -114,3 +116,8 @@ netlist output. The schema 55 upgrade preserves all existing Route data and
 changes only the version stamp. MOS bulk connections retain their dedicated
 dash pattern. Select a Wire and set `appearance.lineStyle` in its Properties
 code to change it.
+
+Schema 57 makes a locally authored VDD Power Rail an explicit formal Cell Pin.
+Opening a schema-56 Project attaches a stable Cell terminal to each local
+Rail's existing visible label without changing its physical Net or geometry.
+Explicitly Global Rails remain global declarations without Cell Pins.

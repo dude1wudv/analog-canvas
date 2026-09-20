@@ -18,6 +18,7 @@ describe("InsertComponentDialog", () => {
     );
 
     expect(markup).toContain('role="dialog"');
+    expect(markup).not.toContain("insert-cell-dialog");
     expect(markup).toContain('role="combobox"');
     expect(markup).toContain('aria-label="搜索元件"');
     expect(markup).toContain('aria-expanded="true"');
@@ -99,6 +100,7 @@ describe("InsertComponentDialog", () => {
 
     expect(markup).toContain("放置层次化 Cell");
     expect(markup).toContain('aria-label="搜索Cell"');
+    expect(markup).toContain("insert-component-dialog insert-cell-dialog");
     expect(markup).toContain('data-testid="insert-cell-document-amplifier"');
     expect(markup).not.toContain('data-testid="insert-component-nmos"');
     expect(markup).toContain(">Amplifier</span>");

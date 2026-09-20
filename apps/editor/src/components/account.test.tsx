@@ -24,9 +24,7 @@ function markupFor(
     onSignOut: () => undefined,
     ...(onLocalAuthenticate ? { onLocalAuthenticate } : {}),
   };
-  return renderToStaticMarkup(
-    createElement(AccountMenuView, props),
-  );
+  return renderToStaticMarkup(createElement(AccountMenuView, props));
 }
 
 describe("AccountMenuView", () => {

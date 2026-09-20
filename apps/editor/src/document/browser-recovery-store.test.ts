@@ -1,3 +1,4 @@
+import { CURRENT_PROJECT_FILE_VERSION } from "@icm/project-protocol";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 
@@ -34,7 +35,7 @@ function draft(
     generation: "latest",
     projectId: project.id,
     projectName: project.name,
-    projectSchemaVersion: project.schemaVersion,
+    projectSchemaVersion: CURRENT_PROJECT_FILE_VERSION,
     topDocumentId: project.topDocumentId,
     documentRevisions: { [project.topDocumentId]: 1 },
     source: "new",
@@ -535,7 +536,7 @@ describe("migrateLegacyProjectRecovery", () => {
 
   it("stores a previous-schema legacy slot as internally consistent current schema", async () => {
     const { store } = freshStore();
-    const previous = JSON.parse(projectText);
+    const previous = JSON.parse(JSON.stringify(project));
     previous.schemaVersion = CURRENT_PROJECT_SCHEMA_VERSION - 1;
     if (previous.schemaVersion < 50) {
       previous.simulationSetups = previous.simulationFolders;
@@ -546,9 +547,9 @@ describe("migrateLegacyProjectRecovery", () => {
 
     expect(await migrate(storage, store)).toMatchObject({ status: "migrated" });
     const latest = firstSession(await store.readAll()).latest!;
-    expect(latest.projectSchemaVersion).toBe(CURRENT_PROJECT_SCHEMA_VERSION);
+    expect(latest.projectSchemaVersion).toBe(CURRENT_PROJECT_FILE_VERSION);
     expect(JSON.parse(latest.projectText).schemaVersion).toBe(
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
     );
   });
 

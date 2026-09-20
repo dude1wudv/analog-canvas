@@ -6,6 +6,7 @@ import {
   validateLogicalNetContract,
 } from "@icm/derived";
 import { EditTransactionSchema, type EditTransaction } from "./edit-schema.js";
+import { rebuildEditedConnectivity } from "./transaction-connectivity-rebuild.js";
 import {
   affectedConductorNetIds,
   normalizeSameNetConductorTopology,
@@ -34,7 +35,10 @@ import {
   nextPhysicalContactOperation,
 } from "./transaction-connectivity-normalizer.js";
 import { applyCellResetEdit } from "./transaction-cell-reset.js";
-import { applyCellInterfaceEdit } from "./transaction-cell-interface.js";
+import {
+  applyCellInterfaceEdit,
+  inheritCellPortFormatting,
+} from "./transaction-cell-interface.js";
 import { applyInstanceLifecycleEdit } from "./transaction-instance-lifecycle.js";
 import { applyInstanceNetlistEdit } from "./transaction-instance-netlist.js";
 import { applyInstanceSignalFlowEdit } from "./transaction-instance-signal-flow.js";
@@ -124,11 +128,16 @@ export function executeTransaction(
 
   const proposedRevision = document.revision + 1;
   const draft = structuredClone(document);
+  // Removing a Route's geometry states its geometry too: a Junction dragged
+  // onto the pin at the far end of a stub collapses that stub.
   const explicitlyAuthoredRouteIds = new Set(
     transaction.edits.flatMap((edit) =>
-      edit.kind === "set_route_path" || edit.kind === "route_orthogonal"
-        ? [edit.kind === "set_route_path" ? edit.route.id : edit.routeId]
-        : [],
+      edit.kind === "set_route_path"
+        ? [edit.route.id]
+        : edit.kind === "route_orthogonal" ||
+            edit.kind === "remove_route_geometry"
+          ? [edit.routeId]
+          : [],
     ),
   );
   const changedObjectIds = new Set<string>();
@@ -681,12 +690,46 @@ export function executeTransaction(
         resolver,
         transaction.transactionId,
         changedObjectIds,
+        context.beforeContactEvidence,
       );
       geometryChanged ||= directContact.geometryChanged;
       for (const routeId of directContact.changedRouteIds) {
         changedRouteIds.add(routeId);
       }
     }
+  }
+
+  if (
+    transaction.edits.some((edit) =>
+      [
+        "set_route_path",
+        "route_orthogonal",
+        "cut_connection",
+        "remove_route_geometry",
+        "move_junction",
+        "connect_endpoints",
+        "disconnect_endpoint",
+      ].includes(edit.kind),
+    )
+  ) {
+    const membershipBeforeRebuild = JSON.stringify(draft.nets);
+    const rebuilt = rebuildEditedConnectivity(
+      document,
+      draft,
+      transaction,
+      resolver,
+      changedObjectIds,
+    );
+    if (!rebuilt.ok)
+      return rejectTransaction(
+        document,
+        rebuilt.code,
+        rebuilt.message,
+        [],
+        rebuilt.netIds,
+      );
+    connectivityChanged ||=
+      membershipBeforeRebuild !== JSON.stringify(draft.nets);
   }
 
   if (resolver) {
@@ -1122,6 +1165,7 @@ export function executeTransaction(
   }
   draft.revision = proposedRevision;
 
+  inheritCellPortFormatting(document, draft, changedObjectIds);
   const candidate = SchematicDocumentSchema.safeParse(draft);
   if (!candidate.success) {
     return rejectTransaction(

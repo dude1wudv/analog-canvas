@@ -660,10 +660,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     if (!stored.ok || !stored.value) {
       setArtifactBusy(undefined);
       setProblem(
-        uiProblem(
-          "SIMULATION_ARCHIVE_UNAVAILABLE",
-          "所选浏览器归档已不可用",
-        ),
+        uiProblem("SIMULATION_ARCHIVE_UNAVAILABLE", "所选浏览器归档已不可用"),
       );
       return;
     }
@@ -707,10 +704,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     const deleted = await archiveStore.delete(archiveId);
     if (!deleted.ok) {
       setProblem(
-        uiProblem(
-          "SIMULATION_ARCHIVE_DELETE_FAILED",
-          "无法删除浏览器归档",
-        ),
+        uiProblem("SIMULATION_ARCHIVE_DELETE_FAILED", "无法删除浏览器归档"),
       );
       return;
     }
@@ -1110,10 +1104,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
     </details>
   );
   const resultContent = (
-    <section
-      className="simulation-results-dock"
-      aria-label="仿真结果"
-    >
+    <section className="simulation-results-dock" aria-label="仿真结果">
       <div className="simulation-results-body">
         {run && archivedRunIds.current.has(run.id) ? (
           <p>

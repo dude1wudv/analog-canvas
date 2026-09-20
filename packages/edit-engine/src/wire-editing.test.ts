@@ -68,7 +68,7 @@ describe("wire editing proposals", () => {
     ).toBe(true);
   });
 
-  it("orders anchor preludes before merging existing nets", () => {
+  it("authors endpoints and geometry without pre-merging existing nets", () => {
     const from = createFreeWireAnchor({ x: 0, y: 0 }, "net-a", false, 3);
     const to = createFreeWireAnchor({ x: 40, y: 0 }, "net-b", false, 4);
     const proposal = proposeWireCommit(from, to, [], 5);
@@ -77,16 +77,9 @@ describe("wire editing proposals", () => {
     expect(proposal.edits.map((edit) => edit.kind)).toEqual([
       "add_junction",
       "add_junction",
-      "merge_nets",
-      "connect_endpoints",
       "set_route_path",
     ]);
-    expect(proposal.edits[2]).toEqual({
-      kind: "merge_nets",
-      targetNetId: "net-a",
-      sourceNetId: "net-b",
-    });
-    expect(proposal.edits[3]).not.toHaveProperty("newNetId");
+    expect(proposal.edits[2]?.kind).toBe("set_route_path");
   });
 
   it("commits coincident endpoints as direct contact without a Route", () => {

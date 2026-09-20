@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createEmptyDocument } from "@icm/model";
+import { createEmptyDocument, semanticTextDocument } from "@icm/model";
 import type { Annotation, DraftingObject } from "@icm/model";
 
 import {
@@ -60,14 +60,20 @@ describe("unified text editing", () => {
     });
   });
 
-  it("uses compact single-line sessions for Net names and Route markers", () => {
+  it("opens Net names as bound RichText while Route markers stay compact", () => {
     const netLabel = {
       ...annotation(),
       binding: { kind: "net-name" as const, netId: "net-1" },
     };
-    expect(
-      createTextEditingSession({ owner: "annotation", object: netLabel }),
-    ).toMatchObject({ plainTextKind: "net-label" });
+    const netLabelSession = createTextEditingSession({
+      owner: "annotation",
+      object: netLabel,
+    });
+    expect(netLabelSession).toMatchObject({
+      bound: true,
+      bindingKind: "net-name",
+    });
+    expect(netLabelSession).not.toHaveProperty("plainTextKind");
     expect(
       createTextEditingSession({
         owner: "annotation",
@@ -131,6 +137,77 @@ describe("unified text editing", () => {
     const next = updateTextEditingSession(original, { sizeScale: 1.4 });
     expect(next.sizeScale).toBe(1.4);
     expect(original.sizeScale).toBe(1);
+  });
+
+  it("distinguishes typing from an explicit presentation change", () => {
+    const original = createTextEditingSession({
+      owner: "drafting",
+      object: draftingText(),
+    });
+    const typed = updateTextEditingSession(original, {
+      content: { runs: [{ kind: "text", value: "Vinput" }] },
+    });
+    expect(typed.formatEdited).toBeUndefined();
+
+    const formatted = updateTextEditingSession(typed, {
+      content: {
+        runs: [
+          {
+            kind: "span",
+            style: "bold",
+            children: [{ kind: "text", value: "Vinput" }],
+          },
+        ],
+      },
+    });
+    expect(formatted.formatEdited).toBe(true);
+  });
+
+  it("does not mistake a stored voltage default for manual formatting", () => {
+    const document = createEmptyDocument("text", "Text");
+    document.netlist!.terminals.push({
+      id: "terminal-vout",
+      name: "Vout",
+      netId: "net-vout",
+      direction: "output",
+      interfaceInstanceIds: [],
+    });
+    const bound: Annotation = {
+      id: "annotation-vout",
+      kind: "instance-label",
+      binding: { kind: "cell-terminal-name", terminalId: "terminal-vout" },
+      formatOverride: semanticTextDocument("Vout", "formal-port"),
+      anchor: { kind: "free", position: { x: 10, y: 20 } },
+      alignment: "middle",
+      rotation: 0,
+      locked: false,
+    };
+
+    const automatic = createTextEditingSession(
+      { owner: "annotation", object: bound },
+      document,
+    );
+    expect(automatic.formatEdited).toBeUndefined();
+
+    const manual = createTextEditingSession(
+      {
+        owner: "annotation",
+        object: {
+          ...bound,
+          formatOverride: {
+            runs: [
+              {
+                kind: "span",
+                style: "bold",
+                children: [{ kind: "text", value: "Vout" }],
+              },
+            ],
+          },
+        },
+      },
+      document,
+    );
+    expect(manual.formatEdited).toBe(true);
   });
 
   it("resolves only the tagged target kind", () => {

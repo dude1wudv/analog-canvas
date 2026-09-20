@@ -39,7 +39,7 @@ const reporterFile = readFileSync(
  */
 function minimalProjectAt(version: number): string {
   const project = JSON.parse(
-    serializeProject(createEmptyProject("legacy-load", "Legacy load")),
+    JSON.stringify(createEmptyProject("legacy-load", "Legacy load")),
   ) as Record<string, unknown>;
   project.schemaVersion = version;
   if (version < 50) {
@@ -100,7 +100,7 @@ describe("legacy Project loading (#446)", () => {
 
   it("still loads a current-version project unmigrated", () => {
     const result = tryParseProjectWithMetadata(
-      minimalProjectAt(CURRENT_PROJECT_SCHEMA_VERSION),
+      serializeProject(createEmptyProject("current", "Current")),
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;

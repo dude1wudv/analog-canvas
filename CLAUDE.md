@@ -60,7 +60,7 @@ Component data flows one way. `packages/components/definitions/<symbol-id>.json`
 
 Never hand-edit these; each generator has a paired `:check` drift gate:
 
-- `packages/devices/src/components.generated.ts` and `packages/symbols/src/{expanded-components,razavi-catalog}.generated.ts` (`components:generate`, also part of `symbols:razavi`), `packages/derived/src/razavi-peripheral-geometry.generated.ts` (`symbols:razavi-peripherals`), `packages/agent-adapter/src/agent-authoring-catalog.generated.ts` (`agent-kit:catalog`), `apps/mcp-server/src/resources.generated.ts` (`mcp:resources`).
+- `packages/devices/src/components.generated.ts` and `packages/symbols/src/{expanded-components,razavi-catalog}.generated.ts` (`components:generate`, also part of `symbols:razavi`), `packages/derived/src/razavi-peripheral-geometry.generated.ts` (`symbols:razavi-peripherals`), `packages/agent-adapter/src/agent-authoring-catalog.generated.ts` (`agent-kit:catalog`), `apps/mcp-server/src/resources.generated.ts` (`agent-docs:generate`).
 - `fixtures/agent-api/*` (`agent-api:artifacts`), `fixtures/visual-golden/*` (`visual:golden`), `fixtures/exports/*` (`export:golden`), `fixtures/editor-production-smoke/report.json` (`test:production-smoke`), and the PWA icons in `apps/editor/public/` (`pwa:icons`).
 
 Regeneration order when symbol data changes:
@@ -76,7 +76,7 @@ Regeneration order when symbol data changes:
 
 [AGENTS.md](AGENTS.md) defines the mandatory working discipline; read it before working. Summary:
 
-- **Three stages**: (1) local iteration — continue the current local batch branch (a new batch starts as `codex/local-batch` from `main`); each bounded target ends with its own local commit and validation, never an automatic push, PR, merge, deploy, or version bump; (2) batched Preview delivery once at least 10 completed changes accumulate (or on request) — one PR, the mainline delivery gate, merge, verify Preview; (3) Production only when the user requests or has authorized it. Track the batch in the untracked `plan/local-batch.md`.
+- **Three stages**: (1) local iteration on a batch branch; (2) one reviewed merge to `main`, which does not publish the active self-hosted service; (3) an explicitly authorized deployment of a fixed commit with `containers/self-host/deploy.sh`. The Cloudflare Preview channel is retired, and Cloudflare Production remains tag/dispatch-only. Track an in-progress batch in the untracked `plan/local-batch.md`.
 - **Before editing tracked files**: run `git status --short --branch` and audit dirty paths by ownership (unrelated dirty files don't block; overlapping or unclear ones do). Know the target's goal, owned paths, and shared contracts; `plan/` is the untracked scratch area.
 - **Test impact**: a commit that changes implementation code — `.ts/.tsx/.js/.mjs` under `apps/*/src/`, `packages/*/src/`, `worker/`, or `scripts/` — carries a `Test-Impact:` trailer: `tests-updated`, or `no-test-change — <evidence>`. `pnpm test:impact -- --base <ref>` cross-checks the claim against the diff and CI runs the same check.
 - **Validation is risk-proportional**: run the smallest deterministic checks that cover the change (documentation-only → `pnpm docs:check`); full suites only when breadth, risk, or policy justifies them. Every target closes with `git diff --check`, `git status --short --branch`, and a commit message that stands alone: what changed, why, the validation and chosen gates, and the trailer.
@@ -98,7 +98,7 @@ Regeneration order when symbol data changes:
 - `tools/` — Python PDF-vector extraction and Razavi calibration tooling.
 - `config/` — the validation-gate catalog, the MCP distribution declaration (`agent-mcp-distribution.json` holds the published MCP version), and the VACASK Preview environment.
 - `skills/circuit-layout/` — the repo-local Agent layout skill. `references/` — pinned research-only reference repositories (fetched into the ignored `.reference-src/`, never imported or bundled).
-- `docs/` — product plan, ADRs, specs, user and Agent guides, roadmap, testing, deployment. `.github/workflows/` — `ci`, `deploy-preview`, `cloudflare` (production), `container`, `simulator-host`, `mcp-release`.
+- `docs/` — product plan, ADRs, specs, user and Agent guides, roadmap, testing, deployment. `.github/workflows/` — `ci`, `cloudflare` (tag/dispatch-only Production), `container`, `simulator-host`, `mcp-release`.
 
 ### Package layering
 
@@ -121,13 +121,14 @@ Dependencies flow strictly downward and pnpm's topological order is the only bui
 - `@icm/simulation-service` — shared preparation, managed run lifecycle, measurements and Spec results, outputs, and File artifacts (`./contract`, `./files`).
 - `@icm/agent-adapter` — Agent API 3.0 surface: the Circuit endpoint's four operations (capabilities/snapshot/transact/render) plus the File, Simulation, and Project resources; envelopes, zod+OpenAPI schemas, session state, browser-safe host; `./loopback` and the HTTP Agent Kit payload `./kit`.
 - `@icm/agent-client` — Node-only Agent-side client: HTTP/session clients, credential store, snapshot cache.
-7: - `@icm/agent-routing` — Agent-local transient RouteGraph → typed-edit expander. ADR 0008: these types never enter the API schema or persisted model; Agent-side scaffolding with no in-repo importers.
+- `@icm/agent-routing` — Agent-local transient RouteGraph → typed-edit expander. Agent rationale: these types never enter the API schema or persisted model; Agent-side scaffolding with no in-repo importers.
 - `@icm/platform-node` — Node filesystem storage/recovery adapters; no in-repo importers.
 - `apps/editor` — the React/SVG editor and installable PWA, plus the Gallery, account, and moderation surfaces. `analytics/` is the self-contained first-party analytics module; `dev/` holds the Vite dev-server plugins (local Agent relay, netlist conversion, local simulation).
 - `apps/local-host` — loopback-only static host for `apps/editor/dist` with a local simulation transport seam (`bin: interactive-circuit-maker`; its only dependency is `@icm/spice-run`).
 - `apps/mcp-server` — stdio MCP server (`bin: analog-canvas-mcp`) over `agent-client`, with generated doc resources. Release packaging (`scripts/package-mcp.mjs`) bundles it with Vite and takes the version from `config/agent-mcp-distribution.json`, not from its `package.json`.
 - `worker/` — self-hosted workerd Worker and the Cloudflare production Worker. Production deploys from a `v*` tag or an explicit commit via `.github/workflows/cloudflare.yml`; the former Cloudflare Preview channel has been retired.
-8: The retired Cloudflare Preview channel is no longer an active deployment target. Use the self-hosted editor URL and the operator-host deployment procedure for active Agent/simulation work.
+
+The retired Cloudflare Preview channel is no longer an active deployment target. Use the self-hosted editor URL and the operator-host deployment procedure for active Agent/simulation work.
 
 For local development, `pnpm dev` starts the real Agent relay on first use through the editor's own `/api/agent/` routes, including its WebSocket. No separate Worker process needs to be launched manually. Use the loopback origin in the copied message from an Agent on the same computer. The local relay does not start cloud account, Gallery, or hosted simulation services, and restarting the development server ends its in-memory sessions.
 
@@ -153,10 +154,10 @@ An unconfigured production build still keeps the Agent UI dormant. Explicit depl
 
 ## Documentation authority
 
-When documents disagree: accepted ADR / normative spec (`docs/adr/`, `docs/specs/`) → `docs/overall-product-plan.md` → `docs/roadmap/` → implementation and tests. Implementation never silently redefines an approved contract — update the spec or ADR when behavior intentionally changes.
+Specifications own accepted contracts; topic ADRs explain reasons and link to specs. When code and a spec disagree, inspect behavior and tests, preserve deliberate coherent behavior, and surface unresolved choices. Follow `docs/README.md`; do not treat an old ADR as a competing rule or silently endorse an implementation accident.
 
 - Default reading set for product work: [docs/README.md](docs/README.md#contributor-reading-order).
 - Test layers and contract ownership: [docs/testing/README.md](docs/testing/README.md) and its contract matrix.
 - Agent schematic-layout workflow: [docs/agent/workflow.md](docs/agent/workflow.md) and the repo-local [skills/circuit-layout/SKILL.md](skills/circuit-layout/SKILL.md).
 - `pnpm docs:check` validates links in `README.md` and `docs/`, and requires every ADR and spec to be indexed with a `Status:` line (specs also need an owner line). `format:check` skips Markdown, though most docs are Prettier-formatted.
-- Some docs are test-pinned: `packages/{model,edit-engine,agent-adapter}/src/protocol-documentation.test.ts` read spec and plan text (for example the current Project schema version), and `apps/mcp-server/src/resources.test.ts` requires `resources.generated.ts` to match the docs listed in `docs/agent/resource-manifest.json` — after editing one of those docs, run `pnpm mcp:resources`.
+- Some docs are test-pinned: `packages/{model,edit-engine,agent-adapter}/src/protocol-documentation.test.ts` read spec and plan text (for example the current Project schema version), and `apps/mcp-server/src/resources.test.ts` requires `resources.generated.ts` to match the docs listed in `docs/agent/distribution.json` — after editing one of those docs, run `pnpm agent-docs:generate`.

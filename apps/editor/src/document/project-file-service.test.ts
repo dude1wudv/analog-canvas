@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { createEmptyProject, CURRENT_PROJECT_SCHEMA_VERSION } from "@icm/model";
-import { serializeProject } from "@icm/project-protocol";
+import { createEmptyProject } from "@icm/model";
+import {
+  serializeProject,
+  CURRENT_PROJECT_FILE_VERSION,
+} from "@icm/project-protocol";
 
 import {
   formatProjectOpenDiagnostics,
@@ -59,7 +62,7 @@ describe("portable Project files", () => {
     expect(outcome).toMatchObject({
       status: "opened",
       fileName: "amp.icproj.json",
-      sourceSchemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      sourceSchemaVersion: CURRENT_PROJECT_FILE_VERSION,
       migrated: false,
       topDocumentRevision: 0,
     });

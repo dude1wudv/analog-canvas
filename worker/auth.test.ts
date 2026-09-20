@@ -195,6 +195,62 @@ describe("account data migrations", () => {
         .one().display_name,
     ).toBe("Token Zhang");
   });
+
+  it("renames the Magic Li account once without touching another matching handle", () => {
+    const state = sqliteState();
+    new AuthDO(state, {} as AuthEnv);
+    state.storage.sql.exec(
+      `INSERT INTO users
+       (id, provider, provider_id, email, display_name, role, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)`,
+      "2cf8ed78-a15d-4a24-8020-74dca560a897",
+      "github",
+      "3187863239",
+      null,
+      "3187863239-netizen",
+      "user",
+      "2026-09-19T00:00:00.000Z",
+      "other-user",
+      "github",
+      "same-handle",
+      null,
+      "3187863239-netizen",
+      "user",
+      "2026-09-19T00:00:00.000Z",
+    );
+    state.storage.sql.exec(
+      "DELETE FROM data_migrations WHERE id LIKE '%magic-li%'",
+    );
+
+    new AuthDO(state, {} as AuthEnv);
+    expect(
+      state.storage.sql
+        .exec<{ id: string; display_name: string }>(
+          "SELECT id, display_name FROM users ORDER BY id",
+        )
+        .toArray(),
+    ).toEqual([
+      {
+        id: "2cf8ed78-a15d-4a24-8020-74dca560a897",
+        display_name: "Magic Li",
+      },
+      { id: "other-user", display_name: "3187863239-netizen" },
+    ]);
+
+    state.storage.sql.exec(
+      `UPDATE users SET display_name = 'Personal Choice'
+       WHERE id = '2cf8ed78-a15d-4a24-8020-74dca560a897'`,
+    );
+    new AuthDO(state, {} as AuthEnv);
+    expect(
+      state.storage.sql
+        .exec<{ display_name: string }>(
+          `SELECT display_name FROM users
+           WHERE id = '2cf8ed78-a15d-4a24-8020-74dca560a897'`,
+        )
+        .one().display_name,
+    ).toBe("Personal Choice");
+  });
 });
 
 describe("providers visibility (dark ship)", () => {
@@ -262,6 +318,64 @@ describe("email magic-link sign-in", () => {
     expect(logout.status).toBe(200);
     expect(await me(auth, cookie)).toBeNull();
     expect(await me(auth)).toBeNull();
+  });
+
+  it("syncs a renamed profile to Gallery by stable owner id", async () => {
+    const syncs: Array<{ ownerUserId: string; displayName: string }> = [];
+    const auth = harness({
+      RESEND_API_KEY: "rk",
+      GALLERY: {
+        getByName: () => ({
+          fetch: async (input, init) => {
+            expect(String(input)).toBe("https://gallery/rename-owner");
+            syncs.push(JSON.parse(String(init?.body)));
+            return Response.json({ ok: true });
+          },
+        }),
+      },
+    });
+    const cookie = await emailSignIn(auth, "maker@example.com");
+    const before = await me(auth, cookie);
+
+    const renamed = await auth.call("/api/auth/profile", {
+      method: "POST",
+      cookie,
+      body: JSON.stringify({ displayName: "  Current Public Name  " }),
+    });
+
+    expect(renamed.status).toBe(200);
+    expect(syncs).toEqual([
+      {
+        ownerUserId: before!.id,
+        displayName: "Current Public Name",
+      },
+    ]);
+    expect((await me(auth, cookie))?.displayName).toBe("Current Public Name");
+  });
+
+  it("keeps the profile unchanged when Gallery cannot synchronize the byline", async () => {
+    const auth = harness({
+      RESEND_API_KEY: "rk",
+      GALLERY: {
+        getByName: () => ({
+          fetch: async () =>
+            Response.json({ error: "unavailable" }, { status: 503 }),
+        }),
+      },
+    });
+    const cookie = await emailSignIn(auth, "maker@example.com");
+
+    const renamed = await auth.call("/api/auth/profile", {
+      method: "POST",
+      cookie,
+      body: JSON.stringify({ displayName: "Unsynchronized Name" }),
+    });
+
+    expect(renamed.status).toBe(503);
+    expect(await renamed.json()).toEqual({
+      error: "gallery-byline-sync-failed",
+    });
+    expect((await me(auth, cookie))?.displayName).toBe("maker");
   });
 
   it("unions the primary and additive administrator email secrets", async () => {

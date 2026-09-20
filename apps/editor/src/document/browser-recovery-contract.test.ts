@@ -1,3 +1,4 @@
+import { CURRENT_PROJECT_FILE_VERSION } from "@icm/project-protocol";
 import { describe, expect, it } from "vitest";
 
 import { createEmptyProject, CURRENT_PROJECT_SCHEMA_VERSION } from "@icm/model";
@@ -29,7 +30,7 @@ function draft(overrides: Partial<BrowserRecoveryRecordDraft> = {}) {
     generation: "latest" as const,
     projectId: project.id,
     projectName: project.name,
-    projectSchemaVersion: project.schemaVersion,
+    projectSchemaVersion: CURRENT_PROJECT_FILE_VERSION,
     topDocumentId: project.topDocumentId,
     documentRevisions: { [project.topDocumentId]: 3 },
     source: "new" as const,
@@ -213,7 +214,7 @@ describe("reviewBrowserRecoveryProject", () => {
   });
 
   it("accepts a previous-schema recovery envelope after upgrading its Project", () => {
-    const previous = JSON.parse(projectText);
+    const previous = JSON.parse(JSON.stringify(project));
     previous.schemaVersion = CURRENT_PROJECT_SCHEMA_VERSION - 1;
     if (previous.schemaVersion < 50) {
       previous.simulationSetups = previous.simulationFolders;

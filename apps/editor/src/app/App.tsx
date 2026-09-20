@@ -3,10 +3,16 @@ import { NetlistCodePanel } from "../features/netlist-export/netlist-code-panel"
 import { NetlistProfileCode } from "../features/netlist-export/netlist-profile-code";
 import { useNetlistExportPreferences } from "../features/netlist-export/netlist-export-preferences";
 import {
+  planNetlistProcess,
+  prepareNetlistExample,
+} from "../features/netlist-export/netlist-process";
+import { netlistDeviceFamily } from "../features/netlist-export/netlist-process-presets";
+import {
   DEFAULT_ARROW_PRESET,
   type ArrowPreset,
 } from "../features/drafting/arrow-presets";
 import {
+  lazy,
   Suspense,
   useCallback,
   useEffect,
@@ -14,6 +20,29 @@ import {
   useRef,
   useState,
 } from "react";
+import type { ComponentDefinition, Instance } from "@icm/model";
+import type { SharedComponent } from "../features/user-components/component-library-contract";
+import { publishedDefinition } from "../features/user-components/component-library-contract";
+import {
+  newComponentDefinition,
+  planComponentDefinitionEdit,
+  sharedComponentInsertRequest,
+} from "../features/user-components/component-definition-edit";
+
+const UserComponentsLibrary = lazy(
+  () => import("../features/user-components/user-components-library"),
+);
+const ComponentDefinitionEditor = lazy(
+  () => import("../features/user-components/component-definition-editor"),
+);
+
+interface ComponentEditorSession {
+  key: string;
+  definition: ComponentDefinition;
+  mode: "new" | "instance" | "library";
+  entry?: SharedComponent;
+  target?: { projectSessionId: string; documentId: string; instance: Instance };
+}
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import "../styles/editor-entry.css";
 import type {
@@ -21,17 +50,13 @@ import type {
   AgentHostSemanticIntentResult,
 } from "@icm/agent-adapter";
 import {
-  planCellReset,
-  planCreateCell,
   planProjectCellImport,
-  planSetCellSymbolPresentation,
+  planBindCellParameter,
   planSetDeviceModelTarget,
   planSetVddConnectionMode,
-  planInstanceUnplacement,
   planAngledWireRepairs,
   gateRoutingOperationPlan,
   type ProjectStructureEdit,
-  type CellResetPlan,
   type SchematicEdit,
   type WireSource,
 } from "@icm/edit-engine";
@@ -54,12 +79,7 @@ import {
   resolveAnnotationText,
 } from "@icm/derived";
 import type { HierarchyFrame } from "@icm/derived";
-import {
-  createEmptyProject,
-  createEmptyDocument,
-  createId,
-  flattenRichText,
-} from "@icm/model";
+import { createEmptyProject, flattenRichText } from "@icm/model";
 import {
   resolveReviewedExternalBinding,
   reviewedExternalModelSuggestions,
@@ -80,6 +100,7 @@ import { renderCrashRequested, sceneCrashRequested } from "./crash-test-hooks";
 import { buildSceneSafely } from "./scene-safety";
 import { externalSubcircuitSymbolId, hierarchicalSymbolId } from "@icm/symbols";
 import { clipboardPreviewDocument } from "../features/clipboard/clipboard";
+import { prepareProjectCopy } from "../features/clipboard/project-copy";
 import {
   copyPlacementAnchors,
   snapPendingCopyPlacement,
@@ -107,6 +128,10 @@ import {
 } from "../document/release-channel";
 import { resolveSimulationTransport } from "../features/simulation/deployment-transport";
 import { createCanvasHitController } from "../canvas/canvas-hit-controller";
+import { CellInterfaceConfirmationDialog } from "../features/hierarchy/cell-interface-confirmation";
+import { CellParameterDialog } from "../features/hierarchy/cell-parameter-dialog";
+import type { CellInterfaceConfirmation } from "../features/hierarchy/project-structure-commands";
+import { applyConfirmedCellInterfaceEdit } from "../features/hierarchy/project-structure-commands";
 import { screenScaleHitRadius } from "../canvas/canvas-hit-resolver";
 import { buildDiagnosticMarkers } from "../canvas/diagnostic-markers";
 import {
@@ -150,6 +175,7 @@ import {
   type TimingWaveformLayout,
 } from "../features/simulation/timing-waveform";
 import { useCellSymbolLayout } from "../features/hierarchy/use-cell-symbol-layout";
+import { selectedBlockSymbolTarget } from "../features/hierarchy/block-symbol-layout-target";
 import {
   cellInsertLaunch,
   fullInsertLaunch,
@@ -190,14 +216,13 @@ import {
 } from "../features/project-code/project-code";
 import { LazySpiceSimulationSurface } from "./lazy-editor-dialogs";
 import { recoverSourceDrafts } from "../features/simulation/source-draft-cache";
-import type { NewTestbenchRequest } from "../features/simulation/new-testbench-dialog";
 import { useProjectCheck } from "./use-project-check";
 import { summarizeVisualDiagnostics } from "../features/selection/selection-inspector-details";
 import {
   type HighlightedNetOrigin,
-  type RoutingGuidanceView,
   useEditorDerivedModel,
 } from "./use-editor-derived-model";
+import type { RoutingGuidanceView } from "../interaction/interaction-state";
 import {
   quickPlaceRequest,
   ShapesPanel,
@@ -356,8 +381,12 @@ const LIBRARY_PANEL_STORAGE_KEY = "icm.library-panel-open.v1";
 const LIBRARY_WIDTH_STORAGE_KEY = "icm.library-panel-width.v1";
 const PROPERTIES_WIDTH_STORAGE_KEY = "icm.properties-panel-width.v1";
 const SIMULATION_WIDTH_STORAGE_KEY = "icm.simulation-panel-width.v2";
-const PROPERTIES_WIDTH_MIN = 280;
+// The drag floor only keeps the panel from disappearing behind its own
+// collapsed rail; how narrow the inspector is useful is the reader's call.
+const PROPERTIES_WIDTH_MIN = 160;
 const PROPERTIES_WIDTH_MAX = 760;
+/** Only the untouched default opens this wide; a drag may go narrower. */
+const PROPERTIES_WIDTH_DEFAULT_MIN = 280;
 const PROPERTIES_WIDTH_RATIO = 0.24;
 const SIMULATION_WIDTH_MIN = 320;
 const SIMULATION_WIDTH_MAX = 1200;
@@ -376,7 +405,10 @@ function defaultPropertiesWidth(viewportWidth: number): number {
   return Math.round(
     Math.min(
       PROPERTIES_WIDTH_MAX,
-      Math.max(PROPERTIES_WIDTH_MIN, viewportWidth * PROPERTIES_WIDTH_RATIO),
+      Math.max(
+        PROPERTIES_WIDTH_DEFAULT_MIN,
+        viewportWidth * PROPERTIES_WIDTH_RATIO,
+      ),
     ),
   );
 }
@@ -418,6 +450,9 @@ export function App({
       ).project,
   );
   const [status, setStatus] = useState("Ready");
+  const [componentEditor, setComponentEditor] =
+    useState<ComponentEditorSession | null>(null);
+  const [componentLibraryRefresh, setComponentLibraryRefresh] = useState(0);
   const helpButtonRef = useRef<HTMLButtonElement>(null);
   const helpCloseRef = useRef<HTMLButtonElement>(null);
   const libraryResizeOriginRef = useRef<{
@@ -582,6 +617,8 @@ export function App({
     canvasDragSessionRef.current?.cancel();
     stageRecovery(project, { cloudBinding });
   });
+  const definitionProjectRef = useRef({ project, projectSessionId });
+  definitionProjectRef.current = { project, projectSessionId };
   const projectConnectivityIndex = useMemo(
     () => buildProjectConnectivityIndex(project, resolver),
     [project, resolver],
@@ -597,7 +634,13 @@ export function App({
     () =>
       new BrowserAgentHost(
         editorDocumentController,
-        synchronizeExternalCommit,
+        () => {
+          synchronizeExternalCommit();
+          // Agent commits have already crossed a network boundary. Start the
+          // durable write immediately so a following render crash cannot lose
+          // the acknowledged transaction inside the debounce window.
+          void flushRecovery();
+        },
         (request) => agentSemanticIntentRef.current(request),
       ),
     [editorDocumentController, projectSessionId],
@@ -638,7 +681,7 @@ export function App({
   const cameraRuntime = cameraRuntimeRef.current;
   useEffect(() => () => cameraRuntime.dispose(), [cameraRuntime]);
   const [gridDotsVisible, setGridDotsVisible] = useState(true);
-  // Which channel serves this build (ADR 0057). Asked once; anything but a
+  // Which channel serves this build (Deployment rationale). Asked once; anything but a
   // clear "preview" is production, so the public site never wears its badge.
   const [releaseChannel, setReleaseChannel] =
     useState<ReleaseChannel>("production");
@@ -713,28 +756,14 @@ export function App({
   );
   const [importReviewOpen, setImportReviewOpen] = useState(false);
   const [cellManagerOpen, setCellManagerOpen] = useState(false);
-  const [newTestbenchDutId, setNewTestbenchDutId] = useState<string | null>(
-    null,
-  );
-  const [simulationDraftContext, setSimulationDraftContext] = useState<{
-    folderId: string;
-    folderName: string;
-    dutDocumentId: string;
-    rootDocumentId: string;
-  } | null>(null);
   const [activeSimulationFolderId, setActiveSimulationFolderId] = useState<
     string | null
   >(null);
   const activeSimulationFolder =
     project.simulationFolders.find(
       (folder) => folder.id === activeSimulationFolderId,
-    ) ??
-    (simulationDraftContext?.folderId === activeSimulationFolderId
-      ? undefined
-      : project.simulationFolders[0]);
+    ) ?? project.simulationFolders[0];
   useEffect(() => {
-    setNewTestbenchDutId(null);
-    setSimulationDraftContext(null);
     setActiveSimulationFolderId(null);
   }, [projectSessionId]);
   const [canvasContextMenu, setCanvasContextMenu] = useState<{
@@ -742,18 +771,32 @@ export function App({
     y: number;
   } | null>(null);
   const canvasContextMenuSuppressed = useRef(false);
-  const [pendingCellReset, setPendingCellReset] = useState<{
-    plan: CellResetPlan;
-    command: string;
-  } | null>(null);
   const [netlistPreflightOpen, setNetlistPreflightOpen] = useState(false);
   const [projectPanel, setProjectPanel] =
-    useState<EditorProjectPanelMode | null>(null);
+    useState<EditorProjectPanelMode | null>("netlist");
+  const [netlistFocusedInstance, setNetlistFocusedInstance] = useState<{
+    documentId: string;
+    instanceId: string;
+  } | null>(null);
+  useEffect(() => {
+    // Explicit inspector actions (Q, double-click, Issues, import review)
+    // take precedence over the Netlist panel opened at startup.
+    if (selectionOpen) setProjectPanel(null);
+  }, [selectionOpen]);
   const propertiesOpenBeforeProjectPanelRef = useRef(false);
   const [netlistNamingProfile, setNetlistNamingProfile] = useState<
     "native" | "cadence-bang"
   >("native");
   const netlistPreferences = useNetlistExportPreferences();
+  const [netlistEntry, setNetlistEntry] = useState<{
+    sessionId: string;
+    documentId: string;
+  } | null>(null);
+  const netlistRootDocumentId =
+    netlistEntry?.sessionId === projectSessionId &&
+    project.documents.some((item) => item.id === netlistEntry.documentId)
+      ? netlistEntry.documentId
+      : undefined;
   const [documentSettingsOpen, setDocumentSettingsOpen] = useState(false);
   const [projectNameDraft, setProjectNameDraft] = useState<string | null>(null);
   const [publishGalleryOpen, setPublishGalleryOpen] = useState(false);
@@ -848,6 +891,7 @@ export function App({
   const browserAgentFileHost = useMemo(
     () =>
       new BrowserAgentFileHost({
+        transport: simulationTransport,
         getProjectSessionId: () => editorDocumentController.projectSessionId,
         getProject: () => editorDocumentController.project,
         getDocument: (documentId) =>
@@ -859,7 +903,7 @@ export function App({
         dispatchProjectTransaction: (request) =>
           browserAgentHost.dispatchProjectTransaction(request),
       }),
-    [editorDocumentController, projectSessionId],
+    [editorDocumentController, projectSessionId, simulationTransport],
   );
   const projectRunHistory = useMemo(
     () => new ProjectRunHistory(editorDocumentController.project.id),
@@ -943,6 +987,7 @@ export function App({
   );
   const openAnalogSimulation = (): void => {
     if (!publicSimulationUiEnabled) return;
+    setProjectPanel(null);
     setAnalogSimulationState("open");
   };
   const minimizeAnalogSimulation = (): void => {
@@ -958,7 +1003,6 @@ export function App({
     setSimulationPickModeState(null);
     void humanSimulationSession?.clear();
     setAnalogSimulationState("closed");
-    setSimulationDraftContext(null);
   };
   const captureAuthoredProject = async () => {
     if (
@@ -1049,6 +1093,12 @@ export function App({
       setDocumentStack([]);
       setViewBox(nextViewBox, nextDocument.presentation.grid);
       resetInteractionState();
+      // Each newly opened circuit starts with its netlist. Ordinary edits and
+      // user-driven panel changes do not reset the workspace.
+      propertiesOpenBeforeProjectPanelRef.current = false;
+      setSelectionOpen(false);
+      setProjectPanel("netlist");
+      if (compactLayout) setCompactLibraryPanelOpen(false);
       return nextDocument;
     },
   });
@@ -1192,11 +1242,31 @@ export function App({
           cornerOrder: "auto" as const,
         };
   };
+  // Already derived for this revision by the connectivity index above; the
+  // routing plan gate would otherwise derive it again over the same Document.
+  const documentContactEvidence = projectConnectivityIndex.documents.get(
+    document.id,
+  )?.contactEvidence;
+  const [interfaceConfirmation, setInterfaceConfirmation] = useState<{
+    request: CellInterfaceConfirmation;
+    snapshot: typeof project;
+  } | null>(null);
+  const [parameterBinding, setParameterBinding] = useState<{
+    snapshot: CircuitProject;
+    cell: SchematicDocument;
+    instanceId: string;
+    field: string;
+    value: string;
+    anchor: HTMLElement;
+  } | null>(null);
   const { commitStructure, transact, transactConnectivity } =
     createEditorTransactionCommands({
       project,
       document,
       resolver,
+      ...(documentContactEvidence
+        ? { contactEvidence: documentContactEvidence }
+        : {}),
       dispatchProjectTransaction,
       transactDocument,
       getCurrentInteractionKind: () => getCurrentInteractionState().kind,
@@ -1207,17 +1277,20 @@ export function App({
     createCell,
     renameCell,
     deleteCell,
-    updateCellPinDirection,
-    renameCellTerminal,
-    moveCellTerminal,
-    setCellFormalParameters,
+    updateCellPortDirection,
+    moveCellPort,
+    editCellParameter,
     setExternalSubcircuitDefinition,
+    removeExternalSubcircuitDefinition,
     setCellSymbolBodySize,
     setCellSymbolPortPlacement,
     editCellTerminalAnnotation,
+    formatCellTerminalAnnotations,
     removeCellTerminalSelection,
     renameProject,
   } = createProjectStructureCommands({
+    requestConfirmation: (request) =>
+      setInterfaceConfirmation({ request, snapshot: project }),
     project,
     activeDocument: document,
     resolver,
@@ -1232,9 +1305,17 @@ export function App({
   const { openGalleryEntryById, openLibraryExample, insertGalleryEntryById } =
     createGalleryExampleCommands({
       defaultViewBox: DEFAULT_VIEWBOX,
+      prepareLibraryExample: (example) =>
+        prepareNetlistExample(
+          example,
+          netlistPreferences.preferences.profiles[netlistPreferences.selected],
+        ),
       replaceActiveProject,
       guardDirtyReplacement,
-      beginCopyPlacement: beginCopyPlacementInteraction,
+      beginCopyPlacement: (clipboard, anchor) => {
+        prepareProjectCopy(project, document, clipboard);
+        beginCopyPlacementInteraction(clipboard, anchor);
+      },
       cancelAllTransientInteraction,
       setGalleryEntryContext,
       setStatus,
@@ -1364,7 +1445,6 @@ export function App({
   const suppressInstanceClick = useRef(false);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const selectionShelfRef = useRef<HTMLButtonElement>(null);
-  const netLabelEditorInputRef = useRef<HTMLInputElement>(null);
   const documentViewBoxes = useRef(new Map<string, GridRect>());
   const [projectedMovePreviewDocument, setProjectedMovePreviewDocument] =
     useState<SchematicDocument | null>(null);
@@ -1492,17 +1572,22 @@ export function App({
       return { scene: null, anchors: [], error: null };
     }
     try {
-      const previewDocument = clipboardPreviewDocument(
+      const prepared = prepareProjectCopy(
+        project,
         document,
         copyPlacement.clipboard,
+      );
+      const previewDocument = clipboardPreviewDocument(
+        document,
+        prepared.clipboard,
         { x: 0, y: 0 },
         copyPlacement.orientationOperations,
-        resolver,
+        prepared.resolver,
         copyPlacement.sequence,
       );
       return {
-        scene: buildSvgScene(previewDocument, resolver),
-        anchors: copyPlacementAnchors(previewDocument, resolver),
+        scene: buildSvgScene(previewDocument, prepared.resolver),
+        anchors: copyPlacementAnchors(previewDocument, prepared.resolver),
         error: null,
       };
     } catch (error) {
@@ -1519,6 +1604,7 @@ export function App({
     copyPlacement?.clipboard,
     copyPlacement?.orientationOperations,
     copyPlacement?.sequence,
+    project,
     document,
     resolver,
   ]);
@@ -1539,11 +1625,13 @@ export function App({
         copyPlacement.previewPoint.y - copyPlacement.anchor.y
       })`
     : undefined;
+  // Every Instance the Cell holds but the sheet does not show. Import is one
+  // way to get there and was once the only one the tray admitted, but a
+  // returned or pasted Instance lands in the same state — and an Instance
+  // nothing lists is one nobody can place or delete, while it still holds its
+  // reference, its Net terminals and its place in the netlist.
   const unplaced = document.instances.filter(
-    (instance) => instance.importProvenance && instance.placement === null,
-  );
-  const returnablePlacedInstances = document.instances.filter(
-    (instance) => instance.importProvenance && instance.placement !== null,
+    (instance) => instance.placement === null,
   );
   const styleProfile = resolveDocumentStyleProfile(document.presentation);
   const {
@@ -1585,6 +1673,15 @@ export function App({
   const selectedAnnotationOwnerInstanceId = selectedAnnotation
     ? annotationOwningInstanceId(selectedAnnotation)
     : undefined;
+  useEffect(() => {
+    if (
+      parameterBinding &&
+      (!selectionOpen ||
+        selectedInstance?.id !== parameterBinding.instanceId ||
+        document.id !== parameterBinding.cell.id)
+    )
+      setParameterBinding(null);
+  }, [selectionOpen, selectedInstance?.id, document.id, parameterBinding]);
   const selectedComponentSourceCode = useMemo(
     () =>
       selectedInstance
@@ -1826,10 +1923,7 @@ export function App({
   const simulationPickRootDocumentId =
     activeSimulationFolder?.input.circuitBindings.find(
       (binding) => binding.emission === "top-level",
-    )?.documentId ??
-    (simulationDraftContext?.folderId === activeSimulationFolderId
-      ? simulationDraftContext.rootDocumentId
-      : undefined);
+    )?.documentId;
   const simulationPickOccurrence: readonly string[] | undefined =
     documentStack.length > 0
       ? documentStack.map((frame) => frame.instanceId)
@@ -2005,6 +2099,10 @@ export function App({
     setSimulationPickMode(active ? "net" : null);
   const setSimulationTerminalPickMode = (active: boolean): void =>
     setSimulationPickMode(active ? "terminal" : null);
+  const selectedBlockLayout = useMemo(
+    () => selectedBlockSymbolTarget(project, selectedInstance),
+    [project, selectedInstance],
+  );
   const {
     enabled: cellSymbolLayoutEnabled,
     layout: selectedCellSymbolLayout,
@@ -2013,10 +2111,11 @@ export function App({
     exit: exitCellSymbolLayout,
     toggle: toggleCellSymbolLayout,
     beginDrag: beginCellSymbolLayoutDrag,
+    previewDrag: previewCellSymbolLayoutDrag,
     completeDrag: completeCellSymbolLayoutDrag,
   } = useCellSymbolLayout({
     selectedInstance,
-    child: selectedHierarchyCell,
+    target: selectedBlockLayout,
     resolver,
     selectionOpen,
     canvasPointFromEvent: (event) =>
@@ -2063,7 +2162,7 @@ export function App({
     },
   });
   const {
-    restoreTextReference,
+    setTextDisplayAlias,
     applyRouteProperties,
     beginAnnotationTextEditing,
     beginDraftingTextEditing,
@@ -2081,7 +2180,7 @@ export function App({
     placeNetLabel,
     textEditing,
     updateTextEditing,
-    updateNetLabelPlacementDraft,
+    updateNetLabelPlacementText,
     updateNetLabelPlacementPosition,
   } = usePropertiesEditor({
     document,
@@ -2091,7 +2190,6 @@ export function App({
     selectedRouteNetLabels,
     selectedInstance,
     componentParametersForInstance: propertyParametersForInstance,
-    netLabelEditorInputRef,
     transact,
     setStatus,
     replaceSelectionKind: (kind, ids) => replaceSelectionKind(kind, ids),
@@ -2107,11 +2205,13 @@ export function App({
     valueVisibilityEdits,
     isCellPinAnnotation: (annotation) => {
       const anchor = annotation.anchor;
-      if (anchor.kind !== "object") return false;
-      const interfaceInstanceId = anchor.objectId;
       return (
-        document.netlist?.terminals.some((terminal) =>
-          terminal.interfaceInstanceIds.includes(interfaceInstanceId),
+        document.netlist?.terminals.some(
+          (terminal) =>
+            (annotation.binding?.kind === "cell-terminal-name" &&
+              annotation.binding.terminalId === terminal.id) ||
+            (anchor.kind === "object" &&
+              terminal.interfaceInstanceIds.includes(anchor.objectId)),
         ) === true
       );
     },
@@ -2403,6 +2503,15 @@ export function App({
     transactConnectivity,
     transactProject: (transactionId, edits) =>
       commitStructure(transactionId, edits),
+    // A device drawn while working in a process is that process's device.
+    processModelTarget: (symbolId) => {
+      const family = netlistDeviceFamily(symbolId);
+      if (family !== "nmos" && family !== "pmos") return undefined;
+      return (
+        netlistPreferences.preferences.profiles[netlistPreferences.selected]
+          .devices[family].target || undefined
+      );
+    },
     selectOnly,
     cancelAllTransientInteraction,
     cancelCanvasDrag: () => canvasDragSessionRef.current?.cancel(),
@@ -2449,6 +2558,9 @@ export function App({
     transactConnectivity,
     setStatus,
     nextRoutingSuffix,
+    ...(documentContactEvidence
+      ? { contactEvidence: documentContactEvidence }
+      : {}),
   });
   const {
     rotate: rotateSelected,
@@ -2554,26 +2666,19 @@ export function App({
     setStatus(`Deleted ${id} — click another, Esc exits`);
     return true;
   }
-  const {
-    handleDrop,
-    placeAll: placeAllFromTray,
-    returnToTray: returnInstancesToTray,
-  } = createPlacementTrayCommands({
-    document,
-    resolver,
-    styleProfile,
-    viewBox,
-    pointFromDrop: (event) =>
-      pointFromClient(event.clientX, event.clientY, event.currentTarget),
-    transact,
-    selectInstance: (id) => selectOnly("instance", [id]),
-    resetSelection,
-    setStatus,
-    nextSuffix: () => {
-      uniqueSuffixCounter.current += 1;
-      return uniqueSuffixCounter.current;
-    },
-  });
+  const { handleDrop, placeAll: placeAllFromTray } =
+    createPlacementTrayCommands({
+      document,
+      resolver,
+      styleProfile,
+      viewBox,
+      pointFromDrop: (event) =>
+        pointFromClient(event.clientX, event.clientY, event.currentTarget),
+      transact,
+      selectInstance: (id) => selectOnly("instance", [id]),
+      resetSelection,
+      setStatus,
+    });
   const {
     beginCopyPlacement: beginCopyPlacementFromSelection,
     beginKeyboardSelectionMove: beginKeyboardSelectionMoveFromSelection,
@@ -2593,6 +2698,7 @@ export function App({
     toggleSelectedNoConnect: toggleSelectedNoConnectFromSelection,
     updateCommandMovePreview: updateCommandMovePreviewFromSelection,
   } = useSelectionInteraction({
+    project,
     document,
     resolver,
     visualSelection,
@@ -2605,15 +2711,8 @@ export function App({
     selectedEndpointNetId,
     getInteractionState: getCurrentInteractionState,
     transact,
-    transactProjectDocument: (transactionId, edits) => {
-      const committed = commitStructure(transactionId, [
-        {
-          kind: "transact_document",
-          documentId: document.id,
-          expectedRevision: document.revision,
-          edits: [...edits],
-        },
-      ]);
+    transactCopy: (edits) => {
+      const committed = commitStructure("copy-placement", [...edits]);
       return {
         ok: committed,
         revision: committed ? document.revision + 1 : document.revision,
@@ -3280,7 +3379,7 @@ export function App({
     setSelectionOpen(propertiesOpenBeforeProjectPanelRef.current);
   }
 
-  function toggleProjectPanel(mode: "netlist" | "project-code"): void {
+  function toggleProjectPanel(mode: EditorProjectPanelMode): void {
     if (projectPanel === mode) {
       closeProjectPanel();
       return;
@@ -3366,7 +3465,15 @@ export function App({
         (candidate) => candidate.id === exampleId,
       );
       if (exampleProject && example) {
-        replaceActiveProject(exampleProject, DEFAULT_VIEWBOX);
+        replaceActiveProject(
+          prepareNetlistExample(
+            exampleProject,
+            netlistPreferences.preferences.profiles[
+              netlistPreferences.selected
+            ],
+          ),
+          DEFAULT_VIEWBOX,
+        );
         setStatus(`Opened example: ${example.name}`);
       }
     }
@@ -3419,87 +3526,6 @@ export function App({
     setStatus("Choose a Cell, then place it on the canvas");
   }
 
-  function openNewTestbenchDialog(dutDocumentId = document.id): void {
-    if (!publicSimulationUiEnabled) return;
-    cancelAllTransientInteraction();
-    setCanvasContextMenu(null);
-    setNewTestbenchDutId(dutDocumentId);
-  }
-
-  function beginProjectCellPlacement(childDocumentId: string): void {
-    const child = project.documents.find(
-      (candidate) => candidate.id === childDocumentId,
-    );
-    if (!child?.netlist) {
-      setStatus("The selected DUT Cell no longer exists");
-      return;
-    }
-    const cellName = child.netlist.name;
-    beginComponentPlacement({
-      kind: "cell",
-      symbolId: hierarchicalSymbolId(cellName),
-      childDocumentId: child.id,
-      cellName,
-      parameters: {},
-      initialRotation: 0,
-      showReference: false,
-      referenceText: null,
-      showValue: true,
-    });
-  }
-
-  function createTestbenchCell(request: NewTestbenchRequest): void {
-    const dut = project.documents.find(
-      (candidate) => candidate.id === request.dutDocumentId,
-    );
-    if (!dut?.netlist) {
-      setStatus("Could not create Testbench: the selected DUT Cell is missing");
-      return;
-    }
-    if (
-      project.documents.some(
-        (candidate) =>
-          candidate.name.toLowerCase() === request.name.toLowerCase(),
-      )
-    ) {
-      setStatus(
-        `Could not create Testbench: Cell ${request.name} already exists`,
-      );
-      return;
-    }
-    const testbench = createEmptyDocument(createId("document"), request.name);
-    testbench.netlist!.name = request.name;
-    testbench.presentation = structuredClone(dut.presentation);
-    if (
-      !commitStructure(
-        "create-testbench-cell",
-        planCreateCell(testbench),
-        testbench.id,
-      )
-    ) {
-      return;
-    }
-    setDocumentStack([]);
-    setNewTestbenchDutId(null);
-    const folderId = createId("simulation-folder");
-    setSimulationDraftContext({
-      folderId,
-      folderName: `${testbench.name} folder`,
-      dutDocumentId: dut.id,
-      rootDocumentId: testbench.id,
-    });
-    setActiveSimulationFolderId(folderId);
-    if (analogSimulationOpen) minimizeAnalogSimulation();
-    if (request.placeDut) {
-      beginProjectCellPlacement(dut.id);
-      setStatus(
-        `Created Testbench ${testbench.name}. Click to place the ${dut.name} Symbol View; Esc exits.`,
-      );
-    } else {
-      setStatus(`Created Testbench Cell ${testbench.name}`);
-    }
-  }
-
   const selectedFormalTerminal = selectedInstance
     ? document.netlist?.terminals.find((terminal) =>
         terminal.interfaceInstanceIds.includes(selectedInstance.id),
@@ -3535,6 +3561,66 @@ export function App({
         )
       : undefined;
 
+  function openSelectedComponentDefinition(): void {
+    if (!selectedInstance) {
+      setStatus("Select one component to edit its definition");
+      return;
+    }
+    if (hasHierarchyEnterSelection) {
+      enterSelectedHierarchy();
+      return;
+    }
+    const definition = project.componentDefinitions?.find(
+      (item) => item.symbol.id === selectedInstance.symbolId,
+    );
+    if (!definition) {
+      setStatus("No component definition is available for this selection");
+      return;
+    }
+    cancelAllTransientInteraction();
+    setCanvasContextMenu(null);
+    setComponentEditor({
+      key: crypto.randomUUID(),
+      mode: "instance",
+      definition: structuredClone(definition),
+      target: {
+        projectSessionId,
+        documentId: document.id,
+        instance: structuredClone(selectedInstance),
+      },
+    });
+  }
+
+  function insertSharedComponent(entry: SharedComponent): void {
+    try {
+      editorDocumentController.offerComponentDefinition(entry.definition);
+      synchronizeExternalCommit();
+      editorCommands.execute({
+        id: "insert.start",
+        launch: { kind: "quick", request: sharedComponentInsertRequest(entry) },
+      });
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function componentEditPlan(definition: ComponentDefinition) {
+    const target = componentEditor?.target;
+    const live = definitionProjectRef.current;
+    if (!target || live.projectSessionId !== target.projectSessionId)
+      return {
+        ok: false as const,
+        message: "The Project changed. Reopen the component before applying.",
+      };
+    return planComponentDefinitionEdit(
+      live.project,
+      target.documentId,
+      target.instance.id,
+      target.instance,
+      definition,
+    );
+  }
+
   function commitProjectName(): void {
     setProjectNameDraft(null);
     renameProject(projectNameDraft);
@@ -3564,40 +3650,6 @@ export function App({
     browserAgentFileHost.discard(agentFileCandidate.candidateId);
     setAgentFileCandidate(null);
     setStatus("Rejected Agent file candidate");
-  }
-
-  const clearDrawingPlan = planCellReset(project, document.id, "clear-drawing");
-  const resetPlacementPlan = planCellReset(
-    project,
-    document.id,
-    "reset-placement",
-  );
-  const resetBodyPlan = planCellReset(project, document.id, "reset-body");
-
-  function commitCellReset(plan: CellResetPlan, command: string): void {
-    if (plan.edits.length === 0) {
-      setStatus(command + " has nothing to change in Cell " + document.name);
-      return;
-    }
-    setPendingCellReset({ plan, command });
-  }
-
-  function confirmClearCanvas(): void {
-    if (!pendingCellReset) return;
-    const { plan, command } = pendingCellReset;
-    const result = transact([...plan.edits]);
-    if (!result.ok) return;
-    setPendingCellReset(null);
-    resetInteractionState();
-    setStatus(
-      command + " completed in Cell " + document.name + " · Undo restores it",
-    );
-  }
-
-  function cancelClearCanvas(): void {
-    const command = pendingCellReset?.command ?? "Cell reset";
-    setPendingCellReset(null);
-    setStatus(command + " cancelled");
   }
 
   function nextRoutingSuffix(): number {
@@ -3832,6 +3884,16 @@ export function App({
     report: setStatus,
     onChunkLoadFailure: setChunkLoadFailure,
   });
+  // `canBeginKeyboardSelectionMove` runs `planSelectionMove`, a full move
+  // plan, and the command router asks for enablement on every render — from
+  // two call sites, editor-command.ts:188 and :307. The plan reads exactly
+  // these two inputs, so a re-render that changes neither does not need to
+  // re-plan the whole selection. `canBeginKeyboardSelectionMove` itself is a
+  // fresh closure every render and so cannot be the dependency.
+  const hasMoveSelection = useMemo(
+    () => canBeginKeyboardSelectionMove(),
+    [document, visualSelection],
+  );
   const editorCommands = createEditorCommandRouter({
     getContext: () => ({
       interactionMode: getCurrentInteractionState().kind,
@@ -3840,7 +3902,7 @@ export function App({
         hasVisualSelection(visualSelection) && !visualClipboard.busy,
       hasDeletableSelection:
         hasVisualSelection(visualSelection) || selectedEndpoint !== null,
-      hasMoveSelection: canBeginKeyboardSelectionMove(),
+      hasMoveSelection,
       hasAlignableSelection: alignmentParticipantCount >= 2,
       hasRotatableSelection,
       hasMirrorableSelection,
@@ -3971,8 +4033,8 @@ export function App({
       // electrical verdict belongs to.
       electricalWarningsPresent: () =>
         requestElectricalDiagnostics().length > 0,
-      netlistProfile: netlistPreferences.profile,
       netlistPortCase: netlistPreferences.portCase,
+      netlistRootDocumentId,
       netlistConfigurationError: netlistPreferences.error,
       guardDirtyReplacement,
       replaceActiveProject,
@@ -4048,12 +4110,21 @@ export function App({
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
+      if (componentEditor) return;
       // The source workbench owns its keyboard scope, including portalled menus.
       if (
         event.target instanceof Element &&
         event.target.closest(
           ".simulation-code-workspace, [data-workspace-interaction]",
         )
+      )
+        return;
+      // The interface confirmation owns keys even though this router captures
+      // at window level before the modal's React handlers.
+      if (interfaceConfirmation) return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest(".cell-parameter-popover")
       )
         return;
       // File flyout arrows navigate the focused menu, never pan the canvas.
@@ -4154,6 +4225,11 @@ export function App({
         ),
         propertiesOpen: selectionOpen,
         hasHierarchyEnterSelection,
+        hasDefinitionSelection: Boolean(
+          selectedInstance &&
+          !resolver.resolve(selectedInstance.symbolId)?.definition
+            .hierarchicalBlock,
+        ),
         canReturnToParent: documentStack.length > 0,
       });
       if (!shortcut) return;
@@ -4217,6 +4293,9 @@ export function App({
           return;
         case "enter-hierarchy":
           enterSelectedHierarchy();
+          return;
+        case "edit-component-definition":
+          openSelectedComponentDefinition();
           return;
         case "return-to-parent":
           returnToParentDocument();
@@ -4562,17 +4641,88 @@ export function App({
 
   return (
     <main className="app-shell">
+      {parameterBinding &&
+      selectionOpen &&
+      selectedInstance?.id === parameterBinding.instanceId &&
+      document.id === parameterBinding.cell.id ? (
+        <CellParameterDialog
+          anchor={parameterBinding.anchor}
+          cell={parameterBinding.cell}
+          field={parameterBinding.field}
+          value={parameterBinding.value}
+          onCancel={() => setParameterBinding(null)}
+          onApply={(name, defaultValue) => {
+            if (project !== parameterBinding.snapshot)
+              return {
+                ok: false,
+                message:
+                  "Project changed. Close this dialog and select the field again.",
+              };
+            try {
+              const edits = planBindCellParameter(
+                project,
+                parameterBinding.cell.id,
+                parameterBinding.instanceId,
+                parameterBinding.field,
+                name,
+                defaultValue,
+              );
+              const ok = commitStructure("bind-cell-parameter", edits);
+              if (ok) {
+                setParameterBinding(null);
+                setStatus(`Using Cell parameter ${name}`);
+              }
+              return {
+                ok,
+                ...(!ok
+                  ? {
+                      message: "Could not bind the Cell parameter; see status.",
+                    }
+                  : {}),
+              };
+            } catch (error) {
+              return {
+                ok: false,
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "Could not bind Cell parameter",
+              };
+            }
+          }}
+        />
+      ) : null}
+      {interfaceConfirmation ? (
+        <CellInterfaceConfirmationDialog
+          request={interfaceConfirmation.request}
+          onCancel={() => setInterfaceConfirmation(null)}
+          onConfirm={() => {
+            setInterfaceConfirmation(null);
+            try {
+              applyConfirmedCellInterfaceEdit(
+                interfaceConfirmation.request,
+                interfaceConfirmation.snapshot,
+                project,
+              );
+            } catch (error) {
+              setStatus(
+                error instanceof Error
+                  ? error.message
+                  : "Could not update Cell interface",
+              );
+            }
+          }}
+        />
+      ) : null}
       {renderCrashRequested() ? <RenderCrashProbe /> : null}
       <EditorAppChrome
         {...(publicSimulationUiEnabled
-          ? {
-              simulationAction: openAnalogSimulation,
-              onNewTestbench: () => openNewTestbenchDialog(),
-            }
+          ? { simulationAction: openAnalogSimulation }
           : {})}
         simulationState={analogSimulationState}
         releaseChannel={releaseChannel}
         projectName={project.name}
+        galleryEntryMetadata={galleryEntryContext}
         projectSchemaVersion={project.schemaVersion}
         projectNameDraft={projectNameDraft}
         hasUnsavedWork={isDirtyWork()}
@@ -4685,24 +4835,6 @@ export function App({
               format,
             }),
         }))}
-        resets={[
-          {
-            label: "清除图形",
-            enabled: clearDrawingPlan.edits.length > 0,
-            execute: () => commitCellReset(clearDrawingPlan, "Clear Drawing"),
-          },
-          {
-            label: "重置 Cell 放置",
-            enabled: resetPlacementPlan.edits.length > 0,
-            execute: () =>
-              commitCellReset(resetPlacementPlan, "Reset Cell Placement"),
-          },
-          {
-            label: "重置 Cell 内容",
-            enabled: resetBodyPlan.edits.length > 0,
-            execute: () => commitCellReset(resetBodyPlan, "Reset Cell Body"),
-          },
-        ]}
         rotate={{
           enabled: editorCommands.state({ id: "transform.rotate" }).enabled,
           execute: () => editorCommands.execute({ id: "transform.rotate" }),
@@ -4753,12 +4885,11 @@ export function App({
           execute: () => void projectCheck.checkAndSave(),
         }}
         onOpenInstanceCode={() => {
-          showProjectPanel("instances");
+          toggleProjectPanel("instances");
         }}
-        netlistProfileId={netlistPreferences.profile.id}
         netlistFormat={netlistPreferences.format}
         onOpenNetlistConfiguration={() => {
-          showProjectPanel("netlist-configuration");
+          toggleProjectPanel("netlist-configuration");
         }}
         onOpenNetlistPreflight={() => setNetlistPreflightOpen(true)}
         onExportNetlist={exportDesignNetlist}
@@ -4775,7 +4906,7 @@ export function App({
         }
         publishGalleryOpen={publishGalleryOpen}
         onPublishGallery={() => {
-          // The preview reads the gallery and never writes it (ADR 0057);
+          // The preview reads the gallery and never writes it (Deployment rationale);
           // saying so here beats a sign-in dialog with nowhere to sign in.
           if (releaseChannel === "preview") {
             setStatus(
@@ -4798,6 +4929,9 @@ export function App({
                 ? "netlist"
                 : null,
           leftPanelsDisabled: false,
+          styleProfileId: document.presentation.styleProfileId,
+          onStartInsert: (launch) =>
+            editorCommands.execute({ id: "insert.start", launch }),
           tool,
           documentSettingsOpen,
           undo: {
@@ -4843,7 +4977,6 @@ export function App({
           topDocumentId: project.topDocumentId,
           navigationDepth: documentStack.length,
           canEnter: hasHierarchyEnterSelection,
-          onUp: returnToParentDocument,
           onTop: returnToTopDocument,
           onSelectDocument: selectDocumentFromHierarchy,
           onEnter: enterSelectedHierarchy,
@@ -4974,22 +5107,25 @@ export function App({
               }
             : null
         }
-        cellReset={
-          pendingCellReset
-            ? {
-                documentName: document.name,
-                pending: pendingCellReset,
-                onCancel: cancelClearCanvas,
-                onConfirm: confirmClearCanvas,
-              }
-            : null
-        }
         cellManager={
           cellManagerOpen
             ? {
                 open: cellManagerOpen,
                 cells: cellManagerEntries,
-                documents: project.documents,
+                project,
+                hierarchyCalls: projectConnectivityIndex.hierarchy.calls,
+                onOpenOccurrence: (documentId, hierarchyPath) => {
+                  navigateToLocator(
+                    {
+                      documentId,
+                      hierarchyPath: [...hierarchyPath],
+                      kind: "document",
+                      objectId: documentId,
+                    },
+                    "Opened Cell occurrence",
+                  );
+                  setCellManagerOpen(false);
+                },
                 activeDocumentId: document.id,
                 onClose: () => setCellManagerOpen(false),
                 onCreate: (name) => {
@@ -4998,34 +5134,61 @@ export function App({
                 },
                 onOpen: (documentId) => {
                   setCellManagerOpen(false);
+                  setDocumentStack([]);
                   switchDocument(documentId);
                 },
                 onRename: renameCell,
+                onReorder: (documentIds, topDocumentId) => {
+                  commitStructure("reorder-cells", [
+                    { kind: "reorder_documents", documentIds },
+                    { kind: "set_top_document", documentId: topDocumentId },
+                  ]);
+                },
                 onDelete: (documentId) => {
                   if (deleteCell(documentId)) {
                     setCellManagerOpen(false);
                   }
                 },
                 onJumpToCaller: jumpToCaller,
-                onRenameTerminal: (documentId, terminalId, name) =>
-                  renameCellTerminal(terminalId, name, documentId),
-                onSetTerminalDirection: (documentId, terminalId, direction) =>
-                  updateCellPinDirection(terminalId, direction, documentId),
-                onMoveTerminal: (documentId, terminalId, delta) =>
-                  moveCellTerminal(terminalId, delta, documentId),
-                onSetFormalParameters: (documentId, formalParameters) =>
-                  setCellFormalParameters(formalParameters, documentId),
+                onFormatPortLabels: formatCellTerminalAnnotations,
+                onSetPortDirection: (documentId, portId, direction) =>
+                  updateCellPortDirection(portId, direction, documentId),
+                onMovePort: (documentId, portId, delta) =>
+                  moveCellPort(portId, delta, documentId),
+                onEditParameter: (documentId, name, change) =>
+                  editCellParameter(name, change, documentId),
                 externalDefinitions: project.externalSubcircuitDefinitions,
                 onSetExternalDefinition: setExternalSubcircuitDefinition,
-                onSetSymbolPresentation: (documentId, presentation) => {
-                  commitStructure(
-                    "review-cell-symbol",
-                    planSetCellSymbolPresentation(
-                      project,
-                      documentId,
-                      presentation,
-                    ),
+                onRemoveExternalDefinition: removeExternalSubcircuitDefinition,
+                onPlaceExternal: (definitionId) => {
+                  const candidate = externalSubcircuitInsertCandidates.find(
+                    (item) => item.definitionId === definitionId,
                   );
+                  if (!candidate) {
+                    setStatus(
+                      "The selected external master has no resolved symbol",
+                    );
+                    return;
+                  }
+                  setCellManagerOpen(false);
+                  editorCommands.execute({
+                    id: "insert.start",
+                    launch: {
+                      kind: "quick",
+                      request: {
+                        kind: "external-subcircuit",
+                        definitionId,
+                        symbolId: candidate.symbol.id,
+                        symbolName: candidate.masterName,
+                        masterName: candidate.masterName,
+                        parameters: {},
+                        initialRotation: 0,
+                        showReference: !candidate.symbol.hierarchicalBlock,
+                        referenceText: null,
+                        showValue: true,
+                      },
+                    },
+                  });
                 },
                 cloudProjects,
                 activeCloudProjectId: cloudBinding?.id ?? null,
@@ -5073,24 +5236,14 @@ export function App({
               }
             : null
         }
-        newTestbench={
-          publicSimulationUiEnabled && newTestbenchDutId
-            ? {
-                documents: project.documents,
-                initialDutDocumentId: newTestbenchDutId,
-                onCancel: () => setNewTestbenchDutId(null),
-                onCreate: createTestbenchCell,
-              }
-            : null
-        }
         netlistPreflight={
           netlistPreflightOpen
             ? {
                 open: netlistPreflightOpen,
                 project,
-                profile: netlistPreferences.profile,
                 format: netlistPreferences.format,
                 portCase: netlistPreferences.portCase,
+                rootDocumentId: netlistRootDocumentId,
                 // The dialog only renders while open, so this IS the
                 // explicit check the author asked for.
                 electricalDiagnostics: requestElectricalDiagnostics(),
@@ -5354,6 +5507,31 @@ export function App({
           <ShapesPanel
             styleProfileId={document.presentation.styleProfileId}
             open={visibleLibraryPanelOpen}
+            userComponents={
+              <Suspense fallback={null}>
+                <UserComponentsLibrary
+                  refresh={componentLibraryRefresh}
+                  onCreate={() => {
+                    cancelAllTransientInteraction();
+                    setComponentEditor({
+                      key: crypto.randomUUID(),
+                      mode: "new",
+                      definition: newComponentDefinition(),
+                    });
+                  }}
+                  onEdit={(entry) => {
+                    cancelAllTransientInteraction();
+                    setComponentEditor({
+                      key: crypto.randomUUID(),
+                      mode: "library",
+                      definition: entry.definition,
+                      entry,
+                    });
+                  }}
+                  onInsert={insertSharedComponent}
+                />
+              </Suspense>
+            }
             onStartInsert={(launch) =>
               editorCommands.execute({ id: "insert.start", launch })
             }
@@ -5427,12 +5605,7 @@ export function App({
                         }
                       : undefined
                   }
-                  selectedFolderId={
-                    simulationDraftContext?.folderId ===
-                    activeSimulationFolderId
-                      ? simulationDraftContext.folderId
-                      : (activeSimulationFolder?.id ?? null)
-                  }
+                  selectedFolderId={activeSimulationFolder?.id ?? null}
                   onSelectFolderId={setActiveSimulationFolderId}
                   agentGuidance={
                     publicAgentUiEnabled
@@ -5447,7 +5620,6 @@ export function App({
                       `Open ${exampleProject.name} example`,
                       () => {
                         replaceActiveProject(exampleProject, DEFAULT_VIEWBOX);
-                        setSimulationDraftContext(null);
                         setActiveSimulationFolderId(
                           exampleProject.simulationFolders[0]?.id ?? null,
                         );
@@ -5458,9 +5630,6 @@ export function App({
                       },
                     );
                   }}
-                  {...(simulationDraftContext
-                    ? { draftContext: simulationDraftContext }
-                    : {})}
                   open={analogSimulationOpen}
                   maximized={analogSimulationMaximized}
                   onToggleMaximized={toggleAnalogSimulationMaximized}
@@ -5484,7 +5653,6 @@ export function App({
                       edits: [{ kind: "upsert_simulation_folder", folder }],
                     });
                     if (result.ok) {
-                      setSimulationDraftContext(null);
                       setActiveSimulationFolderId(folder.id);
                       setStatus(
                         result.applied
@@ -5541,7 +5709,6 @@ export function App({
                       );
                     if (committed && activeSimulationFolderId === folderId) {
                       setActiveSimulationFolderId(null);
-                      setSimulationDraftContext(null);
                     }
                     return committed;
                   }}
@@ -5578,23 +5745,60 @@ export function App({
           }
           project={
             projectPanel ? (
-              <EditorProjectDock onClose={closeProjectPanel}>
+              <EditorProjectDock>
                 {projectPanel === "netlist-configuration" ? (
                   <NetlistProfileCode
                     text={netlistPreferences.text}
                     error={netlistPreferences.error}
-                    onChange={netlistPreferences.changeText}
+                    onChange={(text) =>
+                      netlistPreferences.changeText(text, (next) => {
+                        const previous = netlistPreferences.preferences;
+                        if (
+                          next.selected === previous.selected &&
+                          JSON.stringify(next.profiles[next.selected]) ===
+                            JSON.stringify(previous.profiles[previous.selected])
+                        )
+                          return;
+                        const edits = planNetlistProcess(
+                          project,
+                          next.profiles[next.selected],
+                        );
+                        if (
+                          edits.length &&
+                          !commitStructure("edit-netlist-process", edits)
+                        )
+                          throw new Error("Could not apply device mappings");
+                      })
+                    }
                   />
                 ) : projectPanel === "netlist" ? (
                   <NetlistCodePanel
+                    key={projectSessionId}
+                    onApply={(edits) =>
+                      commitStructure("edit-netlist-code", edits)
+                    }
+                    onFocusInstance={(instance) => {
+                      if (instance && instance.documentId !== document.id)
+                        selectDocumentFromHierarchy(instance.documentId);
+                      setNetlistFocusedInstance(instance);
+                    }}
                     project={project}
                     format={netlistPreferences.format}
+                    rootDocumentId={netlistRootDocumentId}
+                    onRootChange={(documentId) =>
+                      setNetlistEntry(
+                        documentId
+                          ? { sessionId: projectSessionId, documentId }
+                          : null,
+                      )
+                    }
                     namingProfile={netlistNamingProfile}
                     portCase={netlistPreferences.portCase}
-                    profile={netlistPreferences.profile}
-                    onProfileChange={netlistPreferences.selectProfile}
                     onFormatChange={netlistPreferences.selectFormat}
                     onPortCaseChange={netlistPreferences.selectPortCase}
+                    profiles={netlistPreferences.preferences.profiles}
+                    selectedProcess={netlistPreferences.selected}
+                    onProcessChange={netlistPreferences.selectProfile}
                     onDeviceTargetChange={netlistPreferences.setDeviceTarget}
                     onReset={netlistPreferences.reset}
                     onCopy={() =>
@@ -5895,7 +6099,32 @@ export function App({
                   ? {
                       code: {
                         instance: selectedInstance,
+                        ...(document.netlist
+                          ? {
+                              onUseCellParameter: (
+                                field: string,
+                                value: string,
+                                anchor: HTMLElement,
+                              ) =>
+                                setParameterBinding({
+                                  snapshot: project,
+                                  cell: document,
+                                  instanceId: selectedInstance.id,
+                                  field,
+                                  value,
+                                  anchor,
+                                }),
+                            }
+                          : {}),
                         displayName: selectedDisplayName,
+                        itemName: selectedInstanceLabel
+                          ? flattenRichText(
+                              resolveAnnotationText(
+                                document,
+                                selectedInstanceLabel,
+                              ),
+                            )
+                          : (selectedInstance.reference ?? selectedInstance.id),
                         defaultForeground: styleProfile.foreground,
                         revision: document.revision,
                         referenceVisible:
@@ -5932,18 +6161,6 @@ export function App({
                                 value,
                               );
                             if (
-                              selectedInstance.placement &&
-                              value.placement === null
-                            ) {
-                              edits.push(
-                                ...planInstanceUnplacement(
-                                  document,
-                                  resolver,
-                                  [selectedInstance.id],
-                                  document.revision,
-                                ),
-                              );
-                            } else if (
                               !selectedInstance.placement &&
                               value.placement
                             ) {
@@ -6165,20 +6382,20 @@ export function App({
                           }
                         },
                       },
-                      cellSymbolLayout: selectedHierarchyCell
+                      cellSymbolLayout: selectedBlockLayout
                         ? {
-                            cell: selectedHierarchyCell,
+                            target: selectedBlockLayout,
                             enabled: cellSymbolLayoutEnabled,
                             onToggle: toggleCellSymbolLayout,
                             onBodySizeChange: (width, height) =>
                               setCellSymbolBodySize(
-                                selectedHierarchyCell,
+                                selectedBlockLayout,
                                 width,
                                 height,
                               ),
                             onPortPlacementChange: (terminalId, side, offset) =>
                               setCellSymbolPortPlacement(
-                                selectedHierarchyCell,
+                                selectedBlockLayout,
                                 terminalId,
                                 side,
                                 offset,
@@ -6284,6 +6501,8 @@ export function App({
                 selectedAnnotation
                   ? {
                       annotation: selectedAnnotation,
+                      document,
+                      resolver,
                       inheritedColor: selectedAnnotationInheritedTextColor,
                       onApply: (annotation) => {
                         const result = transact([
@@ -6344,9 +6563,7 @@ export function App({
               placementTray={{
                 document,
                 unplaced,
-                returnablePlaced: returnablePlacedInstances,
                 onPlaceAll: placeAllFromTray,
-                onReturnAll: returnInstancesToTray,
                 onSelect: (instance, label) => {
                   selectOnly("instance", [instance.id]);
                   setStatus(`Selected ${label}`);
@@ -6356,6 +6573,7 @@ export function App({
               routeActions={{
                 active: selectedRouteId !== null,
                 document,
+                resolver,
                 route: selectedRoute ?? null,
                 netLabel: selectedRouteNetLabel ?? null,
                 bulkOwnerLabel: selectedMosBulkOwnerLabel,
@@ -6366,6 +6584,8 @@ export function App({
                 onDeleteWire: deleteSelectedRouteConnection,
               }}
               endpointActions={{
+                item: selectedEndpoint,
+                color: styleProfile.foreground,
                 kind: selectedEndpoint
                   ? selectedEndpoint.endpoint.kind === "junction"
                     ? "junction"
@@ -6526,7 +6746,16 @@ export function App({
             document,
             resolver,
             styleProfile,
-            selectedInstanceIds: selectedIds,
+            selectedInstanceIds:
+              netlistFocusedInstance?.documentId === document.id &&
+              projectPanel === "netlist"
+                ? [
+                    ...new Set([
+                      ...selectedIds,
+                      netlistFocusedInstance.instanceId,
+                    ]),
+                  ]
+                : selectedIds,
             wouldMoveIds,
           }}
           cellSymbolLayout={
@@ -6541,6 +6770,8 @@ export function App({
                     }),
                   ),
                   onDragStart: beginCellSymbolLayoutDrag,
+                  onDragPreview: previewCellSymbolLayoutDrag,
+                  onDragCancel: cancelCellSymbolLayoutDrag,
                 }
               : null
           }
@@ -6603,8 +6834,8 @@ export function App({
           wiring={{
             viewBox,
             netLabelPlacement,
-            netLabelEditorInputRef,
-            onNetLabelDraftChange: updateNetLabelPlacementDraft,
+            styleProfile,
+            onNetLabelTextChange: updateNetLabelPlacementText,
             onNetLabelSubmit: commitNetLabelEditing,
             onNetLabelEscape: () => {
               cancelNetLabelEditing();
@@ -6613,6 +6844,10 @@ export function App({
             flightlines: displayedFlightlines,
             onFlightlineClick: handleFlightline,
             wireDraftPreview,
+            wireSnapTarget:
+              wireSource && wirePreviewTarget?.kind !== "free"
+                ? wirePreviewTarget?.point
+                : undefined,
             bulkRoutePreview: wireSource?.routePresentation === "bulk-dashed",
             snapGuideLayerRef,
           }}
@@ -6833,7 +7068,14 @@ export function App({
                   cycleWireCornerShape();
                   return;
                 }
-                handleWireEndpoint(event, candidate);
+                if (tool === "wire" && event.button === 0) {
+                  event.stopPropagation();
+                  // Commit on the canvas click capture, just like a route or
+                  // the background. The DOM hit radius must not select a
+                  // different electrical target from the hover resolver.
+                } else {
+                  handleWireEndpoint(event, candidate);
+                }
               },
               onNetPointerEnter: (netId) => {
                 if (simulationPickNetsActive) setSimulationHoverNetId(netId);
@@ -6933,7 +7175,7 @@ export function App({
               setStatus("Cancelled text changes");
             },
             onTextDelete: deleteTextEditing,
-            onRestoreReference: restoreTextReference,
+            onDisplayAliasChange: setTextDisplayAlias,
           }}
         />
         {canvasContextMenu ? (
@@ -6944,6 +7186,24 @@ export function App({
               editorCommands.execute({ id: "selection.align", mode })
             }
             actions={[
+              {
+                label: "Edit Component Definition (E)",
+                enabled: Boolean(
+                  selectedInstance &&
+                  !resolver.resolve(selectedInstance.symbolId)?.definition
+                    .hierarchicalBlock,
+                ),
+                execute: openSelectedComponentDefinition,
+              },
+              ...(hasHierarchyEnterSelection
+                ? [
+                    {
+                      label: "Enter Cell (E)",
+                      enabled: true,
+                      execute: enterSelectedHierarchy,
+                    },
+                  ]
+                : []),
               {
                 label: "Properties (Q)",
                 enabled: editorCommands.state({ id: "properties.open" })
@@ -7018,6 +7278,44 @@ export function App({
           onPlaceOnCanvas={beginWaveformPlacement}
         />
       ) : null}
+      {componentEditor ? (
+        <Suspense fallback={null}>
+          <ComponentDefinitionEditor
+            key={componentEditor.key}
+            definition={componentEditor.definition}
+            mode={componentEditor.mode}
+            {...(componentEditor.entry ? { entry: componentEditor.entry } : {})}
+            validateApply={(definition) => {
+              if (!componentEditor.target) return null;
+              const plan = componentEditPlan(
+                publishedDefinition(definition, componentEditor.key, 1),
+              );
+              return plan.ok ? null : plan.message;
+            }}
+            onSaved={(entry) => {
+              setComponentLibraryRefresh((value) => value + 1);
+              if (componentEditor.target) {
+                const plan = componentEditPlan(entry.definition);
+                if (!plan.ok) return plan.message;
+                try {
+                  commitProjectStructure(plan.project, plan.activeDocumentId);
+                  selectOnly("instance", [componentEditor.target.instance.id]);
+                  setStatus(
+                    "Saved publicly and applied to the selected component",
+                  );
+                } catch (error) {
+                  return error instanceof Error ? error.message : String(error);
+                }
+              } else if (componentEditor.mode === "new")
+                insertSharedComponent(entry);
+              if (componentEditor.mode !== "library") setComponentEditor(null);
+              return null;
+            }}
+            onManaged={() => setComponentLibraryRefresh((value) => value + 1)}
+            onClose={() => setComponentEditor(null)}
+          />
+        </Suspense>
+      ) : null}
       <SelectionFilterPopover
         open={selectionFilterOpen}
         filter={selectionFilter}
@@ -7035,6 +7333,11 @@ export function App({
         wireCornerOrder={wireCornerOrder}
         recoveryLabel={isDirtyWork() ? recoveryStateLabel(recoveryState) : null}
         zoomPercent={zoomPercent}
+        gridVisible={gridDotsVisible}
+        onToggleGrid={() => {
+          setGridDotsVisible(!gridDotsVisible);
+          setStatus(gridDotsVisible ? "Grid off" : "Grid on");
+        }}
         selectionFilterSummary={selectionFilterSummary(selectionFilter)}
         onOpenSelectionFilter={() =>
           editorCommands.execute({ id: "selection.filter.open" })

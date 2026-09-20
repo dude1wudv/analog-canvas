@@ -85,6 +85,126 @@ function resistorProject(parameters: Record<string, string>) {
 }
 
 describe("current formal cell interface", () => {
+  it.each(["spice", "spectre"] as const)(
+    "allocates collision-free %s references for unnamed legacy devices without editing the drawing",
+    (format) => {
+      const project = resistorProject({ value: "1k" });
+      const document = project.documents[0]!;
+      document.instances.push({
+        ...structuredClone(document.instances[0]!),
+        id: "unnamed-device",
+      });
+      delete document.instances[1]!.reference;
+      for (const net of document.nets)
+        net.terminals.push({
+          ...net.terminals[0]!,
+          instanceId: "unnamed-device",
+        });
+      const before = structuredClone(project);
+      const result = analyzeDesignNetlist(project, { format });
+      expect(
+        result.diagnostics.filter((item) => item.severity === "error"),
+      ).toEqual([]);
+      expect(
+        result.ir?.cells[0]?.instances.map((instance) => instance.reference),
+      ).toEqual(["R1", "R2"]);
+      expect(project).toEqual(before);
+    },
+  );
+
+  it("derives a portable netlist identifier from a readable Cell name", () => {
+    const project = resistorProject({ value: "10k" });
+    const document = project.documents[0]!;
+    document.name = "cascode current mirror";
+    document.netlist!.name = "cascode current mirror";
+    const before = structuredClone(project);
+
+    const result = analyzeDesignNetlist(project);
+
+    expect(
+      result.diagnostics.filter((item) => item.severity === "error"),
+    ).toEqual([]);
+    expect(result.ir?.cells[0]?.name).toBe("cascode_current_mirror");
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "CELL_NAME_NORMALIZED",
+        severity: "warning",
+        message:
+          "Cell name cascode current mirror exports as cascode_current_mirror",
+      }),
+    );
+    expect(printSpiceNetlist(result.ir!)).toContain(
+      ".subckt cascode_current_mirror",
+    );
+    expect(project).toEqual(before);
+  });
+
+  it("uses the same derived Cell identifier in hierarchy definitions and calls", () => {
+    const project = createEmptyProject("project", "Project", "top");
+    const top = project.documents[0]!;
+    top.name = "top level";
+    top.netlist!.name = "top level";
+    const child = createEmptyDocument("child", "cascode current mirror");
+    project.documents.push(child);
+    top.instances.push({
+      id: "X1",
+      symbolId: "cascode-current-mirror-symbol",
+      reference: "X1",
+      placement: null,
+      netlist: {
+        binding: { kind: "subcircuit", childDocumentId: child.id },
+        parameters: {},
+      },
+    });
+
+    const result = analyzeDesignNetlist(project);
+
+    expect(
+      result.diagnostics.filter((item) => item.severity === "error"),
+    ).toEqual([]);
+    expect(result.ir?.cells.map((cell) => cell.name)).toEqual([
+      "cascode_current_mirror",
+      "top_level",
+    ]);
+    expect(
+      result.ir?.cells.find((cell) => cell.id === "top")?.instances[0],
+    ).toMatchObject({ target: "cascode_current_mirror" });
+    expect(printSpiceNetlist(result.ir!)).toContain(
+      "X1 cascode_current_mirror",
+    );
+  });
+
+  it("blocks ambiguous Cell identifiers after portable normalization", () => {
+    const project = createEmptyProject("project", "Project", "top");
+    const top = project.documents[0]!;
+    top.name = "gain stage";
+    top.netlist!.name = "gain stage";
+    const child = createEmptyDocument("child", "gain-stage");
+    child.netlist!.name = "gain-stage";
+    project.documents.push(child);
+    top.instances.push({
+      id: "X1",
+      symbolId: "gain-stage-symbol",
+      reference: "X1",
+      placement: null,
+      netlist: {
+        binding: { kind: "subcircuit", childDocumentId: child.id },
+        parameters: {},
+      },
+    });
+
+    const result = analyzeDesignNetlist(project);
+
+    expect(result.ir).toBeNull();
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "DUPLICATE_CELL_NAME",
+        message:
+          "Cell names gain-stage and gain stage both export as gain_stage under case folding",
+      }),
+    );
+  });
+
   it("names an unlabeled internal Net from a connected reference and pin", () => {
     const project = createEmptyProject("project", "Project");
     const document = project.documents[0]!;
@@ -1213,7 +1333,7 @@ describe("current formal cell interface", () => {
     expect(printSpiceNetlist(result.ir!)).not.toContain(".global VDD");
   });
 
-  it("blocks export when one VDD Net is both formal and Global", () => {
+  it("lets a Cell state its supply as its own Pin", () => {
     const project = createEmptyProject("project", "Project");
     const document = project.documents[0]!;
     document.instances.push({
@@ -1236,12 +1356,17 @@ describe("current formal cell interface", () => {
 
     const result = analyzeDesignNetlist(project);
 
-    expect(result.ir).toBeNull();
-    expect(result.diagnostics).toContainEqual(
-      expect.objectContaining({
-        code: "FORMAL_PORT_GLOBAL_NET_CONFLICT",
-        objectIds: expect.arrayContaining(["net-vdd", "terminal-vdd1"]),
-      }),
+    // A supply marker is a global connector wherever it is drawn, so exposing
+    // one as a Cell Pin does not take it out of its supply: the Pin and the
+    // global node are one thing under one name. Every other formal Pin on a
+    // global Net is still the accident FORMAL_PORT_GLOBAL_NET_CONFLICT names.
+    expect(
+      result.diagnostics.filter(
+        (item) => item.code === "FORMAL_PORT_GLOBAL_NET_CONFLICT",
+      ),
+    ).toEqual([]);
+    expect(result.ir?.cells[0]?.ports.map((port) => port.name)).toContain(
+      "VDD",
     );
   });
 
@@ -1527,7 +1652,7 @@ describe("current formal cell interface", () => {
   });
 
   it.each(["spice", "spectre"] as const)(
-    "rejects missing MOS bulk in %s without guessing a power domain",
+    "defaults missing schematic MOS bodies in %s while preserving explicit domains",
     (format) => {
       const project = createEmptyProject("project", "Project");
       const document = project.documents[0]!;
@@ -1571,15 +1696,19 @@ describe("current formal cell interface", () => {
 
       const result = analyzeDesignNetlist(project, { format });
 
-      expect(result.ir).toBeNull();
+      expect(result.ir).not.toBeNull();
       expect(
         result.diagnostics.filter((item) => item.severity === "error"),
+      ).toEqual([]);
+      expect(
+        result.ir?.cells[0]?.instances.map((instance) => instance.nodes[3]),
       ).toEqual([
-        expect.objectContaining({ code: "MISSING_PIN_NET", objectIds: ["M1"] }),
-        expect.objectContaining({ code: "MISSING_PIN_NET", objectIds: ["M2"] }),
+        { pinName: "B", netName: "0" },
+        { pinName: "B", netName: "VDD" },
+        { pinName: "B", netName: "VSSB" },
+        { pinName: "B", netName: "VBP" },
       ]);
-      // Once the author connects the two missing bodies to their actual domains,
-      // no implicit VDD/VSS nodes or formal ports are needed.
+      // Explicit body wiring overrides the conventional default supplies.
       document.nets
         .find((net) => net.id === "nmos-body")!
         .terminals.push({ instanceId: "M1", pinName: "B" });

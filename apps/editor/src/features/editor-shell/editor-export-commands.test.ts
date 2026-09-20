@@ -6,8 +6,28 @@ import {
   planDesignNetlistExport,
 } from "./editor-export-commands";
 import { importChunk } from "../../components/chunk-import";
+import { hierarchyParameterFixture } from "../../../../../netlists/hierarchy-parameters/fixture";
 
 describe("editor export commands", () => {
+  it("exports a chosen Cell without changing the default Top or including unrelated errors", () => {
+    const project = hierarchyParameterFixture();
+    const topId = project.topDocumentId;
+    project.documents[0]!.netlist = undefined;
+    const before = structuredClone(project);
+    expect(planDesignNetlistExport({ project, format: "spice" }).status).toBe(
+      "blocked",
+    );
+    const selected = planDesignNetlistExport({
+      project,
+      format: "spice",
+      rootDocumentId: "resistors",
+    });
+    expect(selected.status).toBe("ready");
+    if (selected.status === "ready")
+      expect(String(selected.artifact.bytes)).toContain(".subckt Resistors");
+    expect(project).toEqual(before);
+    expect(project.topDocumentId).toBe(topId);
+  });
   it("blocks structurally incomplete extraction", () => {
     const project = createEmptyProject("project", "Circuit");
     project.documents[0]!.netlist = undefined;
@@ -15,6 +35,33 @@ describe("editor export commands", () => {
       status: "blocked",
       message: "Resolve the Check Report findings before export",
     });
+  });
+
+  it("blocks a netlist whose drawing has a dead-end node", () => {
+    // A TODO placeholder is a value somebody will bind later; a node only one
+    // pin reaches is a wire nobody drew, and the message names it so the
+    // author can go to it.
+    const project = createEmptyProject("project", "Circuit");
+    const document = project.documents[0]!;
+    document.instances.push({
+      id: "R1",
+      symbolId: "resistor",
+      reference: "R1",
+      netlist: {
+        binding: { kind: "primitive", deviceClass: "resistor" },
+        parameters: { value: "10k" },
+      },
+      placement: { position: { x: 0, y: 0 }, rotation: 0, mirror: "none" },
+    });
+    document.nets.push(
+      { id: "net-a", terminals: [{ instanceId: "R1", pinName: "1" }] },
+      { id: "net-b", terminals: [{ instanceId: "R1", pinName: "2" }] },
+    );
+    const plan = planDesignNetlistExport({ format: "spice", project });
+    expect(plan.status).toBe("blocked");
+    if (plan.status !== "blocked") return;
+    expect(plan.message).toContain("2 dead-end nodes");
+    expect(plan.message).toContain("only R1.1 reaches it");
   });
 
   it.each(["spice", "spectre"] as const)(

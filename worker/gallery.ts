@@ -1,8 +1,12 @@
 // Public Gallery HTTP policy and rendering. Durable storage lives in
 // gallery-do.ts; this module only authenticates and maps API requests.
 
-import { analyzeDesignNetlist } from "@icm/netlist";
-import { parseProject, serializeProject } from "@icm/project-protocol";
+import { designExtractsNetlist } from "@icm/netlist";
+import {
+  CURRENT_PROJECT_FILE_VERSION,
+  parseProject,
+  serializeProject,
+} from "@icm/project-protocol";
 import { renderDocumentSvg } from "@icm/render-svg";
 import {
   builtInSymbols,
@@ -263,7 +267,7 @@ async function handleCloudProjects(
     ...(expectedRevisionMatch
       ? { expectedRevision: Number(expectedRevisionMatch[1]) }
       : {}),
-    schemaVersion: project.schemaVersion,
+    schemaVersion: CURRENT_PROJECT_FILE_VERSION,
     projectText: serializeProject(project),
     previewSvg,
   });
@@ -415,13 +419,13 @@ async function handleSubmission(
       // that can tell whether one is already taken.
       id: "",
       // Recorded, never enforced: a circuit that does not extract is
-      // published exactly the same way, it simply does not wear the star.
-      netlistable: analyzeDesignNetlist(project).ir ? 1 : 0,
+      // published exactly the same way, it simply does not wear the badge.
+      netlistable: designExtractsNetlist(project) ? 1 : 0,
       name,
       author,
       description,
       created_at: now.toISOString(),
-      schema_version: project.schemaVersion,
+      schema_version: CURRENT_PROJECT_FILE_VERSION,
       owner_user_id: user.id,
       // Recorded per submission, so an entry stays traceable to the
       // identity that published it even if the account later changes.
@@ -514,7 +518,8 @@ async function handleEntryUpdate(
   const projectResolver = createProjectSymbolResolver(project, builtInSymbols);
   project.name = name;
   const nextStatus = existing.payload.status ?? "public";
-  const netlistable = analyzeDesignNetlist(project).ir ? 1 : 0;
+  // Every republication re-answers this; the badge follows the drawing.
+  const netlistable = designExtractsNetlist(project) ? 1 : 0;
   const { status, payload } = await callGallery(env, "replace-entry", {
     id,
     at: new Date().toISOString(),
@@ -523,7 +528,7 @@ async function handleEntryUpdate(
     description,
     projectText: serializeProject(project),
     svgText: renderPreview(project, projectResolver),
-    schemaVersion: project.schemaVersion,
+    schemaVersion: CURRENT_PROJECT_FILE_VERSION,
     netlistable,
     status: nextStatus,
     tags: wrapTags(sanitizeGalleryTags(body.tags)),
@@ -535,6 +540,21 @@ async function handleEntryUpdate(
  * All `/api/gallery*` routing. Returns null for unrelated paths so the
  * worker entry keeps its ordinary dispatch.
  */
+/**
+ * Re-answer one batch of stored netlist marks whose rule version is behind
+ * this build's. Both callers want the same thing and neither has to know how
+ * staleness is found: the moderation button when somebody wants it now, and
+ * the schedule so that nobody has to.
+ */
+export async function refreshNetlistMarks(
+  env: GalleryEnv,
+  limit?: number,
+): Promise<{ status: number; payload: unknown }> {
+  return callGallery(env, "netlistable-refresh", {
+    ...(limit === undefined ? {} : { limit }),
+  });
+}
+
 export async function routeGalleryRequest(
   request: Request,
   env: GalleryEnv & PreviewAcceptanceEnv,
@@ -593,9 +613,14 @@ export async function routeGalleryRequest(
       limit: url.searchParams.get("limit"),
       cursor: url.searchParams.get("cursor"),
       author: url.searchParams.get("author"),
+      ownerUserId: url.searchParams.get("owner"),
       tags: (url.searchParams.get("tags") ?? "")
         .split(",")
         .filter((tag) => tag.length > 0),
+      // Two marks the reader can narrow by. "Liked" is answered against the
+      // session, so signed out it selects nothing rather than everything.
+      netlistable: url.searchParams.get("netlistable") === "1",
+      liked: url.searchParams.get("liked") === "1",
     });
     return Response.json(payload, {
       headers: { "cache-control": "no-store" },
@@ -643,13 +668,39 @@ export async function routeGalleryRequest(
     if (!(await isAdmin(request, env))) {
       return Response.json({ error: "unauthorized" }, { status: 401 });
     }
-    const { status, payload } = await callGallery(env, "schema-backup", {});
+    const { status, payload } = await callGallery(env, "schema-backup", {
+      table: url.searchParams.get("table"),
+      after: url.searchParams.get("after"),
+    });
     return Response.json(payload, {
       status,
       headers: {
         "cache-control": "no-store",
         "content-disposition": `attachment; filename="analog-canvas-gallery-schema-backup-${new Date().toISOString().slice(0, 10)}.json"`,
       },
+    });
+  }
+  if (
+    segments.length === 2 &&
+    segments[0] === "maintenance" &&
+    segments[1] === "project-format" &&
+    request.method === "POST"
+  ) {
+    if (!sameOrigin(request))
+      return Response.json({ error: "forbidden" }, { status: 403 });
+    if (!(await isAdmin(request, env)))
+      return Response.json({ error: "unauthorized" }, { status: 401 });
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== "object" || Array.isArray(body))
+      return Response.json({ error: "invalid-request" }, { status: 400 });
+    const { status, payload } = await callGallery(
+      env,
+      "gallery-project-format",
+      body,
+    );
+    return Response.json(payload, {
+      status,
+      headers: { "cache-control": "no-store" },
     });
   }
   if (
@@ -667,6 +718,28 @@ export async function routeGalleryRequest(
     const { status, payload } = await callGallery(env, "schema-converge", {
       apply: body?.apply === true,
     });
+    return Response.json(payload, {
+      status,
+      headers: { "cache-control": "no-store" },
+    });
+  }
+  if (
+    segments.length === 2 &&
+    segments[0] === "maintenance" &&
+    segments[1] === "netlist-badges" &&
+    request.method === "POST"
+  ) {
+    if (!(await isAdmin(request, env))) {
+      return Response.json({ error: "unauthorized" }, { status: 401 });
+    }
+    const body = (await request.json().catch(() => null)) as {
+      after?: unknown;
+      limit?: unknown;
+    } | null;
+    const { status, payload } = await refreshNetlistMarks(
+      env,
+      Number.isFinite(Number(body?.limit)) ? Number(body!.limit) : undefined,
+    );
     return Response.json(payload, {
       status,
       headers: { "cache-control": "no-store" },
@@ -939,6 +1012,37 @@ export async function routeGalleryRequest(
     const { status, payload } = await callGallery(env, "reject", {
       id: segments[0],
       reason,
+      at: new Date().toISOString(),
+      reviewerId: reviewer.id,
+    });
+    return Response.json(payload, { status });
+  }
+  if (
+    segments.length === 2 &&
+    segments[0] === "duplicates" &&
+    segments[1] === "recycle" &&
+    request.method === "POST"
+  ) {
+    if (!sameOrigin(request)) {
+      return Response.json({ error: "forbidden" }, { status: 403 });
+    }
+    const reviewer = await sessionUserOf(request, env);
+    if (!reviewer?.isAdmin) {
+      return Response.json({ error: "unauthorized" }, { status: 401 });
+    }
+    const text = await request.text();
+    if (text.length > 32_768) {
+      return Response.json({ error: "invalid-fields" }, { status: 400 });
+    }
+    let body;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      return Response.json({ error: "invalid-fields" }, { status: 400 });
+    }
+    const { status, payload } = await callGallery(env, "recycle-duplicates", {
+      keep: body?.keep,
+      remove: body?.remove,
       at: new Date().toISOString(),
       reviewerId: reviewer.id,
     });

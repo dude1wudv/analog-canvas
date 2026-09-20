@@ -3,11 +3,11 @@ import { describe, expect, it } from "vitest";
 
 import { executeProjectTransaction } from "./project-transaction.js";
 import {
-  planRenameExternalSubcircuitTerminal,
   proposeSetCellFormalParameters,
   proposeUpsertExternalSubcircuitDefinition,
 } from "./hierarchy-planner.js";
 import { externalSubcircuitSymbolId } from "@icm/symbols";
+import { reviewedExternalBindingForMaster } from "@icm/devices";
 
 function transaction(
   project: ReturnType<typeof createEmptyProject>,
@@ -23,6 +23,44 @@ function transaction(
 }
 
 describe("subcircuit interface proposals", () => {
+  it("protects reviewed PDK identity and mapping but allows presentation updates", () => {
+    const project = createEmptyProject("project", "Project");
+    const reviewed = reviewedExternalBindingForMaster(
+      "sky130_fd_pr__nfet_01v8",
+    )!;
+    const definition = {
+      id: "pdk",
+      name: reviewed.masterName,
+      terminals: reviewed.terminals.map((terminal, index) => ({
+        id: `p${index}`,
+        name: terminal.targetName,
+        direction: "passive" as const,
+      })),
+      formalParameters: [],
+      interfaceStatus: "declared" as const,
+    };
+    project.externalSubcircuitDefinitions.push(definition);
+    for (const change of [
+      { name: "Other" },
+      { terminals: [...definition.terminals].reverse() },
+      { formalParameters: [{ name: "w", defaultValue: "2" }] },
+    ]) {
+      const proposal = proposeUpsertExternalSubcircuitDefinition(project, {
+        ...definition,
+        ...change,
+      });
+      expect(proposal.diagnostics).toEqual([
+        expect.stringContaining("Reviewed PDK"),
+      ]);
+      expect(proposal.edits).toEqual([]);
+    }
+    expect(
+      proposeUpsertExternalSubcircuitDefinition(project, {
+        ...definition,
+        presentation: { pinPlacements: [] },
+      }).diagnostics,
+    ).toEqual([]);
+  });
   it("edits ordered internal formal parameters through one project transaction", () => {
     const project = createEmptyProject("project", "Project");
     const child = createEmptyDocument("child", "Child");
@@ -128,54 +166,5 @@ describe("subcircuit interface proposals", () => {
     expect(result.project.documents[0]!.instances[0]!.symbolId).toBe(
       externalSubcircuitSymbolId("external-ota"),
     );
-  });
-
-  it("renames a stable external terminal and reconciles connected callers", () => {
-    const project = createEmptyProject("project", "Project");
-    const document = project.documents[0]!;
-    project.externalSubcircuitDefinitions.push({
-      id: "external-ota",
-      name: "OTA",
-      terminals: [{ id: "external-ota-out", name: "OUT", direction: "output" }],
-      formalParameters: [],
-      interfaceStatus: "declared",
-    });
-    document.instances.push({
-      id: "X1",
-      symbolId: externalSubcircuitSymbolId("external-ota"),
-      placement: null,
-      reference: "X1",
-      netlist: {
-        binding: { kind: "external-subcircuit", definitionId: "external-ota" },
-        parameters: {},
-      },
-    });
-    document.nets.push({
-      id: "net-out",
-
-      terminals: [{ instanceId: "X1", pinName: "OUT" }],
-    });
-
-    const result = transaction(
-      project,
-      planRenameExternalSubcircuitTerminal(
-        project,
-        "external-ota",
-        "external-ota-out",
-        "VOUT",
-      ),
-    );
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(
-      result.project.externalSubcircuitDefinitions[0]!.terminals[0],
-    ).toMatchObject({
-      id: "external-ota-out",
-      name: "VOUT",
-    });
-    expect(result.project.documents[0]!.nets[0]!.terminals).toEqual([
-      { instanceId: "X1", pinName: "VOUT" },
-    ]);
   });
 });

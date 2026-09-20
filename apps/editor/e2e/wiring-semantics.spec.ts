@@ -4,6 +4,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   chooseComponent,
   clickDrawTool,
+  closeProjectTools,
   clickNetlistWorkflowCommand,
 } from "./editor-fixtures";
 
@@ -84,6 +85,108 @@ async function awaitCanvasSettled(canvas: Locator): Promise<void> {
   );
 }
 
+for (const scale of [0.5, 1, 2, 4]) {
+  for (const targetKind of ["pin", "route"] as const) {
+    test(`single click captures ${targetKind} at canvas scale ${scale}`, async ({
+      page,
+    }) => {
+      const project = createEmptyProject("wire-capture", "Wire capture");
+      const document = project.documents[0]!;
+      document.instances.push({
+        id: "C1",
+        symbolId: "capacitor",
+        placement: {
+          position: { x: 300, y: 300 },
+          rotation: 0,
+          mirror: "none",
+        },
+      });
+      document.nets.push({ id: "bus", terminals: [] });
+      document.junctions.push(
+        { id: "left", netId: "bus", position: { x: 240, y: 400 } },
+        { id: "right", netId: "bus", position: { x: 400, y: 400 } },
+      );
+      document.routes.push(
+        createRoutePath({
+          id: "bus-route",
+          netId: "bus",
+          start: { kind: "junction", junctionId: "left" },
+          end: { kind: "junction", junctionId: "right" },
+          bends: [],
+          modes: ["manual"],
+        }),
+      );
+      await page.goto("/editor");
+      await page.getByTestId("project-file").setInputFiles({
+        name: "wire-capture.icproj.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(JSON.stringify(project)),
+      });
+      const canvas = page.getByTestId("schematic-canvas");
+      await expect(page.getByTestId("terminal-C1-1")).toBeAttached();
+      await awaitCanvasSettled(canvas);
+      const target =
+        targetKind === "pin"
+          ? await page.getByTestId("terminal-C1-1").evaluate((element) => ({
+              x: (element as SVGCircleElement).cx.baseVal.value,
+              y: (element as SVGCircleElement).cy.baseVal.value,
+            }))
+          : { x: 305, y: 400 };
+      // Use the real wheel camera path, anchored at the destination. This
+      // exercises its live CTM rather than faking the React viewBox state.
+      await canvas.evaluate(
+        (element, { target, scale }) => {
+          const svg = element as SVGSVGElement;
+          const matrix = svg.getScreenCTM()!;
+          const anchor = new DOMPoint(target.x, target.y).matrixTransform(
+            matrix,
+          );
+          svg.dispatchEvent(
+            new WheelEvent("wheel", {
+              clientX: anchor.x,
+              clientY: anchor.y,
+              ctrlKey: true,
+              deltaY: Math.log(matrix.a / scale) / 0.01,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        },
+        { target, scale },
+      );
+      await expect
+        .poll(() =>
+          canvas.evaluate(
+            (element) => (element as SVGSVGElement).getScreenCTM()!.a,
+          ),
+        )
+        .toBeCloseTo(scale, 1);
+      await awaitCanvasSettled(canvas);
+      await clickDrawTool(page, "wire");
+      const [start, destination] = await onScreen(canvas, [
+        { x: target.x - 30, y: target.y + (targetKind === "pin" ? 20 : -20) },
+        target,
+      ]);
+      await page.mouse.click(start!.x, start!.y);
+      await expect(page.getByTestId("status")).toContainText(
+        "Wire source: free grid point",
+      );
+      // At high zoom this is beyond the old 7px circle AND the DOM hit band.
+      // At low zoom it checks the minimum capture size on the same path.
+      const offset = Math.min(24, Math.max(6, 7 * scale)) * 0.8;
+      await page.mouse.move(destination!.x, destination!.y - offset);
+      await expect(page.getByTestId("wire-snap-target")).toBeVisible();
+      await page.mouse.click(destination!.x, destination!.y - offset);
+      await expect(page.getByTestId("status")).toContainText("Committed route");
+      await expect(page.getByTestId("wire-preview")).toHaveCount(0);
+      await expect(page.getByTestId("wire-snap-target")).toHaveCount(0);
+      await expect(page.locator('[data-canvas-hit-kind="route"]')).toHaveCount(
+        targetKind === "pin" ? 2 : 3,
+      );
+    });
+  }
+}
+
 test("wire can start from any interior point of an existing net", async ({
   page,
 }) => {
@@ -111,6 +214,23 @@ test("wire can start from any interior point of an existing net", async ({
   // junction dot at the tee.
   await expect(page.locator('[data-canvas-hit-kind="route"]')).toHaveCount(3);
   await expect(page.locator('g[data-layer="junctions"] circle')).toHaveCount(1);
+});
+
+test("clicking the active pin does not fix a zero-length wire step", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await placeComponent(page, "resistor", { x: 260, y: 200 });
+  await placeComponent(page, "resistor", { x: 460, y: 340 });
+  const ids = await instanceIds(page);
+  await clickDrawTool(page, "wire");
+  await page.getByTestId(`terminal-${ids[0]}-2`).click();
+  await page.getByTestId(`terminal-${ids[0]}-2`).click();
+  await expect(page.getByTestId("status")).toContainText("Wire source:");
+  await expect(page.getByTestId("status")).not.toContainText("step fixed");
+  await page.getByTestId(`terminal-${ids[1]}-1`).click();
+  await expect(page.getByTestId("status")).toContainText("Committed route");
+  await expect(page.locator('[data-canvas-hit-kind="route"]')).toHaveCount(1);
 });
 
 test("clicking a junction dot selects it and Delete disconnects the tap", async ({
@@ -147,6 +267,42 @@ test("clicking a junction dot selects it and Delete disconnects the tap", async 
   await expect(page.locator('[data-canvas-hit-kind="route"]')).not.toHaveCount(
     3,
   );
+});
+
+test("the wire tool starts a new branch from an existing junction dot", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await placeComponent(page, "resistor", { x: 260, y: 200 });
+  await placeComponent(page, "resistor", { x: 260, y: 420 });
+  await placeComponent(page, "resistor", { x: 460, y: 310 });
+  await placeComponent(page, "resistor", { x: 80, y: 310 });
+  const ids = await instanceIds(page);
+  await page.keyboard.press("w");
+  await page.getByTestId(`terminal-${ids[0]}-2`).click();
+  await page.getByTestId(`terminal-${ids[1]}-1`).click();
+  const route = page.locator('[data-canvas-hit-kind="route"]').first();
+  const box = (await route.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.getByTestId(`terminal-${ids[2]}-1`).click();
+  const dot = page.locator('g[data-layer="junctions"] circle');
+  await expect(dot).toHaveCount(1);
+  await expect(page.locator('[data-canvas-hit-kind="route"]')).toHaveCount(3);
+
+  // The tee's two collinear arms are the same conductor as the dot, so the
+  // click is not an ambiguous crossing: it starts the wire at the junction.
+  const dotBox = (await dot.boundingBox())!;
+  await page.mouse.click(
+    dotBox.x + dotBox.width / 2,
+    dotBox.y + dotBox.height / 2,
+  );
+  await expect(page.getByTestId("status")).toContainText(
+    "Wire source: junction:",
+  );
+  await page.getByTestId(`terminal-${ids[3]}-2`).click();
+  await expect(page.getByTestId("status")).toContainText("Committed route");
+  await expect(page.locator('[data-canvas-hit-kind="route"]')).toHaveCount(4);
+  await expect(dot).toHaveCount(1);
 });
 
 for (const fixedVerticalLeg of [false, true]) {
@@ -520,6 +676,168 @@ test("dragging a wire segment onto another wire endpoint connects there", async 
   await expect(page.locator('g[data-layer="junctions"] circle')).toHaveCount(1);
 });
 
+/**
+ * The cross-coupled shape: leg, 45-degree diagonal, leg, between two
+ * three-way Junctions (two stubs each), so both ends are fixed taps.
+ */
+async function openDiagonalZig(page: Page): Promise<Locator> {
+  const project = createEmptyProject("diagonal-drag", "Diagonal drag");
+  const document = project.documents[0]!;
+  document.presentation.grid = 10;
+  document.nets.push({ id: "net", terminals: [] });
+  document.junctions.push(
+    { id: "left", netId: "net", position: { x: 100, y: 200 } },
+    { id: "right", netId: "net", position: { x: 250, y: 250 } },
+    ...(
+      [
+        ["left-up", { x: 100, y: 150 }],
+        ["left-down", { x: 100, y: 250 }],
+        ["right-up", { x: 250, y: 200 }],
+        ["right-down", { x: 250, y: 300 }],
+      ] as const
+    ).map(([id, position]) => ({
+      id,
+      netId: "net",
+      position,
+      role: "route-anchor" as const,
+    })),
+  );
+  document.routes.push(
+    createRoutePath({
+      id: "zig",
+      netId: "net",
+      start: { kind: "junction", junctionId: "left" },
+      end: { kind: "junction", junctionId: "right" },
+      bends: [
+        { x: 150, y: 200 },
+        { x: 200, y: 250 },
+      ],
+      modes: ["manual", "manual", "manual"],
+    }),
+    ...(
+      [
+        ["left", "left-up"],
+        ["left", "left-down"],
+        ["right", "right-up"],
+        ["right", "right-down"],
+      ] as const
+    ).map(([from, to]) =>
+      createRoutePath({
+        id: `${to}-stub`,
+        netId: "net",
+        start: { kind: "junction", junctionId: from },
+        end: { kind: "junction", junctionId: to },
+        bends: [],
+        modes: ["manual"],
+      }),
+    ),
+  );
+
+  await page.goto("/editor");
+  await page.getByTestId("project-file").setInputFiles({
+    name: "diagonal-drag.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  const canvas = page.getByTestId("schematic-canvas");
+  await awaitCanvasSettled(canvas);
+  return canvas;
+}
+
+async function dragCanvas(
+  page: Page,
+  canvas: Locator,
+  path: readonly { x: number; y: number }[],
+): Promise<void> {
+  const [first, ...rest] = await onScreen(canvas, path);
+  await page.mouse.move(first!.x, first!.y);
+  await page.mouse.down();
+  for (const point of rest) {
+    await page.mouse.move(point.x, point.y, { steps: 8 });
+  }
+  await page.mouse.up();
+}
+
+async function zigCenterline(page: Page): Promise<{ x: number; y: number }[]> {
+  return page.getByTestId("route-hit-zig").evaluate((element) =>
+    Array.from((element as SVGPolylineElement).points).map(({ x, y }) => ({
+      x,
+      y,
+    })),
+  );
+}
+
+test("a dragged diagonal moves along the pointer axis only", async ({
+  page,
+}) => {
+  const canvas = await openDiagonalZig(page);
+  const revision = Number(await page.getByTestId("revision").textContent());
+  // Grab the diagonal's middle and pull it two grid cells to the left.
+  await dragCanvas(page, canvas, [
+    { x: 175, y: 225 },
+    { x: 157, y: 227 },
+  ]);
+  await expect(page.getByTestId("revision")).toHaveText(String(revision + 1));
+  // The legs stretch and shrink; the diagonal keeps its length and angle and
+  // gains no vertical jog.
+  expect(await zigCenterline(page)).toEqual([
+    { x: 100, y: 200 },
+    { x: 130, y: 200 },
+    { x: 180, y: 250 },
+    { x: 250, y: 250 },
+  ]);
+
+  // Now pull it mostly down: the horizontal legs travel with it, and both
+  // three-way Junctions slide down their vertical stubs.
+  await dragCanvas(page, canvas, [
+    { x: 153, y: 222 },
+    { x: 156, y: 241 },
+  ]);
+  await expect(page.getByTestId("revision")).toHaveText(String(revision + 2));
+  expect(await zigCenterline(page)).toEqual([
+    { x: 100, y: 220 },
+    { x: 130, y: 220 },
+    { x: 180, y: 270 },
+    { x: 250, y: 270 },
+  ]);
+});
+
+test("a leg dragged beside a diagonal carries it, and a no-op drag records nothing", async ({
+  page,
+}) => {
+  const canvas = await openDiagonalZig(page);
+  const revision = Number(await page.getByTestId("revision").textContent());
+  // Pull the right-hand leg down two cells. The diagonal travels with it
+  // at 45 degrees instead of being bent to reach the moved bend.
+  await dragCanvas(page, canvas, [
+    { x: 226, y: 250 },
+    { x: 227, y: 271 },
+  ]);
+  await expect(page.getByTestId("revision")).toHaveText(String(revision + 1));
+  expect(await zigCenterline(page)).toEqual([
+    { x: 100, y: 220 },
+    { x: 150, y: 220 },
+    { x: 200, y: 270 },
+    { x: 250, y: 270 },
+  ]);
+
+  // Pull the diagonal away and back, then let go where it started: nothing
+  // changed, so there is no new revision and no empty undo step.
+  await dragCanvas(page, canvas, [
+    { x: 176, y: 246 },
+    { x: 146, y: 247 },
+    { x: 176, y: 246 },
+  ]);
+  await expect(page.getByTestId("status")).toContainText("unchanged");
+  await expect(page.getByTestId("revision")).toHaveText(String(revision + 1));
+  expect(await zigCenterline(page)).toEqual([
+    { x: 100, y: 220 },
+    { x: 150, y: 220 },
+    { x: 200, y: 270 },
+    { x: 250, y: 270 },
+  ]);
+});
+
 test("a power rail drawn across the tops of wires connects to them", async ({
   page,
 }) => {
@@ -632,6 +950,7 @@ test("the preview draws the wire the release commits, contacts and all", async (
     mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify(project)),
   });
+  await closeProjectTools(page);
   const canvas = page.getByTestId("schematic-canvas");
   const [start, end] = await onScreen(canvas, [
     { x: 40, y: 100 },

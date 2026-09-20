@@ -15,8 +15,14 @@
 // longer open.
 
 import { sha256Hex } from "@icm/derived";
-import { analyzeDesignNetlist } from "@icm/netlist";
 import {
+  compareElectricalGraphs,
+  projectElectricalGraph,
+  designExtractsNetlist,
+  NETLIST_MARK_RULE_VERSION,
+} from "@icm/netlist";
+import {
+  CURRENT_PROJECT_FILE_VERSION,
   parseProject,
   serializeProject,
   upgradeSchema24To25,
@@ -43,10 +49,7 @@ import {
   upgradeSchema45To46WithReport,
   upgradeSchema46To47WithReport,
 } from "@icm/project-protocol";
-import {
-  CURRENT_PROJECT_SCHEMA_VERSION,
-  type CircuitProject,
-} from "@icm/model";
+import { type CircuitProject } from "@icm/model";
 
 import type { AuthNamespaceLike } from "./auth";
 
@@ -249,6 +252,8 @@ export interface GalleryEntrySummary {
   id: string;
   name: string;
   author: string;
+  /** Stable identity behind the mutable public byline; null for legacy rows. */
+  ownerUserId: string | null;
   description: string;
   createdAt: string;
   /**
@@ -338,6 +343,7 @@ type EntrySummaryRow = Pick<
   | "author"
   | "description"
   | "created_at"
+  | "owner_user_id"
   | "schema_version"
   | "tags"
   | "netlistable"
@@ -358,6 +364,9 @@ interface PreviewRow extends PreviewAccessRow {
 
 const TOKENZHANG_BYLINE_MIGRATION = "2026-08-26-tokenzhang-to-zhishuai-zhang";
 const TOKENZHANG_BYLINE = "Zhishuai Zhang";
+const MAGIC_LI_BYLINE_MIGRATION = "2026-09-19-3187863239-netizen-to-magic-li";
+const MAGIC_LI_LEGACY_BYLINE = "3187863239-netizen";
+const MAGIC_LI_BYLINE = "Magic Li";
 const VERSION_RETENTION_MIGRATION = "2026-08-27-gallery-version-retention-2";
 const PREVIEW_DIMENSIONS_MIGRATION = "2026-09-02-gallery-preview-dimensions";
 
@@ -368,6 +377,7 @@ function summaryOf(
     id: row.id,
     name: row.name,
     author: row.author,
+    ownerUserId: row.owner_user_id,
     description: row.description,
     createdAt: row.created_at,
     // Existing rows receive the additive column as empty. "legacy" moves
@@ -506,6 +516,7 @@ export class GalleryDO {
       "ALTER TABLE gallery_entries ADD COLUMN submitter_email TEXT",
       "ALTER TABLE gallery_entries ADD COLUMN submitter_provider TEXT",
       "ALTER TABLE gallery_entries ADD COLUMN netlistable INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE gallery_entries ADD COLUMN netlistable_version INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE gallery_entries ADD COLUMN preview_revision TEXT NOT NULL DEFAULT ''",
       "ALTER TABLE gallery_entries ADD COLUMN preview_width REAL",
       "ALTER TABLE gallery_entries ADD COLUMN preview_height REAL",
@@ -581,6 +592,30 @@ export class GalleryDO {
       const applied = this.sql
         .exec<{ id: string }>(
           "SELECT id FROM data_migrations WHERE id = ?",
+          MAGIC_LI_BYLINE_MIGRATION,
+        )
+        .toArray();
+      if (applied.length > 0) return;
+      // A restored snapshot must not bring the old public byline back, so the
+      // current entries and their restorable histories move together.
+      for (const table of ["gallery_entries", "gallery_entry_versions"]) {
+        this.sql.exec(
+          `UPDATE ${table} SET author = ?
+           WHERE LOWER(TRIM(author)) = LOWER(?)`,
+          MAGIC_LI_BYLINE,
+          MAGIC_LI_LEGACY_BYLINE,
+        );
+      }
+      this.sql.exec(
+        "INSERT INTO data_migrations(id, applied_at) VALUES (?, ?)",
+        MAGIC_LI_BYLINE_MIGRATION,
+        new Date().toISOString(),
+      );
+    });
+    this.state.storage.transactionSync(() => {
+      const applied = this.sql
+        .exec<{ id: string }>(
+          "SELECT id FROM data_migrations WHERE id = ?",
           VERSION_RETENTION_MIGRATION,
         )
         .toArray();
@@ -629,6 +664,8 @@ export class GalleryDO {
         );
       case "reject":
         return this.reject(body);
+      case "recycle-duplicates":
+        return this.recycleDuplicates(body);
       case "delete":
         return this.delete(String(body.id), body.requireRecycled !== false);
       case "recycled":
@@ -639,10 +676,14 @@ export class GalleryDO {
         return this.mine(String(body.ownerUserId));
       case "all-ids":
         return this.allIds();
+      case "netlistable-refresh":
+        return this.refreshNetlistable(body);
       case "tags":
         return this.tagCounts();
       case "authors":
         return this.authorCounts();
+      case "rename-owner":
+        return this.renameOwner(body);
       case "update-entry":
         return this.updateEntry(body);
       case "replace-entry":
@@ -679,7 +720,9 @@ export class GalleryDO {
           String(body.previewSvg),
         );
       case "schema-backup":
-        return this.schemaBackup();
+        return this.schemaBackup(body);
+      case "gallery-project-format":
+        return this.galleryProjectFormat(body);
       case "schema-converge":
         return this.schemaConverge(body.apply === true);
       case "schema-restore":
@@ -799,8 +842,8 @@ export class GalleryDO {
           id, name, author, description, created_at, schema_version,
           status, recycled_at, owner_user_id, submitter_email,
           submitter_provider, tags, project_text, svg_text, netlistable,
-          preview_revision, preview_width, preview_height
-        ) VALUES (?, ?, ?, ?, ?, ?, 'public', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          netlistable_version, preview_revision, preview_width, preview_height
+        ) VALUES (?, ?, ?, ?, ?, ?, 'public', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         entry.id,
         entry.name,
         entry.author,
@@ -814,6 +857,7 @@ export class GalleryDO {
         entry.project_text,
         entry.svg_text,
         entry.netlistable ?? 0,
+        NETLIST_MARK_RULE_VERSION,
         previewRevision,
         previewDimensions?.width ?? null,
         previewDimensions?.height ?? null,
@@ -837,37 +881,55 @@ export class GalleryDO {
       typeof body.author === "string" && body.author.length > 0
         ? body.author
         : null;
-    const conditions = ["status = 'public'"];
+    const ownerUserId =
+      typeof body.ownerUserId === "string" && body.ownerUserId.length > 0
+        ? body.ownerUserId
+        : null;
+    // The viewer id leads the bindings because its sub-select comes first.
+    const viewerId = typeof body.viewerId === "string" ? body.viewerId : "";
+    const conditions = ["e.status = 'public'"];
     const bindings: (string | number)[] = [];
-    if (author) {
-      conditions.push("author = ?");
+    if (ownerUserId) {
+      conditions.push("e.owner_user_id = ?");
+      bindings.push(ownerUserId);
+    } else if (author) {
+      conditions.push("e.author = ?");
       bindings.push(author);
     }
     const tags = sanitizeGalleryTags(body.tags);
     if (tags.length > 0) {
-      conditions.push(`(${tags.map(() => "tags LIKE ?").join(" OR ")})`);
+      conditions.push(`(${tags.map(() => "e.tags LIKE ?").join(" OR ")})`);
       for (const tag of tags) bindings.push(`%,${tag},%`);
+    }
+    if (body.netlistable === true) conditions.push("e.netlistable = 1");
+    // Whose likes: the session's, so a signed-out reader asking for their
+    // liked circuits is answered with none instead of with everybody's.
+    if (body.liked === true) {
+      conditions.push(
+        `EXISTS (SELECT 1 FROM gallery_likes
+           WHERE entry_id = e.id AND user_id = ?)`,
+      );
+      bindings.push(viewerId);
     }
     // The whole filtered wall's size, not the page's: counted before the
     // cursor narrows the query, so every page carries the same total.
     const total = Number(
       this.sql
         .exec<{ total: number }>(
-          `SELECT COUNT(*) AS total FROM gallery_entries
+          `SELECT COUNT(*) AS total FROM gallery_entries e
            WHERE ${conditions.join(" AND ")}`,
           ...bindings,
         )
         .toArray()[0]!.total,
     );
-    // The viewer id leads the bindings because its sub-select comes first.
-    const viewerId = typeof body.viewerId === "string" ? body.viewerId : "";
     if (cursor) {
-      conditions.push("(created_at || '|' || id) < ?");
+      conditions.push("(e.created_at || '|' || e.id) < ?");
       bindings.push(cursor);
     }
     const rows = this.sql
       .exec<EntrySummaryRow & { likes: number; liked_by_viewer: number }>(
         `SELECT e.id, e.name, e.author, e.description, e.created_at,
+           e.owner_user_id,
            e.schema_version, e.tags, e.netlistable, e.preview_revision,
            e.preview_width, e.preview_height,
            (SELECT COUNT(*) FROM gallery_likes WHERE entry_id = e.id) AS likes,
@@ -993,8 +1055,8 @@ export class GalleryDO {
         `UPDATE gallery_entries
          SET name = ?, author = ?, description = ?, project_text = ?,
              svg_text = ?, schema_version = ?, status = ?, tags = ?,
-             netlistable = ?, preview_revision = ?, preview_width = ?,
-             preview_height = ?
+             netlistable = ?, netlistable_version = ?, preview_revision = ?,
+             preview_width = ?, preview_height = ?
          WHERE id = ?`,
         String(body.name),
         String(body.author),
@@ -1005,6 +1067,7 @@ export class GalleryDO {
         String(body.status),
         typeof body.tags === "string" ? body.tags : "",
         Number(body.netlistable) === 1 ? 1 : 0,
+        NETLIST_MARK_RULE_VERSION,
         previewRevision,
         previewDimensions?.width ?? null,
         previewDimensions?.height ?? null,
@@ -1016,6 +1079,60 @@ export class GalleryDO {
       status: String(body.status),
       previewRevision,
     });
+  }
+
+  /**
+   * A profile name is a current account label, not versioned circuit content.
+   * Move every materialized byline for the stable owner identity together so
+   * feeds, contributor counts and restorable history cannot disagree.
+   */
+  private renameOwner(body: Record<string, unknown>): Response {
+    const ownerUserId =
+      typeof body.ownerUserId === "string" ? body.ownerUserId.trim() : "";
+    const displayName =
+      typeof body.displayName === "string" ? body.displayName.trim() : "";
+    if (
+      ownerUserId.length === 0 ||
+      displayName.length === 0 ||
+      displayName.length > GALLERY_MAX_AUTHOR_LENGTH
+    ) {
+      return Response.json({ error: "invalid-fields" }, { status: 400 });
+    }
+
+    let entries = 0;
+    let versions = 0;
+    this.state.storage.transactionSync(() => {
+      entries = this.sql
+        .exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM gallery_entries
+           WHERE owner_user_id = ?`,
+          ownerUserId,
+        )
+        .one().count;
+      versions = this.sql
+        .exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM gallery_entry_versions
+           WHERE entry_id IN (
+             SELECT id FROM gallery_entries WHERE owner_user_id = ?
+           )`,
+          ownerUserId,
+        )
+        .one().count;
+      this.sql.exec(
+        `UPDATE gallery_entry_versions SET author = ?
+         WHERE entry_id IN (
+           SELECT id FROM gallery_entries WHERE owner_user_id = ?
+         )`,
+        displayName,
+        ownerUserId,
+      );
+      this.sql.exec(
+        "UPDATE gallery_entries SET author = ? WHERE owner_user_id = ?",
+        displayName,
+        ownerUserId,
+      );
+    });
+    return Response.json({ ownerUserId, displayName, entries, versions });
   }
 
   private versions(entryId: string): Response {
@@ -1115,7 +1232,7 @@ export class GalleryDO {
       );
     }
     const restoredProjectText = serializeProject(restoredProject);
-    const netlistable = analyzeDesignNetlist(restoredProject).ir ? 1 : 0;
+    const netlistable = designExtractsNetlist(restoredProject) ? 1 : 0;
     const previewRevision = sha256Hex(version.svg_text);
     const previewDimensions = svgPreviewDimensions(version.svg_text);
     this.state.storage.transactionSync(() => {
@@ -1124,16 +1241,18 @@ export class GalleryDO {
         `UPDATE gallery_entries
          SET name = ?, author = ?, description = ?, project_text = ?,
              svg_text = ?, schema_version = ?, tags = ?, netlistable = ?,
-             preview_revision = ?, preview_width = ?, preview_height = ?
+             netlistable_version = ?, preview_revision = ?, preview_width = ?,
+             preview_height = ?
          WHERE id = ?`,
         version.name,
-        version.author,
+        entry.author,
         version.description,
         restoredProjectText,
         version.svg_text,
         restoredProject.schemaVersion,
         version.tags ?? "",
         netlistable,
+        NETLIST_MARK_RULE_VERSION,
         previewRevision,
         previewDimensions?.width ?? null,
         previewDimensions?.height ?? null,
@@ -1366,11 +1485,76 @@ export class GalleryDO {
   }
 
   /** Full-fidelity administrator backup before an online schema migration. */
-  private schemaBackup(): Response {
+  private schemaBackup(body: Record<string, unknown>): Response {
+    // Bound each response to one record: a complete store can exceed the
+    // Worker's memory limit before Response.json has even serialized it.
+    // These names are an allowlist, never caller-supplied SQL identifiers.
+    const tables = {
+      galleryEntries: { name: "gallery_entries", keys: ["id"] },
+      galleryEntryVersions: { name: "gallery_entry_versions", keys: ["id"] },
+      cloudProjects: { name: "cloud_projects", keys: ["id"] },
+      galleryLikes: { name: "gallery_likes", keys: ["entry_id", "user_id"] },
+    };
+    if (body.table === "inventory") {
+      return Response.json({
+        format: "analog-canvas-gallery-backup-inventory-v1",
+        exportedAt: new Date().toISOString(),
+        tables: Object.fromEntries(
+          Object.entries(tables).map(([key, table]) => [
+            key,
+            this.sql
+              .exec<{ count: number }>(
+                `SELECT COUNT(*) AS count FROM ${table.name}`,
+              )
+              .toArray()[0]!.count,
+          ]),
+        ),
+      });
+    }
+    if (body.table != null) {
+      const table = Object.hasOwn(tables, String(body.table))
+        ? tables[body.table as keyof typeof tables]
+        : undefined;
+      if (!table)
+        return Response.json({ error: "invalid-table" }, { status: 400 });
+      let after: unknown = null;
+      try {
+        if (body.after) after = JSON.parse(String(body.after));
+      } catch {
+        return Response.json({ error: "invalid-cursor" }, { status: 400 });
+      }
+      if (
+        after !== null &&
+        (!Array.isArray(after) ||
+          after.length !== table.keys.length ||
+          after.some((key) => typeof key !== "string"))
+      ) {
+        return Response.json({ error: "invalid-cursor" }, { status: 400 });
+      }
+      const columns = table.keys.join(", ");
+      const condition =
+        table.keys.length === 1
+          ? `${columns} > ?`
+          : `(${columns}) > (${table.keys.map(() => "?").join(", ")})`;
+      const rows = this.sql
+        .exec<Record<string, unknown>>(
+          `SELECT * FROM ${table.name}${after ? ` WHERE ${condition}` : ""} ORDER BY ${columns} LIMIT 1`,
+          ...((after as string[] | null) ?? []),
+        )
+        .toArray();
+      return Response.json({
+        format: "analog-canvas-gallery-backup-page-v1",
+        table: body.table,
+        rows,
+        nextCursor: rows.length
+          ? JSON.stringify(table.keys.map((key) => rows[0]![key]))
+          : null,
+      });
+    }
     return Response.json({
       format: "analog-canvas-gallery-schema-backup-v1",
       exportedAt: new Date().toISOString(),
-      targetSchemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      targetSchemaVersion: CURRENT_PROJECT_FILE_VERSION,
       tables: {
         galleryEntries: this.sql
           .exec<Record<string, unknown>>("SELECT * FROM gallery_entries")
@@ -1513,6 +1697,85 @@ export class GalleryDO {
    * phase is one Durable Object transaction, so a failed record cannot leave
    * the three storage surfaces at mixed schema versions.
    */
+  /** Bounded Gallery-only conversion. Never touch history retention or row metadata. */
+  private galleryProjectFormat(body: Record<string, unknown>): Response {
+    const tables = {
+      galleryEntries: "gallery_entries",
+      galleryEntryVersions: "gallery_entry_versions",
+    } as const;
+    if (
+      typeof body.table !== "string" ||
+      !Object.hasOwn(tables, body.table) ||
+      typeof body.id !== "string" ||
+      !body.id ||
+      typeof body.originalProjectText !== "string" ||
+      typeof body.projectText !== "string" ||
+      Object.keys(body).some(
+        (key) =>
+          !["table", "id", "originalProjectText", "projectText"].includes(key),
+      ) ||
+      new TextEncoder().encode(body.projectText).length >
+        GALLERY_MAX_PROJECT_BYTES ||
+      new TextEncoder().encode(body.originalProjectText).length >
+        GALLERY_MAX_PROJECT_BYTES
+    )
+      return Response.json({ error: "invalid-request" }, { status: 400 });
+    const table = tables[body.table as keyof typeof tables];
+    const row = this.sql
+      .exec<StoredProjectRow>(
+        `SELECT id, schema_version, project_text FROM ${table} WHERE id = ?`,
+        body.id,
+      )
+      .toArray()[0];
+    if (!row) return Response.json({ error: "not-found" }, { status: 404 });
+    if (
+      row.project_text === body.projectText &&
+      row.schema_version === CURRENT_PROJECT_FILE_VERSION
+    )
+      return Response.json({
+        id: row.id,
+        changed: false,
+        schemaVersion: CURRENT_PROJECT_FILE_VERSION,
+      });
+    if (row.project_text !== body.originalProjectText)
+      return Response.json(
+        { error: "concurrent-change", id: row.id },
+        { status: 409 },
+      );
+    try {
+      // Independently reproduce the offline conversion. Clients cannot use this
+      // maintenance operation to alter circuit content or submit arbitrary JSON.
+      const expected = serializeProject(parseProject(row.project_text));
+      if (
+        expected !== body.projectText ||
+        serializeProject(parseProject(expected)) !== expected
+      )
+        return Response.json({ error: "conversion-mismatch" }, { status: 422 });
+    } catch (error) {
+      return Response.json(
+        {
+          error: "invalid-project",
+          message: error instanceof Error ? error.message : String(error),
+        },
+        { status: 422 },
+      );
+    }
+    // Synchronous DO operation: no await between compare and update. The SQL
+    // predicate also protects against future refactors introducing an await.
+    this.sql.exec(
+      `UPDATE ${table} SET project_text = ?, schema_version = ? WHERE id = ? AND project_text = ?`,
+      body.projectText,
+      CURRENT_PROJECT_FILE_VERSION,
+      body.id,
+      body.originalProjectText,
+    );
+    return Response.json({
+      id: row.id,
+      changed: true,
+      schemaVersion: CURRENT_PROJECT_FILE_VERSION,
+    });
+  }
+
   private schemaConverge(apply: boolean): Response {
     const sources = [
       {
@@ -1791,7 +2054,7 @@ export class GalleryDO {
       return Response.json(
         {
           applied: false,
-          targetSchemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+          targetSchemaVersion: CURRENT_PROJECT_FILE_VERSION,
           inventory,
           failures,
         },
@@ -1805,7 +2068,7 @@ export class GalleryDO {
             `UPDATE ${update.table}
              SET project_text = ?, schema_version = ? WHERE id = ?`,
             update.projectText,
-            CURRENT_PROJECT_SCHEMA_VERSION,
+            CURRENT_PROJECT_FILE_VERSION,
             update.id,
           );
         }
@@ -1813,12 +2076,105 @@ export class GalleryDO {
     }
     return Response.json({
       applied: apply,
-      targetSchemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      targetSchemaVersion: CURRENT_PROJECT_FILE_VERSION,
       inventory,
       records: updates.length + failures.length,
       ready: updates.length,
       failures,
       migrationReports,
+    });
+  }
+
+  /** Recheck current projects and retain a public survivor in the same write. */
+  private recycleDuplicates(body: Record<string, unknown>): Response {
+    const isReference = (
+      value: unknown,
+    ): value is { id: string; previewRevision: string } =>
+      isRecord(value) &&
+      typeof value.id === "string" &&
+      value.id.length > 0 &&
+      value.id.length <= 100 &&
+      typeof value.previewRevision === "string" &&
+      value.previewRevision.length <= 100;
+    if (
+      !isReference(body.keep) ||
+      !Array.isArray(body.remove) ||
+      body.remove.length < 1 ||
+      body.remove.length > 49 ||
+      !body.remove.every(isReference)
+    ) {
+      return Response.json({ error: "invalid-fields" }, { status: 400 });
+    }
+    const references = [body.keep, ...body.remove];
+    if (
+      new Set(references.map((entry) => entry.id)).size !== references.length
+    ) {
+      return Response.json({ error: "invalid-fields" }, { status: 400 });
+    }
+    return this.state.storage.transactionSync(() => {
+      const conflict = (error: string) =>
+        Response.json({ error }, { status: 409 });
+      // Finish every check before the first write: a failed group changes nothing.
+      const rows: EntryRow[] = [];
+      for (const reference of references) {
+        const row = this.sql
+          .exec<EntryRow>(
+            "SELECT * FROM gallery_entries WHERE id = ?",
+            reference.id,
+          )
+          .toArray()[0];
+        if (
+          !row ||
+          row.status !== "public" ||
+          (row.preview_revision || "legacy") !== reference.previewRevision
+        ) {
+          return conflict("duplicate-group-changed");
+        }
+        rows.push(row);
+      }
+      try {
+        const survivor = projectElectricalGraph(
+          parseProject(rows[0]!.project_text),
+        );
+        if (survivor.status !== "ready")
+          return conflict("duplicate-group-uncheckable");
+        for (const row of rows.slice(1)) {
+          // The preview revision covers drawing changes only. Never use it as
+          // evidence of electrical equality: hidden parameters can change too.
+          const candidate = projectElectricalGraph(
+            parseProject(row.project_text),
+          );
+          if (candidate.status !== "ready")
+            return conflict("duplicate-group-uncheckable");
+          const comparison = compareElectricalGraphs(
+            survivor.graph,
+            candidate.graph,
+          );
+          if (comparison !== "equal") {
+            return conflict(
+              comparison === "unknown"
+                ? "duplicate-group-uncheckable"
+                : "not-duplicates",
+            );
+          }
+        }
+      } catch {
+        return conflict("duplicate-group-uncheckable");
+      }
+      for (const row of rows.slice(1)) {
+        this.sql.exec(
+          `UPDATE gallery_entries SET status = 'recycled', recycled_at = ?,
+             reviewed_at = ?, reviewed_by = ? WHERE id = ?`,
+          String(body.at),
+          String(body.at),
+          String(body.reviewerId),
+          row.id,
+        );
+      }
+      return Response.json({
+        kept: rows[0]!.id,
+        recycled: rows.slice(1).map((row) => row.id),
+      });
     });
   }
 
@@ -1907,14 +2263,16 @@ export class GalleryDO {
    * transactions — no alarms, no scheduled work. Keeps the newest
    * {@link GALLERY_RECYCLED_KEEP_PER_ACCOUNT} recycled rows for the writing
    * account; anonymous/legacy rows share one unowned bucket and are exempt
-   * from the cap. The cap is the whole policy — nothing expires by time.
+   * from the cap. Administrator-reviewed rows are also exempt so duplicate
+   * cleanup remains reversible even after later author withdrawals.
+   * Nothing expires by time.
    */
   private sweepRecycledRows(ownerUserId: string): void {
     if (ownerUserId === "") return;
     const overflow = this.sql
       .exec<{ id: string }>(
         `SELECT id FROM gallery_entries
-         WHERE status = 'recycled' AND owner_user_id = ?
+         WHERE status = 'recycled' AND owner_user_id = ? AND reviewed_by IS NULL
          ORDER BY recycled_at DESC, id DESC
          LIMIT -1 OFFSET ?`,
         ownerUserId,
@@ -1974,22 +2332,101 @@ export class GalleryDO {
     return Response.json({ tags });
   }
 
-  /** Public bylines ranked by their number of currently visible circuits. */
+  /** Public contributors ranked by visible circuits and keyed by identity. */
   private authorCounts(): Response {
     const rows = this.sql
-      .exec<{ author: string; count: number }>(
-        `SELECT author, COUNT(*) AS count
+      .exec<{
+        author: string;
+        owner_user_id: string | null;
+        count: number;
+      }>(
+        `SELECT MAX(author) AS author, owner_user_id, COUNT(*) AS count
          FROM gallery_entries
          WHERE status = 'public' AND TRIM(author) <> ''
-         GROUP BY author
+         GROUP BY COALESCE(NULLIF(owner_user_id, ''), 'legacy:' || author)
          ORDER BY count DESC, author COLLATE NOCASE ASC, author ASC`,
       )
       .toArray();
     return Response.json({
       authors: rows.map((row) => ({
         author: row.author,
+        ownerUserId: row.owner_user_id,
         count: Number(row.count),
       })),
+    });
+  }
+
+  /**
+   * Re-answer the netlist badge for stored entries.
+   *
+   * The badge is written when a circuit is published, republished or
+   * restored, so it follows every edit from here on. Entries published before
+   * the current answer existed keep a stale one, and only a pass over stored
+   * Projects can correct that. The pass is batched and resumable: one call
+   * scans `limit` entries after `after`, reports what is left, and never
+   * holds the Object for the whole Gallery.
+   */
+  /**
+   * Re-answer the marks this build's rule has not answered yet.
+   *
+   * Entries carry the rule version their mark came from, so a deployed rule
+   * change leaves exactly the stale rows to find and nothing else to
+   * remember: no cursor to carry, no pass to repeat over answers that are
+   * already current, and the same work whether a person presses the button
+   * or the schedule comes round.
+   */
+  private refreshNetlistable(body: Record<string, unknown>): Response {
+    const limit = Math.min(Math.max(Number(body.limit) || 50, 1), 200);
+    const rows = this.sql
+      .exec<{ id: string; project_text: string; netlistable: number }>(
+        `SELECT id, project_text, netlistable FROM gallery_entries
+         WHERE netlistable_version < ? ORDER BY id LIMIT ?`,
+        NETLIST_MARK_RULE_VERSION,
+        limit,
+      )
+      .toArray();
+    let changed = 0;
+    let unreadable = 0;
+    for (const row of rows) {
+      let answer: number;
+      try {
+        answer = designExtractsNetlist(parseProject(row.project_text)) ? 1 : 0;
+      } catch {
+        // A Project this build cannot parse keeps the answer it has; the
+        // schema maintenance pass owns that repair. Stamping it anyway stops
+        // the pass from meeting the same unreadable row for ever.
+        unreadable += 1;
+        this.sql.exec(
+          "UPDATE gallery_entries SET netlistable_version = ? WHERE id = ?",
+          NETLIST_MARK_RULE_VERSION,
+          row.id,
+        );
+        continue;
+      }
+      if (answer !== row.netlistable) changed += 1;
+      this.sql.exec(
+        `UPDATE gallery_entries SET netlistable = ?, netlistable_version = ?
+         WHERE id = ?`,
+        answer,
+        NETLIST_MARK_RULE_VERSION,
+        row.id,
+      );
+    }
+    const remaining = Number(
+      this.sql
+        .exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM gallery_entries
+           WHERE netlistable_version < ?`,
+          NETLIST_MARK_RULE_VERSION,
+        )
+        .one().count,
+    );
+    return Response.json({
+      scanned: rows.length,
+      changed,
+      unreadable,
+      ruleVersion: NETLIST_MARK_RULE_VERSION,
+      remaining,
     });
   }
 

@@ -4,7 +4,9 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    - cron: "23 18 * * *"
+    # PRs already validate every change. One weekly full-browser audit is
+    # enough to catch latent cross-suite drift without repeating it every day.
+    - cron: "23 18 * * 0"
 
 permissions:
   contents: read
@@ -20,6 +22,7 @@ jobs:
     outputs:
       heavy: ${{ steps.plan.outputs.heavy }}
       browser: ${{ steps.plan.outputs.browser }}
+      browser_shards: ${{ steps.plan.outputs.browser_shards }}
       mode: ${{ steps.plan.outputs.mode }}
       e2e_args: ${{ steps.plan.outputs.e2e_args }}
     steps:
@@ -60,12 +63,17 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: node scripts/check-test-impact.mjs --base "$BASE_SHA"
       - name: Check local Markdown links
+        # Core contracts includes this check for implementation changes.
+        # Keep it here only so documentation-only PRs still have a gate.
+        if: steps.plan.outputs.mode == 'documentation'
         run: node scripts/check-markdown-links.mjs
 
   core:
     name: Core contracts
     needs: changes
-    if: needs.changes.outputs.heavy == 'true'
+    # A scheduled run audits the browser suite against a commit that already
+    # passed Core contracts as a PR. Manual runs still execute both layers.
+    if: needs.changes.outputs.heavy == 'true' && github.event_name != 'schedule'
     runs-on: ubuntu-latest
     env:
       PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: /usr/bin/google-chrome
@@ -89,14 +97,19 @@ jobs:
         # explicit one-time local command instead of pulling a CI container.
         run: pnpm release:verify
 
-  browser:
-    name: Browser tests
+  browser_shard:
+    name: Browser tests (${{ matrix.shard }})
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.browser == 'true'
     runs-on: ubuntu-latest
     env:
       PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: /usr/bin/google-chrome
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Broad batches need more parallelism, not a larger per-job timeout.
+        shard: ${{ fromJSON(needs.changes.outputs.browser_shards) }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -112,7 +125,20 @@ jobs:
         run: |
           read -r -a specs <<< "$E2E_ARGS"
           test "${#specs[@]}" -gt 0
-          pnpm ci:e2e --workers=4 "${specs[@]}"
+          pnpm ci:e2e --workers=3 --shard=${{ matrix.shard }} "${specs[@]}"
+
+  browser:
+    name: Browser tests
+    needs:
+      - changes
+      - browser_shard
+    if: always() && github.event_name == 'pull_request' && needs.changes.outputs.browser == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm every selected browser shard passed
+        env:
+          SHARD_RESULT: ${{ needs.browser_shard.result }}
+        run: test "$SHARD_RESULT" = "success"
 
   full_browser_audit:
     name: Full browser audit (${{ matrix.shard }})
@@ -125,8 +151,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Full coverage is an audit, not a per-PR tax. Four shards retain its
-        # wall-clock speed without charging every candidate for all 489 tests.
+        # Full coverage is a weekly/manual audit, not a per-PR tax. Four shards
+        # retain its wall-clock speed without charging every candidate for the
+        # complete browser suite.
         shard:
           - 1/4
           - 2/4

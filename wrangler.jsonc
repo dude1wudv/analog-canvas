@@ -17,6 +17,10 @@
   "vars": {
     "SIMULATION_UPSTREAM_URL": "https://sim-fra.analog-canvas.tokenzhang.com",
     "SIMULATION_DEFAULT_EXECUTOR": "operator-host",
+    // The second engine is selected only by its Profile. It has its own
+    // gateway credential and never falls back to the ngspice route.
+    "VACASK_UPSTREAM_URL": "https://vacask-preview-sim.tokenzhang.com",
+    "VACASK_PROFILE_ID": "vacask-sky130-candidate",
   },
   "assets": {
     // The binding the Worker fetches through. Its absence is what produced
@@ -38,6 +42,7 @@
   },
   "durable_objects": {
     "bindings": [
+      { "name": "COMPONENT_LIBRARY", "class_name": "ComponentLibraryDO" },
       {
         "name": "ANALYTICS",
         "class_name": "AnalyticsDO",
@@ -66,6 +71,12 @@
       "bucket_name": "analog-canvas-simulation-artifacts-production",
     },
   ],
+  // Re-answers stored Gallery netlist marks a deployed rule change left
+  // behind, one batch a tick. It reads a single count and stops when none of
+  // them is stale, which is every tick but the ones after such a change.
+  "triggers": {
+    "crons": ["*/5 * * * *"],
+  },
   "queues": {
     "producers": [
       {
@@ -107,6 +118,7 @@
       "tag": "v5",
       "new_sqlite_classes": ["SimulationControlDO"],
     },
+    { "tag": "v6", "new_sqlite_classes": ["ComponentLibraryDO"] },
   ],
   "observability": {
     "enabled": true,

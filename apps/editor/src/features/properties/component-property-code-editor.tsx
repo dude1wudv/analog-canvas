@@ -8,6 +8,12 @@ import {
 } from "react";
 
 import type { SchematicDocument } from "@icm/model";
+import { itemPropertyCode } from "./item-property-code";
+import {
+  propertyCodeSpans,
+  propertyCodeChanges,
+  reflectedPropertyCode,
+} from "./component-property-code-assists";
 
 import {
   formatComponentPropertyCode,
@@ -26,6 +32,7 @@ const PropertyJsonEditor = lazy(
 export interface ComponentPropertyCodeEditorProps {
   instance: Instance;
   displayName?: string | null;
+  itemName?: string;
   revision: number;
   referenceVisible: boolean | null;
   valueVisible: boolean | null;
@@ -34,6 +41,7 @@ export interface ComponentPropertyCodeEditorProps {
   netName?: string | null;
   defaultForeground?: string;
   details?: ComponentPropertyCodeContext["details"];
+  onUseCellParameter?(field: string, value: string, anchor: HTMLElement): void;
   onApply: (
     value: ComponentPropertyCodeValue,
   ) => { ok: true } | { ok: false; message: string };
@@ -43,6 +51,7 @@ export interface ComponentPropertyCodeEditorProps {
 export function ComponentPropertyCodeEditor({
   instance,
   displayName,
+  itemName,
   revision,
   referenceVisible,
   valueVisible,
@@ -51,6 +60,7 @@ export function ComponentPropertyCodeEditor({
   netName,
   defaultForeground = "#000000",
   details,
+  onUseCellParameter,
   onApply,
 }: ComponentPropertyCodeEditorProps) {
   const context = useMemo<ComponentPropertyCodeContext>(
@@ -75,9 +85,44 @@ export function ComponentPropertyCodeEditor({
       details,
     ],
   );
-  const baseline = useMemo(
+  const nativeBaseline = useMemo(
     () => formatComponentPropertyCode(context),
     [context, revision],
+  );
+  const projection = useMemo(() => {
+    const value = JSON.parse(nativeBaseline);
+    const namePath =
+      "displayName" in value
+        ? "displayName"
+        : "netName" in value
+          ? "netName"
+          : "netlistName" in value
+            ? "netlistName"
+            : undefined;
+    return itemPropertyCode(nativeBaseline, {
+      type: instance.symbolId,
+      name: itemName ?? instance.reference ?? instance.id,
+      ...(namePath ? { namePath } : {}),
+    });
+  }, [
+    nativeBaseline,
+    instance.symbolId,
+    instance.reference,
+    instance.id,
+    itemName,
+  ]);
+  const baseline = projection.format(nativeBaseline);
+  const adapter = useMemo(
+    () =>
+      projection.adapter({
+        parse: (source) => parseComponentPropertyCode(source, context),
+        spans: (source) => propertyCodeSpans(source, context),
+        changes: (source, values) =>
+          propertyCodeChanges(source, context, values),
+        reflected: (source, direction) =>
+          reflectedPropertyCode(source, context, direction),
+      }),
+    [projection, context],
   );
   const previousBaseline = useRef(baseline);
   const appliedCode = useRef<string | null>(null);
@@ -101,8 +146,11 @@ export function ComponentPropertyCodeEditor({
   }, [baseline, draft]);
 
   const parsed = useMemo(
-    () => parseComponentPropertyCode(draft, context),
-    [context, draft],
+    () =>
+      projection.parse(draft, (source) =>
+        parseComponentPropertyCode(source, context),
+      ),
+    [context, draft, projection],
   );
   const statusMessage =
     applyMessage ??
@@ -121,9 +169,13 @@ export function ComponentPropertyCodeEditor({
     setDraft(source);
     setApplyMessage(null);
     setRejected(false);
-    const next = parseComponentPropertyCode(source, context);
+    const next = projection.parse(source, (native) =>
+      parseComponentPropertyCode(native, context),
+    );
     if (!next.ok) return;
-    const normalized = serializeComponentPropertyCode(next.value);
+    const normalized = projection.format(
+      serializeComponentPropertyCode(next.value),
+    );
     if (normalized === baseline) return;
     const result = onApply(next.value);
     if (!result.ok) {
@@ -148,7 +200,9 @@ export function ComponentPropertyCodeEditor({
             className="component-property-help"
             aria-label="默认值"
             title="恢复参数和颜色默认值"
-            onClick={() => change(defaultComponentPropertyCode(context))}
+            onClick={() =>
+              change(projection.format(defaultComponentPropertyCode(context)))
+            }
           >
             Defaults
           </button>
@@ -198,11 +252,13 @@ export function ComponentPropertyCodeEditor({
         }
       >
         <PropertyJsonEditor
+          adapter={adapter}
           value={draft}
           historyKey={historyKey}
           context={context}
           defaultForeground={defaultForeground}
           onChange={change}
+          {...(onUseCellParameter ? { onUseCellParameter } : {})}
         />
       </Suspense>
       {statusMessage ? (

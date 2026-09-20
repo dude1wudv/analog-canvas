@@ -15,6 +15,27 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 describe("agent http client", () => {
+  it("explains incompatible circuit responses without replaying mutations", async () => {
+    let calls = 0;
+    const client = new AgentHttpClient({
+      baseUrl: BASE,
+      fetch: async () => {
+        calls++;
+        return jsonResponse(200, {
+          ...capabilitiesResponse("c"),
+          futureField: "private-value",
+        });
+      },
+    });
+    await expect(
+      client.circuit("s", "token", {
+        apiVersion: "3.0",
+        requestId: "c",
+        operation: "capabilities",
+      }),
+    ).rejects.toThrow(/MCP manifest.*may already have committed/);
+    expect(calls).toBe(1);
+  });
   it("reads the canonical Session status using bearer authentication and a short deadline", async () => {
     const observation = {
       ok: true,
@@ -136,6 +157,48 @@ describe("agent http client", () => {
     await expect(http.circuit("s", "t", request)).rejects.toThrow(
       "schema validation",
     );
+  });
+  it("accepts a schema-57 annotation-owned Cell terminal", async () => {
+    const body = snapshotResponse("req-57");
+    if (!body.ok || body.operation !== "snapshot")
+      throw new Error("Expected snapshot");
+    body.snapshot.document.cellInterface = {
+      name: "Main",
+      terminals: [
+        {
+          id: "terminal-vdd",
+          name: "VDD",
+          netId: "net-vdd",
+          direction: "passive",
+          interfaceInstanceIds: [],
+          interfaceAnnotationId: "annotation-vdd",
+        },
+      ],
+    };
+    body.snapshot.document.annotations.push({
+      id: "annotation-vdd",
+      kind: "power-label",
+      binding: {
+        kind: "cell-terminal-name",
+        terminalId: "terminal-vdd",
+      },
+      netId: "net-vdd",
+      anchor: { kind: "free", position: { x: 200, y: 80 } },
+      rotation: 0,
+      alignment: "start",
+      locked: false,
+    });
+    const http = new AgentHttpClient({
+      baseUrl: BASE,
+      fetch: async () => jsonResponse(200, body),
+    });
+    const response = await http.circuit("session", "token", {
+      apiVersion: "3.0",
+      requestId: "req-57",
+      operation: "snapshot",
+      documentId: "main",
+    });
+    expect(response).toEqual(body);
   });
   it("backs off on 429 with byte-identical mutation retries and a finite budget", async () => {
     const bodies: string[] = [];

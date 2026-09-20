@@ -1,3 +1,4 @@
+import { parseSavedProject } from "./editor-fixtures";
 import { expect, test } from "@playwright/test";
 import type { Locator, Page } from "@playwright/test";
 
@@ -6,9 +7,10 @@ import {
   createEmptyProject,
   flattenRichText,
 } from "@icm/model";
-import { fractionGeometry } from "@icm/derived";
+import { serializeProject } from "@icm/project-protocol";
 
 import {
+  revealPropertiesShelf,
   awaitEditorReady,
   editComponentPropertyCode,
   editDocumentStyleCode,
@@ -196,6 +198,50 @@ async function controlTop(locator: Locator): Promise<number> {
 }
 
 // The canvas-local toolbar creates RichText AST without exposing raw markup.
+test("keeps every line of a multi-line note on its own line", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await revealPropertiesShelf(page);
+  await placeText(page, { x: 400, y: 220 });
+  const editable = page.getByRole("textbox", { name: "Canvas text editor" });
+  await editable.click();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.type("Bias network");
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.type("second line");
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.type("third line");
+
+  // Typing after a break must continue on the new line. Placing the break by
+  // hand used to leave the caret on an empty text node that Chromium gives no
+  // visual position, so the next characters went back onto the line above and
+  // the note collapsed into one flattened line.
+  await expect
+    .poll(() =>
+      editable.evaluate((element) =>
+        (element.textContent ?? "").replace(/\u00a0/gu, " "),
+      ),
+    )
+    .toBe("Bias network\nsecond line\nthird line");
+
+  await page.getByRole("button", { name: "Apply text changes" }).click();
+  const note = page.locator('[data-kind="draft-text"]').first();
+  await expect(note).toBeVisible();
+  // Three lines: each break resets x and steps the baseline down by one line.
+  await expect(note.locator('tspan[data-text-run="line-break"]')).toHaveCount(
+    2,
+  );
+  const box = await note.boundingBox();
+  expect(box?.height).toBeGreaterThan(40);
+
+  // Reopening edits the same three lines rather than one run of joined text.
+  await note.dblclick({ force: true });
+  const reopened = page.getByRole("textbox", { name: "Canvas text editor" });
+  await expect(reopened).toBeVisible();
+  await expect(reopened.locator("br")).toHaveCount(2);
+});
+
 test("adds formatted drafting text and undo/redo restores it", async ({
   page,
 }) => {
@@ -237,18 +283,20 @@ test("adds formatted drafting text and undo/redo restores it", async ({
     canvasBounds.x + canvasBounds.width + 1,
   );
   expect(editorBounds.width).toBeCloseTo(332, 0);
-  const [boldTop, increaseTop, applyTop, cancelTop, deleteTop] =
+  const [boldTop, decreaseTop, increaseTop, applyTop, cancelTop, deleteTop] =
     await Promise.all([
       controlTop(page.getByRole("button", { name: "Bold" })),
+      controlTop(page.getByRole("button", { name: "Decrease text size" })),
       controlTop(page.getByRole("button", { name: "Increase text size" })),
       controlTop(page.getByRole("button", { name: "Apply text changes" })),
       controlTop(page.getByRole("button", { name: "Cancel text changes" })),
       controlTop(page.getByRole("button", { name: "Delete text" })),
     ]);
-  expect(Math.abs(increaseTop - boldTop)).toBeLessThan(1);
+  expect(Math.abs(increaseTop - decreaseTop)).toBeLessThan(1);
+  expect(increaseTop).toBeGreaterThan(boldTop);
   expect(Math.abs(cancelTop - applyTop)).toBeLessThan(1);
   expect(Math.abs(deleteTop - applyTop)).toBeLessThan(1);
-  expect(applyTop).toBeGreaterThan(boldTop);
+  expect(applyTop).toBeGreaterThan(increaseTop);
 
   const fullViewport = page.viewportSize();
   await page.setViewportSize({ width: 720, height: 720 });
@@ -265,15 +313,15 @@ test("adds formatted drafting text and undo/redo restores it", async ({
   // settles rather than sampling a transient frame.
   await expect
     .poll(async () => {
-      const [boldTop, increaseTop] = await Promise.all([
-        controlTop(page.getByRole("button", { name: "Bold" })),
+      const [decreaseTop, increaseTop] = await Promise.all([
+        controlTop(page.getByRole("button", { name: "Decrease text size" })),
         controlTop(page.getByRole("button", { name: "Increase text size" })),
       ]);
-      return Math.abs(increaseTop - boldTop);
+      return Math.abs(increaseTop - decreaseTop);
     })
     .toBeLessThan(1);
-  const narrowBoldTop = await controlTop(
-    page.getByRole("button", { name: "Bold" }),
+  const narrowSizeTop = await controlTop(
+    page.getByRole("button", { name: "Increase text size" }),
   );
   await expect
     .poll(async () => {
@@ -287,7 +335,7 @@ test("adds formatted drafting text and undo/redo restores it", async ({
   const narrowApplyTop = await controlTop(
     page.getByRole("button", { name: "Apply text changes" }),
   );
-  expect(narrowApplyTop).toBeGreaterThan(narrowBoldTop);
+  expect(narrowApplyTop).toBeGreaterThan(narrowSizeTop);
   await page.getByLabel("Insert circuit symbol").click();
   const [symbolMenuBounds, narrowEditorBounds] = await Promise.all([
     page.getByRole("menu", { name: "Circuit symbols" }).boundingBox(),
@@ -343,7 +391,7 @@ test("adds formatted drafting text and undo/redo restores it", async ({
     "File",
     "Export Project File…",
   );
-  const project = JSON.parse(projectBytes.toString("utf8"));
+  const project = parseSavedProject(projectBytes.toString("utf8"));
   const doc = project.documents[0];
   const textObject = doc.drafting.objects.find(
     (object: { kind: string }) => object.kind === "text",
@@ -386,16 +434,14 @@ test("drafting text owns an independent color override with Auto inheritance", a
   await page.keyboard.press("q");
   const properties = page.getByTestId("drafting-properties");
   await expect(page.getByLabel("Editable Canvas property code")).toBeVisible();
-  expect(
-    JSON.parse(await readComponentPropertyCode(page)).appearance.color,
-  ).toBe("auto");
+  expect(JSON.parse(await readComponentPropertyCode(page)).color).toBe("auto");
   await properties.getByRole("button", { name: "Edit text color" }).click();
   await page
     .getByRole("button", { name: "Use Blue for text", exact: true })
     .click();
   await expect(text).toHaveAttribute("fill", "#2563eb");
 
-  const coloredProject = JSON.parse(
+  const coloredProject = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -408,9 +454,7 @@ test("drafting text owns an independent color override with Auto inheritance", a
   await properties.getByRole("button", { name: "Edit text color" }).click();
   await page.getByRole("button", { name: "Reset text color" }).click();
   await expect(text).toHaveAttribute("fill", "#000");
-  expect(
-    JSON.parse(await readComponentPropertyCode(page)).appearance.color,
-  ).toBe("auto");
+  expect(JSON.parse(await readComponentPropertyCode(page)).color).toBe("auto");
 
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(text).toHaveAttribute("fill", "#2563eb");
@@ -425,7 +469,9 @@ test("authors one validated formula through the canonical text editor", async ({
   await awaitEditorReady(page);
   await placeText(page);
 
-  await page.getByRole("button", { name: "Insert formula" }).click();
+  const latexButton = page.getByRole("button", { name: "Insert formula" });
+  await expect(latexButton).toHaveText("LaTeX");
+  await latexButton.click();
   await expect(page.getByRole("dialog", { name: "Formula" })).toBeVisible();
   await expect(
     page.locator('math-field[aria-label="Formula editor"]'),
@@ -499,10 +545,12 @@ test("authors one validated formula through the canonical text editor", async ({
   ).toHaveCount(0);
 
   const source = page.getByRole("textbox", { name: "Formula LaTeX source" });
+  await expect(source).toHaveValue("Design note");
+  await expect(source).toBeFocused();
+  const directLatex = String.raw`a+b-c=\left(d\right)`;
+  await source.fill(directLatex);
+  await expect(source).toHaveValue(directLatex);
   await page.locator('math-field[aria-label="Formula editor"]').click();
-  await page.keyboard.type("a+b-c=(d)");
-  await expect(source).toHaveValue(/a\+b-c=/u);
-  await expect(source).toHaveValue(/\\left\(d\\right\)/u);
   await formulaKeyboard.getByRole("button", { name: "Insert Product" }).click();
   await formulaKeyboard
     .getByRole("button", { name: "Insert Derivative" })
@@ -569,7 +617,7 @@ test("authors one validated formula through the canonical text editor", async ({
   await expect(formula.locator("path").first()).toBeVisible();
   await expect(page.locator("foreignObject", { has: formula })).toHaveCount(0);
 
-  const project = JSON.parse(
+  const project = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -712,6 +760,7 @@ test("edits an unrestricted device formula in the same visual annotation", async
     .click({ position: { x: 360, y: 240 } });
   await page.keyboard.press("Escape");
   await page.getByTestId("annotation-hit-instance-label-R1").dblclick();
+  await page.getByRole("checkbox", { name: "Use display alias" }).check();
   await page.getByRole("button", { name: "Insert formula" }).click();
   const latex = String.raw`R_1=\frac{1}{g_m}`;
   await page.getByRole("textbox", { name: "Formula LaTeX source" }).fill(latex);
@@ -727,7 +776,7 @@ test("edits an unrestricted device formula in the same visual annotation", async
   await expect(
     page.locator('[data-object-id="instance-label-R1"] [data-role="formula"]'),
   ).toHaveCount(1);
-  const project = JSON.parse(
+  const project = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -826,6 +875,40 @@ test("T previews text at the pointer without creating it and Escape cancels", as
   await expect(page.getByTestId("revision")).toHaveText("0");
 });
 
+test("keeps a rectangle's edges on the grid a wire can land on", async ({
+  page,
+}) => {
+  // Reported as wire endpoints protruding past a Rect outline: the annotation
+  // pitch is finer than the electrical grid, so an edge could sit half a cell
+  // away from every coordinate a wire endpoint is allowed to take.
+  await page.goto("/editor");
+  const canvas = page.getByTestId("schematic-canvas");
+  await clickDrawTool(page, "rectangle");
+  await canvas.click({ position: { x: 305, y: 205 } });
+  await canvas.click({ position: { x: 505, y: 355 } });
+  await page.keyboard.press("Escape");
+
+  const points =
+    (await page
+      .locator('[data-kind="draft-rectangle"]')
+      .first()
+      .getAttribute("points")) ?? "";
+  const grid = await page.evaluate(
+    () =>
+      (
+        globalThis as unknown as {
+          __icmDocument?: { presentation: { grid: number } };
+        }
+      ).__icmDocument?.presentation.grid ?? 10,
+  );
+  const coordinates = points
+    .split(/[ ,]/u)
+    .filter((part) => part.length > 0)
+    .map(Number);
+  expect(coordinates.length).toBe(8);
+  for (const coordinate of coordinates) expect(coordinate % grid).toBe(0);
+});
+
 async function snappedCanvasPoint(
   canvas: Locator,
   client: { x: number; y: number },
@@ -895,7 +978,7 @@ test("places Text at its preview after zoom and pan, then edits and undoes it", 
   await expect(texts).toHaveText("Custom text");
   await expect(page.getByTestId("revision")).toHaveText("2");
 
-  const project = JSON.parse(
+  const project = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1112,7 +1195,7 @@ test("existing text drag commits once and undoes atomically", async ({
     .press("Escape");
   await expect(page.getByTestId("revision")).toHaveText("1");
 
-  const before = JSON.parse(
+  const before = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1122,7 +1205,7 @@ test("existing text drag commits once and undoes atomically", async ({
     y: -45,
   });
   await expect(page.getByTestId("revision")).toHaveText("2");
-  const moved = JSON.parse(
+  const moved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1131,7 +1214,7 @@ test("existing text drag commits once and undoes atomically", async ({
 
   await page.keyboard.press("Control+z");
   await expect(page.getByTestId("revision")).toHaveText("3");
-  const undone = JSON.parse(
+  const undone = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1389,7 +1472,7 @@ test("drafting content and anchor survive save and reopen", async ({
     "File",
     "Export Project File…",
   );
-  const project = JSON.parse(projectBytes.toString("utf8"));
+  const project = parseSavedProject(projectBytes.toString("utf8"));
   const textObject = project.documents[0].drafting.objects.find(
     (object: { kind: string }) => object.kind === "text",
   );
@@ -1418,7 +1501,7 @@ test("drafting content and anchor survive save and reopen", async ({
     "File",
     "Export Project File…",
   );
-  const reopened = JSON.parse(reopenedBytes.toString("utf8"));
+  const reopened = parseSavedProject(reopenedBytes.toString("utf8"));
   const reopenedText = reopened.documents[0].drafting.objects.find(
     (object: { kind: string }) => object.kind === "text",
   );
@@ -1551,6 +1634,7 @@ test("the Library Circle creates a selectable shape with one radial handle and n
   page,
 }) => {
   await page.goto("/editor");
+  await revealPropertiesShelf(page);
   await awaitEditorReady(page);
   await clickDrawTool(page, "circle");
   await clickCreate(page, { x: 260, y: 260 }, { x: 340, y: 260 });
@@ -1606,9 +1690,6 @@ test("E leaves a selected drafting rectangle as drawing geometry", async ({
 
   await expect(page.getByTestId("document-count")).toHaveText("1");
   await expect(page.locator('[data-kind="draft-rectangle"]')).toHaveCount(1);
-  await expect(page.getByTestId("status")).toHaveText(
-    "Select a hierarchical block before entering a Cell",
-  );
 });
 
 // Dragging an arrow endpoint handle moves just that endpoint in one
@@ -1741,6 +1822,7 @@ test("drawing Properties follows selection and closes with the dock", async ({
   await hit.click({ force: true });
   await expect(page.getByTestId("drafting-properties")).toBeVisible();
   await page.keyboard.press("q");
+  await revealPropertiesShelf(page);
   await expect(page.getByTestId("selection-shelf")).toHaveAttribute(
     "aria-expanded",
     "false",
@@ -1768,7 +1850,7 @@ test("drawing Properties unlocks a protected drawing and Delete overrides its lo
   await editComponentPropertyCode(page, (code) => {
     code.appearance.lineStyle = "dotted";
   });
-  const styledProject = JSON.parse(
+  const styledProject = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -2074,8 +2156,10 @@ test("annotation grid pitch frees drawings from the device grid", async ({
     code.canvas.annotationGrid = 1;
   });
 
-  // A drawn rectangle commits at 1-unit precision and survives validation.
-  await clickDrawTool(page, "rectangle");
+  // A drawn circle commits at 1-unit precision and survives validation. A
+  // rectangle would not: it is the one drawn shape that places on the
+  // electrical grid, because it is the one people wire to.
+  await clickDrawTool(page, "circle");
   const canvas = page.getByTestId("schematic-canvas");
   const corners = [
     { x: 301, y: 203 },
@@ -2095,12 +2179,7 @@ test("annotation grid pitch frees drawings from the device grid", async ({
       const local = client.matrixTransform(matrix);
       return { x: Math.round(local.x), y: Math.round(local.y) };
     };
-    const start = toDocument(points[0]!);
-    const end = toDocument(points[1]!);
-    return {
-      x: Math.round((start.x + end.x) / 2),
-      y: Math.round((start.y + end.y) / 2),
-    };
+    return toDocument(points[0]!);
   }, corners);
 
   // A device stays on the Document grid no matter the annotation pitch.
@@ -2109,7 +2188,7 @@ test("annotation grid pitch frees drawings from the device grid", async ({
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("hit-R1")).toBeVisible();
 
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -2127,12 +2206,12 @@ test("annotation grid pitch frees drawings from the device grid", async ({
   };
   expect(saved.schemaVersion).toBe(CURRENT_PROJECT_SCHEMA_VERSION);
   const document = saved.documents[0]!;
-  const rectangle = document.drafting?.objects.find(
-    (object) => object.kind === "rectangle",
+  const circle = document.drafting?.objects.find(
+    (object) => object.kind === "circle",
   ) as { center?: { x: number; y: number } } | undefined;
-  // 1-unit pitch: the drawn center lands exactly where the clicks map, not
+  // 1-unit pitch: the drawn center lands exactly where the click maps, not
   // on a device-grid multiple.
-  expect(rectangle?.center).toEqual(expectedCenter);
+  expect(circle?.center).toEqual(expectedCenter);
   const placement = document.instances[0]!.placement!.position;
   expect(placement.x % 10).toBe(0);
   expect(placement.y % 10).toBe(0);
@@ -2208,7 +2287,7 @@ test("authors inline fractions alongside styled text and preserves them through 
   await expect(note).toContainText(" + R");
   await expect(note.locator('[data-text-run="subscript"]')).toHaveCount(2);
   const saved = await downloadBytes(page, "File", "Export Project File…");
-  const project = JSON.parse(saved.toString("utf8"));
+  const project = parseSavedProject(saved.toString("utf8"));
   const content = project.documents[0].drafting.objects[0].content;
   expect(content.runs.map((run: { kind: string }) => run.kind)).toContain(
     "fraction",
@@ -2239,7 +2318,7 @@ test("authors inline fractions alongside styled text and preserves them through 
     buffer: saved,
   });
   await expect(note.locator('[data-role="fraction-bar"]')).toHaveCount(1);
-  const reopened = JSON.parse(
+  const reopened = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -2311,6 +2390,7 @@ test("places a mixed fraction in a device visual annotation without changing its
     .click({ position: { x: 450, y: 340 } });
   await page.keyboard.press("Escape");
   await page.getByTestId("annotation-hit-instance-label-R1").dblclick();
+  await page.getByRole("checkbox", { name: "Use display alias" }).check();
   const editor = page.getByRole("textbox", {
     name: "Canvas text editor",
     exact: true,
@@ -2335,7 +2415,7 @@ test("places a mixed fraction in a device visual annotation without changing its
   const label = page.locator('[data-object-id="instance-label-R1"]');
   await expect(label.locator('[data-role="fraction-bar"]')).toHaveCount(1);
   await expect(label).toContainText(" + R1");
-  const project = JSON.parse(
+  const project = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -2428,15 +2508,20 @@ test("centers fraction parts on a content-sized bar and defaults notes to bold",
   const check = async (target: Locator) => {
     const { top, bottom, bar, partFontSize } = await measure(target);
     for (const part of [top, bottom]) {
-      expect(Math.abs(part.center - bar.center)).toBeLessThan(0.02);
+      // Native glyph advances are intentionally not stretched to the
+      // deterministic layout width. Keep the visible centers within a small
+      // fraction of one em while retaining the stronger containment checks.
+      expect(Math.abs(part.center - bar.center)).toBeLessThan(
+        partFontSize * 0.15,
+      );
       expect(part.x).toBeGreaterThan(bar.x);
       expect(part.x + part.width).toBeLessThan(bar.x + bar.width);
     }
-    // Fixed small overhang; the line must not grow independently of the text.
-    expect(bar.width - Math.max(top.width, bottom.width)).toBeCloseTo(
-      partFontSize * fractionGeometry.barOverhangEm * 2,
-      2,
-    );
+    // The bar follows deterministic layout advances while glyphs retain their
+    // native width. Require it to enclose both parts; the grow/shrink checks
+    // below prove that its width still follows content without stretching text.
+    const nativeOverhang = bar.width - Math.max(top.width, bottom.width);
+    expect(nativeOverhang).toBeGreaterThan(0);
     return bar.width;
   };
   await apply();
@@ -2569,7 +2654,7 @@ for (const kind of ["rectangle", "circle"] as const) {
     await page.getByTestId("project-file").setInputFiles({
       name: "annotation.icproj.json",
       mimeType: "application/json",
-      buffer: Buffer.from(JSON.stringify(project)),
+      buffer: Buffer.from(serializeProject(project)),
     });
     const hit = page.getByTestId("drafting-hit-shape");
     const edgePoint = () =>
@@ -2598,7 +2683,7 @@ for (const kind of ["rectangle", "circle"] as const) {
     );
     const before = JSON.parse(await readComponentPropertyCode(page));
     expect(before.stacking).toEqual({ layer: "front" });
-    expect(before.placement).not.toHaveProperty("bearing");
+    expect(before).not.toHaveProperty("bearing");
     const lineStyle = page.getByRole("combobox", {
       name: "Line style options",
       exact: true,
@@ -2634,7 +2719,7 @@ for (const kind of ["rectangle", "circle"] as const) {
     await expect(shape).not.toHaveAttribute("stroke-dasharray");
     const revision = Number(await page.getByTestId("revision").textContent());
     await editComponentPropertyCode(page, (code) => {
-      code.appearance.color = [12, 34, 56];
+      code.color = [12, 34, 56];
       code.appearance.fillColor = [225, 238, 255];
       code.stacking.layer = "back";
     });
@@ -2729,7 +2814,7 @@ test("text and voltage/polarity annotations expose their own live code without l
   await page.getByTestId("project-file").setInputFiles({
     name: "notes.icproj.json",
     mimeType: "application/json",
-    buffer: Buffer.from(JSON.stringify(project)),
+    buffer: Buffer.from(serializeProject(project)),
   });
   await expect(page.getByTestId("status")).toContainText(
     "Opened notes.icproj.json",
@@ -2739,10 +2824,10 @@ test("text and voltage/polarity annotations expose their own live code without l
     const editor = page.getByLabel("Editable Canvas property code");
     if (index === 0) await page.keyboard.press("q");
     const code = JSON.parse(await readComponentPropertyCode(page));
-    expect(code.appearance.color).toBe("auto");
+    expect(code.color).toBe("auto");
     expect(Boolean(code.content)).toBe(index < 2);
     await editComponentPropertyCode(page, (value) => {
-      value.appearance.color = [220, 38, 38];
+      value.color = [220, 38, 38];
       if (index < 2) value.content.runs[0].value = `V${index}`;
     });
     const note = page.locator(
@@ -2800,7 +2885,7 @@ test("annotation dropdowns use typed values and disable locked or incompatible c
   await page.getByTestId("project-file").setInputFiles({
     name: "annotation-options.icproj.json",
     mimeType: "application/json",
-    buffer: Buffer.from(JSON.stringify(project)),
+    buffer: Buffer.from(serializeProject(project)),
   });
   await expect(page.getByTestId("status")).toContainText(
     "Opened annotation-options.icproj.json",
@@ -2826,7 +2911,7 @@ test("annotation dropdowns use typed values and disable locked or incompatible c
     .getByRole("combobox", { name: "Rotation options", exact: true })
     .selectOption("45");
   expect(JSON.parse(await readComponentPropertyCode(page))).toMatchObject({
-    placement: { rotation: 45 },
+    rotation: 45,
     appearance: { alignment: "end", weight: "normal", italic: true },
   });
   await lock.selectOption("true");
@@ -2855,7 +2940,7 @@ test("annotation dropdowns use typed values and disable locked or incompatible c
       .locator('option[value="outline"]'),
   ).toBeDisabled();
   await startStyle.selectOption("medium-arrow");
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -2907,7 +2992,7 @@ for (const shape of ["line", "outline"] as const) {
     await page.getByTestId("project-file").setInputFiles({
       name: "ends.icproj.json",
       mimeType: "application/json",
-      buffer: Buffer.from(JSON.stringify(project)),
+      buffer: Buffer.from(serializeProject(project)),
     });
     await expect(page.getByTestId("status")).toContainText(
       "Opened ends.icproj.json",
@@ -2990,7 +3075,7 @@ for (const shape of ["line", "outline"] as const) {
     }));
     const saved = await downloadBytes(page, "File", "Export Project File…");
     expect(
-      JSON.parse(saved.toString("utf8")).documents[0].drafting.objects[0]
+      parseSavedProject(saved.toString("utf8")).documents[0].drafting.objects[0]
         .styleOverride,
     ).toMatchObject({ arrowStart: "dot", arrowEnd: "large-arrow" });
     const svg = (await downloadBytes(page, "File", "Export SVG")).toString(

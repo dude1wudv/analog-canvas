@@ -1,15 +1,15 @@
-import type { SchematicDocument } from "@icm/model";
+import type { BlockSymbolLayoutTarget } from "../hierarchy/block-symbol-layout-target";
 
 type PinSide = "north" | "east" | "south" | "west" | "auto";
 
 export function CellSymbolLayoutProperties({
-  cell,
+  target,
   enabled,
   onToggle,
   onBodySizeChange,
   onPortPlacementChange,
 }: {
-  cell: SchematicDocument;
+  target: BlockSymbolLayoutTarget;
   enabled: boolean;
   onToggle: () => void;
   onBodySizeChange: (width: number, height: number) => void;
@@ -19,14 +19,13 @@ export function CellSymbolLayoutProperties({
     offset: number,
   ) => void;
 }) {
-  const bodySize = cell.presentation.cellSymbol?.minimumBodySize;
+  const bodySize = target.presentation?.minimumBodySize;
   return (
-    <div className="cell-symbol-layout-properties" aria-label="Cell 符号布局">
-      <div className="property-section-heading">Cell 符号布局</div>
-      <small>
-        Editing <strong>{cell.name}</strong>. These definition-level changes
-        apply to every parent instance; connected routes follow the moved pin.
-      </small>
+    <div
+      className="cell-symbol-layout-properties"
+      aria-label="Cell symbol layout"
+    >
+      <div className="property-section-heading">Cell symbol layout</div>
       <button
         type="button"
         className="cell-symbol-layout-toggle"
@@ -46,8 +45,8 @@ export function CellSymbolLayoutProperties({
         <label>
           Width
           <input
-            key={`${cell.id}-${cell.revision}-symbol-width`}
-            aria-label="Cell 符号宽度"
+            key={`${target.id}-${target.revision}-symbol-width`}
+            aria-label="Cell symbol width"
             defaultValue={String(bodySize?.width ?? 100)}
             inputMode="numeric"
             onBlur={(event) =>
@@ -61,8 +60,8 @@ export function CellSymbolLayoutProperties({
         <label>
           Height
           <input
-            key={`${cell.id}-${cell.revision}-symbol-height`}
-            aria-label="Cell 符号高度"
+            key={`${target.id}-${target.revision}-symbol-height`}
+            aria-label="Cell symbol height"
             defaultValue={String(bodySize?.height ?? 60)}
             inputMode="numeric"
             onBlur={(event) =>
@@ -74,53 +73,64 @@ export function CellSymbolLayoutProperties({
           />
         </label>
       </div>
-      {cell.netlist?.terminals.map((terminal) => {
-        const pinPlacement = cell.presentation.cellSymbol?.pinPlacements?.find(
-          (placement) => placement.terminalId === terminal.id,
-        );
-        return (
-          <div key={terminal.id} className="cell-symbol-pin-layout-row">
-            <strong>{terminal.name}</strong>
-            <label>
-              Side
-              <select
-                key={`${cell.revision}-${terminal.id}-side`}
-                aria-label={`Cell symbol ${terminal.name} pin side`}
-                defaultValue={pinPlacement?.side ?? "auto"}
-                onChange={(event) =>
-                  onPortPlacementChange(
-                    terminal.id,
-                    event.currentTarget.value as PinSide,
-                    pinPlacement?.offset ?? 0,
-                  )
-                }
-              >
-                <option value="auto">自动</option>
-                <option value="west">左侧</option>
-                <option value="east">右侧</option>
-                <option value="north">顶层</option>
-                <option value="south">底部</option>
-              </select>
-            </label>
-            <label>
-              Offset
-              <input
-                key={`${cell.revision}-${terminal.id}-offset`}
-                aria-label={`Cell symbol ${terminal.name} pin offset`}
-                defaultValue={String(pinPlacement?.offset ?? 0)}
-                inputMode="numeric"
-                onBlur={(event) =>
-                  onPortPlacementChange(
-                    terminal.id,
-                    pinPlacement?.side ?? "auto",
-                    Number(event.currentTarget.value),
-                  )
-                }
-              />
-            </label>
-          </div>
-        );
-      })}
+      <table className="cell-symbol-pin-layout-table">
+        <thead>
+          <tr>
+            <th scope="col">Pin</th>
+            <th scope="col">Side</th>
+            <th scope="col">Offset</th>
+          </tr>
+        </thead>
+        <tbody>
+          {target.terminals.map((terminal) => {
+            const pinPlacement = target.presentation?.pinPlacements?.find(
+              (placement) => placement.terminalId === terminal.id,
+            );
+            return (
+              <tr key={terminal.id}>
+                <th scope="row" title={terminal.name}>
+                  {terminal.name}
+                </th>
+                <td>
+                  <select
+                    key={`${target.revision}-${terminal.id}-side`}
+                    aria-label={`Cell symbol ${terminal.name} pin side`}
+                    defaultValue={pinPlacement?.side ?? "auto"}
+                    onChange={(event) =>
+                      onPortPlacementChange(
+                        terminal.id,
+                        event.currentTarget.value as PinSide,
+                        pinPlacement?.offset ?? 0,
+                      )
+                    }
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="west">Left</option>
+                    <option value="east">Right</option>
+                    <option value="north">Top</option>
+                    <option value="south">Bottom</option>
+                  </select>
+                </td>
+                <td>
+                  <input
+                    key={`${target.revision}-${terminal.id}-offset`}
+                    aria-label={`Cell symbol ${terminal.name} pin offset`}
+                    defaultValue={String(pinPlacement?.offset ?? 0)}
+                    inputMode="numeric"
+                    onBlur={(event) =>
+                      onPortPlacementChange(
+                        terminal.id,
+                        pinPlacement?.side ?? "auto",
+                        Number(event.currentTarget.value),
+                      )
+                    }
+                  />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

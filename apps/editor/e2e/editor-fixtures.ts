@@ -1,8 +1,43 @@
+import { parseProject } from "@icm/project-protocol";
 import { expect, type Locator, type Page } from "@playwright/test";
 
 /** Wait until the route-split editor shell is ready to receive shortcuts. */
 export async function awaitEditorReady(page: Page): Promise<void> {
   await page.getByTestId("schematic-canvas").waitFor();
+}
+
+/**
+ * Give the canvas the whole workspace.
+ *
+ * The editor opens with the project dock showing, so a test that reaches for
+ * document coordinates near the right edge — or for a floating window the
+ * dock pushes over them — has to close it first, exactly as a reader would.
+ */
+export async function closeProjectTools(page: Page): Promise<void> {
+  await awaitEditorReady(page);
+  const dock = page.getByRole("complementary", { name: "Project tools" });
+  if (!(await dock.isVisible())) return;
+  // A panel is closed by the control that opened it. Netlist is the one the
+  // editor starts in; Project Code is the other toolbar panel.
+  for (const testId of ["netlist-panel-toggle", "project-code-toggle"]) {
+    const toggle = page.getByTestId(testId);
+    if ((await toggle.getAttribute("aria-pressed")) !== "true") continue;
+    await toggle.click();
+    break;
+  }
+  await page.locator(".app-workspace").evaluate(async (element) => {
+    await Promise.all(
+      element
+        .getAnimations()
+        .map((animation) => animation.finished.catch(() => {})),
+    );
+  });
+}
+
+/** Enter the Properties workspace before interacting with its shelf. */
+export async function revealPropertiesShelf(page: Page): Promise<void> {
+  await closeProjectTools(page);
+  await expect(page.getByTestId("selection-shelf")).toBeVisible();
 }
 
 /** Wait for the recovery coordinator to finish creating its owned IDB store. */
@@ -327,10 +362,13 @@ export async function copyNetlistText(
     name: "Live netlist",
     exact: true,
   });
-  if (!(await panel.isVisible())) {
-    await page.getByTestId("netlist-panel-toggle").click();
-    await expect(panel).toBeVisible();
-  }
+  const toggle = page.getByTestId("netlist-panel-toggle");
+  if (
+    (await toggle.getAttribute("aria-pressed")) !== "true" ||
+    !(await panel.isVisible())
+  )
+    await toggle.click();
+  await expect(panel).toBeVisible();
   if (format) await panel.getByLabel("Netlist format").selectOption(format);
   await panel.getByTestId("copy-netlist-panel").click();
   await expect
@@ -350,4 +388,11 @@ export async function copyNetlistText(
   expect(downloads).toBe(0);
   page.off("download", downloaded);
   return normalizedText;
+}
+
+/** Decode a downloaded portable file before asserting editor-model behavior.
+ * Format-specific tests inspect raw JSON themselves; other journeys should
+ * not accidentally prescribe the storage layout. */
+export function parseSavedProject(text: string): any {
+  return parseProject(text);
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { semanticTextDocument } from "@icm/model";
+import { semanticTextDocument, voltageNodeTextDocument } from "@icm/model";
 
 import { schematicTextFontSize } from "./schematic-text.js";
 import { renderRichTextDocument } from "./rich-text.js";
@@ -29,9 +29,24 @@ describe("Razavi schematic typography", () => {
     );
   });
 
-  it("draws an ordinary subscript upright", () => {
+  it("draws an explicitly authored subscript upright", () => {
     const rendered = renderRichTextDocument(
-      semanticTextDocument("Vin", "formal-port"),
+      {
+        runs: [
+          { kind: "text", value: "V" },
+          {
+            kind: "span",
+            style: "subscript",
+            children: [
+              {
+                kind: "span",
+                style: "bold",
+                children: [{ kind: "text", value: "in" }],
+              },
+            ],
+          },
+        ],
+      },
       razaviTextbookProfile,
       {
         fontSize: schematicTextFontSize("net-label", razaviTextbookProfile),
@@ -39,6 +54,36 @@ describe("Razavi schematic typography", () => {
     );
     expect(rendered).toContain(
       '<tspan data-text-run="span" style="font-style:normal;font-weight:700">in</tspan>',
+    );
+  });
+
+  it("preserves the authored suffix case of a generated voltage name", () => {
+    const rendered = renderRichTextDocument(
+      voltageNodeTextDocument("VB12"),
+      razaviTextbookProfile,
+    );
+
+    expect(rendered).toContain('data-text-run="subscript"');
+    expect(rendered).toContain("font-style:italic;font-weight:700");
+    expect(rendered).toContain("font-style:normal;font-weight:700");
+    expect(rendered).toContain(">B12</tspan>");
+    expect(rendered).not.toContain(">b12</tspan>");
+  });
+
+  it("preserves an authored lowercase voltage head and uppercase suffix", () => {
+    const rendered = renderRichTextDocument(
+      voltageNodeTextDocument("vBIAS"),
+      razaviTextbookProfile,
+    );
+
+    expect(rendered).toContain(">v</tspan>");
+    expect(rendered).toContain(">BIAS</tspan>");
+    expect(rendered).not.toContain(">V</tspan>");
+    expect(rendered).toContain(
+      'style="font-style:italic;font-weight:700">v</tspan>',
+    );
+    expect(rendered).toContain(
+      'style="font-style:normal;font-weight:700">BIAS</tspan>',
     );
   });
 

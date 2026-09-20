@@ -17,6 +17,14 @@ import {
   type GalleryFeedState,
   type GalleryTagOption,
 } from "../gallery-client";
+import {
+  GALLERY_FILTERS_KEY,
+  createDefaultGalleryFilters,
+  galleryFilterSearch,
+  galleryFiltersNarrowQuery,
+  resolveGalleryFilters,
+  type GalleryFilterState,
+} from "../gallery-filters";
 import type { BundledGalleryTile } from "./gallery-bundled-fallback";
 
 // The wall and the canvas-side panel share one data layer, so a search that
@@ -37,6 +45,8 @@ import { fetchSessionUser } from "./account";
 import { GalleryChrome } from "./gallery-chrome";
 import { Masonry } from "./masonry";
 import { ShelfWall } from "./shelf-wall";
+import { GalleryDuplicateCheck } from "./gallery-duplicate-check";
+import type { GalleryDuplicateReport } from "../gallery-duplicates";
 
 /**
  * How many tags the bar shows before it offers the rest. One row at a typical
@@ -239,6 +249,35 @@ function HeartIcon({ filled }: { filled: boolean }) {
 }
 
 /**
+ * The netlist mark, drawn rather than typed.
+ *
+ * A star said "rating" on a wall of circuits and sat beside the like heart,
+ * where two accents competed for the same meaning. This says what it marks:
+ * the SPICE deck this circuit extracts to. Absence is not a verdict — a
+ * sketch publishes exactly the same way — so the mark is quiet and only ever
+ * appears, never crosses anything out.
+ */
+function NetlistIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="12"
+      height="12"
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="4.5" y="3" width="15" height="18" rx="2.5" />
+      <path d="M8 8.5h8M8 12.5h8M8 16.5h5" />
+    </svg>
+  );
+}
+
+/**
  * One search string against one circuit. The query arrives normalized
  * (trimmed, lowercased); fields answer case-insensitively. A tag counts as
  * content, so a query matching a tag matches the circuits that carry it.
@@ -261,7 +300,7 @@ function GalleryContributorRow({
 }: {
   option: GalleryAuthorOption;
   rank: number;
-  onSelectAuthor: (author: string) => void;
+  onSelectAuthor: (option: GalleryAuthorOption) => void;
 }) {
   return (
     <li
@@ -274,7 +313,7 @@ function GalleryContributorRow({
         className="gallery-contributor-author"
         data-testid={`gallery-contributor-author-${rank}`}
         aria-label={`查看 ${option.author} 的画廊`}
-        onClick={() => onSelectAuthor(option.author)}
+        onClick={() => onSelectAuthor(option)}
       >
         {option.author}
       </button>
@@ -296,7 +335,7 @@ export function GalleryCountPanel({
   filtered?: boolean;
   search?: { visible: number; settled: boolean } | null;
   refreshSignal?: number;
-  onSelectAuthor?: (author: string) => void;
+  onSelectAuthor?: (option: GalleryAuthorOption) => void;
 }) {
   const label = galleryCountLabel(total, { filtered, search });
   const rootRef = useRef<HTMLDetailsElement | null>(null);
@@ -370,12 +409,12 @@ export function GalleryCountPanel({
           <ol className="gallery-contributor-list">
             {contributorAuthors.map((option, index) => (
               <GalleryContributorRow
-                key={`${refreshSignal}:${total}:${option.author}`}
+                key={`${refreshSignal}:${total}:${option.ownerUserId ?? "legacy"}:${option.author}`}
                 option={option}
                 rank={index + 1}
-                onSelectAuthor={(author) => {
+                onSelectAuthor={(option) => {
                   rootRef.current?.removeAttribute("open");
-                  onSelectAuthor(author);
+                  onSelectAuthor(option);
                 }}
               />
             ))}
@@ -409,34 +448,42 @@ export function GalleryFeed({
 }: {
   visitStats?: { pv: number; uv: number } | null | undefined;
 }) {
-  // The two walls the site has: everyone's circuits, and your own. The choice
-  // rides in the URL so a reload, a bookmark, and the Back button all keep it.
-  const [view, setView] = useState<"gallery" | "shelf">(() =>
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("view") === "shelf"
-      ? "shelf"
-      : "gallery",
-  );
-  // One box, two levels: the query narrows the tag row to reachable chips,
-  // and filters the wall itself by name, author, description, and tags.
-  const [searchQuery, setSearchQuery] = useState("");
+  // Which wall, whose circuits, which tags, which words, which marks: one
+  // state, because a reader changes them for one reason. It rides in the URL
+  // so a link and the Back button carry the same slice, and in browser
+  // storage so opening a circuit and coming back does not widen the wall.
+  const [filters, setFilters] = useState<GalleryFilterState>(() => {
+    if (typeof window === "undefined") return createDefaultGalleryFilters();
+    try {
+      return resolveGalleryFilters(
+        window.location.search,
+        window.localStorage.getItem(GALLERY_FILTERS_KEY),
+      );
+    } catch {
+      // Private-mode storage throws on read; the link still decides.
+      return resolveGalleryFilters(window.location.search, null);
+    }
+  });
+  const {
+    view,
+    author,
+    ownerUserId,
+    tags: selectedTags,
+    search: searchQuery,
+    netlistable: netlistableOnly,
+    liked: likedOnly,
+  } = filters;
+  function updateFilters(patch: Partial<GalleryFilterState>): void {
+    setFilters((previous) => ({ ...previous, ...patch }));
+  }
   const [showAllTags, setShowAllTags] = useState(false);
+  const [duplicateReport, setDuplicateReport] =
+    useState<GalleryDuplicateReport | null>(null);
+  const [signedIn, setSignedIn] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
   const [ownerBusy, setOwnerBusy] = useState<string | null>(null);
   const [ownerNotice, setOwnerNotice] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<GalleryFeedEntry | null>(null);
-  const [author, setAuthor] = useState<string | null>(() =>
-    typeof window === "undefined"
-      ? null
-      : new URLSearchParams(window.location.search).get("author"),
-  );
-  const [selectedTags, setSelectedTags] = useState<string[]>(() =>
-    typeof window === "undefined"
-      ? []
-      : (new URLSearchParams(window.location.search).get("tags") ?? "")
-          .split(",")
-          .filter((tag) => tag.length > 0),
-  );
   const [tagOptions, setTagOptions] = useState<
     { tag: string; count: number }[]
   >([]);
@@ -446,10 +493,37 @@ export function GalleryFeed({
     tiles: BundledGalleryTile[];
   }>({ status: "idle", tiles: [] });
 
+  // Remembered at once: a reader who narrows the wall and immediately opens a
+  // circuit must come back to the same slice, so this write cannot wait.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(GALLERY_FILTERS_KEY, JSON.stringify(filters));
+    } catch {
+      // The wall works without storage; only the memory of it is lost.
+    }
+  }, [filters]);
+
+  // The address follows a beat later, so typing in the search box does not
+  // push a history entry per keystroke. Losing the last one to a navigation
+  // costs nothing, because the store above already has it.
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname +
+          galleryFilterSearch(window.location.search, filters),
+      );
+    }, 150);
+    return () => window.clearTimeout(handle);
+  }, [filters]);
+
   useEffect(() => {
     let cancelled = false;
     void fetchSessionUser().then((user) => {
-      if (!cancelled) setIsOwner(user?.isAdmin === true);
+      if (cancelled) return;
+      setSignedIn(user !== null);
+      setIsOwner(user?.isAdmin === true);
     });
     return () => {
       cancelled = true;
@@ -557,7 +631,13 @@ export function GalleryFeed({
     const generation = ++feedGenerationRef.current;
     firstPageLoadingRef.current = true;
     loadingMoreRef.current = false;
-    const queryKey = `${author ?? ""}\u0000${selectedTags.join(",")}`;
+    const queryKey = [
+      author ?? "",
+      ownerUserId ?? "",
+      selectedTags.join(","),
+      netlistableOnly ? "netlist" : "",
+      likedOnly ? "liked" : "",
+    ].join("\u0000");
     const changingQuery = loadedQueryRef.current !== queryKey;
     if (changingQuery) {
       setState({
@@ -567,7 +647,13 @@ export function GalleryFeed({
         total: null,
       });
     }
-    void loadGalleryFeed(fetch, { author, tags: selectedTags }).then((page) => {
+    void loadGalleryFeed(fetch, {
+      author,
+      ownerUserId,
+      tags: selectedTags,
+      netlistable: netlistableOnly,
+      liked: likedOnly,
+    }).then((page) => {
       if (cancelled || generation !== feedGenerationRef.current) return;
       firstPageLoadingRef.current = false;
       if (page) {
@@ -586,7 +672,14 @@ export function GalleryFeed({
     return () => {
       cancelled = true;
     };
-  }, [author, selectedTags, refreshSignal]);
+  }, [
+    author,
+    ownerUserId,
+    selectedTags,
+    netlistableOnly,
+    likedOnly,
+    refreshSignal,
+  ]);
 
   // The sentinel appends the next newest-first page as it comes into view.
   // Once the server returns no cursor, the wall is complete and stops.
@@ -604,7 +697,10 @@ export function GalleryFeed({
       const generation = feedGenerationRef.current;
       void loadGalleryFeed(fetch, {
         author,
+        ownerUserId,
         tags: selectedTags,
+        netlistable: netlistableOnly,
+        liked: likedOnly,
         cursor: nextCursor,
       }).then((page) => {
         if (generation !== feedGenerationRef.current) return;
@@ -624,37 +720,38 @@ export function GalleryFeed({
     });
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [nextCursor, author, selectedTags]);
+  }, [
+    nextCursor,
+    author,
+    ownerUserId,
+    selectedTags,
+    netlistableOnly,
+    likedOnly,
+  ]);
 
-  function syncQuery(nextAuthor: string | null, nextTags: string[]): void {
-    const url = new URL(window.location.href);
-    if (nextAuthor) url.searchParams.set("author", nextAuthor);
-    else url.searchParams.delete("author");
-    if (nextTags.length > 0) url.searchParams.set("tags", nextTags.join(","));
-    else url.searchParams.delete("tags");
-    window.history.replaceState(null, "", url.pathname + url.search);
+  function selectAuthor(
+    nextAuthor: string | null,
+    nextOwnerUserId: string | null = null,
+  ): void {
+    updateFilters({ author: nextAuthor, ownerUserId: nextOwnerUserId });
   }
 
-  function selectAuthor(next: string | null): void {
-    setAuthor(next);
-    syncQuery(next, selectedTags);
-  }
-
-  function selectContributor(nextAuthor: string): void {
-    setSearchQuery("");
-    setSelectedTags([]);
-    setAuthor(nextAuthor);
-    syncQuery(nextAuthor, []);
+  function selectContributor(option: GalleryAuthorOption): void {
+    updateFilters({
+      author: option.author,
+      ownerUserId: option.ownerUserId ?? null,
+      tags: [],
+      search: "",
+    });
   }
 
   function toggleTag(tag: string): void {
-    setSelectedTags((previous) => {
-      const next = previous.includes(tag)
-        ? previous.filter((candidate) => candidate !== tag)
-        : [...previous, tag];
-      syncQuery(author, next);
-      return next;
-    });
+    setFilters((previous) => ({
+      ...previous,
+      tags: previous.tags.includes(tag)
+        ? previous.tags.filter((candidate) => candidate !== tag)
+        : [...previous.tags, tag],
+    }));
   }
 
   function removeManagedEntry(entry: GalleryFeedEntry): void {
@@ -771,6 +868,21 @@ export function GalleryFeed({
             (!everyTagSelected && selectedTags.includes(option.tag)),
         );
   const hiddenTagCount = matchingTags.length - visibleTags.length;
+  const duplicates = new Map(
+    duplicateReport?.groups.flatMap((group, index) =>
+      group.map(
+        (entry) =>
+          [
+            entry.id,
+            {
+              group: index + 1,
+              count: group.length,
+              revision: entry.previewRevision,
+            },
+          ] as const,
+      ),
+    ) ?? [],
+  );
 
   return (
     <main className="gallery-shell" data-testid="gallery-feed">
@@ -794,13 +906,7 @@ export function GalleryFeed({
               className="gallery-view-tab"
               data-testid={`gallery-view-${id}`}
               aria-selected={view === id}
-              onClick={() => {
-                setView(id);
-                const next = new URL(window.location.href);
-                if (id === "shelf") next.searchParams.set("view", "shelf");
-                else next.searchParams.delete("view");
-                window.history.replaceState(null, "", next);
-              }}
+              onClick={() => updateFilters({ view: id })}
             >
               {label}
             </button>
@@ -811,7 +917,7 @@ export function GalleryFeed({
         {view === "gallery" ? (
           <GalleryCountPanel
             total={state.total}
-            filtered={author !== null || selectedTags.length > 0}
+            filtered={galleryFiltersNarrowQuery(filters)}
             refreshSignal={refreshSignal}
             onSelectAuthor={selectContributor}
             search={
@@ -830,7 +936,11 @@ export function GalleryFeed({
 
       {view === "gallery" ? (
         <>
-          {tagOptions.length > 0 || entries.length > 0 ? (
+          {tagOptions.length > 0 ||
+          entries.length > 0 ||
+          netlistableOnly ||
+          likedOnly ||
+          isOwner ? (
             <div className="gallery-tag-bar" data-testid="gallery-tag-bar">
               <input
                 className="gallery-tag-search"
@@ -839,8 +949,51 @@ export function GalleryFeed({
                 value={searchQuery}
                 placeholder="名称、作者、标签…"
                 aria-label="搜索电路"
-                onChange={(event) => setSearchQuery(event.currentTarget.value)}
+                onChange={(event) =>
+                  updateFilters({ search: event.currentTarget.value })
+                }
               />
+              {/* The wall's two marks, narrowing by the same glyphs the tiles
+                  carry. The heart is asked of the session, so it is offered
+                  to a reader who has one — or who left it on. */}
+              <button
+                type="button"
+                className={
+                  netlistableOnly
+                    ? "gallery-tag-option gallery-tag-mark gallery-tag-selected"
+                    : "gallery-tag-option gallery-tag-mark"
+                }
+                data-testid="gallery-filter-netlistable"
+                aria-pressed={netlistableOnly}
+                title={
+                  netlistableOnly
+                    ? "Stop filtering by netlist"
+                    : "Show only circuits that extract to a netlist"
+                }
+                onClick={() => updateFilters({ netlistable: !netlistableOnly })}
+              >
+                <NetlistIcon /> With netlist
+              </button>
+              {signedIn || likedOnly ? (
+                <button
+                  type="button"
+                  className={
+                    likedOnly
+                      ? "gallery-tag-option gallery-tag-mark gallery-tag-selected"
+                      : "gallery-tag-option gallery-tag-mark"
+                  }
+                  data-testid="gallery-filter-liked"
+                  aria-pressed={likedOnly}
+                  title={
+                    likedOnly
+                      ? "Stop filtering by your likes"
+                      : "Show only circuits you have liked"
+                  }
+                  onClick={() => updateFilters({ liked: !likedOnly })}
+                >
+                  <HeartIcon filled={true} /> Liked
+                </button>
+              ) : null}
               {/* Tags select as a union, so turning every one on is not "no
                   filter" — it is "carrying at least one tag", which drops the
                   untagged circuits. The control is named for what it does, and
@@ -857,13 +1010,13 @@ export function GalleryFeed({
                       ? "停止按标签筛选"
                       : "仅显示至少带有一个标签的电路"
                   }
-                  onClick={() => {
-                    const next = everyTagSelected
-                      ? []
-                      : tagOptions.map((option) => option.tag);
-                    setSelectedTags(next);
-                    syncQuery(author, next);
-                  }}
+                  onClick={() =>
+                    updateFilters({
+                      tags: everyTagSelected
+                        ? []
+                        : tagOptions.map((option) => option.tag),
+                    })
+                  }
                 >
                   任意标签
                 </button>
@@ -909,13 +1062,24 @@ export function GalleryFeed({
                   type="button"
                   className="gallery-tag-option gallery-tag-clear"
                   data-testid="gallery-tags-clear"
-                  onClick={() => {
-                    setSelectedTags([]);
-                    syncQuery(author, []);
-                  }}
+                  onClick={() => updateFilters({ tags: [] })}
                 >
                   清除 {selectedTags.length} 个已选标签
                 </button>
+              ) : null}
+              {/* The curator's scan wears the same pill as the filters and
+                  takes the free end of their row; what it reports breaks onto
+                  its own line below them. */}
+              {isOwner ? (
+                <GalleryDuplicateCheck
+                  onReport={setDuplicateReport}
+                  onRecycled={(ids) => {
+                    // The scan covers the whole library, while this feed may
+                    // be filtered. Let the server recalculate its counts.
+                    setRefreshSignal((signal) => signal + 1);
+                    if (ids[0]) announceGalleryChange({ entryId: ids[0] });
+                  }}
+                />
               ) : null}
             </div>
           ) : null}
@@ -975,14 +1139,25 @@ export function GalleryFeed({
                           <span className="gallery-tile-copy">
                             <span className="gallery-tile-name">
                               {entry.name}
+                              {duplicates.has(entry.id) &&
+                              duplicates.get(entry.id)!.revision ===
+                                entry.previewRevision ? (
+                                <span
+                                  className="gallery-duplicate-badge"
+                                  title={`Same netlist as ${duplicates.get(entry.id)!.count - 1} other circuits. See duplicate group ${duplicates.get(entry.id)!.group}.`}
+                                >
+                                  Duplicate · group{" "}
+                                  {duplicates.get(entry.id)!.group}
+                                </span>
+                              ) : null}
                               {entry.netlistable ? (
                                 <span
-                                  className="gallery-tile-star"
-                                  data-testid={`gallery-star-${entry.id}`}
+                                  className="gallery-tile-netlist"
+                                  data-testid={`gallery-netlist-${entry.id}`}
                                   title="可提取为 SPICE 网表"
                                   aria-label="可提取为 SPICE 网表"
                                 >
-                                  ★
+                                  <NetlistIcon />
                                 </span>
                               ) : null}
                             </span>
@@ -997,7 +1172,10 @@ export function GalleryFeed({
                                     onClick={(event) => {
                                       event.preventDefault();
                                       event.stopPropagation();
-                                      selectAuthor(entry.author);
+                                      selectAuthor(
+                                        entry.author,
+                                        entry.ownerUserId ?? null,
+                                      );
                                     }}
                                   >
                                     {entry.author}
@@ -1123,6 +1301,19 @@ export function GalleryFeed({
                   data-testid="gallery-filter-empty"
                 >
                   {author} 暂未发布公开电路。
+                </p>
+              ) : null}
+              {entries.length === 0 &&
+              author === null &&
+              (netlistableOnly || likedOnly) ? (
+                <p className="gallery-status" data-testid="gallery-mark-empty">
+                  {likedOnly && !signedIn
+                    ? "Sign in to collect the circuits you like."
+                    : likedOnly && netlistableOnly
+                      ? "None of the circuits you liked extracts to a netlist yet."
+                      : likedOnly
+                        ? "You have not liked any circuits yet."
+                        : "No circuits here extract to a netlist yet."}
                 </p>
               ) : null}
               {/* Two empty states, because only one of them is a verdict:

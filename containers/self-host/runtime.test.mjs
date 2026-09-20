@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import {
   mkdtemp,
   mkdir,
@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { renderRuntimeConfig } from "./runtime-config.mjs";
 
 // The repository's regular `test:local` includes this file, while the
@@ -31,7 +32,8 @@ const { after, before, test } = testApi;
 
 const selfHostDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(selfHostDir, "../..");
-const bundlePath = resolve(repoRoot, "dist/self-host/worker.js");
+const execFileAsync = promisify(execFile);
+let bundlePath;
 const schemaPath = resolve(repoRoot, "node_modules/workerd/workerd.capnp");
 const initSecretsPath = resolve(selfHostDir, "init-secrets.mjs");
 const fixturePath = resolve(
@@ -202,6 +204,7 @@ before(async () => {
   // Proto's `embed` paths are relative to the config file and Windows cannot
   // represent a relative path between different drive letters.
   tempRoot = await mkdtemp(join(repoRoot, ".analog-self-host-"));
+  bundlePath = join(tempRoot, "dist", "self-host", "worker.js");
   secretsDir = join(tempRoot, "secrets");
   dataDir = join(tempRoot, "data");
   assetsDir = join(tempRoot, "assets");
@@ -209,11 +212,27 @@ before(async () => {
   await mkdir(secretsDir, { recursive: true, mode: 0o700 });
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   await mkdir(assetsDir, { recursive: true, mode: 0o755 });
+  await mkdir(dirname(bundlePath), { recursive: true });
   await writeFile(
     join(assetsDir, "index.html"),
     "<!doctype html><title>probe</title>",
   );
   projectText = await readFile(fixturePath, "utf8");
+
+  const esbuildBin = resolve(repoRoot, "node_modules/esbuild/bin/esbuild");
+  await execFileAsync(
+    process.execPath,
+    [
+      esbuildBin,
+      "worker/self-host.ts",
+      "--bundle",
+      "--format=esm",
+      "--platform=browser",
+      "--tsconfig=tsconfig.check.json",
+      `--outfile=${bundlePath}`,
+    ],
+    { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 },
+  );
 
   const initialized = await runNodeScript(initSecretsPath, secretsDir);
   assert.equal(initialized.code, 0, initialized.stderr);

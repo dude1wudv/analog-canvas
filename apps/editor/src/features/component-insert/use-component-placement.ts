@@ -25,7 +25,6 @@ import type {
   CircuitProject,
   DraftingObject,
   Point,
-  RouteEndpoint,
   SchematicDocument,
 } from "@icm/model";
 import { defaultDraftTextDocument } from "@icm/model";
@@ -38,10 +37,8 @@ import type {
   InsertScope,
 } from "./insert-launch";
 import {
-  powerConnectionForSymbol,
   proposePlacementContact,
-  proposedStandalonePowerConnection,
-  type PlacementContactProposal,
+  planInsertedInstanceConnections,
 } from "./placement-connectivity";
 import { planInitialMosBulkDefault } from "./mos-bulk-defaults";
 import { constrainedPowerRailEndpoint, planVddRailEdits } from "./vdd-rail";
@@ -52,13 +49,12 @@ import {
 } from "../instance-display/default-instance-display";
 import {
   initialInstanceNetlist,
+  createNewInstance,
+  nextCellPinName,
   nextInstanceId,
-  nextInstanceReference,
 } from "../netlist-export/netlist-authoring";
-import {
-  defaultRazaviSymbolVariantId,
-  razaviManualBulkConnectionEdits,
-} from "../../presentation/razavi-presentation";
+import { defaultRazaviSymbolVariantId } from "../../presentation/razavi-presentation";
+import { sharedComponentNetlist } from "../user-components/component-definition-edit";
 import type { ScreenFlip } from "../../interaction/shortcut-orientation";
 import type { PendingComponentPlacement } from "../../interaction/interaction-state";
 import type { DrawingTool } from "../../interaction/interaction-state";
@@ -68,18 +64,6 @@ import {
   describePlacementNearMiss,
   findPlacementNearMisses,
 } from "./placement-near-miss";
-
-function nextCellPinName(document: SchematicDocument): string {
-  const occupiedNames = new Set(
-    (document.netlist?.terminals ?? []).map((terminal) =>
-      terminal.name.trim().toLowerCase(),
-    ),
-  );
-  if (!occupiedNames.has("vin")) return "Vin";
-  let ordinal = 2;
-  while (occupiedNames.has(`vin${ordinal}`)) ordinal += 1;
-  return `Vin${ordinal}`;
-}
 
 export interface UseComponentPlacementOptions {
   recentStorageKey: string;
@@ -119,6 +103,8 @@ export interface UseComponentPlacementOptions {
     object: Extract<DraftingObject, { kind: "text" }>,
   ) => void;
   nextId: (prefix: string) => string;
+  /** The model the process in hand names for this device, if it takes one. */
+  processModelTarget: (symbolId: string) => string | undefined;
   rotateComponentPlacement: (delta: 45 | -45 | 90 | -90) => void;
   mirrorComponentPlacement: (direction: ScreenFlip) => void;
   componentPlacementRotation: NonNullable<
@@ -166,27 +152,35 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
     placementRequest: PendingComponentPlacement,
   ): void => {
     if (placementRequest.kind !== "symbol") return;
-    const id = nextInstanceId(options.document, symbolId);
-    const symbolVariantId = defaultRazaviSymbolVariantId(symbolId);
-    const netlist = initialInstanceNetlist(
-      symbolId,
-      placementRequest.parameters,
-    );
-    const reference =
-      placementRequest.referenceText ??
-      nextInstanceReference(options.document, symbolId);
-    const instance = {
-      id,
-      symbolId,
-      ...(reference ? { reference } : {}),
-      ...(symbolVariantId ? { symbolVariantId } : {}),
-      placement: {
-        position,
-        rotation: options.componentPlacementRotation,
-        mirror: options.componentPlacementMirror,
+    const customDefinition = placementRequest.componentDefinition;
+    const instance = createNewInstance(
+      options.document,
+      {
+        symbolId,
+        symbolVariantId: customDefinition
+          ? customDefinition.symbol.defaultVariantId
+          : defaultRazaviSymbolVariantId(symbolId),
+        placement: {
+          position,
+          rotation: options.componentPlacementRotation,
+          mirror: options.componentPlacementMirror,
+        },
+        netlist: customDefinition
+          ? sharedComponentNetlist(customDefinition)
+          : initialInstanceNetlist(
+              symbolId,
+              placementRequest.parameters,
+              options.processModelTarget(symbolId),
+            ),
       },
-      ...(netlist ? { netlist } : {}),
-    };
+      {
+        reference: placementRequest.referenceText ?? undefined,
+        project: customDefinition
+          ? { componentDefinitions: [customDefinition] }
+          : options.project,
+      },
+    );
+    const id = instance.id;
     const displayAnnotations = defaultInstanceDisplayAnnotations(
       options.document,
       instance,
@@ -197,90 +191,22 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
         showValue: placementRequest.showValue,
       },
     );
-    const contact = proposePlacementContact(
-      options.document,
-      options.resolver,
-      instance,
-      options.visibleEndpoints,
-    );
-    if (contact.ambiguous) {
-      options.setStatus(
-        `Cannot place ${id}: the contacted point contains multiple conductors; choose one explicit connection`,
+    let connectionPlan: ReturnType<typeof planInsertedInstanceConnections>;
+    try {
+      connectionPlan = planInsertedInstanceConnections(
+        options.document,
+        options.resolver,
+        instance,
+        options.visibleEndpoints,
       );
+    } catch (error) {
+      options.setStatus(error instanceof Error ? error.message : String(error));
       return;
     }
-    const standalonePower: PlacementContactProposal = contact.matched
-      ? { edits: [], matched: false, ambiguous: false }
-      : proposedStandalonePowerConnection(options.document, instance);
-    const powerRejection = contact.rejected ?? standalonePower.rejected;
-    if (powerRejection) {
-      options.setStatus(`Cannot place ${id}: ${powerRejection}`);
-      return;
-    }
-    const powerNetId = standalonePower.powerNetId ?? contact.powerNetId;
-    const powerConnection = powerConnectionForSymbol(symbolId);
-    const initialBulkDefaultEdits =
-      powerConnection && powerNetId
-        ? planInitialMosBulkDefault(
-            options.document,
-            powerConnection.domain,
-            powerNetId,
-          )
-        : [];
-    const resolvedPowerSymbol = options.resolver.resolve(
-      instance.symbolId,
-      instance.symbolVariantId,
-    );
-    const vddPowerLabel =
-      powerConnection?.domain === "vdd" && powerNetId && resolvedPowerSymbol
-        ? vddPowerLabelAnnotation({
-            instance,
-            resolved: resolvedPowerSymbol,
-            netId: powerNetId,
-            grid: options.document.presentation.grid,
-          })
-        : null;
-    const projectedDocument = structuredClone(options.document);
-    projectedDocument.instances.push(instance);
-    for (const edit of [...contact.edits, ...standalonePower.edits]) {
-      if (edit.kind !== "connect_endpoints" || !edit.newNetId) continue;
-      projectedDocument.nets.push({
-        id: edit.newNetId,
-        terminals: [edit.from, edit.to]
-          .filter(
-            (
-              endpoint,
-            ): endpoint is Extract<RouteEndpoint, { kind: "terminal" }> =>
-              endpoint.kind === "terminal",
-          )
-          .map(({ instanceId, pinName }) => ({ instanceId, pinName }))
-          .filter(
-            (terminal, index, terminals) =>
-              terminals.findIndex(
-                (candidate) =>
-                  candidate.instanceId === terminal.instanceId &&
-                  candidate.pinName === terminal.pinName,
-              ) === index,
-          ),
-      });
-    }
+    const { contact, projectedDocument } = connectionPlan;
     const placementEdits: SchematicEdit[] = [
       { kind: "add_instance", instance },
-      ...contact.edits,
-      ...standalonePower.edits,
-      ...initialBulkDefaultEdits,
-      ...razaviManualBulkConnectionEdits(
-        projectedDocument,
-        projectedDocument.instances,
-      ),
-      ...(vddPowerLabel
-        ? [
-            {
-              kind: "upsert_schematic_annotation" as const,
-              annotation: vddPowerLabel,
-            },
-          ]
-        : []),
+      ...connectionPlan.edits,
       ...displayAnnotations.map((annotation) => ({
         kind: "upsert_schematic_annotation" as const,
         annotation,
@@ -539,12 +465,20 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
         )
       : undefined;
     const connectedName = connectedLogicalNet?.name?.trim();
-    const formalName =
-      (placementRequest.kind === "cell-pin"
+    const requestedName =
+      placementRequest.kind === "cell-pin"
         ? placementRequest.portName?.trim()
-        : undefined) ||
+        : undefined;
+    const formalName =
+      requestedName ||
       connectedName ||
-      (supply ? "VDD" : nextCellPinName(options.document));
+      (supply
+        ? "VDD"
+        : nextCellPinName(
+            options.document,
+            new Set(),
+            symbolId === "port-filled" ? "filled" : "hollow",
+          ));
     const baseNetId = `net-cell-pin-${id.toLowerCase()}`;
     let netId = contact.netId ?? baseNetId;
     let netSuffix = 2;
@@ -606,7 +540,7 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
             options.styleProfile,
             { formalTerminalId: terminalId },
           );
-    const annotation = annotations[0] ? { ...annotations[0] } : undefined;
+    const annotation = annotations[0];
     const committed = options.transactProject(
       "place-cell-pin",
       planCreateCellPin(options.project, options.document.id, {

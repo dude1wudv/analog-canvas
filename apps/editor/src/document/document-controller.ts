@@ -1,3 +1,4 @@
+import type { ComponentDefinition } from "@icm/model";
 import { useRef, useState } from "react";
 
 import {
@@ -14,9 +15,14 @@ import type {
   ProjectTransactionResult,
   SchematicEdit,
 } from "@icm/edit-engine";
-import { CircuitProjectSchema } from "@icm/model";
+import { CircuitProjectSchema, ComponentDefinitionSchema } from "@icm/model";
 import type { CircuitProject, SchematicDocument } from "@icm/model";
-import { builtInSymbols, createProjectSymbolResolver } from "@icm/symbols";
+import {
+  builtInSymbols,
+  createProjectSymbolResolver,
+  withProjectComponentDefinitions,
+  projectCellSymbolTerminals,
+} from "@icm/symbols";
 
 import {
   replaceProjectDocument,
@@ -32,6 +38,8 @@ const SYMBOL_DEFINITION_EDIT_KINDS = new Set<SchematicEdit["kind"]>([
   "remove_cell_terminal",
   "reorder_cell_terminals",
   "set_cell_symbol_presentation",
+  "upsert_schematic_annotation",
+  "remove_schematic_annotation",
 ]);
 
 function transactionMayChangeSymbolDefinitions(
@@ -58,7 +66,9 @@ function documentSymbolDefinitionChanged(
     JSON.stringify(before.netlist?.terminals) !==
       JSON.stringify(after.netlist?.terminals) ||
     JSON.stringify(before.presentation.cellSymbol) !==
-      JSON.stringify(after.presentation.cellSymbol)
+      JSON.stringify(after.presentation.cellSymbol) ||
+    JSON.stringify(projectCellSymbolTerminals(before)) !==
+      JSON.stringify(projectCellSymbolTerminals(after))
   );
 }
 
@@ -106,12 +116,45 @@ export class EditorDocumentController {
     project: CircuitProject;
     activeDocumentId: string;
   }> = [];
+  private readonly componentHistory = new WeakMap<
+    object,
+    ComponentDefinition
+  >();
+  private readonly availableComponents = new Map<string, ComponentDefinition>();
+
+  /** An insertion candidate is not Project content until a real instance is placed. */
+  offerComponentDefinition(value: ComponentDefinition): void {
+    const definition = ComponentDefinitionSchema.parse(structuredClone(value));
+    if (!definition.symbol.id.startsWith("user-"))
+      throw new Error(
+        "Shared component IDs must be versioned user definitions",
+      );
+    const existing =
+      this.projectValue.componentDefinitions?.find(
+        (item) => item.symbol.id === definition.symbol.id,
+      ) ?? this.availableComponents.get(definition.symbol.id);
+    if (existing && JSON.stringify(existing) !== JSON.stringify(definition))
+      throw new Error("A placed component version cannot be overwritten");
+    this.availableComponents.set(definition.symbol.id, definition);
+    this.resolverValue = this.projectResolver(this.projectValue);
+  }
+
+  private projectResolver(project: CircuitProject): ProjectSymbolResolver {
+    return createProjectSymbolResolver(project, [
+      ...builtInSymbols,
+      ...[...this.availableComponents.values()].map((item) => item.symbol),
+    ]);
+  }
+  private readonly liveResolver = {
+    resolve: (id: string, variant?: string) =>
+      this.resolverValue.resolve(id, variant),
+  };
   private transactionCounter = 0;
   private projectSessionCounter = 1;
 
   constructor(initialProject: CircuitProject) {
-    this.projectValue = CircuitProjectSchema.parse(
-      structuredClone(initialProject),
+    this.projectValue = withProjectComponentDefinitions(
+      CircuitProjectSchema.parse(structuredClone(initialProject)),
     );
     this.activeDocumentIdValue = this.projectValue.topDocumentId;
     this.resolverValue = createProjectSymbolResolver(
@@ -123,7 +166,7 @@ export class EditorDocumentController {
       this.activeDocumentIdValue,
     );
     this.historyValue = new DocumentHistory(document, {
-      symbolResolver: this.resolverValue,
+      symbolResolver: this.liveResolver,
     });
     this.histories = new Map([[document.id, this.historyValue]]);
   }
@@ -184,7 +227,7 @@ export class EditorDocumentController {
       existingHistory?.document.revision === document.revision
         ? existingHistory
         : new DocumentHistory(document, {
-            symbolResolver: this.resolverValue,
+            symbolResolver: this.liveResolver,
           });
     this.histories.set(document.id, this.historyValue);
     this.activeDocumentIdValue = document.id;
@@ -193,17 +236,15 @@ export class EditorDocumentController {
 
   replaceProject(nextProject: CircuitProject): SchematicDocument {
     this.projectSessionCounter += 1;
-    this.projectValue = CircuitProjectSchema.parse(
-      structuredClone(nextProject),
+    this.projectValue = withProjectComponentDefinitions(
+      CircuitProjectSchema.parse(structuredClone(nextProject)),
     );
+    this.availableComponents.clear();
     this.activeDocumentIdValue = this.projectValue.topDocumentId;
-    this.resolverValue = createProjectSymbolResolver(
-      this.projectValue,
-      builtInSymbols,
-    );
+    this.resolverValue = this.projectResolver(this.projectValue);
     const document = this.document;
     this.historyValue = new DocumentHistory(document, {
-      symbolResolver: this.resolverValue,
+      symbolResolver: this.liveResolver,
     });
     this.histories = new Map([[document.id, this.historyValue]]);
     this.projectUndoStack.length = 0;
@@ -221,7 +262,9 @@ export class EditorDocumentController {
     nextProject: CircuitProject,
     activeDocumentId = this.activeDocumentIdValue,
   ): SchematicDocument {
-    const parsed = CircuitProjectSchema.parse(structuredClone(nextProject));
+    const parsed = withProjectComponentDefinitions(
+      CircuitProjectSchema.parse(structuredClone(nextProject)),
+    );
     if (parsed.id !== this.projectValue.id) {
       throw new Error(
         `Structural commit cannot replace Project ${this.projectValue.id} with ${parsed.id}`,
@@ -249,10 +292,7 @@ export class EditorDocumentController {
     this.projectRedoStack.length = 0;
     this.projectValue = parsed;
     this.activeDocumentIdValue = activeDocumentId;
-    this.resolverValue = createProjectSymbolResolver(
-      this.projectValue,
-      builtInSymbols,
-    );
+    this.resolverValue = this.projectResolver(this.projectValue);
     this.resetHistoriesFromProject();
     return this.document;
   }
@@ -351,6 +391,23 @@ export class EditorDocumentController {
         request.dryRun ?? false,
       );
     }
+    // History snapshots preserve object identity through structural sharing.
+    // Associate their classes before removal, without keeping unused classes
+    // in the live Project or accidentally reusing them for a fresh insertion.
+    const currentDefinitions = new Map(
+      (this.projectValue.componentDefinitions ?? []).map((definition) => [
+        definition.symbol.id,
+        definition,
+      ]),
+    );
+    for (const object of [
+      ...history.document.instances,
+      ...(history.document.drafting?.objects ?? []),
+    ]) {
+      if (!("symbolId" in object)) continue;
+      const definition = currentDefinitions.get(object.symbolId);
+      if (definition) this.componentHistory.set(object, definition);
+    }
     let result: EditTransactionResult;
     try {
       result = history.transact(request);
@@ -370,18 +427,55 @@ export class EditorDocumentController {
         (document) => document.id === request.documentId,
       )!;
       try {
-        this.projectValue = replaceProjectDocument(
-          this.projectValue,
-          result.document,
+        const definitions = new Map(currentDefinitions);
+        for (const [id, definition] of this.availableComponents) {
+          if (!definitions.has(id)) definitions.set(id, definition);
+        }
+        if (historyEdit?.kind === "undo" || historyEdit?.kind === "redo") {
+          for (const object of [
+            ...result.document.instances,
+            ...(result.document.drafting?.objects ?? []),
+          ]) {
+            const definition = this.componentHistory.get(object);
+            if (definition && !currentDefinitions.has(definition.symbol.id))
+              definitions.set(definition.symbol.id, definition);
+          }
+        }
+        this.projectValue = withProjectComponentDefinitions(
+          replaceProjectDocument(
+            {
+              ...this.projectValue,
+              componentDefinitions: [...definitions.values()],
+            },
+            result.document,
+          ),
         );
+
         if (
-          transactionMayChangeSymbolDefinitions(request.edits) &&
-          documentSymbolDefinitionChanged(previousDocument, result.document)
+          [
+            ...new Set([
+              ...(previousProject.componentDefinitions ?? []).map(
+                (definition) => definition.symbol.id,
+              ),
+              ...(this.projectValue.componentDefinitions ?? []).map(
+                (definition) => definition.symbol.id,
+              ),
+            ]),
+          ].some((id) => {
+            const next =
+              this.projectValue.componentDefinitions?.find(
+                (definition) => definition.symbol.id === id,
+              )?.symbol ??
+              builtInSymbols.find((definition) => definition.id === id);
+            return (
+              JSON.stringify(next) !==
+              JSON.stringify(this.resolverValue.resolve(id)?.definition)
+            );
+          }) ||
+          (transactionMayChangeSymbolDefinitions(request.edits) &&
+            documentSymbolDefinitionChanged(previousDocument, result.document))
         ) {
-          this.resolverValue = createProjectSymbolResolver(
-            this.projectValue,
-            builtInSymbols,
-          );
+          this.resolverValue = this.projectResolver(this.projectValue);
         }
         if (
           !request.edits.some(
@@ -488,7 +582,7 @@ export class EditorDocumentController {
     )
       ? target.activeDocumentId
       : restored.topDocumentId;
-    this.resolverValue = createProjectSymbolResolver(restored, builtInSymbols);
+    this.resolverValue = this.projectResolver(restored);
     this.resetHistoriesFromProject();
     const document =
       restored.documents.find((item) => item.id === documentId) ??
@@ -521,7 +615,7 @@ export class EditorDocumentController {
   private resetHistoriesFromProject(): void {
     const document = this.document;
     this.historyValue = new DocumentHistory(document, {
-      symbolResolver: this.resolverValue,
+      symbolResolver: this.liveResolver,
     });
     this.histories = new Map([[document.id, this.historyValue]]);
   }
@@ -540,7 +634,7 @@ export class EditorDocumentController {
     );
     if (!document) return null;
     const history = new DocumentHistory(document, {
-      symbolResolver: this.resolverValue,
+      symbolResolver: this.liveResolver,
     });
     this.histories.set(documentId, history);
     return history;

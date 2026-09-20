@@ -1,80 +1,115 @@
 import { useEffect, useState } from "react";
+import type { ProjectCellSummary } from "@icm/derived";
 
 import type {
   CircuitProject,
   ExternalSubcircuitDefinition,
-  CellSymbolPresentation,
-  SchematicDocument,
+  HierarchyFrame,
 } from "@icm/model";
+import { CellHierarchyTree } from "./cell-hierarchy-tree";
 import type { CloudProjectSummary } from "../editor-shell/cloud-projects";
 
 import { CellInterfaceEditor } from "./cell-interface-dialog";
-import { CellSymbolReview } from "./cell-symbol-review";
+import { ExternalCircuitEditor } from "./external-circuit-editor";
+import type {
+  CellParameterChange,
+  ExternalDefinitionResult,
+} from "./project-structure-commands";
 
-export interface CellManagerEntry {
-  readonly id: string;
-  readonly name: string;
-  readonly isTop: boolean;
-  readonly portCount: number;
-  readonly callers: readonly {
-    documentId: string;
-    documentName: string;
-    instanceId: string;
-  }[];
+function CellName({
+  name,
+  onRename,
+}: {
+  name: string;
+  onRename(name: string): void;
+}) {
+  const [draft, setDraft] = useState(name);
+  useEffect(() => setDraft(name), [name]);
+  return (
+    <input
+      className="cell-manager-name"
+      aria-label="Cell name"
+      value={draft}
+      onChange={(event) => setDraft(event.currentTarget.value)}
+      onBlur={(event) => {
+        const next = event.currentTarget.value.trim();
+        if (next && next !== name) onRename(next);
+        else setDraft(name);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.currentTarget.blur();
+        }
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          event.currentTarget.value = name;
+          setDraft(name);
+          event.currentTarget.blur();
+        }
+      }}
+    />
+  );
 }
 
 export function CellManagerDialog({
   open,
   cells,
-  documents,
+  project,
+  hierarchyCalls,
+  onOpenOccurrence,
   activeDocumentId,
   onClose,
   onCreate,
   onOpen,
   onRename,
+  onReorder,
   onDelete,
   onJumpToCaller,
-  onRenameTerminal,
-  onSetTerminalDirection,
-  onMoveTerminal,
-  onSetFormalParameters,
+  onFormatPortLabels,
+  onSetPortDirection,
+  onMovePort,
+  onEditParameter,
   externalDefinitions,
   onSetExternalDefinition,
-  onSetSymbolPresentation,
+  onRemoveExternalDefinition,
+  onPlaceExternal,
   cloudProjects,
   activeCloudProjectId,
   onLoadCloudProject,
   onImportCloudCell,
 }: {
   open: boolean;
-  cells: readonly CellManagerEntry[];
-  documents: readonly SchematicDocument[];
+  cells: readonly ProjectCellSummary[];
+  project: CircuitProject;
+  hierarchyCalls: readonly HierarchyFrame[];
+  onOpenOccurrence(documentId: string, path: readonly HierarchyFrame[]): void;
   activeDocumentId: string;
   onClose(): void;
   onCreate(name: string): void;
   onOpen(documentId: string): void;
   onRename(documentId: string, name: string): void;
+  onReorder(documentIds: string[], topDocumentId: string): void;
   onDelete(documentId: string): void;
   onJumpToCaller(documentId: string, instanceId: string): void;
-  onRenameTerminal(documentId: string, terminalId: string, name: string): void;
-  onSetTerminalDirection(
+  onFormatPortLabels(documentId: string): void;
+  onSetPortDirection(
     documentId: string,
-    terminalId: string,
+    portId: string,
     direction: "input" | "output" | "inout" | "passive",
   ): void;
-  onMoveTerminal(documentId: string, terminalId: string, delta: -1 | 1): void;
-  onSetFormalParameters(
+  onMovePort(documentId: string, portId: string, delta: -1 | 1): void;
+  onEditParameter(
     documentId: string,
-    formalParameters: NonNullable<
-      SchematicDocument["netlist"]
-    >["formalParameters"],
-  ): void;
+    name: string,
+    change: CellParameterChange,
+  ): ExternalDefinitionResult;
   externalDefinitions: readonly ExternalSubcircuitDefinition[];
-  onSetExternalDefinition(definition: ExternalSubcircuitDefinition): void;
-  onSetSymbolPresentation(
-    documentId: string,
-    presentation: CellSymbolPresentation | null,
-  ): void;
+  onSetExternalDefinition(
+    definition: ExternalSubcircuitDefinition,
+  ): ExternalDefinitionResult;
+  onPlaceExternal(definitionId: string): void;
+  onRemoveExternalDefinition(definitionId: string): ExternalDefinitionResult;
   cloudProjects: readonly CloudProjectSummary[];
   activeCloudProjectId: string | null;
   onLoadCloudProject(
@@ -88,9 +123,15 @@ export function CellManagerDialog({
   ): Promise<{ ok: boolean; message: string; documentId?: string }>;
 }) {
   const [selectedId, setSelectedId] = useState(activeDocumentId);
+  const [resourceKind, setResourceKind] = useState<"local" | "external">(
+    "local",
+  );
+  const [externalId, setExternalId] = useState<string | null>(null);
+  const [externalDraft, setExternalDraft] = useState(0);
   const [draftName, setDraftName] = useState("");
   const [creating, setCreating] = useState(false);
-  const [renameId, setRenameId] = useState<string | null>(null);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dropId, setDropId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [importProjectId, setImportProjectId] = useState("");
@@ -102,11 +143,11 @@ export function CellManagerDialog({
   useEffect(() => {
     if (open) {
       setSelectedId(activeDocumentId);
+      setResourceKind("local");
       return;
     }
     setDraftName("");
     setCreating(false);
-    setRenameId(null);
     setDeleteId(null);
     setImporting(false);
     setImportProjectId("");
@@ -118,16 +159,51 @@ export function CellManagerDialog({
 
   const selectedEntry =
     cells.find((cell) => cell.id === selectedId) ?? cells[0];
-  const selectedDocument = documents.find(
+  const orderedCells = [
+    ...cells.filter((cell) => cell.isTop),
+    ...cells.filter((cell) => !cell.isTop),
+  ];
+  function moveCell(sourceId: string, beforeId: string, makeTop: boolean) {
+    if (sourceId === beforeId) return;
+    const ids = orderedCells
+      .map((cell) => cell.id)
+      .filter((id) => id !== sourceId);
+    // Ordinary sorting cannot implicitly demote Top.
+    if (!makeTop && sourceId === project.topDocumentId) return;
+    ids.splice(beforeId ? ids.indexOf(beforeId) : ids.length, 0, sourceId);
+    onReorder(ids, makeTop ? sourceId : project.topDocumentId);
+    setDraggedId(null);
+    setDropId(null);
+  }
+  const selectedDocument = project.documents.find(
     (document) => document.id === selectedEntry?.id,
   );
-  const renameTarget = cells.find((cell) => cell.id === renameId);
+  const selectedExternal = externalDefinitions.find(
+    (definition) => definition.id === externalId,
+  );
+  const callers =
+    resourceKind === "local"
+      ? (selectedEntry?.callers ?? [])
+      : project.documents.flatMap((document) =>
+          document.instances.flatMap((instance) =>
+            selectedExternal &&
+            instance.netlist?.binding?.kind === "external-subcircuit" &&
+            instance.netlist.binding.definitionId === selectedExternal.id
+              ? [
+                  {
+                    documentId: document.id,
+                    documentName: document.name,
+                    instanceId: instance.id,
+                  },
+                ]
+              : [],
+          ),
+        );
   const deleteTarget = cells.find((cell) => cell.id === deleteId);
 
   function dismissActionDialog(): void {
     setDraftName("");
     setCreating(false);
-    setRenameId(null);
     setDeleteId(null);
     setImporting(false);
   }
@@ -135,8 +211,7 @@ export function CellManagerDialog({
   function submitCellName(): void {
     const name = draftName.trim();
     if (!name) return;
-    if (renameTarget) onRename(renameTarget.id, name);
-    else onCreate(name);
+    onCreate(name);
     dismissActionDialog();
   }
 
@@ -157,100 +232,269 @@ export function CellManagerDialog({
       >
         <header className="cell-manager-header">
           <div>
-            <p>项目层次结构</p>
-            <h2 id="cell-manager-title">Cell 管理器</h2>
+            <h2 id="cell-manager-title">Cell Manager</h2>
           </div>
-          <button type="button" onClick={onClose} aria-label="关闭 Cell 管理器">
-            关闭
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close Cell Manager"
+          >
+            Close
           </button>
         </header>
 
+        <div
+          className="cell-manager-resource-tabs"
+          role="group"
+          aria-label="Definition type"
+        >
+          <button
+            type="button"
+            aria-pressed={resourceKind === "local"}
+            onClick={() => setResourceKind("local")}
+          >
+            Cells
+          </button>
+          <button
+            type="button"
+            aria-pressed={resourceKind === "external"}
+            onClick={() => setResourceKind("external")}
+          >
+            External Circuit Defs
+          </button>
+        </div>
         <div className="cell-manager-body">
-          <aside className="cell-manager-list" aria-label="Cell">
-            <div className="cell-manager-list-heading">
-              <span>Cell</span>
-              <span>{cells.length}</span>
-            </div>
-            <div className="cell-manager-list-scroll">
-              {cells.map((cell) => (
-                <button
-                  key={cell.id}
-                  type="button"
-                  className="cell-manager-list-item"
-                  aria-selected={cell.id === selectedEntry?.id}
-                  onClick={() => setSelectedId(cell.id)}
+          {resourceKind === "local" ? (
+            <aside className="cell-manager-list" aria-label="Cells">
+              <div className="cell-manager-list-scroll">
+                <CellHierarchyTree
+                  project={project}
+                  calls={hierarchyCalls}
+                  onOpen={onOpenOccurrence}
+                />
+                {orderedCells.map((cell) => (
+                  <div
+                    key={cell.id}
+                    className="cell-manager-entry"
+                    data-drop={dropId === cell.id ? "active" : undefined}
+                    onDragOver={(event) => {
+                      if (
+                        draggedId &&
+                        draggedId !== cell.id &&
+                        draggedId !== project.topDocumentId
+                      ) {
+                        event.preventDefault();
+                        setDropId(cell.id);
+                      }
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      if (draggedId) moveCell(draggedId, cell.id, cell.isTop);
+                    }}
+                  >
+                    {dropId === cell.id ? (
+                      <small className="cell-drop-hint">
+                        {cell.isTop ? "Set as Top" : `Move before ${cell.name}`}
+                      </small>
+                    ) : null}
+                    <button
+                      type="button"
+                      draggable={!cell.isTop}
+                      onDragStart={(event) => {
+                        event.dataTransfer.setData("text/plain", cell.id);
+                        event.dataTransfer.effectAllowed = "move";
+                        setDraggedId(cell.id);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedId(null);
+                        setDropId(null);
+                      }}
+                      onDoubleClick={() => onOpen(cell.id)}
+                      onKeyDown={(event) => {
+                        if (event.altKey && event.key === "ArrowUp") {
+                          event.preventDefault();
+                          const index = orderedCells.findIndex(
+                            (item) => item.id === cell.id,
+                          );
+                          if (index > 0)
+                            moveCell(
+                              cell.id,
+                              orderedCells[index - 1]!.id,
+                              index === 1,
+                            );
+                        }
+                        if (
+                          event.altKey &&
+                          event.key === "ArrowDown" &&
+                          !cell.isTop
+                        ) {
+                          event.preventDefault();
+                          const index = orderedCells.findIndex(
+                            (item) => item.id === cell.id,
+                          );
+                          if (index < orderedCells.length - 1)
+                            moveCell(
+                              cell.id,
+                              orderedCells[index + 2]?.id ?? "",
+                              false,
+                            );
+                        }
+                      }}
+                      className="cell-manager-list-item"
+                      aria-selected={cell.id === selectedEntry?.id}
+                      onClick={() => setSelectedId(cell.id)}
+                    >
+                      <span>
+                        <strong>{cell.name}</strong>
+                        {cell.isTop ? <em>Top</em> : null}
+                      </span>
+                      <small>
+                        {cell.portCount} ports · {cell.callers.length} callers
+                      </small>
+                    </button>
+                  </div>
+                ))}
+                <div
+                  className="cell-manager-drop-end"
+                  aria-label="Move Cell to end"
+                  onDragOver={(event) => {
+                    if (draggedId) {
+                      event.preventDefault();
+                      setDropId("");
+                    }
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    if (draggedId) moveCell(draggedId, "", false);
+                  }}
                 >
-                  <span>
-                    <strong>{cell.name}</strong>
-                    {cell.isTop ? <em>顶层</em> : null}
-                  </span>
-                  <small>
-                    {cell.portCount} ports · {cell.callers.length} callers
-                  </small>
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              className="cell-manager-new"
-              onClick={() => {
-                setRenameId(null);
-                setDraftName("");
-                setDeleteId(null);
-                setCreating(true);
-              }}
+                  {draggedId ? "Move to end" : null}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="cell-manager-new"
+                onClick={() => {
+                  setDraftName("");
+                  setDeleteId(null);
+                  setCreating(true);
+                }}
+              >
+                New Cell
+              </button>
+              <button
+                type="button"
+                className="cell-manager-new"
+                disabled={cloudProjects.length === 0}
+                onClick={() => {
+                  setCreating(false);
+                  setDeleteId(null);
+                  setImporting(true);
+                  setImportProjectId("");
+                  setImportSource(null);
+                  setImportCellId("");
+                  setImportMessage("");
+                }}
+              >
+                Import Cell
+              </button>
+            </aside>
+          ) : (
+            <aside
+              className="cell-manager-list"
+              aria-label="External Circuit Defs"
             >
-              New Cell
-            </button>
-            <button
-              type="button"
-              className="cell-manager-new"
-              disabled={cloudProjects.length === 0}
-              onClick={() => {
-                setCreating(false);
-                setRenameId(null);
-                setDeleteId(null);
-                setImporting(true);
-                setImportProjectId("");
-                setImportSource(null);
-                setImportCellId("");
-                setImportMessage("");
-              }}
-            >
-              Import Cell
-            </button>
-          </aside>
+              <div className="cell-manager-list-scroll">
+                {externalDefinitions.map((definition) => (
+                  <button
+                    key={definition.id}
+                    type="button"
+                    className="cell-manager-list-item"
+                    aria-selected={definition.id === externalId}
+                    onClick={() => setExternalId(definition.id)}
+                  >
+                    <span>
+                      <strong>{definition.name}</strong>
+                      <em>External</em>
+                    </span>
+                    <small>{definition.terminals.length} ports</small>
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="cell-manager-new"
+                onClick={() => {
+                  setExternalId(null);
+                  setExternalDraft((value) => value + 1);
+                }}
+              >
+                New External Circuit Def
+              </button>
+            </aside>
+          )}
 
           <div className="cell-manager-detail">
-            {selectedEntry && selectedDocument ? (
+            {resourceKind === "external" ? (
+              <>
+                <header className="cell-manager-detail-header">
+                  <div className="cell-manager-title-row">
+                    <h3>
+                      {selectedExternal?.name ?? "New External Circuit Def"}
+                    </h3>
+                    <span>External</span>
+                  </div>
+                  {selectedExternal ? (
+                    <button
+                      type="button"
+                      onClick={() => onPlaceExternal(selectedExternal.id)}
+                    >
+                      Place
+                    </button>
+                  ) : null}
+                </header>
+                <ExternalCircuitEditor
+                  key={selectedExternal?.id ?? `new-${externalDraft}`}
+                  definition={selectedExternal}
+                  onRemoveExternalDefinition={(id) => {
+                    const result = onRemoveExternalDefinition(id);
+                    if (result.ok) setExternalId(null);
+                    return result;
+                  }}
+                  onSetExternalDefinition={(definition) => {
+                    const result = onSetExternalDefinition(definition);
+                    if (result.ok) setExternalId(definition.id);
+                    return result;
+                  }}
+                />
+              </>
+            ) : selectedEntry && selectedDocument ? (
               <>
                 <header className="cell-manager-detail-header">
                   <div>
                     <div className="cell-manager-title-row">
-                      <h3>{selectedEntry.name}</h3>
-                      {selectedEntry.isTop ? <span>顶层 Cell</span> : null}
+                      <CellName
+                        key={selectedEntry.id}
+                        name={selectedEntry.name}
+                        onRename={(name) => onRename(selectedEntry.id, name)}
+                      />
                     </div>
-                    <p>
-                      {selectedEntry.portCount} ports ·{" "}
-                      {selectedEntry.callers.length} callers
-                    </p>
                   </div>
                   <div className="cell-manager-actions">
-                    <button
-                      type="button"
-                      onClick={() => onOpen(selectedEntry.id)}
-                    >
-                      打开
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setRenameId(selectedEntry.id);
-                        setDraftName(selectedEntry.name);
-                      }}
-                    >
-                      Rename
-                    </button>
+                    {!selectedEntry.isTop ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          moveCell(
+                            selectedEntry.id,
+                            project.topDocumentId,
+                            true,
+                          )
+                        }
+                      >
+                        Set as Top
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       disabled={
@@ -258,74 +502,58 @@ export function CellManagerDialog({
                       }
                       onClick={() => setDeleteId(selectedEntry.id)}
                     >
-                      删除
+                      Delete
                     </button>
                   </div>
                 </header>
 
-                <CellSymbolReview
-                  key={`${selectedDocument.id}:${selectedDocument.revision}`}
-                  cell={selectedDocument}
-                  onApply={(presentation) =>
-                    onSetSymbolPresentation(selectedDocument.id, presentation)
-                  }
-                />
                 <CellInterfaceEditor
                   cell={selectedDocument}
+                  project={project}
                   callerCount={selectedEntry.callers.length}
-                  onRenameTerminal={(terminalId, name) =>
-                    onRenameTerminal(selectedEntry.id, terminalId, name)
+                  onFormatPortLabels={() =>
+                    onFormatPortLabels(selectedEntry.id)
                   }
-                  onSetTerminalDirection={(terminalId, direction) =>
-                    onSetTerminalDirection(
-                      selectedEntry.id,
-                      terminalId,
-                      direction,
-                    )
+                  onSetPortDirection={(portId, direction) =>
+                    onSetPortDirection(selectedEntry.id, portId, direction)
                   }
-                  onMoveTerminal={(terminalId, delta) =>
-                    onMoveTerminal(selectedEntry.id, terminalId, delta)
+                  onMovePort={(portId, delta) =>
+                    onMovePort(selectedEntry.id, portId, delta)
                   }
-                  onSetFormalParameters={(formalParameters) =>
-                    onSetFormalParameters(selectedEntry.id, formalParameters)
+                  onEditParameter={(name, change) =>
+                    onEditParameter(selectedEntry.id, name, change)
                   }
-                  externalDefinitions={externalDefinitions}
-                  onSetExternalDefinition={onSetExternalDefinition}
                 />
-
-                {selectedEntry.callers.length > 0 ? (
-                  <details className="cell-manager-callers">
-                    <summary>Callers ({selectedEntry.callers.length})</summary>
-                    <ul>
-                      {selectedEntry.callers.map((caller) => (
-                        <li key={`${caller.documentId}:${caller.instanceId}`}>
-                          <span>
-                            {caller.documentName}.{caller.instanceId}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              onJumpToCaller(
-                                caller.documentId,
-                                caller.instanceId,
-                              )
-                            }
-                          >
-                            Jump to caller
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                ) : null}
               </>
             ) : (
-              <p className="cell-interface-empty">未选择 Cell。</p>
+              <p className="cell-interface-empty">No Cell selected.</p>
             )}
+            {callers.length > 0 ? (
+              <details className="cell-manager-callers">
+                <summary>Callers ({callers.length})</summary>
+                <ul>
+                  {callers.map((caller) => (
+                    <li key={`${caller.documentId}:${caller.instanceId}`}>
+                      <span>
+                        {caller.documentName}.{caller.instanceId}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onJumpToCaller(caller.documentId, caller.instanceId)
+                        }
+                      >
+                        Jump to caller
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
           </div>
         </div>
 
-        {deleteTarget || creating || renameTarget || importing ? (
+        {deleteTarget || creating || importing ? (
           <div
             className="cell-manager-dialog-layer"
             onPointerDown={(event) =>
@@ -340,8 +568,7 @@ export function CellManagerDialog({
                 aria-labelledby="import-cell-dialog-title"
               >
                 <header className="editor-action-dialog-header">
-                  <p>项目层次结构</p>
-                  <h2 id="import-cell-dialog-title">导入云端 Cell</h2>
+                  <h2 id="import-cell-dialog-title">Import Cloud Cell</h2>
                 </header>
                 <div className="editor-action-dialog-body">
                   <label>
@@ -367,7 +594,7 @@ export function CellManagerDialog({
                         setImportCellId(loaded.project.topDocumentId);
                       }}
                     >
-                      <option value="">选择已保存的项目…</option>
+                      <option value="">Choose a saved Project…</option>
                       {cloudProjects
                         .filter((cloud) => cloud.id !== activeCloudProjectId)
                         .map((cloud) => (
@@ -399,7 +626,7 @@ export function CellManagerDialog({
                 </div>
                 <footer className="editor-action-dialog-actions">
                   <button type="button" onClick={dismissActionDialog}>
-                    取消
+                    Cancel
                   </button>
                   <button
                     type="button"
@@ -429,13 +656,12 @@ export function CellManagerDialog({
                 className="editor-action-dialog"
                 role="dialog"
                 aria-modal="true"
-                aria-label="删除 Cell"
+                aria-label="Delete Cell"
                 onKeyDown={(event) => {
                   if (event.key === "Escape") dismissActionDialog();
                 }}
               >
                 <header className="editor-action-dialog-header">
-                  <p>项目层次结构</p>
                   <h2 id="delete-cell-dialog-title">
                     Delete {deleteTarget.name}?
                   </h2>
@@ -448,7 +674,7 @@ export function CellManagerDialog({
                 </div>
                 <footer className="editor-action-dialog-actions">
                   <button type="button" autoFocus onClick={dismissActionDialog}>
-                    取消
+                    Cancel
                   </button>
                   <button
                     type="button"
@@ -458,7 +684,7 @@ export function CellManagerDialog({
                       dismissActionDialog();
                     }}
                   >
-                    删除 Cell
+                    Delete Cell
                   </button>
                 </footer>
               </section>
@@ -477,19 +703,11 @@ export function CellManagerDialog({
                 }}
               >
                 <header className="editor-action-dialog-header">
-                  <p>项目层次结构</p>
-                  <h2 id="cell-name-dialog-title">
-                    {renameTarget ? "Rename Cell" : "New Cell"}
-                  </h2>
+                  <h2 id="cell-name-dialog-title">New Cell</h2>
                 </header>
                 <div className="editor-action-dialog-body">
-                  <p>
-                    {renameTarget
-                      ? "Update the name used throughout this project."
-                      : "Create a reusable schematic definition in this project."}
-                  </p>
                   <label className="editor-action-dialog-field">
-                    <span>Cell 名称</span>
+                    <span>Cell name</span>
                     <input
                       id="cell-name-input"
                       autoFocus
@@ -502,14 +720,14 @@ export function CellManagerDialog({
                 </div>
                 <footer className="editor-action-dialog-actions">
                   <button type="button" onClick={dismissActionDialog}>
-                    取消
+                    Cancel
                   </button>
                   <button
                     type="submit"
                     className="primary"
                     disabled={draftName.trim().length === 0}
                   >
-                    {renameTarget ? "Rename" : "Create"}
+                    Create
                   </button>
                 </footer>
               </form>

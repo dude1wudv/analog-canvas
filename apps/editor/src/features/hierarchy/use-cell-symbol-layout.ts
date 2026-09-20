@@ -7,18 +7,25 @@ import {
   type Point,
   type SchematicDocument,
 } from "@icm/model";
-import type { SymbolPin, SymbolResolver } from "@icm/symbols";
+import {
+  createBlockSymbol,
+  type SymbolDefinition,
+  type SymbolPin,
+  type SymbolResolver,
+} from "@icm/symbols";
+
+import type { BlockSymbolLayoutTarget } from "./block-symbol-layout-target";
 
 import { snapCoordinate } from "../../snap/engine";
 
 type Instance = SchematicDocument["instances"][number];
 
 export interface CellSymbolLayoutSession {
-  child: SchematicDocument;
+  target: BlockSymbolLayoutTarget;
   instance: Instance;
   body: { left: number; right: number; top: number; bottom: number };
   pins: readonly {
-    terminal: NonNullable<SchematicDocument["netlist"]>["terminals"][number];
+    terminal: BlockSymbolLayoutTarget["terminals"][number];
     pin: SymbolPin;
   }[];
 }
@@ -27,6 +34,7 @@ type CellSymbolLayoutDrag = {
   kind: "body" | "pin";
   pointerId: number;
   terminalId?: string;
+  captureTarget?: SVGCircleElement;
 };
 
 export type CellSymbolLayoutEdit =
@@ -40,15 +48,16 @@ export type CellSymbolLayoutEdit =
   | null;
 
 export function cellSymbolLayoutEditAtLocalPoint(
-  layout: Pick<CellSymbolLayoutSession, "body">,
+  layout: Pick<CellSymbolLayoutSession, "body"> &
+    Partial<Pick<CellSymbolLayoutSession, "target">>,
   drag: Pick<CellSymbolLayoutDrag, "kind" | "terminalId">,
   local: Point,
 ): CellSymbolLayoutEdit {
   if (drag.kind === "body") {
     return {
       kind: "body",
-      width: Math.max(10, snapCoordinate(Math.abs(local.x) * 2, 10)),
-      height: Math.max(10, snapCoordinate(Math.abs(local.y) * 2, 10)),
+      width: Math.max(20, snapCoordinate(local.x * 2, 20)),
+      height: Math.max(20, snapCoordinate(local.y * 2, 20)),
     };
   }
   if (!drag.terminalId) return null;
@@ -61,20 +70,32 @@ export function cellSymbolLayoutEditAtLocalPoint(
   const side = distances.reduce((closest, candidate) =>
     candidate[1] < closest[1] ? candidate : closest,
   )[0];
+  const requestedOffset = snapCoordinate(
+    side === "west" || side === "east" ? local.y : local.x,
+    10,
+  );
+  const occupied = new Set(
+    (layout.target?.presentation?.pinPlacements ?? [])
+      .filter((pin) => pin.terminalId !== drag.terminalId && pin.side === side)
+      .map((pin) => pin.offset),
+  );
+  let offset = requestedOffset;
+  for (let distance = 10; occupied.has(offset); distance += 10) {
+    offset = !occupied.has(requestedOffset + distance)
+      ? requestedOffset + distance
+      : requestedOffset - distance;
+  }
   return {
     kind: "pin",
     terminalId: drag.terminalId,
     side,
-    offset: snapCoordinate(
-      side === "west" || side === "east" ? local.y : local.x,
-      10,
-    ),
+    offset,
   };
 }
 
 export function useCellSymbolLayout({
   selectedInstance,
-  child,
+  target,
   resolver,
   selectionOpen,
   canvasPointFromEvent,
@@ -82,17 +103,17 @@ export function useCellSymbolLayout({
   setPortPlacement,
 }: {
   selectedInstance: Instance | undefined;
-  child: SchematicDocument | undefined;
+  target: BlockSymbolLayoutTarget | undefined;
   resolver: SymbolResolver;
   selectionOpen: boolean;
   canvasPointFromEvent: (event: ReactPointerEvent<SVGSVGElement>) => Point;
   setBodySize: (
-    child: SchematicDocument,
+    target: BlockSymbolLayoutTarget,
     width: number,
     height: number,
   ) => void;
   setPortPlacement: (
-    child: SchematicDocument,
+    target: BlockSymbolLayoutTarget,
     terminalId: string,
     side: CellSymbolSide,
     offset: number,
@@ -102,8 +123,7 @@ export function useCellSymbolLayout({
   const [targetInstanceId, setTargetInstanceId] = useState<string | null>(null);
   const [drag, setDrag] = useState<CellSymbolLayoutDrag | null>(null);
   const layout = useMemo<CellSymbolLayoutSession | null>(() => {
-    if (!enabled || !selectedInstance?.placement || !child?.netlist)
-      return null;
+    if (!enabled || !selectedInstance?.placement || !target) return null;
     const definition = resolver.resolve(selectedInstance.symbolId)?.definition;
     const body = definition?.primitives.find(
       (primitive) => primitive.kind === "polygon",
@@ -112,7 +132,7 @@ export function useCellSymbolLayout({
     const xs = body.points.map((point) => point.x);
     const ys = body.points.map((point) => point.y);
     return {
-      child,
+      target,
       instance: selectedInstance,
       body: {
         left: Math.min(...xs),
@@ -120,25 +140,32 @@ export function useCellSymbolLayout({
         top: Math.min(...ys),
         bottom: Math.max(...ys),
       },
-      pins: child.netlist.terminals.flatMap((terminal) => {
+      pins: target.terminals.flatMap((terminal) => {
         const pin = definition.pins.find(
           (candidate) => candidate.name === terminal.name,
         );
         return pin ? [{ terminal, pin }] : [];
       }),
     };
-  }, [child, enabled, resolver, selectedInstance]);
+  }, [target, enabled, resolver, selectedInstance]);
+
+  const cancelDrag = (): void => {
+    if (drag?.captureTarget?.hasPointerCapture(drag.pointerId)) {
+      drag.captureTarget.releasePointerCapture(drag.pointerId);
+    }
+    setDrag(null);
+  };
 
   const exit = (): void => {
-    setDrag(null);
+    cancelDrag();
     setEnabled(false);
     setTargetInstanceId(null);
   };
 
   useEffect(() => {
     if (!enabled) return;
-    if (selectedInstance?.id !== targetInstanceId || !child?.netlist) exit();
-  }, [child?.netlist, enabled, selectedInstance?.id, targetInstanceId]);
+    if (selectedInstance?.id !== targetInstanceId || !target) exit();
+  }, [target, enabled, selectedInstance?.id, targetInstanceId]);
 
   useEffect(() => {
     if (!selectionOpen && enabled) exit();
@@ -149,7 +176,7 @@ export function useCellSymbolLayout({
       exit();
       return;
     }
-    if (!child?.netlist || !selectedInstance?.placement) return;
+    if (!target || !selectedInstance?.placement) return;
     setTargetInstanceId(selectedInstance.id);
     setEnabled(true);
   };
@@ -159,14 +186,52 @@ export function useCellSymbolLayout({
     kind: "body" | "pin",
     terminalId?: string,
   ): void => {
-    if (!layout) return;
+    if (!layout || event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
     setDrag({
       kind,
       pointerId: event.pointerId,
+      captureTarget: event.currentTarget,
       ...(terminalId ? { terminalId } : {}),
+    });
+  };
+
+  const previewDrag = (
+    event: ReactPointerEvent<SVGGElement>,
+  ): SymbolDefinition | null => {
+    if (!drag || drag.pointerId !== event.pointerId || !layout) return null;
+    const svg = event.currentTarget.ownerSVGElement;
+    if (!svg) return null;
+    const point = canvasPointFromEvent({ ...event, currentTarget: svg });
+    const placement = layout.instance.placement!;
+    const edit = cellSymbolLayoutEditAtLocalPoint(
+      layout,
+      drag,
+      inverseTransformPoint(point, placement.position, placement),
+    );
+    if (!edit) return null;
+    const current = layout.target.presentation;
+    return createBlockSymbol({
+      ...layout.target,
+      presentation: {
+        ...current,
+        ...(edit.kind === "body"
+          ? { minimumBodySize: { width: edit.width, height: edit.height } }
+          : {
+              pinPlacements: [
+                ...(current?.pinPlacements ?? []).filter(
+                  (pin) => pin.terminalId !== edit.terminalId,
+                ),
+                {
+                  terminalId: edit.terminalId,
+                  side: edit.side,
+                  offset: edit.offset,
+                },
+              ],
+            }),
+      },
     });
   };
 
@@ -176,11 +241,11 @@ export function useCellSymbolLayout({
     const placement = layout.instance.placement!;
     const local = inverseTransformPoint(point, placement.position, placement);
     const edit = cellSymbolLayoutEditAtLocalPoint(layout, drag, local);
-    setDrag(null);
+    cancelDrag();
     if (edit?.kind === "body") {
-      setBodySize(layout.child, edit.width, edit.height);
+      setBodySize(layout.target, edit.width, edit.height);
     } else if (edit?.kind === "pin") {
-      setPortPlacement(layout.child, edit.terminalId, edit.side, edit.offset);
+      setPortPlacement(layout.target, edit.terminalId, edit.side, edit.offset);
     }
     return true;
   };
@@ -189,10 +254,11 @@ export function useCellSymbolLayout({
     enabled,
     layout,
     activeDragPointerId: drag?.pointerId ?? null,
-    cancelDrag: () => setDrag(null),
+    cancelDrag,
     exit,
     toggle,
     beginDrag,
+    previewDrag,
     completeDrag,
   };
 }

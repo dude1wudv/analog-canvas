@@ -12,10 +12,7 @@ import {
 describe("schema 31 to 32 migration (Annotation text color)", () => {
   const schema31Project = (): Record<string, unknown> => {
     const project = createEmptyProject("text-color", "Text color");
-    const raw = JSON.parse(serializeProject(project)) as Record<
-      string,
-      unknown
-    >;
+    const raw = JSON.parse(JSON.stringify(project)) as Record<string, unknown>;
     const document = (raw.documents as Record<string, unknown>[])[0]!;
     (document.instances as unknown[]).push({
       id: "R1",
