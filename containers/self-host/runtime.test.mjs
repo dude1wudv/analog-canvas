@@ -56,13 +56,13 @@ function workerdCommand() {
   if (process.env.WORKERD_BIN) {
     return { command: process.env.WORKERD_BIN, args: [] };
   }
-  // Use workerd's Node launcher so the test works on Windows and Linux
-  // without hard-coding a platform package path. The launcher then selects
-  // the installed native binary.
-  return {
-    command: process.execPath,
-    args: [resolve(repoRoot, "node_modules/workerd/bin/workerd")],
-  };
+  // The postinstall hook replaces workerd/bin/workerd with the native binary
+  // on Unix, while Windows keeps the Node launcher there. Only pass the
+  // launcher to Node on Windows; Node must never parse a Unix ELF binary.
+  const installed = resolve(repoRoot, "node_modules/workerd/bin/workerd");
+  return process.platform === "win32"
+    ? { command: process.execPath, args: [installed] }
+    : { command: installed, args: [] };
 }
 
 function runNodeScript(script, argument) {
