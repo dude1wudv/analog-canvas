@@ -18,7 +18,7 @@ describe("Project protocol boundary", () => {
 
   it("upgrades the previous schema to the current schema", () => {
     const current = JSON.parse(
-      serializeProject(createEmptyProject("protocol-project", "Protocol")),
+      JSON.stringify(createEmptyProject("protocol-project", "Protocol")),
     ) as Record<string, unknown>;
     const previousSchemaVersion = CURRENT_PROJECT_SCHEMA_VERSION - 1;
     const previous: Record<string, unknown> = {
@@ -43,7 +43,7 @@ describe("Project protocol boundary", () => {
 
   it("rejects projects older than the supported chain window", () => {
     const current = JSON.parse(
-      serializeProject(createEmptyProject("protocol-project", "Protocol")),
+      JSON.stringify(createEmptyProject("protocol-project", "Protocol")),
     ) as Record<string, unknown>;
     expect(
       tryParseProjectWithMetadata(

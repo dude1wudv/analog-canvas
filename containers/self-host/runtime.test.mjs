@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { build as esbuild } from "esbuild";
 import { renderRuntimeConfig } from "./runtime-config.mjs";
 
 // The repository's regular `test:local` includes this file, while the
@@ -31,7 +32,7 @@ const { after, before, test } = testApi;
 
 const selfHostDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(selfHostDir, "../..");
-const bundlePath = resolve(repoRoot, "dist/self-host/worker.js");
+let bundlePath;
 const schemaPath = resolve(repoRoot, "node_modules/workerd/workerd.capnp");
 const initSecretsPath = resolve(selfHostDir, "init-secrets.mjs");
 const fixturePath = resolve(
@@ -55,13 +56,13 @@ function workerdCommand() {
   if (process.env.WORKERD_BIN) {
     return { command: process.env.WORKERD_BIN, args: [] };
   }
-  // Use workerd's Node launcher so the test works on Windows and Linux
-  // without hard-coding a platform package path. The launcher then selects
-  // the installed native binary.
-  return {
-    command: process.execPath,
-    args: [resolve(repoRoot, "node_modules/workerd/bin/workerd")],
-  };
+  // The postinstall hook replaces workerd/bin/workerd with the native binary
+  // on Unix, while Windows keeps the Node launcher there. Only pass the
+  // launcher to Node on Windows; Node must never parse a Unix ELF binary.
+  const installed = resolve(repoRoot, "node_modules/workerd/bin/workerd");
+  return process.platform === "win32"
+    ? { command: process.execPath, args: [installed] }
+    : { command: installed, args: [] };
 }
 
 function runNodeScript(script, argument) {
@@ -202,6 +203,7 @@ before(async () => {
   // Proto's `embed` paths are relative to the config file and Windows cannot
   // represent a relative path between different drive letters.
   tempRoot = await mkdtemp(join(repoRoot, ".analog-self-host-"));
+  bundlePath = join(tempRoot, "dist", "self-host", "worker.js");
   secretsDir = join(tempRoot, "secrets");
   dataDir = join(tempRoot, "data");
   assetsDir = join(tempRoot, "assets");
@@ -209,11 +211,22 @@ before(async () => {
   await mkdir(secretsDir, { recursive: true, mode: 0o700 });
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   await mkdir(assetsDir, { recursive: true, mode: 0o755 });
+  await mkdir(dirname(bundlePath), { recursive: true });
   await writeFile(
     join(assetsDir, "index.html"),
     "<!doctype html><title>probe</title>",
   );
   projectText = await readFile(fixturePath, "utf8");
+
+  await esbuild({
+    bundle: true,
+    entryPoints: ["worker/self-host.ts"],
+    format: "esm",
+    outfile: bundlePath,
+    platform: "browser",
+    tsconfig: resolve(repoRoot, "tsconfig.check.json"),
+    absWorkingDir: repoRoot,
+  });
 
   const initialized = await runNodeScript(initSecretsPath, secretsDir);
   assert.equal(initialized.code, 0, initialized.stderr);

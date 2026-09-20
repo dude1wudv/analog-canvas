@@ -1,3 +1,5 @@
+import { parseSavedProject } from "./editor-fixtures";
+import { revealPropertiesShelf } from "./editor-fixtures.js";
 import { expect, test, type Page } from "@playwright/test";
 
 import {
@@ -19,6 +21,7 @@ async function placeSymbol(page: Page, symbolId: string): Promise<void> {
 async function placeMarkedSymbol(page: Page, symbolId: string): Promise<void> {
   await placeSymbol(page, symbolId);
   await page.getByTestId("hit-X1").click();
+  await revealPropertiesShelf(page);
   const shelf = page.getByTestId("selection-shelf");
   if ((await shelf.getAttribute("aria-expanded")) !== "true")
     await shelf.click();
@@ -93,6 +96,7 @@ test("the Properties field shows what the canvas edit committed", async ({
   await page.getByRole("button", { name: "Apply text changes" }).click();
 
   await page.getByTestId("hit-X1").click();
+  await revealPropertiesShelf(page);
   const shelf = page.getByTestId("selection-shelf");
   if ((await shelf.getAttribute("aria-expanded")) !== "true")
     await shelf.click();
@@ -102,7 +106,7 @@ test("the Properties field shows what the canvas edit committed", async ({
     "current steering",
   );
 
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),

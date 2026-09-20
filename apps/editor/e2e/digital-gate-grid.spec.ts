@@ -1,7 +1,9 @@
+import { parseSavedProject } from "./editor-fixtures";
 import { expect, test, type Page } from "@playwright/test";
 import { createEmptyProject } from "@icm/model";
 
 import {
+  revealPropertiesShelf,
   awaitEditorReady,
   clickCommand,
   clickDrawTool,
@@ -125,7 +127,7 @@ test("digital gates align from their left outline and keep wired terminals throu
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-canvas-hit-kind="route"]')).toHaveCount(9);
 
-  const wired = JSON.parse(
+  const wired = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -177,9 +179,10 @@ test("digital gates align from their left outline and keep wired terminals throu
   // The moving NAND inputs and output must remain named-pin connections,
   // including when placement rotates and mirrors the new asymmetric body.
   await page.getByTestId("hit-U8").click();
+  await revealPropertiesShelf(page);
   await page.getByTestId("selection-shelf").click();
   await editComponentPropertyCode(page, (code) => {
-    const placement = code.placement as Record<string, unknown>;
+    const placement = code;
     placement.coordinate = [240, 500];
     placement.rotation = 90;
     placement.mirror = "horizontal";
@@ -211,7 +214,7 @@ test("digital gates align from their left outline and keep wired terminals throu
   await clickCommand(page, "Edit", "Redo");
 
   const saved = await downloadBytes(page, "File", "Export Project File…");
-  const document = JSON.parse(saved.toString("utf8")).documents[0];
+  const document = parseSavedProject(saved.toString("utf8")).documents[0];
   expect(
     document.nets.flatMap((net: { terminals: unknown[] }) => net.terminals),
   ).toEqual(

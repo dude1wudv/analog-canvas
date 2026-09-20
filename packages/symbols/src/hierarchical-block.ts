@@ -1,7 +1,18 @@
-import { deriveStableId, projectCellInterface } from "@icm/model";
-import type { CircuitProject, SchematicDocument } from "@icm/model";
+import {
+  deriveStableId,
+  projectCellInterface,
+  semanticTextDocument,
+} from "@icm/model";
+import type {
+  CellSymbolPresentation,
+  CircuitProject,
+  SchematicDocument,
+} from "@icm/model";
 
-import { createHierarchicalBlockGeometry } from "./hierarchical-block-geometry.js";
+import {
+  createHierarchicalBlockGeometry,
+  type HierarchicalBlockTerminal,
+} from "./hierarchical-block-geometry.js";
 import { resolvePdkSymbolMappingForTerminalOrder } from "./pdk-registry.js";
 import { SymbolDefinitionSchema } from "./schema.js";
 import type { SymbolDefinition } from "./schema.js";
@@ -15,28 +26,85 @@ export function externalSubcircuitSymbolId(definitionId: string): string {
   return deriveStableId("external-subcircuit-symbol", definitionId);
 }
 
+/** Shared generic block artwork contract, independent of its definition owner. */
+export interface BlockSymbolLayout {
+  id: string;
+  name: string;
+  terminals: readonly HierarchicalBlockTerminal[];
+  presentation?: CellSymbolPresentation | undefined;
+}
+
+export function createBlockSymbol(layout: BlockSymbolLayout): SymbolDefinition {
+  const positional = createHierarchicalBlockGeometry(
+    layout.terminals,
+    layout.presentation,
+  );
+  return SymbolDefinitionSchema.parse({
+    ...positional,
+    pins: positional.pins.map((pin) => ({
+      ...pin,
+      presentation: {
+        ...pin.presentation,
+        nameContent:
+          layout.terminals.find((terminal) => terminal.name === pin.name)
+            ?.nameContent ?? semanticTextDocument(pin.name, "formal-port"),
+      },
+    })),
+    id: layout.id,
+    name: layout.name,
+    hierarchicalBlock: true,
+    variants: [],
+  });
+}
+
+type CellSymbolSource = Pick<SchematicDocument, "netlist"> &
+  Partial<Pick<SchematicDocument, "annotations">>;
+
+/** Same representative declaration as the effective interface, including its authored format. */
+export function projectCellSymbolTerminals(
+  document: CellSymbolSource,
+): HierarchicalBlockTerminal[] {
+  return projectCellInterface(document.netlist).ports.map((port) => {
+    const terminal = document.netlist!.terminals.find(
+      (item) => item.id === port.id,
+    )!;
+    const annotation = document.annotations?.find(
+      (item) =>
+        (item.binding?.kind === "cell-terminal-name" &&
+          item.binding.terminalId === port.id) ||
+        (!item.binding &&
+          (item.id === terminal.interfaceAnnotationId ||
+            (item.kind === "instance-label" &&
+              item.anchor.kind === "object" &&
+              terminal.interfaceInstanceIds.includes(item.anchor.objectId)))),
+    );
+    return {
+      ...port,
+      nameContent:
+        annotation?.formatOverride ??
+        (!annotation?.binding ? annotation?.content : undefined) ??
+        semanticTextDocument(port.name, "formal-port"),
+    };
+  });
+}
+
 export function createHierarchicalBlockSymbol(
   document: Pick<SchematicDocument, "name" | "sourceBinding" | "netlist"> & {
     readonly presentation?: SchematicDocument["presentation"];
+    readonly annotations?: SchematicDocument["annotations"];
   },
 ): SymbolDefinition | null {
   // The current netlist name is the local Cell identity. sourceBinding keeps
   // import provenance and intentionally does not change when the local Cell is
   // renamed, so it must not select the runtime symbol identity.
   const cellName = document.netlist?.name;
-  const terminals = projectCellInterface(document.netlist).ports;
+  const terminals = projectCellSymbolTerminals(document);
   if (!cellName) return null;
-  const positional = createHierarchicalBlockGeometry(
-    terminals,
-    document.presentation?.cellSymbol,
-  );
-  return SymbolDefinitionSchema.parse({
-    ...positional,
+  return createBlockSymbol({
     id: hierarchicalSymbolId(cellName),
     name: document.name,
-    hierarchicalBlock: true,
-    pins: positional.pins,
-    variants: [],
+    terminals,
+    presentation: document.presentation?.cellSymbol,
   });
 }
 
@@ -73,25 +141,53 @@ export function createProjectHierarchicalSymbols(
           }),
         ];
       }
-      const positional = createHierarchicalBlockGeometry(
-        definition.terminals.map((terminal) => ({
-          id: terminal.id,
-          name: terminal.name,
-          direction: terminal.direction,
-        })),
-        definition.presentation,
-      );
       return [
-        SymbolDefinitionSchema.parse({
-          ...positional,
+        createBlockSymbol({
           id: externalSubcircuitSymbolId(definition.id),
           name: definition.name,
-          hierarchicalBlock: true,
-          pins: positional.pins,
-          variants: [],
+          terminals: definition.terminals,
+          presentation: definition.presentation,
         }),
       ];
     },
   );
   return [...internal, ...external];
+}
+
+/** Authored inputs of generated blocks; used to invalidate only changed
+ * interfaces/presentations while retaining captured artwork across releases. */
+export function projectSymbolSources(
+  project: Pick<CircuitProject, "documents" | "topDocumentId"> &
+    Partial<Pick<CircuitProject, "externalSubcircuitDefinitions">>,
+) {
+  const sources = new Map<
+    string,
+    import("@icm/model").ComponentDefinitionSource
+  >();
+  for (const document of project.documents) {
+    if (!document.netlist) continue;
+    sources.set(hierarchicalSymbolId(document.netlist.name), {
+      name: document.name,
+      terminals: projectCellSymbolTerminals(document).map(
+        ({ id, name, direction, nameContent }) => ({
+          id,
+          name,
+          direction,
+          ...(nameContent ? { nameContent } : {}),
+        }),
+      ),
+      ...(document.presentation.cellSymbol
+        ? { presentation: document.presentation.cellSymbol }
+        : {}),
+    });
+  }
+  for (const definition of project.externalSubcircuitDefinitions ?? [])
+    sources.set(externalSubcircuitSymbolId(definition.id), {
+      name: definition.name,
+      terminals: definition.terminals,
+      ...(definition.presentation
+        ? { presentation: definition.presentation }
+        : {}),
+    });
+  return sources;
 }

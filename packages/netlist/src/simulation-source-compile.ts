@@ -7,7 +7,8 @@ import {
   type SimulationRunVariant,
 } from "@icm/model";
 import { sha256Hex } from "@icm/derived";
-import { analyzeDesignNetlist } from "./extract.js";
+import { simulationNetlistDiagnostic } from "./simulation-diagnostic.js";
+import { analyzeDesignNetlist, SIMULATION_DECK_GROUND } from "./extract.js";
 import type { DesignNetlistCell, DesignNetlistIR } from "./ir.js";
 import {
   mapSimulationFile,
@@ -220,15 +221,10 @@ export function compileSourceSimulation(
     const result = analyzeDesignNetlist(effective, {
       format: "spice",
       rootDocumentId: binding.documentId,
+      ...SIMULATION_DECK_GROUND,
+      rootAsTopLevel: binding.emission === "top-level",
     });
-    diagnostics.push(
-      ...result.diagnostics.map((d) => ({
-        code: d.code,
-        severity: d.severity,
-        message: d.message,
-        field: d.documentId,
-      })),
-    );
+    diagnostics.push(...result.diagnostics.map(simulationNetlistDiagnostic));
     if (result.ir)
       plans.set(
         binding.id,
@@ -340,11 +336,8 @@ export function compileSourceSimulation(
     if (!printed.ok)
       diagnostics.push(
         ...printed.diagnostics.map((d) => ({
-          code: d.code,
-          severity: d.severity,
-          message: d.message,
+          ...simulationNetlistDiagnostic(d),
           path: binding.path,
-          field: d.documentId,
         })),
       );
     else

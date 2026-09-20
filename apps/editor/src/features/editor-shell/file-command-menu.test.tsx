@@ -45,11 +45,11 @@ describe("FileCommandMenu", () => {
     expect(markup).toContain("Saved Circuit");
     expect(markup).toContain('class="cloud-project-time"');
     expect(markup).toContain("cloud-project-cloud-1");
-    expect(markup).toContain("Import Project File…");
+    expect(markup).toContain("导入项目文件…");
     expect(markup).toContain("Import SPICE / SCS…");
-    expect(markup).toContain("Import Cadence SPICE (`!` globals)…");
+    expect(markup).toContain("导入 Cadence SPICE（`!` 全局网络）…");
     expect(markup).toContain('data-testid="cadence-spice-files"');
-    expect(markup).toContain("Export Project File…");
+    expect(markup).toContain("导出项目文件…");
     expect(markup).not.toContain("Copy SPICE netlist");
     expect(markup).not.toContain("Copy Spectre netlist");
     expect(markup).not.toContain("Download Backup");
@@ -57,11 +57,11 @@ describe("FileCommandMenu", () => {
     expect(markup).not.toContain("cloud snapshot");
   });
 
-  it("identifies the isolated Preview Project store", () => {
+  it("keeps the production Cloud Project store as the only configured store", () => {
     const markup = renderToStaticMarkup(
       <FileCommandMenu
-        projectStoreLabel="预览项目"
-        projectStoreItemLabel="预览项目"
+        projectStoreLabel="云项目"
+        projectStoreItemLabel="云项目"
         cloudProjects={[]}
         activeCloudProjectId={null}
         canRevert={false}
@@ -83,6 +83,7 @@ describe("FileCommandMenu", () => {
       />,
     );
 
-    expect(markup).toContain(`预览项目 (0/${CLOUD_PROJECT_LIMIT})`);
+    expect(markup).toContain(`云项目 (0/${CLOUD_PROJECT_LIMIT})`);
+    expect(markup).not.toContain("预览项目");
   });
 });

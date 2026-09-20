@@ -173,13 +173,6 @@ export function samePoint(left: Point, right: Point): boolean {
   return left.x === right.x && left.y === right.y;
 }
 
-export function endpointBelongsToInstance(
-  endpoint: RouteEndpoint,
-  instanceId: string,
-): boolean {
-  return endpoint.kind === "terminal" && endpoint.instanceId === instanceId;
-}
-
 /**
  * Move one resolved terminal endpoint while preserving the axis of its
  * adjacent persisted segment. This changes geometry only; it never changes
@@ -204,29 +197,6 @@ export function followRouteEndpoint(
     newPoint,
     leads,
     outward,
-  );
-}
-
-/**
- * Apply topology-preserving Route geometry after any instance placement
- * transform. The caller supplies the pre-edit snapshot and the transformed
- * draft, making move/rotate/mirror share one behavior at the transaction
- * boundary.
- */
-export function applyInstanceRouteFollow(
-  draft: SchematicDocument,
-  originalDocument: SchematicDocument,
-  resolver: SymbolResolver,
-  instanceId: string,
-  explicitlyAuthoredRouteIds: ReadonlySet<string>,
-): string[] {
-  return applyInstancesRouteFollow(
-    draft,
-    originalDocument,
-    resolver,
-    resolver,
-    new Set([instanceId]),
-    explicitlyAuthoredRouteIds,
   );
 }
 

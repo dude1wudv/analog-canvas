@@ -1,3 +1,4 @@
+import { withProjectComponentDefinitions } from "@icm/symbols";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
@@ -7,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { CURRENT_PROJECT_SCHEMA_VERSION } from "@icm/model";
 import {
   parseProject,
+  canonicalConnectionIndexes,
   serializeProject,
   tryParseProjectWithMetadata,
 } from "./index.js";
@@ -83,7 +85,11 @@ describe("supported Project compatibility corpus", () => {
       expect(result.migrated).toBe(true);
       const saved = serializeProject(result.project);
       assertCurrentForm(saved);
-      expect(parseProject(saved)).toEqual(result.project);
+      expect(canonicalConnectionIndexes(parseProject(saved))).toEqual(
+        canonicalConnectionIndexes(
+          withProjectComponentDefinitions(result.project),
+        ),
+      );
     }
   });
 

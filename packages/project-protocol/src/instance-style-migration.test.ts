@@ -46,7 +46,7 @@ import { upgradeSchema47To48 } from "./transforms/simulation-design-variables.js
 describe("schema migrations through hidden Net-name retirement", () => {
   it("keeps each retained historical transform independently usable", () => {
     const current = JSON.parse(
-      serializeProject(createEmptyProject("test", "Test")),
+      JSON.stringify(createEmptyProject("test", "Test")),
     ) as Record<string, unknown>;
     const v29 = upgradeSchema28To29({ ...current, schemaVersion: 28 });
     const v30 = upgradeSchema29To30(v29);
@@ -114,7 +114,7 @@ describe("schema migrations through hidden Net-name retirement", () => {
 
   it("migrates schema 31 through the current schema at the project boundary", () => {
     const current = JSON.parse(
-      serializeProject(createEmptyProject("test", "Test")),
+      JSON.stringify(createEmptyProject("test", "Test")),
     ) as Record<string, unknown>;
     const v31 = JSON.stringify({ ...current, schemaVersion: 31 });
     const result = tryParseProjectWithMetadata(v31);
@@ -128,7 +128,7 @@ describe("schema migrations through hidden Net-name retirement", () => {
 
   it("keeps schema 30 loadable through the upgrade chain", () => {
     const current = JSON.parse(
-      serializeProject(createEmptyProject("test", "Test")),
+      JSON.stringify(createEmptyProject("test", "Test")),
     ) as Record<string, unknown>;
     const v30 = JSON.stringify({ ...current, schemaVersion: 30 });
     expect(tryParseProjectWithMetadata(v30)).toMatchObject({

@@ -105,7 +105,9 @@ export async function buildSimulationArtifactArchive(
           entries,
           {
             level: 6,
-            mtime: new Date("1980-01-01T00:00:00.000Z"),
+            // ZIP timestamps start in 1980 local time. Jan 1 UTC is still
+            // 1979 in western time zones, which fflate correctly rejects.
+            mtime: new Date("1980-01-02T00:00:00.000Z"),
           },
           (error, bytes) => (error ? reject(error) : resolve(bytes)),
         ),
@@ -148,7 +150,7 @@ export async function buildSimulationWorkspaceArchive(
       bytes: await new Promise<Uint8Array>((resolve, reject) =>
         zip(
           entries,
-          { level: 6, mtime: new Date("1980-01-01T00:00:00.000Z") },
+          { level: 6, mtime: new Date("1980-01-02T00:00:00.000Z") },
           (error, bytes) => (error ? reject(error) : resolve(bytes)),
         ),
       ),

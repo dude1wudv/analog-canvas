@@ -490,9 +490,7 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
           <span className="simulation-code-output-spacer" />
           <button
             type="button"
-            aria-label={
-              collapsed ? "展开代码输出" : "折叠代码输出"
-            }
+            aria-label={collapsed ? "展开代码输出" : "折叠代码输出"}
             onClick={() => setCollapsed(!collapsed)}
           >
             {collapsed ? "⌃" : "⌄"}
@@ -500,9 +498,7 @@ export function SimulationCodeWorkspace(props: SimulationCodeWorkspaceProps) {
           {props.onToggleMaximize ? (
             <button
               type="button"
-              aria-label={
-                props.maximized ? "还原结果区" : "最大化结果区"
-              }
+              aria-label={props.maximized ? "还原结果区" : "最大化结果区"}
               onClick={() => {
                 setCollapsed(false);
                 props.onToggleMaximize?.();

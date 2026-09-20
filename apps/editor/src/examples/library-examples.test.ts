@@ -4,25 +4,29 @@ import { readFileSync } from "node:fs";
 import {
   buildProjectConnectivityIndex,
   evaluateSubmissionGates,
+  pointOnSegment,
+  resolveAnnotationText,
   resolveDocumentLogicalNets,
+  resolveDocumentRoutingGeometry,
+  resolveEndpointPoint,
   resolveVisualAnchor,
   runErcChecks,
 } from "@icm/derived";
-import {
-  CURRENT_PROJECT_SCHEMA_VERSION,
-  readSimulationExperimentConfig,
-} from "@icm/model";
+import { flattenRichText, readSimulationExperimentConfig } from "@icm/model";
 import type { CircuitProject } from "@icm/model";
 import {
   analyzeDesignNetlist,
   compileSourceSimulation,
   createDesignNetlistExport,
-  createNetlistExportProfile,
   printSpiceNetlist,
 } from "@icm/netlist";
-import { serializeProject } from "@icm/project-protocol";
+import {
+  serializeProject,
+  CURRENT_PROJECT_FILE_VERSION,
+} from "@icm/project-protocol";
 import { builtInSymbols, createProjectSymbolResolver } from "@icm/symbols";
 import { describe, expect, it } from "vitest";
+import { createTextEditingSession } from "../features/text-editing/text-editing";
 
 import {
   createLibraryExampleProject,
@@ -57,7 +61,7 @@ describe("bundled Library Project examples", () => {
     for (const example of libraryProjectExamples) {
       expect(example.name.trim()).not.toBe("");
       expect(serializeProject(example.project)).toContain(
-        `"schemaVersion": ${CURRENT_PROJECT_SCHEMA_VERSION}`,
+        `"schemaVersion": ${CURRENT_PROJECT_FILE_VERSION}`,
       );
       expect(example.project.documents.length).toBeGreaterThanOrEqual(1);
       expect(
@@ -107,6 +111,121 @@ describe("bundled Library Project examples", () => {
         ),
         example.id,
       ).toEqual([]);
+    }
+  });
+
+  it("defaults device labels to live netlist names, without display aliases", () => {
+    for (const example of libraryProjectExamples) {
+      for (const document of example.project.documents) {
+        for (const annotation of document.annotations) {
+          if (
+            annotation.kind !== "instance-label" ||
+            annotation.anchor.kind !== "object"
+          )
+            continue;
+          const instanceId = annotation.anchor.objectId;
+          const instance = document.instances.find(
+            (item) => item.id === instanceId,
+          );
+          if (!instance?.reference) continue;
+          const context = `${example.id}:${annotation.id}`;
+          expect(annotation.binding, context).toEqual({
+            kind: "instance-reference",
+            instanceId,
+          });
+          expect(
+            flattenRichText(resolveAnnotationText(document, annotation)),
+            context,
+          ).toBe(instance.reference);
+          expect(
+            createTextEditingSession(
+              { owner: "annotation", object: annotation },
+              document,
+            ).displayAlias,
+            context,
+          ).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("draws a physical connection at every connected port, not just net membership", () => {
+    for (const example of libraryProjectExamples) {
+      const resolver = projectResolver(example.project);
+      for (const document of example.project.documents) {
+        const routing = resolveDocumentRoutingGeometry(document, resolver);
+        for (const port of document.instances.filter(
+          (item) => item.symbolId === "port",
+        )) {
+          const net = document.nets.find((item) =>
+            item.terminals.some((terminal) => terminal.instanceId === port.id),
+          );
+          if (!net || net.terminals.length < 2) continue;
+          const point = resolveEndpointPoint(document, resolver, {
+            kind: "terminal",
+            instanceId: port.id,
+            pinName: "P",
+          });
+          expect(point, `${example.id}:${port.id}`).not.toBeNull();
+          if (!point) continue;
+          const touchesWire = [...routing.routes.values()].some(
+            (route) =>
+              route.netId === net.id &&
+              route.segments.some((segment) =>
+                pointOnSegment(point, segment.from, segment.to),
+              ),
+          );
+          const touchesPin = net.terminals.some((terminal) => {
+            if (terminal.instanceId === port.id) return false;
+            const other = resolveEndpointPoint(document, resolver, {
+              kind: "terminal",
+              ...terminal,
+            });
+            return other?.x === point.x && other?.y === point.y;
+          });
+          expect(
+            touchesWire || touchesPin,
+            `${example.id}:${document.id}:${port.id}: disconnected port artwork`,
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("keeps the two-stage input separate from its output and negative feedback", () => {
+    const project = createLibraryExampleProject("two-stage-op-amp")!;
+    const document = project.documents[0]!;
+    const input = document.netlist!.terminals.find(
+      (terminal) => terminal.name === "Vin",
+    )!;
+    const output = document.netlist!.terminals.find(
+      (terminal) => terminal.name === "Vout",
+    )!;
+    expect(input.netId).not.toBe(output.netId);
+    expect(
+      document.nets.find((net) => net.id === input.netId)!.terminals,
+    ).toEqual(
+      expect.arrayContaining([
+        { instanceId: "P13", pinName: "P" },
+        { instanceId: "X7", pinName: "IN+" },
+      ]),
+    );
+    expect(
+      document.nets.find((net) => net.id === output.netId)!.terminals,
+    ).toEqual(
+      expect.arrayContaining([
+        { instanceId: "P12", pinName: "P" },
+        { instanceId: "X7", pinName: "IN-" },
+        { instanceId: "X8", pinName: "OUT" },
+      ]),
+    );
+    for (const format of ["spice", "spectre"] as const) {
+      const exported = createDesignNetlistExport(project, { format });
+      expect(exported.status, JSON.stringify(exported.diagnostics)).toBe(
+        "ready",
+      );
+      if (exported.status !== "ready") continue;
+      expect(exported.file.text).toMatch(/X1\s+\(?VDD VSS Vin Vout /u);
     }
   });
 
@@ -160,27 +279,39 @@ describe("bundled Library Project examples", () => {
     expect(createLibraryExampleProject("missing-example")).toBeNull();
   });
 
-  it("exports every transistor-level Example with the Abstract preset", () => {
-    const transistorLevelExampleIds = new Set([
-      "common-source-amplifier",
-      "current-mirror-loaded-differential-pair",
-      "fully-differential-two-stage-op-amp",
-      "five-transistor-ota-sky130",
-    ]);
-    const failures = libraryProjectExamples
-      .filter((example) => transistorLevelExampleIds.has(example.id))
-      .flatMap((example) => {
-        const result = createDesignNetlistExport(example.project, {
-          profile: createNetlistExportProfile("abstract"),
-        });
-        const errors = result.diagnostics.filter(
-          (diagnostic) => diagnostic.severity === "error",
-        );
-        return result.status === "ready" && errors.length === 0
-          ? []
-          : [{ example: example.id, status: result.status, errors }];
-      });
-    expect(failures).toEqual([]);
+  it("exports a complete Example without replacing its persisted bindings", () => {
+    const example = createLibraryExampleProject("five-transistor-ota-sky130");
+    expect(example).not.toBeNull();
+    if (!example) return;
+
+    const result = createDesignNetlistExport(example);
+    expect(result.status).toBe("ready");
+    expect(
+      result.diagnostics.filter(
+        (diagnostic) => diagnostic.severity === "error",
+      ),
+    ).toEqual([]);
+    if (result.status !== "ready") return;
+    expect(result.file.text).toContain("sky130_fd_pr__nfet_01v8");
+    expect(result.file.text).toContain("sky130_fd_pr__pfet_01v8");
+  });
+
+  it("reports an incomplete Example instead of repairing it with an export preset", () => {
+    const example = createLibraryExampleProject("common-source-amplifier");
+    expect(example).not.toBeNull();
+    if (!example) return;
+
+    const result = createDesignNetlistExport(example);
+    expect(
+      result.diagnostics.some(
+        (diagnostic) => diagnostic.code === "MISSING_MODEL_TARGET",
+      ),
+    ).toBe(true);
+    expect(
+      result.diagnostics.some(
+        (diagnostic) => diagnostic.code === "MISSING_REQUIRED_PARAMETER",
+      ),
+    ).toBe(true);
   });
 });
 
@@ -442,7 +573,7 @@ describe("the bundled five-transistor Sky130 OTA", () => {
   });
 
   it("exports an ota_5t subcircuit connectivity-equivalent to the reference", () => {
-    // ADR 0055's acceptance fixture is the circuit this example draws. A
+    // Simulation rationale's acceptance fixture is the circuit this example draws. A
     // structural comparison — not a string compare — is what proves the
     // drawing did not quietly move a terminal or drop a finger count.
     const referenceText = readFileSync(

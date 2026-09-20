@@ -11,6 +11,8 @@ describe("DrawingToolbar", () => {
         libraryPanelOpen
         projectPanel="project-code"
         tool="wire"
+        styleProfileId="razavi-textbook"
+        onStartInsert={vi.fn()}
         documentSettingsOpen
         undo={{ enabled: true, execute: vi.fn() }}
         redo={{ enabled: true, execute: vi.fn() }}
@@ -36,17 +38,10 @@ describe("DrawingToolbar", () => {
     expect(markup).not.toContain('data-testid="draw-tool-line"');
     expect(markup).not.toContain('data-testid="draw-tool-rectangle"');
     expect(markup).not.toContain('data-testid="draw-tool-circle"');
-    expect(markup).toContain("Document settings");
+    expect(markup).toContain("文档设置");
     expect(markup).toContain('data-testid="digital-simulation-toggle"');
-    expect(markup).toContain("Digital Simulation");
-    expect(markup).toContain('class="draw-toolbar-project-spacer"');
-    expect(
-      markup.indexOf('data-testid="netlist-panel-toggle"'),
-    ).toBeGreaterThan(
-      markup.indexOf('data-testid="digital-simulation-toggle"'),
-    );
-    expect(markup.indexOf('data-testid="project-code-toggle"')).toBeGreaterThan(
-      markup.indexOf('data-testid="netlist-panel-toggle"'),
-    );
+    expect(markup).toContain("数字仿真");
+    expect(markup).toContain('aria-label="Panels"');
+    expect(markup).toContain('aria-label="Annotation tools"');
   });
 });

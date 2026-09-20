@@ -1,3 +1,5 @@
+import { serializeProject } from "@icm/project-protocol";
+import { parseSavedProject } from "./editor-fixtures";
 import { expect, test, type Page } from "@playwright/test";
 import {
   awaitEditorReady,
@@ -17,7 +19,7 @@ async function placeResistor(page: Page) {
   await page.keyboard.press("Escape");
 }
 async function projectFile(page: Page) {
-  return JSON.parse(
+  return parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -37,6 +39,10 @@ test("canvas edits one visual annotation without changing the Netlist Reference"
     (a: { id: string }) => a.id === "instance-label-R1",
   );
   await page.getByTestId("annotation-hit-instance-label-R1").dblclick();
+  await expect(
+    page.getByRole("checkbox", { name: "Use display alias" }),
+  ).not.toBeChecked();
+  await page.getByRole("checkbox", { name: "Use display alias" }).check();
   const editor = page.getByRole("textbox", { name: "Canvas text editor" });
   await expect(
     page.getByRole("button", { name: "Bold", exact: true }),
@@ -44,32 +50,41 @@ test("canvas edits one visual annotation without changing the Netlist Reference"
   await expect(
     page.getByRole("button", { name: "Subscript", exact: true }),
   ).toBeVisible();
-  const [sizeControl, ...actionControls] = await Promise.all(
-    [
-      page.getByRole("button", { name: "Increase text size" }),
-      page.getByRole("button", { name: "Apply text changes" }),
-      page.getByRole("button", { name: "Cancel text changes" }),
-      page.getByRole("button", { name: "Delete text" }),
-      page.getByRole("button", { name: "Use netlist name", exact: true }),
-    ].map(async (control) => {
-      const bounds = await control.boundingBox();
-      if (!bounds) throw new Error("Text editor control is not measurable");
-      return bounds;
-    }),
-  );
+  const controlBounds = async (name: string) => {
+    const bounds = await page.getByRole("button", { name }).boundingBox();
+    if (!bounds) throw new Error("Text editor control is not measurable");
+    return bounds;
+  };
+  const [
+    decreaseControl,
+    increaseControl,
+    applyControl,
+    cancelControl,
+    deleteControl,
+  ] = await Promise.all([
+    controlBounds("Decrease text size"),
+    controlBounds("Increase text size"),
+    controlBounds("Apply text changes"),
+    controlBounds("Cancel text changes"),
+    controlBounds("Delete text"),
+  ]);
+  const actionControls = [applyControl, cancelControl, deleteControl];
   expect(
     actionControls.every(({ y }) => Math.abs(y - actionControls[0]!.y) < 1),
   ).toBe(true);
-  expect(actionControls[0]!.y).toBeGreaterThan(sizeControl!.y);
+  expect(Math.abs(increaseControl.y - decreaseControl.y)).toBeLessThan(1);
+  expect(increaseControl.x).toBeGreaterThan(decreaseControl.x);
+  expect(actionControls[0]!.y).toBeGreaterThan(increaseControl.y);
   const toolbarBounds = await page
     .getByRole("toolbar", { name: "Text formatting" })
     .boundingBox();
   if (!toolbarBounds) throw new Error("Text toolbar is not measurable");
-  expect(
-    toolbarBounds.x +
-      toolbarBounds.width -
-      (sizeControl!.x + sizeControl!.width),
-  ).toBeLessThanOrEqual(12);
+  for (const control of [decreaseControl, increaseControl, ...actionControls]) {
+    expect(control.x).toBeGreaterThanOrEqual(toolbarBounds.x);
+    expect(control.x + control.width).toBeLessThanOrEqual(
+      toolbarBounds.x + toolbarBounds.width + 1,
+    );
+  }
   await editor.fill("R2");
   await editor.press("End");
   await editor.press("Shift+Enter");
@@ -96,7 +111,7 @@ test("canvas edits one visual annotation without changing the Netlist Reference"
   await page.getByTestId("project-file").setInputFiles({
     name: "visual-annotation.icproj.json",
     mimeType: "application/json",
-    buffer: Buffer.from(JSON.stringify(saved)),
+    buffer: Buffer.from(serializeProject(saved)),
   });
   await expect(page.getByTestId("status")).toContainText(
     "Opened visual-annotation.icproj.json",
@@ -114,18 +129,19 @@ test("Properties renames the electrical identity explicitly; restore is an in-pl
 }) => {
   await placeResistor(page);
   await page.getByTestId("annotation-hit-instance-label-R1").dblclick();
+  await page.getByRole("checkbox", { name: "Use display alias" }).check();
   await page.getByRole("textbox", { name: "Canvas text editor" }).fill("load");
   await page.getByRole("button", { name: "Apply text changes" }).click();
   await page.getByTestId("hit-R1").click();
-  await page.getByTestId("selection-shelf").click();
+  await page.keyboard.press("q");
   const properties = page.getByRole("complementary", { name: "Properties" });
-  await expectComponentCodeField(page, "displayName", "load");
+  await expectComponentCodeField(page, "name", "load");
   await expectComponentCodeField(page, "netlistName", "R1");
   await expect(properties.getByLabel("Component label")).toHaveCount(0);
   await editComponentPropertyCode(page, (code) => {
-    code.displayName = "RL";
+    code.name = "RL";
   });
-  await expectComponentCodeField(page, "displayName", "RL");
+  await expectComponentCodeField(page, "name", "RL");
   await expectComponentCodeField(page, "netlistName", "R1");
   await expect(visual(page)).toContainText("RL");
   await editComponentPropertyCode(page, (code) => {
@@ -150,14 +166,16 @@ test("Properties renames the electrical identity explicitly; restore is an in-pl
   await expect(visual(page)).toContainText("RL");
 
   await page.getByTestId("annotation-hit-instance-label-R1").dblclick();
-  const restore = page.getByRole("button", {
-    name: "Use netlist name",
+  const restore = page.getByRole("checkbox", {
+    name: "Use display alias",
     exact: true,
   });
-  await restore.click();
+  await expect(restore).toBeChecked();
+  await restore.uncheck();
+  await expect(visual(page)).toContainText("R7");
   await expect(
     page.getByRole("textbox", { name: "Canvas text editor" }),
-  ).toHaveText("R7");
+  ).toHaveValue("R7");
   await page.getByRole("button", { name: "Apply text changes" }).click();
   await expect(visual(page)).toContainText("R7");
   const saved = await projectFile(page);

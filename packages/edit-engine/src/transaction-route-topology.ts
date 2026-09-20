@@ -1,10 +1,6 @@
-import { JunctionSchema, deriveStableId, routeEndpoints } from "@icm/model";
+import { JunctionSchema, routeEndpoints } from "@icm/model";
 import type { SchematicDocument } from "@icm/model";
-import {
-  endpointKey,
-  resolveDocumentLogicalNets,
-  resolveEndpointConnection,
-} from "@icm/derived";
+import { endpointKey, resolveEndpointConnection } from "@icm/derived";
 import type { SymbolResolver } from "@icm/symbols";
 
 import type { EditTransaction } from "./edit-schema.js";
@@ -15,12 +11,8 @@ import {
   rejectedEditMutation,
 } from "./transaction-domain.js";
 import {
-  type BulkDefaultIdentity,
-  propagateSpiceSourceEvidenceAfterSplit,
   removeConnectivityEvidenceOwnedBy,
   retargetConnectivityEvidenceOwner,
-  retargetMosBulkDefaultsAfterSplit,
-  retargetOwnerEvidenceAfterSplit,
 } from "./transaction-connectivity.js";
 import {
   captureNetLabelRouteAnchors,
@@ -34,7 +26,6 @@ import { splitRoute } from "./transaction-route-follow.js";
 import {
   addEndpointToNet,
   endpointOwnerNetId,
-  netEndpointGroups,
   routeIsProtected,
   validateConnectableEndpoint,
   validateRoute,
@@ -476,26 +467,6 @@ export function applyRouteTopologyEdit(
           },
         );
       }
-      const bulkDefaultBeforeCut =
-        draft.mosBulkDefaults?.nmosNetId === net.id ||
-        draft.mosBulkDefaults?.pmosNetId === net.id
-          ? resolveDocumentLogicalNets(draft).byBaseNetId.get(net.id)
-          : undefined;
-      const bulkDefaultIdentity: BulkDefaultIdentity | undefined =
-        bulkDefaultBeforeCut
-          ? {
-              ...(bulkDefaultBeforeCut.name
-                ? { name: bulkDefaultBeforeCut.name }
-                : {}),
-              ...(bulkDefaultBeforeCut.scope
-                ? { scope: bulkDefaultBeforeCut.scope }
-                : {}),
-              ...(bulkDefaultBeforeCut.powerDomain === "ground" ||
-              bulkDefaultBeforeCut.powerDomain === "vdd"
-                ? { powerDomain: bulkDefaultBeforeCut.powerDomain }
-                : {}),
-            }
-          : undefined;
       const candidateOrphanJunctionIds = new Set(
         routeEndpoints(route).flatMap((endpoint) =>
           endpoint.kind === "junction" ? [endpoint.junctionId] : [],
@@ -550,157 +521,10 @@ export function applyRouteTopologyEdit(
         changedObjectIds.add(junctionId);
       }
 
-      const groups = netEndpointGroups(draft, net.id, context.symbolResolver);
-      if (groups.length === 0) {
-        for (const netId of new Set([net.id, ...ownerNetIds])) {
-          deferNetPrune(netId);
-        }
-        if (!draft.nets.some((candidate) => candidate.id === net.id)) {
-          if (draft.mosBulkDefaults?.nmosNetId === net.id) {
-            delete draft.mosBulkDefaults.nmosNetId;
-          }
-          if (draft.mosBulkDefaults?.pmosNetId === net.id) {
-            delete draft.mosBulkDefaults.pmosNetId;
-          }
-        }
-        connectivityChanged = true;
-        break;
-      }
-      if (groups.length > 1) {
-        // The component containing the authored Route's `from` endpoint (or
-        // `to` when `from` was an orphan Junction removed by this cut)
-        // retains the original Base-Net identity and non-owner Evidence.
-        // Every detached component receives a new Base Net; logical/global/
-        // imported Evidence is never allowed to suppress physical splitting.
-        const primaryIndex = routeEndpoints(route)
-          .map((endpoint) => endpointKey(endpoint))
-          .map((key) => groups.findIndex((group) => group.includes(key)))
-          .find((index) => index >= 0);
-        if (primaryIndex !== undefined && primaryIndex > 0) {
-          groups.unshift(...groups.splice(primaryIndex, 1));
-        }
-        const netIdByEndpoint = new Map<string, string>();
-        const splitNetIds = groups
-          .slice(1)
-          .map((group) =>
-            deriveStableId("net-split", net.id, route.id, group[0]!),
-          );
-        const collidingNetId = splitNetIds.find((splitNetId) =>
-          draft.nets.some((candidate) => candidate.id === splitNetId),
-        );
-        if (collidingNetId) {
-          return rejectAt(
-            "EDIT_PRECONDITION",
-            `Derived split Net already exists: ${collidingNetId}`,
-            [],
-            [collidingNetId],
-          );
-        }
-        groups.forEach((group, index) => {
-          const groupNetId =
-            index === 0
-              ? net.id
-              : deriveStableId("net-split", net.id, route.id, group[0]!);
-          for (const key of group) netIdByEndpoint.set(key, groupNetId);
-        });
-        for (const instance of draft.instances) {
-          if (instance.mosBulkBinding?.netId !== net.id) continue;
-          const bodyNetId = netIdByEndpoint.get(
-            endpointKey({
-              kind: "terminal",
-              instanceId: instance.id,
-              pinName: "B",
-            }),
-          );
-          if (bodyNetId && bodyNetId !== net.id) {
-            instance.mosBulkBinding.netId = bodyNetId;
-            changedObjectIds.add(instance.id);
-          }
-        }
-        const originalTerminals = [...net.terminals];
-        const terminalsFor = (groupNetId: string) =>
-          originalTerminals.filter(
-            (terminal) =>
-              netIdByEndpoint.get(
-                endpointKey({ kind: "terminal", ...terminal }),
-              ) === groupNetId,
-          );
-        net.terminals = terminalsFor(net.id);
-        changedObjectIds.add(net.id);
-        for (const group of groups.slice(1)) {
-          const groupNetId = netIdByEndpoint.get(group[0]!)!;
-          draft.nets.push({
-            id: groupNetId,
-            terminals: terminalsFor(groupNetId),
-          });
-          changedObjectIds.add(groupNetId);
-        }
-        for (const cellTerminal of draft.netlist?.terminals ?? []) {
-          if (cellTerminal.netId !== net.id) continue;
-          const interfaceInstanceId = cellTerminal.interfaceInstanceIds[0];
-          const groupNetId = interfaceInstanceId
-            ? netIdByEndpoint.get(
-                endpointKey({
-                  kind: "terminal",
-                  instanceId: interfaceInstanceId,
-                  pinName: "P",
-                }),
-              )
-            : undefined;
-          if (groupNetId && groupNetId !== cellTerminal.netId) {
-            cellTerminal.netId = groupNetId;
-            changedObjectIds.add(cellTerminal.id);
-          }
-        }
-        for (const junction of draft.junctions.filter(
-          (candidate) => candidate.netId === net.id,
-        )) {
-          const groupNetId = netIdByEndpoint.get(
-            endpointKey({ kind: "junction", junctionId: junction.id }),
-          );
-          if (groupNetId && groupNetId !== junction.netId) {
-            junction.netId = groupNetId;
-            changedObjectIds.add(junction.id);
-          }
-        }
-        for (const remainingRoute of draft.routes.filter(
-          (candidate) => candidate.netId === net.id,
-        )) {
-          const fromNetId = netIdByEndpoint.get(
-            endpointKey(remainingRoute.start),
-          );
-          const toNetId = netIdByEndpoint.get(
-            endpointKey(routeEndpoints(remainingRoute)[1]),
-          );
-          if (!fromNetId || fromNetId !== toNetId) {
-            return rejectAt(
-              "INVALID_RESULT",
-              `Cut leaves Route ${remainingRoute.id} across split Nets`,
-              [],
-              [remainingRoute.id],
-            );
-          }
-          if (remainingRoute.netId !== fromNetId) {
-            remainingRoute.netId = fromNetId;
-            changedObjectIds.add(remainingRoute.id);
-          }
-        }
-        retargetOwnerEvidenceAfterSplit(draft, net.id, changedObjectIds);
-        propagateSpiceSourceEvidenceAfterSplit(
-          draft,
-          net.id,
-          [...new Set(netIdByEndpoint.values())],
-          changedObjectIds,
-        );
-        retargetMosBulkDefaultsAfterSplit(
-          draft,
-          net.id,
-          [...new Set(netIdByEndpoint.values())],
-          bulkDefaultIdentity,
-          changedObjectIds,
-        );
-        connectivityChanged = true;
-      }
+      // The final topology owns partitioning. A replacement Route later in
+      // this same transaction may reconnect both sides of this cut.
+      for (const netId of ownerNetIds) deferNetPrune(netId);
+      deferNetPrune(net.id);
       break;
     }
     case "connect_endpoints": {
@@ -720,10 +544,9 @@ export function applyRouteTopologyEdit(
       const fromOwner = endpointOwnerNetId(draft, edit.from);
       const toOwner = endpointOwnerNetId(draft, edit.to);
       if (fromOwner && toOwner && fromOwner !== toOwner) {
-        return rejectAt(
-          "EDIT_PRECONDITION",
-          `Endpoints belong to different Nets; merge ${fromOwner} and ${toOwner} explicitly`,
-        );
+        // The final graph joins these endpoints after all geometry edits.
+        connectivityChanged = true;
+        break;
       }
       let netId = fromOwner ?? toOwner;
       if (!netId) {

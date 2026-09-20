@@ -34,6 +34,14 @@ import type {
 
 export const ProjectStructureEditSchema = z.discriminatedUnion("kind", [
   z.strictObject({
+    kind: z.literal("reorder_documents"),
+    documentIds: z.array(z.string().min(1)).min(1),
+  }),
+  z.strictObject({
+    kind: z.literal("set_top_document"),
+    documentId: z.string().min(1),
+  }),
+  z.strictObject({
     kind: z.literal("add_source_file"),
     sourceFile: SourceFileRecordSchema,
   }),
@@ -301,9 +309,43 @@ export function executeProjectTransaction(
   const documentResults: EditTransactionResult[] = [];
   const explicitlyTouchedDocumentIds = new Set<string>();
   const cellSymbolChangedDocumentIds = new Set<string>();
+  const externalSymbolChangedIds = new Set<string>();
   let structuralChange = false;
 
   for (const [editIndex, edit] of transaction.edits.entries()) {
+    if (edit.kind === "reorder_documents") {
+      const byId = new Map(candidate.documents.map((cell) => [cell.id, cell]));
+      if (
+        edit.documentIds.length !== byId.size ||
+        new Set(edit.documentIds).size !== byId.size ||
+        edit.documentIds.some((id) => !byId.has(id))
+      ) {
+        return rejectProjectTransaction(
+          project,
+          "OBJECT_NOT_FOUND",
+          "Cell order must include each existing Cell exactly once",
+        );
+      }
+      structuralChange ||= candidate.documents.some(
+        (cell, index) => cell.id !== edit.documentIds[index],
+      );
+      candidate.documents = edit.documentIds.map((id) => byId.get(id)!);
+      continue;
+    }
+    if (edit.kind === "set_top_document") {
+      if (
+        !candidate.documents.some((document) => document.id === edit.documentId)
+      ) {
+        return rejectProjectTransaction(
+          project,
+          "OBJECT_NOT_FOUND",
+          `Cell does not exist: ${edit.documentId}`,
+        );
+      }
+      structuralChange ||= candidate.topDocumentId !== edit.documentId;
+      candidate.topDocumentId = edit.documentId;
+      continue;
+    }
     if (edit.kind === "add_source_file") {
       const existing = candidate.source.files.find(
         (sourceFile) => sourceFile.id === edit.sourceFile.id,
@@ -450,6 +492,7 @@ export function executeProjectTransaction(
     }
 
     if (edit.kind === "upsert_external_subcircuit_definition") {
+      externalSymbolChangedIds.add(edit.definition.id);
       const index = candidate.externalSubcircuitDefinitions.findIndex(
         (definition) => definition.id === edit.definition.id,
       );
@@ -626,7 +669,10 @@ export function executeProjectTransaction(
     }
   }
 
-  if (cellSymbolChangedDocumentIds.size > 0) {
+  if (
+    cellSymbolChangedDocumentIds.size > 0 ||
+    externalSymbolChangedIds.size > 0
+  ) {
     const originalResolver = createProjectSymbolResolver(
       project,
       builtInSymbols,
@@ -643,8 +689,10 @@ export function executeProjectTransaction(
       const callerIds = new Set(
         parent.instances.flatMap((instance) => {
           const binding = instance.netlist?.binding;
-          return binding?.kind === "subcircuit" &&
-            cellSymbolChangedDocumentIds.has(binding.childDocumentId)
+          return (binding?.kind === "subcircuit" &&
+            cellSymbolChangedDocumentIds.has(binding.childDocumentId)) ||
+            (binding?.kind === "external-subcircuit" &&
+              externalSymbolChangedIds.has(binding.definitionId))
             ? [instance.id]
             : [];
         }),

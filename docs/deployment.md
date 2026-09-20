@@ -65,7 +65,7 @@ remove production Cloudflare authentication.
 ## Releasing to Production
 
 Select the intended commit and use either a version tag or explicit dispatch.
-[ADR 0057](adr/0057-release-channels-preview-and-production.md) explains the choice.
+[Deployment ADR](adr/deployment.md) records why this fork retired automatic channel routing.
 
 ## Deploy, verify, recover
 

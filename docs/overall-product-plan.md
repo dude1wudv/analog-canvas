@@ -59,7 +59,7 @@ human UI / authorized Agent
   └─ prepare / run / read / cancel
        → SimulationService ← immutable snapshot of selected authored input
        → configured executor / managed admission
-       → ngspice + qualified models, or Preview's native VACASK candidate
+       → ngspice + qualified models, or the hosted native VACASK candidate
        → parsed results / artifacts → UI and Agent
 ```
 
@@ -86,7 +86,7 @@ through the bounded compatibility path in the
   explicit cut partitions physical connectivity.
 - Cell Pins are ordered hierarchy interfaces. Visual variants never delete
   electrical terminal semantics or invent MOS bulk connections.
-- Canonical Project content is schema-56, governed by the
+- The normalized editor model is schema-58; portable Project Code is schema-60, governed by the
   [file-format contract](specs/project-file-format.md).
   Cloud Save, portable file export, browser recovery, and public Gallery
   publication are distinct operations.

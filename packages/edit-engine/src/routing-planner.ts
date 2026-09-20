@@ -313,6 +313,8 @@ export interface RouteEditPlan {
   routeId: string;
   edits: SchematicEdit[];
   expectedElectricalEffect?: ExpectedElectricalEffect;
+  /** The edits leave every drawn wire and Junction where it already is. */
+  unchanged?: true;
   preview?: {
     routes: readonly RouteStretchProposal[];
     junctions: readonly JunctionMoveProposal[];
@@ -523,13 +525,18 @@ function routeEdits(
   });
 }
 
-/** Plan one topology-preserving segment drag as typed transaction edits. */
+/**
+ * Plan one topology-preserving segment drag as typed transaction edits.
+ * `origin` is where the drag began; a 45-degree segment moves along the
+ * dominant axis of the travel from it.
+ */
 export function proposeWireSegmentMove(
   document: SchematicDocument,
   resolver: SymbolResolver,
   routeId: string,
   segmentIndex: number,
   target: Point,
+  origin?: Point,
 ): RouteEditPlan {
   const proposal = proposeWireSegmentDrag(
     document,
@@ -537,6 +544,7 @@ export function proposeWireSegmentMove(
     routeId,
     segmentIndex,
     target,
+    origin,
   );
   const edits: SchematicEdit[] = [
     ...proposal.junctions.map((move): SchematicEdit => ({
@@ -577,10 +585,39 @@ export function proposeWireSegmentMove(
           }),
         }
       : undefined;
+  // A drag released where it started, or held back from the first step,
+  // plans the current geometry again; committing it would only add an empty
+  // undo step.
+  const samePoint = (left: Point | undefined, right: Point | undefined) =>
+    left?.x === right?.x && left?.y === right?.y;
+  const drawn = (source: SchematicDocument, id: string) => {
+    const route = source.routes.find((candidate) => candidate.id === id);
+    return route
+      ? resolveRouteGeometry(source, resolver, route)?.centerline
+      : [];
+  };
+  const unchanged =
+    proposal.junctions.every((move) =>
+      samePoint(
+        document.junctions.find((junction) => junction.id === move.junctionId)
+          ?.position,
+        move.position,
+      ),
+    ) &&
+    proposal.routes.every((item) => {
+      if (item.collapsedToContact) return false;
+      const before = drawn(document, item.routeId) ?? [];
+      const after = drawn(projected, item.routeId) ?? [];
+      return (
+        before.length === after.length &&
+        before.every((point, index) => samePoint(point, after[index]))
+      );
+    });
   return {
     routeId,
     edits,
     ...(expectedElectricalEffect ? { expectedElectricalEffect } : {}),
+    ...(unchanged ? { unchanged: true as const } : {}),
     preview: proposal,
   };
 }
@@ -1312,6 +1349,13 @@ export function proposeVisualRouteDeletion(
   const removedAnnotationIds = [
     ...new Set([...removedRouteAnnotationIds, ...removedPowerLabelIds]),
   ].sort((a, b) => a.localeCompare(b, "en"));
+  const removedFormalTerminalIds = (document.netlist?.terminals ?? []).flatMap(
+    (terminal) =>
+      terminal.interfaceAnnotationId &&
+      removedAnnotationIds.includes(terminal.interfaceAnnotationId)
+        ? [terminal.id]
+        : [],
+  );
   // `cut_connection` removes a junction that becomes orphaned. Only a selected
   // junction already detached before this transaction needs an explicit edit;
   // otherwise a second remove would reject the transaction.
@@ -1360,6 +1404,10 @@ export function proposeVisualRouteDeletion(
     junctionIds: sortedJunctionIds,
     annotationIds: removedAnnotationIds,
     edits: [
+      ...removedFormalTerminalIds.map((terminalId): SchematicEdit => ({
+        kind: "remove_cell_terminal",
+        terminalId,
+      })),
       ...removedAnnotationIds.map((annotationId): SchematicEdit => ({
         kind: "remove_schematic_annotation",
         annotationId,
@@ -1629,22 +1677,8 @@ export function proposeWireCommit(
           to.routePresentation === "power-rail"
         ? "power-rail"
         : undefined;
-  let netId = from.netId ?? to.netId;
-  if (from.netId && to.netId && from.netId !== to.netId) {
-    netId = from.netId;
-    edits.push({
-      kind: "merge_nets",
-      targetNetId: from.netId,
-      sourceNetId: to.netId,
-    });
-  }
-  if (!netId) netId = ids.newNetId;
-  edits.push({
-    kind: "connect_endpoints",
-    from: from.endpoint,
-    to: to.endpoint,
-    ...(!from.netId && !to.netId ? { newNetId: netId } : {}),
-  });
+  // Only an identity hint; the completed endpoint graph derives membership.
+  const netId = from.netId ?? to.netId ?? ids.newNetId;
   const routeId = ids.routeId;
   const routed = compileWireDraft(
     from,
@@ -1658,10 +1692,16 @@ export function proposeWireCommit(
     draft.routingMode ?? "orthogonal",
     draft.cornerOrder ?? "auto",
   );
-  // Exact endpoint contact is real connectivity but has no conductor length.
-  // Keep the ordinary connect/merge edits above and do not manufacture a
-  // Route whose sole segment begins and ends at the same resolved point.
-  if (routed.points.length < 2) return { routeId, netId, edits };
+  // Direct contact has no path to persist and remains an explicit connection.
+  if (routed.points.length < 2) {
+    edits.push({
+      kind: "connect_endpoints",
+      from: from.endpoint,
+      to: to.endpoint,
+      ...(!from.netId && !to.netId ? { newNetId: netId } : {}),
+    });
+    return { routeId, netId, edits };
+  }
   edits.push({
     kind: "set_route_path",
     route: createRoutePath({
@@ -1868,17 +1908,11 @@ export function proposeWireCommitThroughContacts(
 
     for (const extra of next.extras) {
       edits.push(...extra.source.preludeEdits);
-      if (extra.source.netId && extra.source.netId !== netId) {
-        edits.push({
-          kind: "merge_nets",
-          targetNetId: netId,
-          sourceNetId: extra.source.netId,
-        });
-      }
       edits.push({
         kind: "connect_endpoints",
         from: next.source.endpoint,
         to: extra.source.endpoint,
+        newNetId: ids.newNetId,
       });
     }
   }

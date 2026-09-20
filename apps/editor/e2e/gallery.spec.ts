@@ -1,12 +1,13 @@
 import { expect, test } from "@playwright/test";
-import type { Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import type { Locator, Page } from "@playwright/test";
 
 import {
   createEmptyDocument,
   createEmptyProject,
   CURRENT_PROJECT_SCHEMA_VERSION,
 } from "@icm/model";
-import { serializeProject } from "@icm/project-protocol";
+import { serializeProject, parseProject } from "@icm/project-protocol";
 import { hierarchicalSymbolId } from "@icm/symbols";
 
 import {
@@ -30,6 +31,232 @@ const ENTRY = {
 
 /** Match the list path with or without filters and a paging cursor. */
 const galleryListUrl = (url: URL): boolean => url.pathname === "/api/gallery";
+
+test("admin checks duplicates and cleans selected copies with partial failure recovery", async ({
+  page,
+  context,
+}) => {
+  const project = createEmptyProject("duplicate-fixture", "Circuit");
+  const document = project.documents[0]!;
+  document.instances = ["R1", "R2"].map((id) => ({
+    id,
+    reference: id,
+    symbolId: "resistor",
+    placement: null,
+    netlist: {
+      binding: { kind: "primitive" as const, deviceClass: "resistor" as const },
+      parameters: { value: "1k" },
+    },
+  }));
+  document.nets = ["1", "2"].map((pinName) => ({
+    id: pinName,
+    terminals: document.instances.map(({ id }) => ({
+      instanceId: id,
+      pinName,
+    })),
+  }));
+  const renamed = structuredClone(project);
+  renamed.documents[0]!.instances[0]!.reference = "R99";
+  const different = structuredClone(project);
+  different.documents[0]!.instances[0]!.netlist!.parameters.value = "2k";
+  const entries = [
+    { ...ENTRY, id: "original", name: "Resistor pair" },
+    { ...ENTRY, id: "redrawn", name: "Completely different title" },
+    { ...ENTRY, id: "unfinished", name: "Unfinished circuit" },
+    {
+      ...ENTRY,
+      id: "other-original",
+      name: "Other original",
+      createdAt: "2025-01-01",
+    },
+    { ...ENTRY, id: "other-copy", name: "Other copy" },
+  ];
+  const projects = [
+    project,
+    renamed,
+    createEmptyProject("empty", "Empty"),
+    different,
+    different,
+  ];
+  await context.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        user: {
+          id: "owner-1",
+          displayName: "Owner",
+          email: "owner@example.com",
+          provider: "github",
+          role: "user",
+          isAdmin: true,
+        },
+      },
+    }),
+  );
+  const recycled = new Set<string>();
+  const cleanupRequests: Array<{
+    keep: { id: string };
+    remove: Array<{ id: string }>;
+  }> = [];
+  let failOtherGroup = true;
+  // Context routes also intercept the dedicated worker's fetch requests.
+  await context.route("**/api/gallery**", (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/gallery/duplicates/recycle") {
+      const body = route.request().postDataJSON();
+      cleanupRequests.push(body);
+      if (failOtherGroup && body.keep.id === "other-original")
+        return route.fulfill({
+          status: 409,
+          json: { error: "duplicate-group-changed" },
+        });
+      const removed = body.remove.map((entry: { id: string }) => entry.id);
+      removed.forEach((id: string) => recycled.add(id));
+      return route.fulfill({ json: { kept: body.keep.id, recycled: removed } });
+    }
+    if (url.pathname.endsWith("preview.svg"))
+      return route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60"><path d="M10 30h20l5 -10 10 20 10 -20 10 20 5 -10h20" fill="none" stroke="black"/></svg>',
+      });
+    if (url.pathname === "/api/gallery") {
+      const visible = (
+        url.searchParams.has("author") ? [entries[0]!] : entries
+      ).filter((entry) => !recycled.has(entry.id));
+      return route.fulfill({
+        json: {
+          entries: visible,
+          total: visible.length,
+          nextCursor: null,
+        },
+      });
+    }
+    if (url.pathname.endsWith("/tags"))
+      return route.fulfill({ json: { tags: [] } });
+    const index = entries.findIndex((entry) =>
+      url.pathname.endsWith(`/${entry.id}`),
+    );
+    if (index >= 0)
+      return route.fulfill({
+        json: {
+          status: "public",
+          entry: entries[index],
+          projectText: serializeProject(projects[index]!),
+        },
+      });
+    return route.fulfill({ json: {} });
+  });
+  await page.goto("/?author=tz");
+  await expect(page.getByTestId("gallery-tile-original")).toBeVisible();
+  await expect(page.getByTestId("gallery-check-duplicates")).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "Fill missing SKY130 models",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await page.getByTestId("gallery-check-duplicates").click();
+  const panel = page.getByTestId("gallery-duplicates");
+  await expect(panel.getByRole("status")).toContainText(
+    "Scan finished: 5 checked · 2 extra copies in 2 groups · 1 unable to compare",
+  );
+  await expect(
+    panel.getByRole("link", { name: "Completely different title tz" }),
+  ).toHaveAttribute("href", "/g/redrawn");
+  await expect(page.getByTestId("gallery-tile-original")).toContainText(
+    "Duplicate · group 1",
+  );
+  await panel.getByText("Unable to compare · 1").click();
+  await expect(panel.getByText("No netlist devices to compare")).toBeVisible();
+  await expect(
+    panel.getByRole("radio", { name: "Keep Resistor pair", exact: true }),
+  ).toBeChecked();
+  await panel
+    .getByRole("radio", {
+      name: "Keep Completely different title",
+      exact: true,
+    })
+    .check();
+  await page.screenshot({
+    path: "plan/gallery-duplicate-cleanup.png",
+    fullPage: true,
+  });
+  await panel
+    .getByRole("button", { name: "Remove all extra copies (2)", exact: true })
+    .click();
+  await expect(
+    panel.getByText("Moved 1 circuit to the recycle bin.", { exact: false }),
+  ).toBeVisible();
+  await expect(panel.getByRole("alert")).toContainText(
+    "changed or no longer match",
+  );
+  expect(cleanupRequests.map((request) => request.keep.id)).toEqual([
+    "redrawn",
+    "other-original",
+  ]);
+  expect([...recycled]).toEqual(["original"]);
+  await expect(page.getByTestId("gallery-tile-original")).toHaveCount(0);
+  await expect(
+    panel.getByRole("link", { name: "Open recycle bin" }),
+  ).toHaveAttribute("href", "/moderation");
+  failOtherGroup = false;
+  const remainingGroup = panel
+    .locator("details")
+    .filter({ hasText: "same netlist" });
+  if ((await remainingGroup.getAttribute("open")) === null) {
+    await remainingGroup.locator("summary").click();
+  }
+  await remainingGroup
+    .getByRole("button", { name: "Keep selected, remove 1 copy" })
+    .click();
+  await expect(
+    panel.getByText("Moved 2 circuits to the recycle bin.", { exact: false }),
+  ).toBeVisible();
+  await expect(panel.getByRole("alert")).toHaveCount(0);
+  await expect(
+    panel.getByText("No remaining duplicates", { exact: false }),
+  ).toBeVisible();
+  expect([...recycled]).toEqual(["original", "other-copy"]);
+  await panel.getByRole("button", { name: "Hide results" }).click();
+  await expect(
+    panel.getByText("No remaining duplicates", { exact: false }),
+  ).not.toBeVisible();
+});
+
+for (const role of ["visitor", "user", "moderator"]) {
+  test(`duplicate check is hidden for ${role}`, async ({ page }) => {
+    await page.route("**/api/auth/me", (route) =>
+      route.fulfill({
+        json: {
+          user:
+            role === "visitor"
+              ? null
+              : {
+                  id: "member",
+                  displayName: "Member",
+                  email: "member@example.com",
+                  provider: "github",
+                  role,
+                  isAdmin: false,
+                },
+        },
+      }),
+    );
+    await page.route("**/api/gallery**", (route) =>
+      route.fulfill({
+        json: { entries: [ENTRY], total: 1, tags: [], nextCursor: null },
+      }),
+    );
+    await page.goto("/");
+    await expect(page.getByTestId(`gallery-tile-${ENTRY.id}`)).toBeVisible();
+    await expect(page.getByTestId("gallery-check-duplicates")).toHaveCount(0);
+    await expect(
+      page.getByRole("button", {
+        name: "Fill missing SKY130 models",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+  });
+}
 
 function hierarchicalPublishProject() {
   const project = createEmptyProject("hierarchical-publish", "Hierarchical");
@@ -114,6 +341,53 @@ async function mockGallery(page: Page, entries: object[]): Promise<void> {
     }),
   );
 }
+
+test("Gallery copies SKY130 dependencies with preview, repeat placement and atomic undo", async ({
+  page,
+}) => {
+  const source = parseProject(
+    readFileSync(
+      "apps/editor/src/examples/simulation-common-source.icproj.json",
+      "utf8",
+    ),
+  );
+  const count = source.documents.find((d) => d.id === source.topDocumentId)!
+    .instances.length;
+  await mockGallery(page, [ENTRY]);
+  await page.route(`**/api/gallery/${ENTRY.id}`, (route) =>
+    route.fulfill({
+      json: { entry: ENTRY, projectText: serializeProject(source) },
+    }),
+  );
+  await page.goto("/editor");
+  await awaitEditorReady(page);
+  await page.getByTestId("examples-toggle").click();
+  await page.getByTestId(`gallery-example-${ENTRY.id}`).click();
+  const canvas = page.getByTestId("schematic-canvas");
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error("Canvas is not measurable");
+  await page.mouse.move(box.x + 260, box.y + 220);
+  await expect(page.getByTestId("copy-placement-preview")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("instance-count")).toHaveText("0");
+  await page.getByTestId(`gallery-example-${ENTRY.id}`).click();
+  await page.mouse.move(box.x + 260, box.y + 220);
+  await page.keyboard.press("r");
+  await canvas.click({ position: { x: 260, y: 220 } });
+  await expect(page.getByTestId("instance-count")).toHaveText(String(count));
+  await expect(page.getByTestId("copy-placement-preview")).toBeVisible();
+  await canvas.click({ position: { x: 600, y: 380 } });
+  await expect(page.getByTestId("instance-count")).toHaveText(
+    String(count * 2),
+  );
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+z");
+  await expect(page.getByTestId("instance-count")).toHaveText(String(count));
+  await page.keyboard.press("Control+z");
+  await expect(page.getByTestId("instance-count")).toHaveText("0");
+  await page.keyboard.press("Control+Shift+z");
+  await expect(page.getByTestId("instance-count")).toHaveText(String(count));
+});
 
 test("the site lands on the full-screen gallery feed", async ({ page }) => {
   await mockGallery(page, [ENTRY]);
@@ -493,6 +767,138 @@ test("clicking a byline filters the wall to that author, clearable", async ({
   await page.getByTestId("gallery-filter-clear").click();
   await expect(page.getByTestId("gallery-tile-f-bob")).toBeVisible();
   await expect(page).not.toHaveURL(/author=/);
+});
+
+test("narrows the wall by netlist mark and by the reader's own likes", async ({
+  page,
+}) => {
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        user: {
+          id: "u-reader",
+          displayName: "Reader",
+          email: "reader@example.com",
+          provider: "github",
+          role: "user",
+        },
+      },
+    }),
+  );
+  await page.route("**/api/gallery**", (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname !== "/api/gallery") return route.fallback();
+    const tile = (
+      id: string,
+      name: string,
+      netlistable: boolean,
+      liked: boolean,
+    ) => ({
+      id,
+      name,
+      author: "reader",
+      description: "",
+      createdAt: "2026-08-22T10:00:00.000Z",
+      schemaVersion: 23,
+      netlistable,
+      likes: liked ? 1 : 0,
+      likedByViewer: liked,
+    });
+    const all = [
+      tile("f-ready", "Extractable", true, false),
+      tile("f-sketch", "Sketch", false, true),
+    ];
+    const entries = all.filter(
+      (entry) =>
+        (url.searchParams.get("netlistable") !== "1" || entry.netlistable) &&
+        (url.searchParams.get("liked") !== "1" || entry.likedByViewer),
+    );
+    return route.fulfill({ json: { entries, nextCursor: null } });
+  });
+  await page.route("**/api/gallery/*/preview.svg", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 6"><rect width="10" height="6" fill="#fff"/></svg>',
+    }),
+  );
+
+  await page.goto("/");
+  await expect(page.getByTestId("gallery-tile-f-sketch")).toBeVisible();
+
+  await page.getByTestId("gallery-filter-netlistable").click();
+  await expect(page.getByTestId("gallery-tile-f-ready")).toBeVisible();
+  await expect(page.getByTestId("gallery-tile-f-sketch")).toHaveCount(0);
+  await expect(page).toHaveURL(/netlist=1/u);
+
+  // The two marks compose, and here nothing carries both: the wall says which
+  // choice emptied it rather than reading as an empty Gallery.
+  await page.getByTestId("gallery-filter-liked").click();
+  await expect(page.getByTestId("gallery-mark-empty")).toBeVisible();
+
+  await page.getByTestId("gallery-filter-netlistable").click();
+  await expect(page.getByTestId("gallery-tile-f-sketch")).toBeVisible();
+  await expect(page.getByTestId("gallery-tile-f-ready")).toHaveCount(0);
+});
+
+test("keeps the reader's filter when they leave the wall and come back", async ({
+  page,
+}) => {
+  await page.route("**/api/gallery**", (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname !== "/api/gallery") return route.fallback();
+    const alice = url.searchParams.get("author") === "alice";
+    const entries = [
+      {
+        id: "p-alice",
+        name: "Alice's OTA",
+        author: "alice",
+        description: "",
+        createdAt: "2026-08-22T10:00:00.000Z",
+        schemaVersion: 23,
+      },
+      ...(alice
+        ? []
+        : [
+            {
+              id: "p-bob",
+              name: "Bob's Mixer",
+              author: "bob",
+              description: "",
+              createdAt: "2026-08-22T09:00:00.000Z",
+              schemaVersion: 23,
+            },
+          ]),
+    ];
+    return route.fulfill({ json: { entries, nextCursor: null } });
+  });
+  await page.route("**/api/gallery/*/preview.svg", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 6"><rect width="10" height="6" fill="#fff"/></svg>',
+    }),
+  );
+
+  await page.goto("/");
+  await page.getByTestId("gallery-author-p-alice").click();
+  await expect(page.getByTestId("gallery-tile-p-bob")).toHaveCount(0);
+  await expect(page).toHaveURL(/author=alice/u);
+
+  // Opening a circuit and returning to the bare address is the common way
+  // back; the wall must still be the slice the reader chose.
+  await page.goto("/");
+  await expect(page.getByTestId("gallery-filter")).toContainText(
+    "Circuits by alice",
+  );
+  await expect(page.getByTestId("gallery-tile-p-bob")).toHaveCount(0);
+  await expect(page).toHaveURL(/author=alice/u);
+
+  // And clearing it is remembered just as well, so the wall cannot creep back
+  // to a filter the reader switched off.
+  await page.getByTestId("gallery-filter-clear").click();
+  await expect(page.getByTestId("gallery-tile-p-bob")).toBeVisible();
+  await page.goto("/");
+  await expect(page.getByTestId("gallery-tile-p-bob")).toBeVisible();
+  await expect(page).not.toHaveURL(/author=/u);
 });
 
 test("the account chip sits on the header line and ellipsizes a long name", async ({
@@ -1194,11 +1600,25 @@ test("a gallery tile opens its circuit in the editor", async ({ page }) => {
   await page.goto("/");
   await page.getByTestId(`gallery-tile-${ENTRY.id}`).click();
   await expect(page).toHaveURL(/\/g\/g-ring$/);
+  // The editor arrives behind a lazy chunk. Wait for the canvas before
+  // reading the status line: an expect() poll gives up sooner than a cold,
+  // busy runner needs to load it, which is a failure with no defect in it.
+  await awaitEditorReady(page);
   await expect(page.getByTestId("status")).toContainText(
     `Opened gallery circuit: ${ENTRY.name}`,
   );
   // The circuit name is an editable field now, so it is read as a value.
   await expect(page.getByTestId("project-name-input")).toHaveValue(ENTRY.name);
+  const gallerySummary = page.getByTestId("gallery-entry-summary");
+  await expect(gallerySummary).toContainText(`by ${ENTRY.author}`);
+  await expect(gallerySummary).toContainText(ENTRY.description);
+  await gallerySummary.click();
+  const galleryInformation = page.getByTestId("gallery-entry-popover");
+  await expect(galleryInformation).toBeVisible();
+  await expect(galleryInformation).toContainText("Contributor");
+  await expect(galleryInformation).toContainText(ENTRY.author);
+  await expect(galleryInformation).toContainText("Notes");
+  await expect(galleryInformation).toContainText(ENTRY.description);
 
   // The brand mark is the single way back; a second toolbar link said the
   // same thing twice.
@@ -1602,7 +2022,7 @@ test("keeps newest-first order and stops after the last circuit", async ({
   ).toBe(true);
 });
 
-test("stars the circuits that extract and counts thumbs on every card", async ({
+test("marks the circuits that extract and counts thumbs on every card", async ({
   page,
 }) => {
   const extractable = {
@@ -1637,12 +2057,14 @@ test("stars the circuits that extract and counts thumbs on every card", async ({
   });
 
   await page.goto("/");
-  // The star marks the one that extracts. The other is on the wall all the
-  // same — a schematic is allowed to be abbreviated.
-  await expect(
-    page.getByTestId(`gallery-star-${extractable.id}`),
-  ).toBeVisible();
-  await expect(page.getByTestId(`gallery-star-${sketch.id}`)).toHaveCount(0);
+  // The netlist mark, a drawn deck rather than a star, belongs to the one
+  // that extracts. The other is on the wall all the same — a schematic is
+  // allowed to be abbreviated.
+  const mark = page.getByTestId(`gallery-netlist-${extractable.id}`);
+  await expect(mark).toBeVisible();
+  await expect(mark.locator("svg")).toHaveCount(1);
+  await expect(mark).not.toContainText("★");
+  await expect(page.getByTestId(`gallery-netlist-${sketch.id}`)).toHaveCount(0);
   await expect(page.getByTestId(`gallery-tile-${sketch.id}`)).toBeVisible();
 
   const thumb = page.getByTestId(`gallery-like-${extractable.id}`);
@@ -2075,6 +2497,7 @@ test("an opened gallery entry offers updating in place", async ({ page }) => {
   });
 
   await page.goto(`/g/${ENTRY.id}`);
+  await awaitEditorReady(page);
   await expect(page.getByTestId("status")).toContainText(
     `Opened gallery circuit: ${ENTRY.name}`,
   );
@@ -2165,6 +2588,7 @@ test("a reviewer browses version history and restores a version", async ({
   );
 
   await page.goto(`/g/${ENTRY.id}`);
+  await awaitEditorReady(page);
   await expect(page.getByTestId("status")).toContainText(
     `Opened gallery circuit: ${ENTRY.name}`,
   );
@@ -2190,6 +2614,7 @@ test("a reviewer browses version history and restores a version", async ({
   await expect(version).toHaveCSS("display", "grid");
   await expect(version).toContainText("Ring Oscillator (older)");
   await page.getByTestId("version-restore-2").click();
+  await awaitEditorReady(page);
   await expect(page.getByTestId("status")).toContainText(
     `Opened gallery circuit: ${ENTRY.name}`,
   );
@@ -2221,6 +2646,7 @@ test("replacing the project retires the stale update offer", async ({
   );
 
   await page.goto(`/g/${ENTRY.id}`);
+  await awaitEditorReady(page);
   await expect(page.getByTestId("status")).toContainText(
     `Opened gallery circuit: ${ENTRY.name}`,
   );
@@ -2292,6 +2718,7 @@ test("the Examples panel guards dirty work before opening an entry", async ({
 
   await card.click();
   await dialog.getByRole("button", { name: "Continue without saving" }).click();
+  await awaitEditorReady(page);
   await expect(page.getByTestId("status")).toContainText(
     `Opened gallery circuit: ${ENTRY.name}`,
   );
@@ -2305,6 +2732,7 @@ test("bundled starter tiles open their example in the editor", async ({
   await page.goto("/");
   await page.getByTestId("gallery-bundled-common-source-amplifier").click();
   await expect(page).toHaveURL(/\/editor\?example=common-source-amplifier$/);
+  await awaitEditorReady(page);
   await expect(page.getByTestId("status")).toContainText(
     "Opened example: Common-Source Amplifier",
   );
@@ -2320,9 +2748,25 @@ test("bundled VDD rails keep their current presentation in the Gallery and edito
   );
   const tileRails = tile.locator('[data-route-presentation="power-rail"]');
   await expect(tileRails).toHaveCount(3);
-  for (const rail of await tileRails.all()) {
-    await expect(rail).toHaveAttribute("stroke-width", "3.24");
-  }
+  // A conductor run is one shape, so a rail's width is on the shape carrying
+  // its subpath rather than on the element that carries its identity.
+  const railInkWidths = (root: Locator) =>
+    root.evaluate((element: SVGElement | HTMLElement) => {
+      const inks = [...element.querySelectorAll('[data-role="conductor-ink"]')];
+      return [
+        ...element.querySelectorAll('[data-route-presentation="power-rail"]'),
+      ].map((rail) => {
+        const subpath = `M ${Array.from((rail as SVGPolylineElement).points)
+          .map((point) => `${point.x} ${point.y}`)
+          .join(" L ")}`;
+        return (
+          inks
+            .find((path) => (path.getAttribute("d") ?? "").includes(subpath))
+            ?.getAttribute("stroke-width") ?? null
+        );
+      });
+    });
+  expect(await railInkWidths(tile)).toEqual(["3.24", "3.24", "3.24"]);
   await expect(
     tile.locator(
       '[data-layer="junctions"] circle[cx="380"][cy="160"], [data-layer="junctions"] circle[cx="500"][cy="160"]',
@@ -2338,9 +2782,9 @@ test("bundled VDD rails keep their current presentation in the Gallery and edito
     '[data-testid="schematic-canvas"] [data-route-presentation="power-rail"]',
   );
   await expect(canvasRails).toHaveCount(3);
-  for (const rail of await canvasRails.all()) {
-    await expect(rail).toHaveAttribute("stroke-width", "3.24");
-  }
+  expect(
+    await railInkWidths(page.locator('[data-testid="schematic-canvas"]')),
+  ).toEqual(["3.24", "3.24", "3.24"]);
   await expect(
     page.locator(
       '[data-testid="schematic-canvas"] [data-layer="junctions"] circle[cx="380"][cy="160"], [data-testid="schematic-canvas"] [data-layer="junctions"] circle[cx="500"][cy="160"]',

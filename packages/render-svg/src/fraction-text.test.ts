@@ -57,6 +57,8 @@ describe("mixed fraction text", () => {
     expect(svg).toContain('fill="#246bfd"');
     expect(svg).toContain('stroke="#246bfd"');
     expect(svg).toContain(" + R");
+    expect(svg).not.toContain("textLength");
+    expect(svg).not.toContain("lengthAdjust");
     const bars = [
       ...svg.matchAll(
         /data-role="fraction-bar" x1="([^"]+)" x2="([^"]+)" y1="([^"]+)"/g,
@@ -69,6 +71,21 @@ describe("mixed fraction text", () => {
       fontSize: 15,
     }).width;
     expect(bars[0]![0]).toBeCloseTo(options.x - width / 2, 5);
+  });
+  it("centers standalone plain fraction parts with native glyph advances", () => {
+    const svg = renderFractionText(
+      { runs: [fraction("WWW + MMM", "R")] },
+      razaviTextbookProfile,
+      options,
+    )!;
+
+    expect(svg).toMatch(
+      /data-role="fraction-numerator"><text x="100"[^>]+text-anchor="middle"/u,
+    );
+    expect(svg).toMatch(
+      /data-role="fraction-denominator"><text x="100"[^>]+text-anchor="middle"/u,
+    );
+    expect(svg).not.toContain("textLength");
   });
   it("escapes user text and gives separate fraction lines enough vertical space", () => {
     const svg = renderFractionText(

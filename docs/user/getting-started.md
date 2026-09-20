@@ -104,7 +104,7 @@ is defined.
   wire styling controls. Place an unplaced device first.
 - Netlist export and simulation use actual Bulk connections, including those
   established by placement defaults. Connect a missing Bulk or mark it NoConnect;
-  export presets do not repair it. Module interfaces and hierarchy calls retain
+  no output path repairs it. Module interfaces and hierarchy calls retain
   their authored Pins and order: no VDD/VSS interface is added automatically.
   Explicitly Global supplies stay global, and separate supplies such as `AVDD`
   and `DVDD` retain their connections. Ground remains node `0`, not a VSS Pin.
@@ -242,6 +242,57 @@ input leaves the current Document unchanged. **Export Project File…** does not
 change Cloud save state. The old rolling cloud
 snapshot and local File System Access Save paths have been removed.
 
+### Project Code and custom components
+
+Open **Project Code** from the top toolbar to edit the complete Project. Copy
+all of its JSON into another editor's Project Code and choose **Apply** (or
+press Ctrl/⌘ + Enter) to reproduce the drawing, including its component
+definitions. The receiving editor keeps its own Project identity and Cloud
+binding. Apply is undoable; invalid code leaves the live drawing unchanged.
+
+To edit one component, select it and press **E**, or right-click and choose
+**Edit Component Definition**. **Q** continues to edit instance properties.
+The definition workspace shows code and a live, isolated preview with pin
+coordinates. It does not provide mouse drawing tools. **Save & apply** publishes
+a new shared component and changes only the selected instance; peers retain
+their existing definitions. It supports normal Project Undo. A hierarchical
+Cell still uses **E / Enter Cell** to navigate into its circuit.
+
+The Library ends with **User Defined**, after **Extended Devices**. Choose
+**Create component**, edit the starter code, and **Save & place**. Signing in
+is required to save; every saved definition is public, with no private-library
+option. Other people can place it or fork it as a new component. Authors can
+update their own library entries; each revision is captured independently
+when placed, so updates never silently rewrite existing drawings.
+
+Administrators can mark an entry **Official**, delete it from the public list,
+or restore it using the **Deleted** filter. Official entries can be updated
+only by an administrator; anyone may fork them. Deletion retains the stored
+definition, and circuits that already contain it remain complete and usable.
+Official here means an administrator-reviewed public library entry, not an
+automatic change to the repository's built-in component files.
+
+Custom component artwork is also editable through complete Project Code. Find its entry in
+`componentDefinitions`: `symbol` contains the shapes and pins, while
+`electrical` and optional `subcircuit` describe its netlist interface. Edit the
+included definition and apply it to update every instance that references its
+`symbol.id`. There is no mouse editor for the component's internal shapes.
+Ordinary canvas placement, rotation, mirroring and circuit wiring remain
+available and do not rewrite that shared definition.
+
+To customize just some instances, copy the definition, give `symbol.id` and
+any included `electrical.symbolId` / `subcircuit.symbolId` the same new ID, and
+set those instances' `symbolId` to that ID in the same edit. Keep pin names and
+electrical pin order unchanged when only adjusting artwork. A moved pin keeps
+its identity; existing route geometry may need a manual adjustment.
+
+The Project carries one definition per used component type, including uses in
+other Cells. Deleting its final use removes the definition; Undo restores it.
+Unused definitions inside a Project are not a component library. When editing
+through Project Code, keep a placed instance while developing a definition.
+The User Defined library stores published definitions independently. An Agent can make
+the same changes in the complete Project code without a separate file format.
+
 SPICE files are import inputs, not embedded source attachments. Saving an
 imported Project preserves the editable schematic and source provenance, but
 does not preserve `.spi`, `.lib`, or `.inc` contents; keep those original files
@@ -281,9 +332,20 @@ remain listed for manual repair. **File / Save** and **Ctrl+S** remain save-only
 
 Click the top **Netlist** copy button to put the netlist on the clipboard and
 open its live code in the right sidebar. That panel's **Format** (SPICE or SCS)
-and **Process** selectors choose what is copied and are remembered in this
-browser; **Default** restores every preset. Editing the circuit refreshes the
-visible code. Clipboard failures leave the code selectable for manual copy.
+and **Process** selectors are independent. The editor starts in SKY130, and a
+transistor you draw is bound to the selected process as you place it. Choose
+Abstract, SKY130, TSMC 28, TSMC 180 or Custom, then optionally choose
+NMOS/PMOS/R/C/L targets below the code. Process changes update the circuit and
+can be undone; existing values are retained. Unbound native devices use the
+cached template's defaults when the panel opens. **Default** restores the
+mapping the editor starts in and output preferences. An older circuit whose
+devices have no model shows **Fill N devices** beside it: one undoable click
+gives exactly those devices the selected process's model and dimensions, and
+leaves every value you authored alone. The code area is as tall as the netlist,
+up to the room the sidebar has, and scrolls inside itself beyond that.
+The selected templates, format and port-name case are remembered in this browser.
+Editing the circuit refreshes the visible code. Clipboard failures leave the
+code selectable for manual copy.
 
 **Netlist / Instances…** opens the Project's netlist instances as one editable
 JSON document in the right sidebar. Paste whole blocks to change references,
@@ -322,9 +384,10 @@ Built-in Analog Blocks require their library-declared supply Nets to exist;
 export reports missing supplies instead of adding Cell Pins. Use an explicit
 external definition when the block needs a different supply interface.
 
-Fields still missing after these defaults use undefined `TODO_…` placeholders;
-the sidebar and Check Report identify incomplete output. The Project stays
-unchanged. Existing values, connections, and formal pin order are retained.
+Fields still missing after these defaults block netlist output; the sidebar and
+Check Report identify the exact device and field. Refresh applies configured
+defaults in one undoable Project change. Existing values, connections, and
+formal pin order are retained.
 Copied code contains no generated comments; detailed findings remain in Check
 Report. SPICE keeps an empty first title line so a simulator does not consume
 the first directive. An explicitly marked NoConnect becomes a floating node
@@ -352,7 +415,43 @@ DC/AC/PULSE/SIN/PWL sources and simple OP/AC/DC/TRAN analyses. It preserves a
 SPICE-language section in SCS. Unsupported parameters, native model syntax,
 behavioral expressions and ngspice control scripts cannot be translated into
 native Spectre; they produce an error instead of a partial circuit. Simulation
-source folders remain the place for complete original testbenches.
+source folders remain the place for complete original testbenches. See the
+[SPICE compatibility guide](spice-compatibility.md) for the current import and
+export support matrix.
+
+## Finding duplicate circuits
+
+Administrators can click **Check duplicates** on the Community Gallery to scan every public
+circuit, independently of the current search, author or tag filters. The scan
+runs in a cancellable background worker. Results show duplicate groups with
+previews and links, the number of extra copies (a group of three contributes
+two), and badges on matching Gallery cards. The entry point is hidden for
+visitors and ordinary members.
+
+Each group selects the oldest publication to keep; choose another copy if
+preferred. **Keep selected, remove…** cleans one group, and **Remove all extra
+copies** cleans every listed group using those selections. Removed copies go
+to the admin recycle bin with their project, likes and version history intact.
+They are exempt from automatic author recycle-bin limits and can be restored
+from **Open recycle bin**. The server requires an administrator and rechecks
+the current electrical netlists before changing anything in a group. If a
+group changed or cannot be compared, it stays untouched and shows an error;
+other groups can still succeed. Results are a snapshot; scan again after
+library changes.
+
+Comparison uses the extracted electrical netlist, not titles or drawing JSON.
+Instance names, internal node names, drawing positions and instance order do
+not matter. Device classes, models, values, terminal roles and the ordered
+external port contract do. Equivalent numeric spellings such as `1k` and
+`1000` match. Unset model/value fields match only the same unset fields, with
+NMOS and PMOS kept distinct. The check does not apply a viewer's PDK preset or
+claim that externally supplied models have identical implementations.
+
+Simple hierarchy is expanded for comparison. Parameterized hierarchy,
+behavioral references, circuits without usable connectivity, and comparisons
+that exceed bounded computation are listed under **Unable to compare**, with
+a reason; they are never silently classified as unique. Candidate summaries
+only narrow the search: duplicates require an exact electrical graph match.
 
 ## Portable release
 
@@ -368,12 +467,13 @@ install action. The server accepts only loopback connections.
 
 ## Deployment
 
-The editor is served by the Cloudflare Worker in `worker/`. Merges to `main`
-deploy the Preview channel through `.github/workflows/deploy-preview.yml`;
-Production deploys only a Preview-accepted candidate from a `v*` release tag or
-an explicit dispatch of `.github/workflows/cloudflare.yml`. Each channel's
-Worker hosts the built editor and the gallery, account, Agent-session, and
-simulation endpoints behind it; see [deployment](../deployment.md).
+The active hosted editor is the fixed-commit self-hosted stack described in
+[self-hosting](../self-hosting.md). Merging a pull request does not publish that
+service; an operator fetches the accepted commit and runs
+`containers/self-host/deploy.sh <commit>`. The retired Cloudflare Preview
+channel is not a deployment target. Cloudflare Production remains available
+only through a `v*` release tag or explicit dispatch; see
+[deployment](../deployment.md).
 
 The private Cloud Project is the formal saved copy. Exported `.icproj.json`
 and downloaded backups remain portable user-owned copies. Browser recovery is

@@ -17,6 +17,7 @@ import {
   resolveDocumentLogicalNets,
   resolveEndpointConnection,
 } from "@icm/derived";
+import type { DocumentContactEvidence } from "@icm/derived";
 import type { SymbolResolver } from "@icm/symbols";
 
 import type { SchematicEdit } from "./edit-schema.js";
@@ -70,6 +71,7 @@ export function netEndpointGroups(
   document: SchematicDocument,
   netId: string,
   resolver?: SymbolResolver,
+  contactEvidence?: DocumentContactEvidence,
 ): string[][] {
   const net = document.nets.find((candidate) => candidate.id === netId);
   if (!net) return [];
@@ -95,7 +97,9 @@ export function netEndpointGroups(
   for (const route of document.routes.filter(
     (candidate) => candidate.netId === netId,
   )) {
-    union(endpointKey(route.start), endpointKey(routeEnd(route)));
+    const from = endpointKey(route.start);
+    const to = endpointKey(routeEnd(route));
+    if (parent.has(from) && parent.has(to)) union(from, to);
   }
   // A pin or Junction placed directly on another explicit same-Net endpoint
   // is a real electrical contact even when no Route object exists between the
@@ -103,8 +107,12 @@ export function netEndpointGroups(
   // Name claims and other Logical-Net Evidence are intentionally excluded:
   // they express logical identity, not one physical Base-Net component.
   if (resolver) {
-    for (const contact of deriveDocumentContactEvidence(document, resolver)
-      .contacts) {
+    // A caller that already holds this Document's evidence passes it: deriving
+    // it here ran once per call, and the direct-contact reconciliation asks
+    // this question once per lost pair.
+    const evidence =
+      contactEvidence ?? deriveDocumentContactEvidence(document, resolver);
+    for (const contact of evidence.contacts) {
       if (contact.netId !== netId || contact.endpoints.length < 2) continue;
       const [first, ...rest] = contact.endpoints.map(endpointKey);
       for (const key of rest) union(first!, key);
@@ -221,20 +229,31 @@ export function validateRoute(
   route: RouteBranch,
   resolver: SymbolResolver,
   resolvedPath?: ReturnType<typeof resolveRouteEditPath>,
+  membership: "committed" | "pending" = "committed",
 ): string | null {
   const net = document.nets.find((candidate) => candidate.id === route.netId);
-  if (!net) return `Route net does not exist: ${route.netId}`;
+  if (membership === "committed" && !net)
+    return `Route net does not exist: ${route.netId}`;
   if (
+    membership === "committed" &&
     route.presentation === "power-rail" &&
-    !resolveDocumentLogicalNets(document).byBaseNetId.get(net.id)?.name
+    !resolveDocumentLogicalNets(document).byBaseNetId.get(route.netId)?.name
   ) {
     return `Power rail ${route.id} must belong to a named Net`;
   }
-  if (!endpointBelongsToNet(document, net, route.start)) {
+  if (
+    membership === "committed" &&
+    net &&
+    !endpointBelongsToNet(document, net, route.start)
+  ) {
     return `Route from endpoint is not a member of ${route.netId}`;
   }
   const end = routeEnd(route);
-  if (!endpointBelongsToNet(document, net, end)) {
+  if (
+    membership === "committed" &&
+    net &&
+    !endpointBelongsToNet(document, net, end)
+  ) {
     return `Route to endpoint is not a member of ${route.netId}`;
   }
   const polyline =

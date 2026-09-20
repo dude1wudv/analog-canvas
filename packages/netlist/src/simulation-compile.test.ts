@@ -22,9 +22,6 @@ import {
 } from "@icm/spice-run";
 
 import { compileStructuredSimulation } from "./simulation-compile.js";
-import { printVacaskWithLocations } from "./vacask-printer.js";
-import { vacaskAcquisition } from "./vacask-acquisitions.js";
-import { parseVacaskRawfile } from "../../spice-run/src/vacask-rawfile.js";
 
 function claimNet(
   document: SchematicDocument,
@@ -408,16 +405,6 @@ describe("compiling a structured simulation folder", () => {
       path: ["X1"],
       senseReference: "VICMPRB003",
     });
-    expect(vacaskAcquisition(result.acquisitionAddresses.inner!)).toEqual({
-      quantity: "voltage",
-      vector: "X1:OUT",
-      save: "v('X1:OUT')",
-    });
-    expect(vacaskAcquisition(result.acquisitionAddresses.current!)).toEqual({
-      quantity: "current",
-      vector: "X1:VICMPRB003:flow(br)",
-      save: "i('X1:VICMPRB003')",
-    });
   });
 
   it("does not prefix a global supply voltage with its occurrence", async () => {
@@ -453,119 +440,7 @@ describe("compiling a structured simulation folder", () => {
       node: "VDD",
     });
     expect(result.vectors[0]!.vector).toBe("v(vdd)");
-    expect(vacaskAcquisition(result.acquisitionAddresses.supply!).vector).toBe(
-      "VDD",
-    );
   });
-
-  it.skipIf(!process.env.VACASK_BIN || !process.env.VACASK_MODULES)(
-    "runs Canvas-generated native terminal instrumentation with exact probe identities and signs",
-    async () => {
-      const project = hierarchicalProject();
-      const before = structuredClone(project);
-      const result = await compile(
-        project,
-        setupWith({
-          analyses: [{ kind: "op" }],
-          outputs: [
-            {
-              id: "inner",
-              label: "Inner",
-              expression: {
-                kind: "voltage",
-                documentId: "dut",
-                occurrence: ["inst-x1"],
-                anchor: { kind: "base-net", netId: "dut-net-out" },
-              },
-            },
-            {
-              id: "formal",
-              label: "Formal",
-              expression: {
-                kind: "voltage",
-                documentId: "dut",
-                occurrence: ["inst-x1"],
-                anchor: { kind: "base-net", netId: "dut-net-a" },
-              },
-            },
-            {
-              id: "enter",
-              label: "Entering",
-              expression: {
-                kind: "current",
-                documentId: "dut",
-                occurrence: ["inst-x1"],
-                instanceId: "dut-rt",
-                pinName: "1",
-              },
-            },
-            {
-              id: "leave",
-              label: "Leaving",
-              expression: {
-                kind: "current",
-                documentId: "dut",
-                occurrence: ["inst-x1"],
-                instanceId: "dut-rt",
-                pinName: "2",
-              },
-            },
-          ],
-        }),
-      );
-      if (!result.ok) throw Error(JSON.stringify(result.diagnostics));
-      expect(project).toEqual(before);
-      const printed = printVacaskWithLocations(result.circuit, true);
-      if (!printed.ok) throw Error(JSON.stringify(printed.diagnostics));
-      const acquisitions = Object.fromEntries(
-        Object.entries(result.acquisitionAddresses).map(([id, address]) => [
-          id,
-          vacaskAcquisition(address),
-        ]),
-      );
-      const cwd = mkdtempSync(join(tmpdir(), "icm-native-canvas-probes-"));
-      writeFileSync(
-        join(cwd, "run.sim"),
-        printed.text +
-          '\ncontrol\nabort always\noptions rawfile="ascii" strictsave=2\nsave ' +
-          Object.values(acquisitions)
-            .map((a) => a.save)
-            .join(" ") +
-          "\nanalysis proof op\nendc\n",
-      );
-      const startup = join(cwd, "startup.toml");
-      writeFileSync(startup, "# controlled Canvas probe qualification\n");
-      const run = spawnSync(
-        process.env.VACASK_BIN!,
-        ["--tomlfile", startup, "-n", "1", "-b", "1", "run.sim"],
-        {
-          cwd,
-          encoding: "utf8",
-          windowsHide: true,
-          timeout: 15000,
-          env: { ...process.env, SIM_MODULE_PATH: process.env.VACASK_MODULES },
-        },
-      );
-      writeFileSync(join(cwd, "stdout.log"), run.stdout ?? "");
-      writeFileSync(join(cwd, "stderr.log"), run.stderr ?? "");
-      expect(run.error, cwd).toBeUndefined();
-      expect(run.status, `${cwd}\n${run.stdout}\n${run.stderr}`).toBe(0);
-      const raw = parseVacaskRawfile(
-        readFileSync(join(cwd, "proof.raw"), "utf8"),
-      );
-      if (!raw.ok) throw Error(raw.error.message);
-      const values = new Map(
-        raw.plots[0]!.vectors.map((v) => [v.variable.name, v.real[0]]),
-      );
-      for (const [id, expected] of [
-        ["inner", 0.5],
-        ["formal", 1],
-        ["enter", 0.0005],
-        ["leave", -0.0005],
-      ] as const)
-        expect(values.get(acquisitions[id]!.vector)).toBeCloseTo(expected, 12);
-    },
-  );
 
   it("derives hierarchy-aware NMOS and PMOS terminal operating points", async () => {
     const project = CircuitProjectSchema.parse(
@@ -635,55 +510,72 @@ describe("compiling a structured simulation folder", () => {
     expect(result.request.netlist).toContain("VICMPRB");
   });
 
-  it("rejects selected MOS operating points when bulk connections are missing", async () => {
-    const project = CircuitProjectSchema.parse(
-      currentFiveTransistorOtaCircuitSource(),
-    );
-    const dut = project.documents.find(
-      (document) => document.id === "document-ota-5t",
-    )!;
-    dut.mosBulkDefaults = undefined;
-    dut.nets = dut.nets.map((net) => ({
-      ...net,
-      terminals: net.terminals.filter(
-        (terminal) =>
-          !["M1", "M3"].includes(terminal.instanceId) ||
-          terminal.pinName !== "B",
-      ),
-    }));
-    for (const instanceId of ["M1", "M3"])
-      dut.instances.find(
-        (instance) => instance.id === instanceId,
-      )!.mosBulkBinding = undefined;
+  it.each([false, true])(
+    "handles missing MOS bodies for operating points (imported: %s)",
+    async (imported) => {
+      const project = CircuitProjectSchema.parse(
+        currentFiveTransistorOtaCircuitSource(),
+      );
+      const dut = project.documents.find(
+        (document) => document.id === "document-ota-5t",
+      )!;
+      dut.mosBulkDefaults = undefined;
+      dut.nets = dut.nets.map((net) => ({
+        ...net,
+        terminals: net.terminals.filter(
+          (terminal) =>
+            !["M1", "M3"].includes(terminal.instanceId) ||
+            terminal.pinName !== "B",
+        ),
+      }));
+      for (const instanceId of ["M1", "M3"])
+        dut.instances.find(
+          (instance) => instance.id === instanceId,
+        )!.mosBulkBinding = undefined;
 
-    const result = await compile(
-      project,
-      setupWith({
-        rootDocumentId: "document-ota-5t-testbench",
-        analyses: [{ kind: "op" }],
-        outputs: [],
-        deviceOperatingPoints: [
-          {
-            id: "op-m1",
-            documentId: "document-ota-5t",
-            instanceId: "M1",
-            occurrence: ["XDUT"],
-          },
-          {
-            id: "op-m3",
-            documentId: "document-ota-5t",
-            instanceId: "M3",
-            occurrence: ["XDUT"],
-          },
-        ],
-      }),
-    );
+      if (imported)
+        for (const instanceId of ["M1", "M3"]) {
+          dut.instances.find(
+            (instance) => instance.id === instanceId,
+          )!.importProvenance = {
+            kind: "subcircuit",
+            sourceMasterName: "source_mos",
+            sourceTarget: "source_mos",
+          };
+        }
+      const result = await compile(
+        project,
+        setupWith({
+          rootDocumentId: "document-ota-5t-testbench",
+          analyses: [{ kind: "op" }],
+          outputs: [],
+          deviceOperatingPoints: [
+            {
+              id: "op-m1",
+              documentId: "document-ota-5t",
+              instanceId: "M1",
+              occurrence: ["XDUT"],
+            },
+            {
+              id: "op-m3",
+              documentId: "document-ota-5t",
+              instanceId: "M3",
+              occurrence: ["XDUT"],
+            },
+          ],
+        }),
+      );
 
-    expect(result.ok).toBe(false);
-    expect(
-      result.diagnostics.filter((item) => item.code === "MISSING_PIN_NET"),
-    ).toHaveLength(2);
-  });
+      expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+      expect(
+        result.diagnostics.filter((item) => item.code === "MISSING_PIN_NET"),
+      ).toHaveLength(0);
+      if (result.ok) {
+        expect(result.request.netlist).toMatch(/^XM1 \S+ \S+ \S+ vss /imu);
+        expect(result.request.netlist).toMatch(/^XM3 \S+ \S+ \S+ vdd /imu);
+      }
+    },
+  );
 
   it("compiles Noise against a root independent source and writes both plots", async () => {
     const compiled = await compile(

@@ -3,11 +3,16 @@ import {
   createSimulationFolder,
   flattenRichText,
   plainNameDocument,
+  semanticTextDocument,
 } from "@icm/model";
 import { describe, expect, it } from "vitest";
 
 import { createEmptyDocument, createEmptyProject } from "@icm/model";
-import { externalSubcircuitSymbolId, hierarchicalSymbolId } from "@icm/symbols";
+import {
+  externalSubcircuitSymbolId,
+  hierarchicalSymbolId,
+  projectCellSymbolTerminals,
+} from "@icm/symbols";
 
 import {
   planRenameCell,
@@ -16,8 +21,88 @@ import {
   planEditCellTerminalAnnotation,
   planRenameCellTerminal,
   planSetCellSymbolPresentation,
+  createExternalSubcircuitInstance,
 } from "./hierarchy-planner.js";
 import { executeProjectTransaction } from "./project-transaction.js";
+
+describe("default project entry", () => {
+  it("reorders definitions atomically with Top without changing their contents", () => {
+    const project = createEmptyProject("order", "Order");
+    project.documents.push(
+      createEmptyDocument("second", "Second"),
+      createEmptyDocument("third", "Third"),
+    );
+    const original = structuredClone(project);
+    const envelope = {
+      projectId: project.id,
+      expectedStructureRevision: project.structureRevision,
+      transactionId: "order",
+      actor: { kind: "human" as const, id: "local" },
+    };
+    const ids = ["third", project.topDocumentId, "second"];
+    const result = executeProjectTransaction(project, {
+      ...envelope,
+      edits: [
+        { kind: "reorder_documents", documentIds: ids },
+        { kind: "set_top_document", documentId: "third" },
+      ],
+    });
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    expect(result.project.topDocumentId).toBe("third");
+    expect(result.project.documents).toEqual(
+      ids.map((id) => original.documents.find((cell) => cell.id === id)),
+    );
+    for (const invalid of [
+      ["second"],
+      ["second", "second", "third"],
+      ["unknown", "second", "third"],
+    ]) {
+      const rejected = executeProjectTransaction(project, {
+        ...envelope,
+        edits: [
+          { kind: "set_top_document", documentId: "third" },
+          { kind: "reorder_documents", documentIds: invalid },
+        ],
+      });
+      expect(rejected.ok).toBe(false);
+      expect(project).toEqual(original);
+    }
+  });
+  it("changes only the default Top and rejects unknown definitions", () => {
+    const project = createEmptyProject("project", "Project");
+    const child = createEmptyDocument("child", "Child");
+    project.documents.push(child);
+    project.documents[0]!.instances.push(
+      hierarchyInstance("X1", "Child", child.id),
+    );
+    const original = structuredClone(project);
+    const envelope = {
+      transactionId: "set-top",
+      projectId: project.id,
+      expectedStructureRevision: project.structureRevision,
+      actor: { kind: "human" as const, id: "local" },
+    };
+    const result = executeProjectTransaction(project, {
+      ...envelope,
+      edits: [{ kind: "set_top_document", documentId: child.id }],
+    });
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    expect(result.project.topDocumentId).toBe(child.id);
+    expect(result.project.documents).toEqual(original.documents);
+    expect(result.project.simulationFolders).toEqual(
+      original.simulationFolders,
+    );
+    expect(project).toEqual(original);
+    const rejected = executeProjectTransaction(project, {
+      ...envelope,
+      edits: [{ kind: "set_top_document", documentId: "missing" }],
+    });
+    expect(rejected).toMatchObject({
+      ok: false,
+      error: { code: "OBJECT_NOT_FOUND" },
+    });
+  });
+});
 
 function hierarchyInstance(
   id: string,
@@ -72,6 +157,66 @@ function addCellPin(
 }
 
 describe("Project structural transaction", () => {
+  it.each([false, true])(
+    "retains effective Port formatting after representative deletion (authored survivor: %s)",
+    (authored) => {
+      const project = createEmptyProject("project", "Project");
+      const child = createEmptyDocument("child", "Child");
+      project.documents.push(child);
+      const formatted = {
+        runs: [
+          { kind: "text" as const, value: "V" },
+          {
+            kind: "span" as const,
+            style: "subscript" as const,
+            children: [{ kind: "text" as const, value: "out" }],
+          },
+        ],
+      };
+      for (const id of ["one", "two"]) {
+        addCellPin(child, {
+          instanceId: `P-${id}`,
+          terminalId: id,
+          name: "Vout",
+          netId: `net-${id}`,
+        });
+        child.annotations.push({
+          id: `label-${id}`,
+          kind: "instance-label",
+          binding: { kind: "cell-terminal-name", terminalId: id },
+          anchor: {
+            kind: "object",
+            objectId: `P-${id}`,
+            localOffset: { x: 0, y: 0 },
+            fallbackPosition: { x: 0, y: 0 },
+          },
+          alignment: "middle",
+          rotation: 0,
+          locked: false,
+          ...(id === "one"
+            ? { formatOverride: formatted }
+            : authored
+              ? { formatOverride: plainNameDocument("Vout") }
+              : {}),
+        });
+      }
+      const result = executeProjectTransaction(project, {
+        transactionId: "remove-formatted-marker",
+        projectId: project.id,
+        expectedStructureRevision: project.structureRevision,
+        actor: { kind: "human", id: "local" },
+        edits: planRemoveCellTerminal(project, child.id, "one"),
+      });
+      if (!result.ok) throw new Error(JSON.stringify(result));
+      const updated = result.project.documents[1]!;
+      expect(updated.annotations).toHaveLength(1);
+      expect(projectCellSymbolTerminals(updated)[0]!.nameContent).toEqual(
+        authored ? plainNameDocument("Vout") : formatted,
+      );
+      expect(child.annotations).toHaveLength(2);
+    },
+  );
+
   it("accepts a Gallery-sized nested document transaction within its bound", () => {
     const project = createEmptyProject("gallery-sized-project", "Gallery");
     const edits = Array.from({ length: 272 }, () => ({
@@ -311,86 +456,189 @@ describe("Project structural transaction", () => {
     ]);
   });
 
-  it("detaches the vanished caller pin instead of merging it into an existing name", () => {
+  it.each([false, true])(
+    "joins a Port name with explicit electrical merge=%s",
+    (mergeExistingPort) => {
+      const project = createEmptyProject("project", "Project");
+      const child = createEmptyDocument("document-child", "Child");
+      addCellPin(child, {
+        instanceId: "P1",
+        terminalId: "terminal-old",
+        name: "OLD",
+        netId: "net-old",
+      });
+      addCellPin(child, {
+        instanceId: "P2",
+        terminalId: "terminal-new",
+        name: "NEW",
+        netId: "net-new",
+      });
+      project.documents.push(child);
+      child.presentation.cellSymbol = {
+        pinPlacements: [
+          { terminalId: "terminal-old", side: "west", offset: 0 },
+          { terminalId: "terminal-new", side: "north", offset: 20 },
+        ],
+      };
+      const parent = project.documents[0]!;
+      parent.instances.push(hierarchyInstance("X1", "Child", child.id));
+      parent.nets.push(
+        {
+          id: "net-parent-old",
+          terminals: [{ instanceId: "X1", pinName: "OLD" }],
+        },
+        {
+          id: "net-parent-new",
+          terminals: [{ instanceId: "X1", pinName: "NEW" }],
+        },
+      );
+      parent.junctions.push({
+        id: "junction-parent-tail",
+        netId: "net-parent-old",
+        position: { x: -100, y: 0 },
+        role: "route-anchor",
+      });
+      parent.routes.push(
+        createRoutePath({
+          id: "route-parent-old",
+          netId: "net-parent-old",
+          start: { kind: "terminal", instanceId: "X1", pinName: "OLD" },
+          end: { kind: "junction", junctionId: "junction-parent-tail" },
+          bends: [],
+          modes: ["manual"],
+        }),
+      );
+
+      const result = executeProjectTransaction(project, {
+        transactionId: "rename-final-old-pin-onto-existing-name",
+        projectId: project.id,
+        expectedStructureRevision: project.structureRevision,
+        actor: { kind: "human", id: "human-local" },
+        edits: planRenameCellTerminal(
+          project,
+          child.id,
+          "terminal-old",
+          "new",
+          { mergeExistingPort },
+        ),
+      });
+
+      if (!result.ok) throw new Error(JSON.stringify(result, null, 2));
+      expect(
+        result.project.documents[1]!.presentation.cellSymbol?.pinPlacements,
+      ).toEqual([{ terminalId: "terminal-old", side: "north", offset: 20 }]);
+      const updatedParent = result.project.documents[0]!;
+      if (mergeExistingPort) {
+        expect(updatedParent.nets).toEqual([
+          expect.objectContaining({
+            id: "net-parent-old",
+            terminals: [{ instanceId: "X1", pinName: "new" }],
+          }),
+        ]);
+        expect(updatedParent.routes[0]!.start).toEqual({
+          kind: "terminal",
+          instanceId: "X1",
+          pinName: "new",
+        });
+        expect(updatedParent.routes[0]!.netId).toBe("net-parent-old");
+        expect(updatedParent.junctions).toHaveLength(1);
+        return;
+      }
+      expect(updatedParent.nets).toEqual([
+        expect.objectContaining({ id: "net-parent-old", terminals: [] }),
+        expect.objectContaining({
+          id: "net-parent-new",
+          terminals: [{ instanceId: "X1", pinName: "new" }],
+        }),
+      ]);
+      expect(updatedParent.routes[0]!.start).toMatchObject({
+        kind: "junction",
+      });
+      expect(updatedParent.routes[0]!.netId).toBe("net-parent-old");
+      expect(
+        updatedParent.junctions.filter(
+          (junction) => junction.netId === "net-parent-old",
+        ),
+      ).toHaveLength(2);
+      expect(updatedParent.nets).toHaveLength(2);
+      expect(result.project.documents[1]!.nets).toMatchObject([
+        { id: "net-old", terminals: [{ instanceId: "P1", pinName: "P" }] },
+        { id: "net-new", terminals: [{ instanceId: "P2", pinName: "P" }] },
+      ]);
+      expect(result.project.documents[1]!.netlist!.terminals).toMatchObject([
+        { id: "terminal-old", name: "new", netId: "net-old" },
+        { id: "terminal-new", name: "NEW", netId: "net-new" },
+      ]);
+    },
+  );
+
+  it("merges shared caller Nets once and reconciles NoConnect declarations", () => {
     const project = createEmptyProject("project", "Project");
-    const child = createEmptyDocument("document-child", "Child");
-    addCellPin(child, {
-      instanceId: "P1",
-      terminalId: "terminal-old",
-      name: "OLD",
-      netId: "net-old",
-    });
-    addCellPin(child, {
-      instanceId: "P2",
-      terminalId: "terminal-new",
-      name: "NEW",
-      netId: "net-new",
-    });
+    const child = createEmptyDocument("child", "Child");
+    for (const name of ["A", "B"])
+      addCellPin(child, {
+        instanceId: `P${name}`,
+        terminalId: name,
+        name,
+        netId: `net-${name}`,
+      });
     project.documents.push(child);
     const parent = project.documents[0]!;
-    parent.instances.push(hierarchyInstance("X1", "Child", child.id));
+    for (const id of ["X1", "X2", "X3", "X4"])
+      parent.instances.push(hierarchyInstance(id, "Child", child.id));
     parent.nets.push(
       {
-        id: "net-parent-old",
-        terminals: [{ instanceId: "X1", pinName: "OLD" }],
+        id: "left",
+        terminals: ["X1", "X2", "X3"].map((instanceId) => ({
+          instanceId,
+          pinName: "A",
+        })),
       },
       {
-        id: "net-parent-new",
-        terminals: [{ instanceId: "X1", pinName: "NEW" }],
+        id: "right",
+        terminals: ["X1", "X2"].map((instanceId) => ({
+          instanceId,
+          pinName: "B",
+        })),
       },
     );
-    parent.junctions.push({
-      id: "junction-parent-tail",
-      netId: "net-parent-old",
-      position: { x: -100, y: 0 },
-      role: "route-anchor",
-    });
-    parent.routes.push(
-      createRoutePath({
-        id: "route-parent-old",
-        netId: "net-parent-old",
-        start: { kind: "terminal", instanceId: "X1", pinName: "OLD" },
-        end: { kind: "junction", junctionId: "junction-parent-tail" },
-        bends: [],
-        modes: ["manual"],
-      }),
+    parent.noConnects.push(
+      {
+        id: "nc3",
+        endpoint: { kind: "terminal", instanceId: "X3", pinName: "B" },
+      },
+      {
+        id: "nc4a",
+        endpoint: { kind: "terminal", instanceId: "X4", pinName: "A" },
+      },
+      {
+        id: "nc4b",
+        endpoint: { kind: "terminal", instanceId: "X4", pinName: "B" },
+      },
     );
-
     const result = executeProjectTransaction(project, {
-      transactionId: "rename-final-old-pin-onto-existing-name",
+      transactionId: "merge-shared-callers",
       projectId: project.id,
       expectedStructureRevision: project.structureRevision,
-      actor: { kind: "human", id: "human-local" },
-      edits: planRenameCellTerminal(project, child.id, "terminal-old", "new"),
-    });
-
-    if (!result.ok) throw new Error(JSON.stringify(result, null, 2));
-    const updatedParent = result.project.documents[0]!;
-    expect(updatedParent.nets).toEqual([
-      expect.objectContaining({ id: "net-parent-old", terminals: [] }),
-      expect.objectContaining({
-        id: "net-parent-new",
-        terminals: [{ instanceId: "X1", pinName: "new" }],
+      actor: { kind: "human", id: "local" },
+      edits: planRenameCellTerminal(project, child.id, "A", "B", {
+        mergeExistingPort: true,
       }),
-    ]);
-    expect(updatedParent.routes[0]!.start).toMatchObject({
-      kind: "junction",
     });
-    expect(updatedParent.routes[0]!.netId).toBe("net-parent-old");
-    expect(
-      updatedParent.junctions.filter(
-        (junction) => junction.netId === "net-parent-old",
-      ),
-    ).toHaveLength(2);
-    expect(updatedParent.nets).toHaveLength(2);
-    expect(result.project.documents[1]!.nets).toMatchObject([
-      { id: "net-old", terminals: [{ instanceId: "P1", pinName: "P" }] },
-      { id: "net-new", terminals: [{ instanceId: "P2", pinName: "P" }] },
+    if (!result.ok) throw new Error(JSON.stringify(result, null, 2));
+    const updated = result.project.documents[0]!;
+    expect(updated.nets).toHaveLength(1);
+    expect(updated.nets[0]!.terminals).toEqual(
+      ["X1", "X2", "X3"].map((instanceId) => ({ instanceId, pinName: "B" })),
+    );
+    expect(updated.noConnects).toEqual([
+      {
+        id: "nc4a",
+        endpoint: { kind: "terminal", instanceId: "X4", pinName: "B" },
+      },
     ]);
-    expect(result.project.documents[1]!.netlist!.terminals).toMatchObject([
-      { id: "terminal-old", name: "new", netId: "net-old" },
-      { id: "terminal-new", name: "NEW", netId: "net-new" },
-    ]);
+    expect(parent.nets).toHaveLength(2);
+    expect(parent.noConnects).toHaveLength(3);
   });
 
   it("renames the surviving caller spelling when the first same-named Pin leaves its group", () => {
@@ -410,6 +658,11 @@ describe("Project structural transaction", () => {
     });
     project.documents.push(child);
     const parent = project.documents[0]!;
+    child.presentation.cellSymbol = {
+      pinPlacements: [
+        { terminalId: "terminal-in-1", side: "north", offset: 20 },
+      ],
+    };
     parent.instances.push(hierarchyInstance("X1", "Child", child.id));
     parent.nets.push({
       id: "net-parent-in",
@@ -425,6 +678,9 @@ describe("Project structural transaction", () => {
     });
 
     if (!result.ok) throw new Error(JSON.stringify(result, null, 2));
+    expect(
+      result.project.documents[1]!.presentation.cellSymbol?.pinPlacements,
+    ).toEqual([{ terminalId: "terminal-in-2", side: "north", offset: 20 }]);
     expect(result.project.documents[0]!.nets).toEqual([
       {
         id: "net-parent-in",
@@ -454,6 +710,11 @@ describe("Project structural transaction", () => {
     });
     project.documents.push(child);
     const parent = project.documents[0]!;
+    child.presentation.cellSymbol = {
+      pinPlacements: [
+        { terminalId: "terminal-in-1", side: "north", offset: 20 },
+      ],
+    };
     parent.instances.push(hierarchyInstance("X1", "Child", child.id));
     parent.nets.push({
       id: "net-parent-in",
@@ -485,6 +746,9 @@ describe("Project structural transaction", () => {
     });
 
     if (!result.ok) throw new Error(JSON.stringify(result, null, 2));
+    expect(
+      result.project.documents[1]!.presentation.cellSymbol?.pinPlacements,
+    ).toEqual([{ terminalId: "terminal-in-2", side: "north", offset: 20 }]);
     const updatedParent = result.project.documents[0]!;
     expect(updatedParent.nets).toEqual([
       {
@@ -1275,6 +1539,21 @@ describe("Project structural transaction", () => {
       direction: "input",
       interfaceInstanceIds: ["port-in"],
     });
+    child.annotations.push({
+      id: "instance-label-port-in",
+      kind: "instance-label",
+      binding: { kind: "cell-terminal-name", terminalId: "terminal-in" },
+      formatOverride: semanticTextDocument("IN", "formal-port"),
+      anchor: {
+        kind: "object",
+        objectId: "port-in",
+        localOffset: { x: 0, y: 0 },
+        fallbackPosition: { x: 0, y: 0 },
+      },
+      alignment: "middle",
+      rotation: 0,
+      locked: false,
+    });
     project.documents.push(child);
     const caller = {
       ...hierarchyInstance("X1", "Child", child.id),
@@ -1319,6 +1598,11 @@ describe("Project structural transaction", () => {
           {
             id: "document-child",
             netlist: { terminals: [{ id: "terminal-in", name: "VIN" }] },
+            annotations: [
+              expect.not.objectContaining({
+                formatOverride: expect.anything(),
+              }),
+            ],
           },
         ],
       },
@@ -1406,6 +1690,25 @@ describe("Project structural transaction", () => {
     expect(result.project.documents[1]!.annotations[0]!.binding).toEqual({
       kind: "cell-terminal-name",
       terminalId: "terminal-vout",
+    });
+
+    const renamed = executeProjectTransaction(result.project, {
+      transactionId: "rename-manually-formatted-port",
+      projectId: result.project.id,
+      expectedStructureRevision: result.project.structureRevision,
+      actor: { kind: "human", id: "human-local" },
+      edits: planRenameCellTerminal(
+        result.project,
+        child.id,
+        "terminal-vout",
+        "VBIAS",
+      ),
+    });
+    if (!renamed.ok) throw new Error("Expected formatted Port rename");
+    const renamedAnnotation = renamed.project.documents[1]!.annotations[0]!;
+    expect(flattenRichText(renamedAnnotation.formatOverride!)).toBe("VBIAS");
+    expect(renamedAnnotation.formatOverride?.runs[0]).toMatchObject({
+      style: "bold",
     });
   });
 
@@ -1553,90 +1856,133 @@ describe("Project structural transaction", () => {
     });
   });
 
-  it("follows caller Route geometry when a definition pin moves", () => {
-    const project = createEmptyProject("project", "Project");
-    const child = createEmptyDocument("document-child", "Child");
-    child.instances.push({
-      id: "P1",
-      symbolId: "port",
-      placement: null,
-    });
-    child.nets.push({
-      id: "net-in",
+  it.each(["cell", "external"] as const)(
+    "follows caller Route geometry when a %s definition pin moves",
+    (kind) => {
+      const project = createEmptyProject("project", "Project");
+      const child = createEmptyDocument("document-child", "Child");
+      child.instances.push({
+        id: "P1",
+        symbolId: "port",
+        placement: null,
+      });
+      child.nets.push({
+        id: "net-in",
 
-      terminals: [{ instanceId: "P1", pinName: "P" }],
-    });
-    child.netlist!.terminals.push({
-      id: "terminal-in",
-      name: "IN",
-      netId: "net-in",
-      direction: "input",
-      interfaceInstanceIds: ["P1"],
-    });
-    project.documents.push(child);
-    const parent = project.documents[0]!;
-    parent.instances.push(hierarchyInstance("X1", "Child", child.id));
-    parent.nets.push({
-      id: "net-parent",
+        terminals: [{ instanceId: "P1", pinName: "P" }],
+      });
+      child.netlist!.terminals.push({
+        id: "terminal-in",
+        name: "IN",
+        netId: "net-in",
+        direction: "input",
+        interfaceInstanceIds: ["P1"],
+      });
+      project.documents.push(child);
+      const parent = project.documents[0]!;
+      parent.instances.push(hierarchyInstance("X1", "Child", child.id));
+      parent.nets.push({
+        id: "net-parent",
 
-      terminals: [{ instanceId: "X1", pinName: "IN" }],
-    });
-    parent.junctions.push({
-      id: "J1",
-      netId: "net-parent",
-      position: { x: -150, y: 0 },
-    });
-    parent.routes.push(
-      createRoutePath({
-        id: "route-input",
+        terminals: [{ instanceId: "X1", pinName: "IN" }],
+      });
+      parent.junctions.push({
+        id: "J1",
         netId: "net-parent",
-        start: { kind: "terminal", instanceId: "X1", pinName: "IN" },
-        end: { kind: "junction", junctionId: "J1" },
-        bends: [],
-        modes: ["auto"],
-      }),
-    );
+        position: { x: -150, y: 0 },
+      });
+      parent.routes.push(
+        createRoutePath({
+          id: "route-input",
+          netId: "net-parent",
+          start: { kind: "terminal", instanceId: "X1", pinName: "IN" },
+          end: { kind: "junction", junctionId: "J1" },
+          bends: [],
+          modes: ["auto"],
+        }),
+      );
 
-    const result = executeProjectTransaction(project, {
-      transactionId: "move-child-input-pin",
-      projectId: project.id,
-      expectedStructureRevision: project.structureRevision,
-      actor: { kind: "human", id: "human-local" },
-      edits: planSetCellSymbolPresentation(project, child.id, {
+      const presentation = {
         pinPlacements: [
-          { terminalId: "terminal-in", side: "north", offset: 0 },
+          { terminalId: "terminal-in", side: "north" as const, offset: 0 },
         ],
-      }),
-    });
+      };
+      const external = {
+        id: "external-child",
+        name: "ExternalChild",
+        terminals: [
+          { id: "terminal-in", name: "IN", direction: "input" as const },
+        ],
+        formalParameters: [],
+        interfaceStatus: "declared" as const,
+      };
+      if (kind === "external") {
+        project.externalSubcircuitDefinitions.push(external);
+        parent.instances[0] = createExternalSubcircuitInstance(
+          "X1",
+          external,
+          parent.instances[0]!.placement!,
+        );
+      }
+      const anotherCaller = structuredClone(parent);
+      anotherCaller.id = "document-other";
+      anotherCaller.name = "Other";
+      anotherCaller.netlist!.name = "Other";
+      project.documents.push(anotherCaller);
+      const result = executeProjectTransaction(project, {
+        transactionId: "move-child-input-pin",
+        projectId: project.id,
+        expectedStructureRevision: project.structureRevision,
+        actor: { kind: "human", id: "human-local" },
+        edits:
+          kind === "cell"
+            ? planSetCellSymbolPresentation(project, child.id, presentation)
+            : [
+                {
+                  kind: "upsert_external_subcircuit_definition",
+                  definition: { ...external, presentation },
+                },
+              ],
+      });
 
-    expect(result).toMatchObject({
-      ok: true,
-      applied: true,
-      changedDocumentIds: ["document-child", "document-main"],
-      project: {
-        documents: [
-          {
-            routes: [
-              {
-                id: "route-input",
-                legs: [
-                  {
-                    mode: "auto",
-                    to: {
-                      kind: "bend",
-                      position: { x: -150, y: -30 },
+      expect(result).toMatchObject({
+        ok: true,
+        applied: true,
+        changedDocumentIds:
+          kind === "cell"
+            ? ["document-child", "document-main", "document-other"]
+            : ["document-main", "document-other"],
+        project: {
+          documents: [
+            {
+              routes: [
+                {
+                  id: "route-input",
+                  legs: [
+                    {
+                      mode: "auto",
+                      to: {
+                        kind: "bend",
+                        position: { x: -150, y: -30 },
+                      },
                     },
-                  },
-                  { mode: "auto", to: { kind: "endpoint" } },
-                ],
-              },
-            ],
-          },
-          {},
-        ],
-      },
-    });
-  });
+                    { mode: "auto", to: { kind: "endpoint" } },
+                  ],
+                },
+              ],
+            },
+            {},
+            {},
+          ],
+        },
+      });
+      if (result.ok) {
+        expect(result.project.documents[2]!.routes).toEqual(
+          result.project.documents[0]!.routes,
+        );
+      }
+    },
+  );
 
   it("preserves a canonical MOS caller while its reviewed external definition stays compatible", () => {
     const project = createEmptyProject("project", "Project");

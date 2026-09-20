@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { compileSourceSimulation } from "@icm/netlist";
-import { serializeProject, parseProject } from "@icm/project-protocol";
+import {
+  serializeProject,
+  parseProject,
+  canonicalConnectionIndexes,
+} from "@icm/project-protocol";
 import {
   createSimulationExample,
   simulationExamples,
@@ -13,9 +17,10 @@ describe("simulation starter projects", () => {
       const before = JSON.stringify(example.source);
       const project = createSimulationExample(example.id);
       expect(project.simulationFolders.length).toBeGreaterThan(0);
-      expect(parseProject(serializeProject(project)).documents).toEqual(
-        project.documents,
-      );
+      expect(
+        canonicalConnectionIndexes(parseProject(serializeProject(project)))
+          .documents,
+      ).toEqual(canonicalConnectionIndexes(project).documents);
       for (const folder of project.simulationFolders) {
         const code = folder.input.files.find(
           (file) => file.path === folder.input.entry,

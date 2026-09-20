@@ -21,12 +21,29 @@ restrictive content-security-policy.
   (`{entries, nextCursor, total}`; keyset cursor; limit clamps at 60; optional
   `author` filters to that exact byline and optional `tags=a,b` to
   entries carrying ANY listed tag, both ahead of pagination; `total` counts
-  the whole filtered set and repeats on every page). Rejected and
+  the whole filtered set and repeats on every page). `netlistable=1` keeps
+  only the entries whose stored mark says the drawing extracts, and `liked=1`
+  only the ones this session has liked — a signed-out request for the
+  session's likes therefore selects none of them, never all of them. Every
+  narrowing composes and every one of them precedes the cursor, so `total`
+  and the page agree. Rejected and
   recycled entries never appear. Every entry includes the content-derived
   `previewRevision` used by its thumbnail URL plus `previewWidth` and
   `previewHeight` from the stored SVG viewBox. Older or invalid previews may
   omit the dimensions; clients must then retain their existing natural-size
   fallback.
+  Each entry also carries `netlistable`: whether that stored drawing extracts
+  to a netlist, answered by `designExtractsNetlist` through the same export
+  the editor's Netlist panel uses, held to the same standard the editor's own
+  copy/export is held to. The mark is about the drawing, not about a process
+  library — a missing device model or an unbound width exports as a TODO
+  placeholder and leaves the mark standing. A missing MOS body, an unresolved
+  required pin, or a node only one pin reaches
+  (`DEAD_END_NET`, see [netlist export](netlist-export.md)) clears it: those
+  say the drawing is unfinished, which no export option can supply. It is
+  re-answered whenever an entry is written, so repairing a published circuit
+  lights its mark immediately, and the scheduled maintenance pass below
+  re-answers stored marks after the rule itself changes.
 - `GET /api/gallery/tags` — distinct public tags with counts, most
   frequent first (feeds the multi-select menu).
 - `GET /api/gallery/authors` — non-empty public bylines with their currently
@@ -39,6 +56,17 @@ restrictive content-security-policy.
 - `GET /api/gallery/<id>/preview.svg?v=<previewRevision>` — the
   server-rendered preview. A revision matching the stored SVG is immutable;
   unversioned, stale-revision, hidden, and missing responses are `no-store`.
+- Which circuits a reader is looking at — the wall (`view`), the byline
+  (`author`), the tags (`tags`), the text (`q`), and the two marks
+  (`netlist`, `liked`) — is one preference and persists as one: it rides in
+  the address so a link and the Back button carry the same slice, and in the
+  browser's own store (`icm.gallery-filters.v1`) so opening a circuit and
+  returning to the bare address restores it, including an emptiness the reader
+  chose. A link that names any narrowing parameter is somebody's request for
+  exactly that slice and replaces the stored preference outright rather than
+  intersecting with it. The text query is answered in the browser over what
+  has loaded, so it never speaks for the wall's `total`. The store is a
+  convenience: a browser that refuses it loses only the memory, never the wall.
 - `/` serves the full-screen feed; each tile links to `/g/<id>`, which the
   editor opens through the ordinary protocol boundary. `/editor` is the
   plain editor; `/editor?example=<id>` opens a bundled example. The
@@ -130,6 +158,9 @@ submitter until the Owner restores the entry.
   which applies to every account carrying that verified email. A
   moderator curates; quality advice is non-blocking for every role. The recycle bin and
   maintenance stay admin-only.
+- The Gallery has no bulk process-model fill action, including for the Owner.
+  One-off library repairs belong outside the Gallery browsing interface;
+  process and model editing remain available inside each circuit's editor.
 
 Every community tile carries a Like toggle backed by
 `POST /api/gallery/<id>/like` (same-origin): a signed-in account holds at most
@@ -261,11 +292,22 @@ header buys nothing. Without such a session every admin route answers
 - `GET /api/gallery/maintenance/schema-backup` — download a full-fidelity
   administrator backup of entries, saved versions, and private Cloud Projects.
 - `POST /api/gallery/maintenance/schema-current` — validate or transactionally
-  converge every stored Project to `CURRENT_PROJECT_SCHEMA_VERSION`. The
+  converge every stored Project to `CURRENT_PROJECT_FILE_VERSION`. The
   request body is `{ "apply": false }` for a dry run and `{ "apply": true }`
   to commit only when every record is valid. The response reports
   source-version counts, validation failures, and the current target version;
   it does not embed a second Gallery-specific migration policy.
+- `POST /api/gallery/maintenance/netlist-badges` — re-answer one batch of
+  stored netlistable marks (`{ "limit"?: 1..200 }` → `{scanned, changed,
+  unreadable, ruleVersion, remaining}`). Every entry stores the rule version
+  its mark came from (`NETLIST_MARK_RULE_VERSION`, bumped whenever a change
+  can turn a stored answer stale), so the pass selects exactly the entries
+  behind this build and carries no cursor: running it again when none is
+  stale reads one count and stops. An unreadable stored Project keeps its
+  mark, is counted, and is stamped so the pass does not meet it for ever.
+  The same pass runs on a schedule (`triggers.crons` in both channels'
+  Wrangler configs), so a deployed rule change converges without anybody
+  pressing anything; the route stays for when somebody wants it now.
 - `POST /api/gallery/maintenance/schema-restore` — atomically restore the three
   Project-bearing tables from a `schema-backup` payload supplied as
   `{ "backup": ... }`. Current retention is reapplied, so a legacy backup with

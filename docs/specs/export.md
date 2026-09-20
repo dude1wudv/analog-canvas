@@ -4,7 +4,7 @@ Status: `accepted`
 
 Primary owners: `packages/render-svg`, `packages/exporters`
 
-Related ADR: [`0014-resolved-route-geometry.md`](../adr/0014-resolved-route-geometry.md).
+Related ADR: [`routing.md`](../adr/routing.md).
 Formal export consumes the resolved route geometry (centerline + endpoint joins)
 and, as today, excludes editor overlays, flightlines, selection, and
 diagnostics.
@@ -15,7 +15,7 @@ Every export starts from one validated `SchematicDocument`, one symbol
 resolver, and the formal SVG scene. Editor overlays, hit targets, selections,
 flightlines, and diagnostics are never part of a formal artifact.
 
-| Format | v0.1 derivation                             | Media type        |
+| Format | Derivation                                  | Media type        |
 | ------ | ------------------------------------------- | ----------------- |
 | SVG    | canonical formal scene                      | `image/svg+xml`   |
 | PNG    | white-background raster of that SVG at 3x   | `image/png`       |

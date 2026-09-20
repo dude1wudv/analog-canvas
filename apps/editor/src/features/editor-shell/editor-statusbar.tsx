@@ -75,6 +75,7 @@ export function EditorStatusbar({
   wireCornerOrder,
   recoveryLabel,
   zoomPercent,
+  gridVisible,
   issues,
   selectionFilterSummary,
   onOpenSelectionFilter,
@@ -82,6 +83,7 @@ export function EditorStatusbar({
   onWireRoutingModeChange,
   onWireCornerOrderChange,
   onOpenAnalytics,
+  onToggleGrid,
   onZoomOut,
   onZoomIn,
   onFitView,
@@ -96,6 +98,8 @@ export function EditorStatusbar({
   wireCornerOrder: WireCornerOrder;
   recoveryLabel: string | null;
   zoomPercent: number;
+  /** Whether the canvas paints its background grid dots. */
+  gridVisible: boolean;
   selectionFilterSummary: string | null;
   issues?: {
     errorCount: number;
@@ -107,6 +111,7 @@ export function EditorStatusbar({
   onWireRoutingModeChange: (mode: WireRoutingMode) => void;
   onWireCornerOrderChange: (order: WireCornerOrder) => void;
   onOpenAnalytics: () => void;
+  onToggleGrid: () => void;
   onZoomOut: () => void;
   onZoomIn: () => void;
   onFitView: () => void;
@@ -231,27 +236,54 @@ export function EditorStatusbar({
           {visitStats.pv.toLocaleString()} views
         </a>
       ) : null}
-      <div className="canvas-controls" aria-label="画布视图控件">
+      <div className="statusbar-view-controls">
+        {/* One click away, unlike the canvas.showGrid setting. The label
+            collapses to the icon in half-width windows. */}
         <button
           type="button"
-          aria-label="Zoom out"
-          title="Zoom out"
-          onClick={onZoomOut}
+          className="statusbar-grid-toggle"
+          data-testid="statusbar-grid-toggle"
+          aria-label="Grid"
+          aria-pressed={gridVisible}
+          title={
+            gridVisible
+              ? "Grid On — click to hide the background grid"
+              : "Grid Off — click to show the background grid"
+          }
+          onClick={onToggleGrid}
         >
-          <ToolIcon name="zoom-out" />
+          <ToolIcon name="grid" />
+          <span className="statusbar-grid-label">
+            {gridVisible ? "网格开启" : "网格关闭"}
+          </span>
         </button>
-        <output aria-label="当前缩放比例">{zoomPercent}%</output>
-        <button type="button" aria-label="放大" title="放大" onClick={onZoomIn}>
-          <ToolIcon name="zoom-in" />
-        </button>
-        <button
-          type="button"
-          aria-label="适合窗口"
-          title="适合窗口（Home）"
-          onClick={onFitView}
-        >
-          <ToolIcon name="fit" />
-        </button>
+        <div className="canvas-controls" aria-label="画布视图控件">
+          <button
+            type="button"
+            aria-label="缩小"
+            title="缩小"
+            onClick={onZoomOut}
+          >
+            <ToolIcon name="zoom-out" />
+          </button>
+          <output aria-label="当前缩放比例">{zoomPercent}%</output>
+          <button
+            type="button"
+            aria-label="放大"
+            title="放大"
+            onClick={onZoomIn}
+          >
+            <ToolIcon name="zoom-in" />
+          </button>
+          <button
+            type="button"
+            aria-label="适合窗口"
+            title="适合窗口（Home）"
+            onClick={onFitView}
+          >
+            <ToolIcon name="fit" />
+          </button>
+        </div>
       </div>
     </footer>
   );

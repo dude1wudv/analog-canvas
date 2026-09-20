@@ -11,6 +11,7 @@
 // change are left untouched rather than deleted.
 
 import {
+  CURRENT_PROJECT_FILE_VERSION,
   parseProject,
   ProjectFormatError,
   serializeProject,
@@ -552,7 +553,7 @@ export async function migrateLegacyProjectRecovery(
     generation: "latest",
     projectId: project.id,
     projectName: project.name,
-    projectSchemaVersion: project.schemaVersion,
+    projectSchemaVersion: CURRENT_PROJECT_FILE_VERSION,
     topDocumentId: project.topDocumentId,
     documentRevisions,
     source: "recovered",

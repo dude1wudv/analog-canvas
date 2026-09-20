@@ -1,3 +1,4 @@
+import { withProjectComponentDefinitions } from "@icm/symbols";
 import type { CircuitProject, SchematicDocument } from "@icm/model";
 import { CircuitProjectSchema } from "@icm/model";
 import {
@@ -37,20 +38,34 @@ export function validateProjectCode(
       message: diagnosticMessage(parsed.diagnostics[0]!),
     };
   }
-  if (parsed.project.id !== projectId) {
+  // Pasted code owns the complete drawing, not the receiving editor session.
+  // Keep the recipient's Project identity so cross-Project paste uses the same
+  // undoable commit and connected Agent session. Drawing references stay intact.
+  try {
+    return {
+      ok: true,
+      project: withProjectComponentDefinitions({
+        ...parsed.project,
+        id: projectId,
+      }),
+    };
+  } catch (error) {
     return {
       ok: false,
-      message: `Project id is fixed for this editing session (${projectId})`,
+      message: error instanceof Error ? error.message : String(error),
     };
   }
-  return { ok: true, project: parsed.project };
 }
 
-function documentWithoutRevision(document: SchematicDocument): unknown {
+function documentWithoutRevision(
+  document: SchematicDocument,
+): SchematicDocument {
   return { ...document, revision: 0 };
 }
 
-function projectWithoutManagedRevisions(project: CircuitProject): unknown {
+function projectWithoutManagedRevisions(
+  project: CircuitProject,
+): CircuitProject {
   return {
     ...project,
     structureRevision: 0,
@@ -63,8 +78,8 @@ function sameAuthoredProject(
   right: CircuitProject,
 ): boolean {
   return (
-    JSON.stringify(projectWithoutManagedRevisions(left)) ===
-    JSON.stringify(projectWithoutManagedRevisions(right))
+    serializeProject(projectWithoutManagedRevisions(left)) ===
+    serializeProject(projectWithoutManagedRevisions(right))
   );
 }
 

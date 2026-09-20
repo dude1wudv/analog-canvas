@@ -7,7 +7,11 @@ import {
   routeAgentSessionRequest,
   type AgentSessionNamespaceLike,
 } from "./agent-session";
-import { routeGalleryRequest, type GalleryNamespaceLike } from "./gallery";
+import {
+  refreshNetlistMarks,
+  routeGalleryRequest,
+  type GalleryNamespaceLike,
+} from "./gallery";
 import { routeSimulationRequest, type SimulationEnv } from "./simulation";
 import {
   consumeSimulationJobs,
@@ -26,6 +30,11 @@ import {
   type ChannelEnv,
 } from "./channel";
 import { routeAuthRequest, type AuthNamespaceLike } from "./auth";
+import {
+  routeComponentLibraryRequest,
+  type ComponentLibraryEnv,
+} from "./component-library";
+export { ComponentLibraryDO } from "./component-library";
 
 export { AnalyticsDO } from "../apps/editor/analytics/worker";
 export { AgentSessionDO } from "./agent-session";
@@ -33,7 +42,8 @@ export { GalleryDO } from "./gallery";
 export { AuthDO } from "./auth";
 export { SimulationControlDO } from "./simulation-control-do";
 
-type Env = SimulationEnv &
+type Env = ComponentLibraryEnv &
+  SimulationEnv &
   SimulationOperationsEnv &
   ChannelEnv & {
     ASSETS: { fetch(request: Request): Promise<Response> };
@@ -53,7 +63,7 @@ type Env = SimulationEnv &
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    // Every preview response is stamped noindex on the way out (ADR 0057).
+    // Every preview response is stamped noindex on the way out (Deployment rationale).
     return markPreviewResponse(await route(request, env), env);
   },
   async queue(
@@ -62,7 +72,19 @@ export default {
   ): Promise<void> {
     await consumeSimulationJobs(batch, env);
   },
+  // A deployed change to the netlist rule leaves every stored Gallery mark
+  // answering an older question. One batch per tick re-answers them without
+  // anybody pressing anything; when none are stale the pass reads one count
+  // and stops.
+  async scheduled(_event: ScheduledEventLike, env: Env): Promise<void> {
+    await refreshNetlistMarks(env, SCHEDULED_NETLIST_MARK_BATCH);
+  },
 };
+
+/** Batch size per tick: large enough to converge quickly, small enough to stay well inside one invocation. */
+const SCHEDULED_NETLIST_MARK_BATCH = 50;
+
+type ScheduledEventLike = { scheduledTime: number; cron: string };
 
 async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -92,6 +114,9 @@ async function route(request: Request, env: Env): Promise<Response> {
 
   const galleryResponse = await routeGalleryRequest(request, env);
   if (galleryResponse) return galleryResponse;
+
+  const componentsResponse = await routeComponentLibraryRequest(request, env);
+  if (componentsResponse) return componentsResponse;
 
   const managedSimulationResponse = await routeManagedSimulationRequest(
     request,

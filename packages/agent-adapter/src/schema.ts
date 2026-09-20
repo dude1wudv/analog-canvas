@@ -240,7 +240,12 @@ export const AgentSchematicEditSchema = SchematicEditSchema.superRefine(
 );
 const TransactionPayloadShape = {
   edits: z.array(AgentSchematicEditSchema).min(1).max(256).optional(),
-  wireIntent: AgentWireIntentSchema.optional(),
+  wireIntent: z
+    .union([
+      AgentWireIntentSchema,
+      z.array(AgentWireIntentSchema).min(1).max(64),
+    ])
+    .optional(),
   semanticIntent: AgentSemanticIntentSchema.optional(),
   command: AgentAuthoringCommandSchema.optional(),
   structureEdits: z
@@ -512,7 +517,8 @@ export const AgentSnapshotDocumentSchema = z.strictObject({
           name: z.string().min(1),
           netId: StableIdSchema,
           direction: z.enum(["input", "output", "inout", "passive"]),
-          interfaceInstanceIds: z.array(StableIdSchema).length(1),
+          interfaceInstanceIds: z.array(StableIdSchema).max(1),
+          interfaceAnnotationId: StableIdSchema.optional(),
         }),
       ),
     })
@@ -554,6 +560,8 @@ export const AgentProjectIndexDocumentSchema = z.strictObject({
       instanceId: StableIdSchema,
       targetName: z.string().min(1),
       targetDocumentId: StableIdSchema.nullable(),
+      targetKind: z.enum(["internal", "external", "unresolved"]).optional(),
+      targetDefinitionId: StableIdSchema.nullable().optional(),
     }),
   ),
 });
@@ -674,6 +682,8 @@ export const AgentTransactSuccessResponseSchema = ResponseBaseSchema.extend({
   revision: z.number().int().nonnegative(),
   proposedRevision: z.number().int().nonnegative(),
   diff: AgentDiffSchema,
+  /** Document-local terminal equivalence only; not full electrical equivalence. */
+  terminalConnectivityChanged: z.boolean().optional(),
   diagnostics: z.array(AgentDiagnosticSchema),
   diagnosticDelta: z
     .strictObject({

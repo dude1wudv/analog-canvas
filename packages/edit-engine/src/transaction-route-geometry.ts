@@ -75,7 +75,13 @@ export function applyRouteGeometryEdit(
       if (!route.styleOverride && existing?.styleOverride) {
         route.styleOverride = structuredClone(existing.styleOverride);
       }
-      const routeError = validateRoute(draft, route, resolver);
+      const routeError = validateRoute(
+        draft,
+        route,
+        resolver,
+        undefined,
+        "pending",
+      );
       if (routeError) {
         return {
           ok: false,
@@ -169,7 +175,13 @@ export function applyRouteGeometryEdit(
       if (existing?.styleOverride) {
         route.styleOverride = structuredClone(existing.styleOverride);
       }
-      const routeError = validateRoute(draft, route, resolver);
+      const routeError = validateRoute(
+        draft,
+        route,
+        resolver,
+        undefined,
+        "pending",
+      );
       if (routeError) {
         return {
           ok: false,

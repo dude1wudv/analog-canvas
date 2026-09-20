@@ -16,22 +16,23 @@ import {
 } from "./connectivity.js";
 import type { RoutingGuide } from "./routing-guidance.js";
 import { endpointKey, isVisibleEndpoint, netEndpoints } from "./endpoint.js";
-import { directObjectLocator, type ObjectLocator } from "./object-locator.js";
+import {
+  directObjectLocator,
+  type ObjectLocator,
+  type HierarchyFrame,
+} from "./object-locator.js";
 import type { ResolvedNetLabelBinding } from "./net-label.js";
 import { resolveAnnotationText } from "./annotation-text.js";
-import { resolveDocumentLogicalNets } from "./logical-net.js";
+import {
+  resolveDocumentLogicalNets,
+  type ResolvedDocumentLogicalNets,
+} from "./logical-net.js";
 import type { DocumentDerivedContext } from "./document-derived-context.js";
 
 /**
- * Unified read-only connectivity index (ADR 0013). Single source of
- * connectivity truth for routing guidance, net highlight, cross-Cell trace,
- * project search, and ERC. Never persisted, exported, or mutated by GUI state.
- *
- * This first implementation is an additive facade over the existing tested
- * `derive*` primitives, plus the partition-invariant routing-guidance id
- * normalization (ADR 0013 / WP-R0 finding), typed virtual edges, hierarchy
- * edges, and a project object index. Production consumers keep using the old
- * helpers until the R10 migration proves parity and switches them.
+ * Shared derived connectivity read model; see docs/specs/connectivity-and-routing.md.
+ * Physical membership, logical equivalence, guidance and occurrence-aware lookup
+ * remain projections of Project facts, never another persisted authority.
  */
 
 export type EndpointRef = RouteEndpoint;
@@ -78,6 +79,8 @@ export interface HierarchyEdge {
 }
 
 export interface HierarchyConnectivityIndex {
+  /** Structural calls exist even without pins, wiring or resolved symbols. */
+  calls: readonly HierarchyFrame[];
   edges: readonly HierarchyEdge[];
 }
 
@@ -93,7 +96,7 @@ export interface GlobalNetGroup {
 }
 
 /**
- * Project-level object identity (ADR 0015). Direct-document locators carry an
+ * Project-level object identity (Net connectivity rationale). Direct-document locators carry an
  * empty hierarchy path; C6 later supplies non-empty paths for navigation.
  */
 export interface ProjectObjectIndex {
@@ -130,7 +133,7 @@ const documentIndexCache = new WeakMap<
  * Returns routing guidance whose `from`/`to` are ordered by `endpointKey` and
  * whose `id` is recomputed from the ordered keys, so the same logical guide
  * yields the same id regardless of how the visible wire is partitioned into
- * Routes (ADR 0013; resolves the WP-R0 partition-sensitivity finding).
+ * Routes (Net connectivity rationale).
  */
 function normalizeRoutingGuidance(line: RoutingGuide): RoutingGuide {
   const swap =
@@ -308,6 +311,7 @@ function buildNetRecord(
     document,
     net,
     connectivityContext.netLabelBindingsByNetId.get(net.id) ?? [],
+    connectivityContext.logicalNetResolution,
   );
 
   return {
@@ -333,6 +337,7 @@ function deriveLabelVirtualEdges(
   document: SchematicDocument,
   net: Net,
   bindings: readonly ResolvedNetLabelBinding[],
+  logicalNets: ResolvedDocumentLogicalNets,
 ): VirtualConnectivityEdge[] {
   const groups = new Map<
     string,
@@ -343,7 +348,7 @@ function deriveLabelVirtualEdges(
       (candidate) => candidate.id === binding.annotationId,
     )!;
     const label = flattenRichText(
-      resolveAnnotationText(document, annotation),
+      resolveAnnotationText(document, annotation, logicalNets),
     ).trim();
     if (label.length === 0) continue;
     const group = groups.get(label) ?? {
@@ -362,7 +367,7 @@ function deriveLabelVirtualEdges(
     );
     if (!binding) continue;
     const label = flattenRichText(
-      resolveAnnotationText(document, annotation),
+      resolveAnnotationText(document, annotation, logicalNets),
     ).trim();
     if (label.length === 0) continue;
     const group = groups.get(label) ?? {
@@ -398,11 +403,17 @@ function buildHierarchyIndex(
   resolver: SymbolResolver,
   documents: ReadonlyMap<string, DocumentConnectivityIndex>,
 ): HierarchyConnectivityIndex {
+  const calls: HierarchyFrame[] = [];
   const edges: HierarchyEdge[] = [];
   for (const parent of project.documents) {
     for (const instance of parent.instances) {
       const childId = referencedDocumentId(project, instance);
       if (!childId) continue;
+      calls.push({
+        parentDocumentId: parent.id,
+        instanceId: instance.id,
+        childDocumentId: childId,
+      });
       const child = project.documents.find(
         (candidate) => candidate.id === childId,
       );
@@ -449,7 +460,13 @@ function buildHierarchyIndex(
       a.instanceId.localeCompare(b.instanceId, "en") ||
       a.parentPinName.localeCompare(b.parentPinName, "en"),
   );
-  return { edges };
+  calls.sort(
+    (a, b) =>
+      a.parentDocumentId.localeCompare(b.parentDocumentId, "en") ||
+      a.instanceId.localeCompare(b.instanceId, "en") ||
+      a.childDocumentId.localeCompare(b.childDocumentId, "en"),
+  );
+  return { calls, edges };
 }
 
 function buildGlobalNetIndex(

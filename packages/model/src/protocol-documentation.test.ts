@@ -1,3 +1,4 @@
+import { CURRENT_PROJECT_FILE_VERSION } from "@icm/project-protocol";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,13 +19,19 @@ describe("Project protocol documentation", () => {
     const expectations = [
       ["docs/overall-product-plan.md", `schema-${version}`],
       ["docs/specs/schematic-model.md", `strict schema ${version}`],
-      ["docs/specs/persistence-and-recovery.md", `schema-${version}`],
-      ["docs/specs/project-file-format.md", `Project schema: \`${version}\``],
+      [
+        "docs/specs/persistence-and-recovery.md",
+        `schema-${CURRENT_PROJECT_FILE_VERSION}`,
+      ],
+      [
+        "docs/specs/project-file-format.md",
+        `Portable file schema: \`${CURRENT_PROJECT_FILE_VERSION}\``,
+      ],
       ["docs/specs/editor-interaction.md", `schema-${version}`],
-      ["docs/specs/community-gallery.md", "CURRENT_PROJECT_SCHEMA_VERSION"],
+      ["docs/specs/community-gallery.md", "CURRENT_PROJECT_FILE_VERSION"],
       [
         "docs/user/project-compatibility.md",
-        `schema version is \`${version}\``,
+        `schema version is \`${CURRENT_PROJECT_FILE_VERSION}\``,
       ],
     ] as const;
 

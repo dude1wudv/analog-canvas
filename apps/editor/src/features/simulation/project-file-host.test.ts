@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { parseProject, serializeProject } from "@icm/project-protocol";
+import {
+  parseProject,
+  serializeProject,
+  canonicalConnectionIndexes,
+} from "@icm/project-protocol";
 import { generateCircuitSource } from "@icm/netlist";
 import { SimulationFiles, sha256 } from "@icm/simulation-service/files";
 import ota from "../../../../../netlists/native-ota-library/legacy-source.icproj.json";
@@ -154,7 +158,9 @@ describe("shared human/Agent generated Circuit File Resource", () => {
           .instances.find((i) => i.id === f.span.instanceId)!.netlist!
           .parameters.w,
       );
-      expect(parseProject(serializeProject(after))).toEqual(after);
+      expect(
+        canonicalConnectionIndexes(parseProject(serializeProject(after))),
+      ).toEqual(canonicalConnectionIndexes(after));
       f.controller.transact([{ kind: "undo" }]);
       expect(
         f.controller.project.documents.map(

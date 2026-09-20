@@ -4,7 +4,7 @@ Status: `accepted`
 
 Primary owner: `packages/netlist`
 
-Related ADR: [`0017-deterministic-design-netlist-boundary.md`](../adr/0017-deterministic-design-netlist-boundary.md)
+Related ADR: [`hierarchy-netlist.md`](../adr/hierarchy-netlist.md)
 
 ## Purpose
 
@@ -65,29 +65,10 @@ properties are invalid. Export extraction and printers do not read them.
 
 The Project model supplies these normalized facts:
 
-```typescript
-interface CellNetlistInterface {
-  name: string;
-  terminals: Array<{
-    id: StableId;
-    name: string;
-    direction: PortDirection;
-    netId: StableId;
-    interfaceInstanceIds: [StableId];
-  }>;
-  formalParameters: Array<{ name: string; defaultValue?: string }>;
-}
-
-interface InstanceNetlistData {
-  binding?:
-    | { kind: "primitive"; deviceClass: DeviceClass }
-    | { kind: "model"; deviceClass: DeviceClass; name: string }
-    | { kind: "subcircuit"; childDocumentId: StableId }
-    | { kind: "external-subcircuit"; definitionId: StableId }
-    | { kind: "unresolved-subcircuit"; name: string };
-  parameters: Record<string, string>;
-}
-```
+The [model schema](../../packages/model/src/schema.ts) owns persisted Cell
+interfaces and Instance bindings. Export reads ordered terminal declarations,
+raw formal defaults, typed targets and raw Instance parameters; it defines no
+parallel persisted shape.
 
 Cell names, references, target names, parameter names, and raw values are
 length-bounded. The shared first-release identifier subset is ASCII letters,
@@ -139,11 +120,16 @@ stable local pins with different names. The released SKY130 resistor maps
 only in Properties and never a Symbol pin, Route endpoint, or NoConnect. The
 reviewed MIM capacitor maps `C0/C1` from the frozen capacitor pins `1/2`.
 
-`Instance.reference` is the exact ngspice designator. Selecting a reviewed
-external target atomically changes `M1/R1/C1` to `XM1/XR1/XC1`; clearing that
-target restores the native prefix. Imported X calls are retained unchanged,
-and all References remain case-insensitively unique before output. Reviewed
-SKY130 `l/w` values are stored canonically as metre-valued SPICE strings and
+`Instance.reference` is the authored schematic name. Selecting or clearing a
+reviewed external target preserves it. SPICE extraction adds the invocation
+prefix only in derived IR (`M1/R1/C1` become `XM1/XR1/XC1` for subcircuit
+bindings); Spectre uses the authored spelling. Existing legal SPICE names are
+reserved first; projected collisions receive `_2`, `_3`, etc. Export and
+simulation consume this same IR, including native signal paths. The code editor
+maps an ordinary rename back to the authored portion (`XM1` to `XM2`
+updates `M1` to `M2`); explicitly authored X-style names remain supported.
+Imported X names remain valid and are never rewritten by a process switch. All
+authored References remain case-insensitively unique per Cell. Reviewed SKY130 `l/w` values are stored canonically as metre-valued SPICE strings and
 projected to plain micrometre numbers by extraction for both SPICE and Spectre
 output.
 
@@ -158,34 +144,16 @@ library model or PDK.
 Each exportable electrical device Symbol has one reviewed `DeviceDescriptor`
 in `packages/devices`. Built-in Analog Blocks instead have a black-box
 subcircuit descriptor: a master name and ordered ports, including fixed supply
-ports.
+ports. The logic Symbols — gates, buffer, inverter, adder, multiplier and the
+D flip-flops — are Blocks on that same contract: the drawing says what the
+block is and which nodes it meets, and the model behind the master name is
+the reader's to supply. Their ports follow the Symbol's own pins, a clock or
+reset counting as an input and a complement as an output, and they declare
+the same fixed supplies so every Block writes a card of the same shape.
 
-```typescript
-interface DeviceDescriptor {
-  id: string;
-  symbolId: StableId;
-  deviceClass:
-    | "resistor"
-    | "capacitor"
-    | "inductor"
-    | "mos"
-    | "diode"
-    | "bjt"
-    | "voltage-source"
-    | "current-source"
-    | "switch"
-    | "net-marker";
-  mosBulkClass?: "nmos" | "pmos";
-  referencePrefix: string | null;
-  pinOrder: string[];
-  targetPolicy: "builtin" | "required-model" | "child-cell" | "none";
-  sourceWaveformDefault?: "dc" | "pulse" | "sin" | "pwl";
-  parameters: DeviceParameterDefinition[];
-  dialects: ["spice", "spectre"];
-  capabilities: DeviceCapabilities;
-  // plus optional authoring-only pin metadata
-}
-```
+[DeviceDescriptor](../../packages/devices/src/contract.ts) owns canonical pin
+order, invocation policy, parameter metadata and supported dialects. The
+[registry](../../packages/devices/src/registry.ts) supplies reviewed entries.
 
 `DeviceParameterDefinition` is the same descriptor-owned field metadata used
 by Insert and Properties (key, label, requiredness, editor kind, optional unit
@@ -197,9 +165,10 @@ Canonical MOS ordering is D/G/S/B. Ground is a Net marker that verifies the
 explicit global Logical Net `0` and emits no instance line. Newly authored VDD
 Power is a non-emitting formal Cell Pin with derived `powerDomain: vdd`; its
 Properties connection mode may instead replace that formal terminal with an
-explicit Global marker claim. A named Power Rail has no Instance and defaults
-to a local VDD claim. Only an explicitly global Net is emitted through the
-dialect's global declaration.
+explicit Global marker claim. A local Power Rail has no Instance but its visible
+power-label annotation owns a formal Cell terminal, so its authored name appears
+in the `.subckt` interface. An explicitly global Power Rail has no formal
+terminal and is emitted through the dialect's global declaration.
 Decorative symbols never have a device definition. An unsupported electrical
 Symbol blocks export.
 
@@ -208,8 +177,15 @@ represented structurally. A display string is not a source specification.
 
 ## Net rules
 
-- `Net.terminals` is the only connectivity truth.
-- Named Nets are unique within a cell under case folding.
+- Extraction consumes the [connectivity contract](connectivity-and-routing.md#net-naming-and-lifecycle)
+  and the [formal interface](schematic-model.md#electrical-authority). It does
+  not reconstruct equivalence from spelling, drawing geometry or source hints.
+- Semantic scope is independent of emitted spelling. Project-global spelling
+  is selected from current claims, formal names, declarations and source hints
+  in authority order, retaining variants for explanation. The dialect codec
+  blocks authored-token collisions between distinct identities; hints may be
+  disambiguated. Cadence bang spelling is an explicit operation profile, not
+  persisted scope or an inference in generic SPICE mode.
 - An unnamed local Net receives an ephemeral collision-free `net0`, `net1`,
   ... name in stable Logical-Net order. Existing authored names reserve their
   dialect spelling, so automatic allocation skips conflicts. This does not
@@ -223,54 +199,21 @@ represented structurally. A display string is not a source specification.
 - Except for the established global SPICE ground reference `0`, one Logical
   Net cannot be both a formal Cell Pin and global; that ambiguity blocks export
   until the interface mode or the conflicting owner is changed.
-- A terminal belongs to at most one Net.
 - An unconnected terminal must carry an explicit `NoConnect`; otherwise export
   is blocked. Each explicit `NoConnect` receives one deterministic,
   collision-free exporter-only local node (`NC0001`, `NC0002`, ...), preserving
   fixed device and subcircuit arity without adding a Project Net.
-- Routes, Junctions, flightlines, labels, placement, and drafting content do
-  not affect the Export IR.
+- Drawing coordinates, text styling and flightlines do not affect Export IR.
+  Committed physical connectivity and owned electrical name claims do;
+  a Net Label's electrical claim is not merely its drawn text.
 
 ## Transient Export IR
 
 The export IR is distinct from the import-oriented `CircuitIR`:
 
-```typescript
-interface DesignNetlistIR {
-  topCellId: StableId;
-  cells: DesignNetlistCell[];
-  externalMasters?: DesignNetlistExternalMaster[];
-  globals: string[];
-}
-
-interface DesignNetlistCell {
-  id: StableId;
-  name: string;
-  ports: Array<{ id: StableId; name: string; netName: string }>;
-  nets: Array<{ id: StableId; name: string; scope: "local" | "global" }>;
-  instances: DesignNetlistInstance[];
-  formalParameters?: Array<{ name: string; defaultValue?: string }>;
-}
-
-// A referenced external or built-in Analog Block interface; never a body.
-interface DesignNetlistExternalMaster {
-  id: StableId;
-  name: string;
-  terminals: Array<{ id: StableId; name: string; direction: PortDirection }>;
-  formalParameters: Array<{ name: string; defaultValue?: string }>;
-}
-
-interface DesignNetlistInstance {
-  id: StableId;
-  reference: string;
-  invocationKind: "primitive" | "subcircuit";
-  reviewedExternalBindingId?: ReviewedExternalBindingId;
-  deviceClass: DeviceClass | "hierarchical";
-  target: string | null;
-  nodes: Array<{ pinName: string; netName: string }>;
-  parameters: Array<{ name: string; rawValue: string }>;
-}
-```
+[DesignNetlistIR](../../packages/netlist/src/ir.ts) owns the transient export
+shape: top Cell, ordered Cells and external masters, globals, named nodes,
+invocation kinds and raw parameters. It is never persisted as Project data.
 
 Extraction validates the entire reachable hierarchy before returning an IR.
 Cells are dependency-first with stable tie breaking. Ports follow the
@@ -306,16 +249,18 @@ simulator can run them without an external simulation setup.
 
 Extraction returns structured diagnostics with stable code, severity,
 Document ID, and affected object IDs. The strict extractor returns no IR when
-any error remains. The copy/export projection below permits explicit TODO
-fields for two omission categories; every other error still prevents printer
-invocation and output. Required error coverage includes:
+any error remains. Copy and export use that same answer: no printer runs and no
+partial netlist is exposed while an error remains. Required error coverage includes:
 
 - invalid cell-terminal, Net, or instance identifiers;
 - missing or mismatched formal terminal mappings;
 - unconnected required terminal without `NoConnect`, including an omitted MOS B;
 - unnamed global Net or duplicate explicit Net name;
 - unknown or multiply assigned terminal;
-- missing device definition, required pin, reference, target, or parameter;
+- missing device definition, required pin, reference, target, or parameter —
+  an Instance carrying no netlist record at all is read as an empty one, since
+  it binds nothing and sets no parameter, so its target and parameters follow
+  the ordinary missing-value rules rather than reporting the drawing broken;
 - wrong reference prefix;
 - unresolved or mismatched child cell and hierarchy cycle;
 - unsupported dialect/device combination;
@@ -325,73 +270,123 @@ Warnings may report generated local Net names or conflicting directions inside
 one same-name Formal Port group. They cannot downgrade a missing
 electrical fact required for meaningful output.
 
-### Explicit export presets
+### One electrical extraction authority
 
-The export boundary accepts an optional `NetlistExportProfile`. The editor
-ships Abstract, SKY130, TSMC 28, TSMC 180, and Custom defaults in a single raw
-JSON configuration. The Netlist menu's Configuration… entry opens it in the
-right-side Project tools dock, which is separate from Properties. `selected`
-chooses the active preset; `format` and `portCase` hold the output choices.
-Valid code edits apply immediately, invalid drafts block copying, and browser
-preferences are separate from the Project schema. The live Netlist panel edits
-the same configuration through compact controls: Format and Process selects;
-NMOS, PMOS, R, C, and L target selects for the selected preset, where choosing
-a target reloads that family's parameter defaults; a Port-name case toggle; and
-a Default action that restores the whole default configuration.
+Live preview, clipboard copy, downloaded design netlists and Canvas-generated
+simulation circuit files all call the same strict extractor on the same
+persisted Project bindings. No output surface applies a browser-local process
+profile, replaces a model/subcircuit master, changes an invocation kind, fills
+device parameters or renumbers an Instance before extraction. An authored
+external-subcircuit remains an `X` call everywhere and an authored primitive MOS
+remains an `M` card everywhere.
 
-Projection copies the Project and visits only the reachable hierarchy. Abstract
-uses ideal R/C/L and generic model names without model cards; SKY130 uses reviewed
-external transistor interfaces and ideal R/C by default; TSMC 28 binds MOS
-models `nch_ulvt_mac`/`pch_ulvt_mac` with default `l=30n` and renames the
-portable MOS `m` to the wrapper's `multi`; TSMC 180 binds `nch`/`pch` with
-default `l=180n`, keeps `m`, and binds PNP to `pnp10_5_rpo`; both TSMC presets
-keep R/C/L ideal; Custom preserves authored targets. Editable library defaults
-are `sky130.lib.spice` section `tt`, `toplevel.scs` section `TOP_TT`, and
-`cmn018_gp2a_5v_v1d4_usage.scs` section `tt_lib`; Abstract and Custom have none.
-Defaults fill only missing parameters, case-insensitively. Existing source
-waveforms and AC intent do not acquire a new DC bias from a fallback.
+Netlist configuration stores `format`, `portCase`, the selected process and
+editable device templates for Abstract, SKY130, TSMC 28, TSMC 180 and Custom.
+The editor works in SKY130 until told otherwise, and a native device placed
+while a process is selected is bound to that process's model as part of the
+placement, so a drawn circuit exports as that process rather than with missing
+model fields.
+Format and case are output preferences. Process/device selection is an
+undoable Project transaction that writes ordinary typed bindings and parameters
+before any consumer extracts the circuit. Creating a bundled example applies
+missing native-device defaults from the cached template while retaining
+explicit models and external interfaces. Opening or reopening a saved Project's
+panel does not edit it, refill deliberately missing parameters, or interfere
+with recovery. Templates are
+cached in the browser; applied bindings travel with the Project. Simulation Profiles select engines,
+dependencies and corners and validate persisted targets; they do not rewrite
+them.
 
-Strict extraction, simulation, and profiled copy export use actual MOS B
-connectivity, including placement-materialized defaults. Without membership or
-an explicit NoConnect they report `MISSING_PIN_NET`; polarity and preset substrate
-settings do not invent MOS connections. Export preserves declared Cell interfaces
-and their ordering in hierarchy calls. It never adds VDD/VSS ports, promotes a
-local rail to a formal Pin, or rewrites a Global marker to local. Ground remains
-node `0`; it does not imply a VSS interface.
+Strict extraction and simulation preserve actual MOS B wiring, configured Cell
+body defaults and explicit NoConnect. An otherwise unresolved schematic MOS
+uses the conventional NMOS ground or PMOS VDD body connection even when no
+supply symbol is drawn. A read-only projection supplies missing VDD and ground
+nodes; block exports expose the new supplies as VDD/VSS ports and propagate
+new pins through internal callers in the same order. The flat simulation root
+keeps ground at node 0. No supply symbols or memberships are written back into
+the drawing. Existing scoped supplies and explicitly connected/custom bodies
+retain priority. The same fallback applies to historical imported devices when
+their B terminal has no connection; source provenance does not disable the
+conventional default. Missing D/G/S wiring remains an error. Existing declared
+Cell interfaces keep their order; this default only adds needed implicit supplies.
 
-Built-in Analog Blocks retain their library-declared fixed supply names, but
-those names must resolve to authored named Nets in the Cell. Missing supplies
-produce `MISSING_BLOCK_SUPPLY`, not synthetic Nets or ports. For different supply
-domains, use an explicit external definition with the intended terminal mapping.
+Ground is the one reference a Cell states rather than reaches for. A Cell
+printed as a `.subckt` that meets ground — its own, or through a Cell it
+instantiates — carries a `VSS` pin: placed immediately after the supplies the
+author declared (a port whose Net is in the `vdd` power domain), and otherwise
+first, so every interface reads `VDD VSS …` the way the Block library already
+writes it. Its internal nodes read `VSS` in place of `0`. A Cell that only
+passes ground down to a child gets the pin too, or the child's reference would
+have nowhere to come from. A Cell whose author already gave ground a pin of
+their own keeps that pin — the policy states a reference rather than
+duplicating one — and the node takes that pin's name, so no Cell printed as a
+subcircuit is left reaching for the global reference under another name.
 
-Explicit physical R/C targets use reviewed W/L parameters, never infer geometry
-from an ideal value, and warn when replacing that value. A resistor's existing
-substrate connection wins; an absent substrate may use an explicitly configured
-existing net or exporter-only ground `0`. Reference or target-interface collisions
-block output. Reviewed geometry stays in canonical metres until strict
-extraction emits the PDK wrapper's micrometre values in either dialect. Unknown
-custom subcircuits and unresolved hierarchy retain their original interfaces and
-validation.
+The one Cell a deck prints as its own top-level cards keeps node `0`: there the
+deck is the outside, and its calls carry that `0` into each child's `VSS` pin.
+So a simulated deck and a handed-out netlist share the same subcircuits, and
+only the outermost level differs. `groundPin` selects the policy and
+`rootAsTopLevel` names which Cell is the deck (`SIMULATION_DECK_GROUND` pairs
+them for every simulation surface). The analyzer's own default keeps node `0`,
+which is what an imported deck round-trips to and what an Agent Snapshot
+reads.
 
-Configured library paths and sections are printed as includes outside the pure
-IR printer. SCS output remains entirely in `simulator lang=spectre`, including
-SKY130; the configured model library is referenced with native Spectre `include`
-syntax. This does not convert the model library itself or claim licensed Spectre
-qualification. Strict extraction and simulation consumers do not implicitly use
-these export presets.
+Built-in Analog Blocks retain their library-declared fixed supply names. Such
+a name resolves first to an authored named Net in the Cell, and failing that
+to the supply the author drew — the Cell's single Net in that power domain, a
+`VSS` port therefore sitting on the ground and a `VDD` port on the positive
+supply, the same reading a MOS body uses for its fourth node
+([connectivity](connectivity-and-routing.md)). The declared name states the
+port's role, not a Net spelling the author has to reproduce: nobody names a
+Net `VSS` when they have drawn a ground symbol. A Cell with no Net in that
+domain, or with more than one, falls back to the Block's own declaration: the
+netlist declares a global node of the declared name and reports
+`DECLARED_BLOCK_SUPPLY` (warning) naming the Block and the node. That is the
+Block's library interface stating what it needs, so it adds no Cell port,
+claims no Net in the Document, and changes no membership — the drawing is
+untouched and the report says what the netlist declared. When that token is
+already some other node in the Cell, declaring it would put two nodes under
+one name, so the supply stays missing and `MISSING_BLOCK_SUPPLY` says which
+Net holds the spelling. For different supply domains, use an explicit external
+definition with the intended terminal mapping.
 
-### Incomplete output
+Persisted reviewed physical R/C bindings emit their declared terminals and raw
+geometry; an ideal value is never reinterpreted as physical geometry during
+export. Reviewed geometry stays in canonical metres until strict extraction
+emits a wrapper's required units in either dialect. Unknown custom subcircuits
+and unresolved hierarchy retain their original interfaces and validation.
+Design-netlist export adds no model-library include. Libraries, sections and
+corners belong to authored simulation source and its selected execution Profile.
 
-`createDesignNetlistExport` permits output when the only errors are
-`MISSING_MODEL_TARGET` and `MISSING_REQUIRED_PARAMETER`. It copies the Project,
-fills absent model bindings and blank/missing required device parameters with
-undefined `TODO_<cell>_<reference>_<field>` identifiers, and requires that copy
-to pass strict extraction before printing. Authored electrical identifiers and
-expressions are reserved case-insensitively to avoid accidental resolution;
-SPICE parameter placeholders use braces and Spectre uses bare identifiers.
-The returned structured placeholder list and diagnostics identify incomplete output.
-The sidebar and Check Report show that state outside the copied text. The
-projection never writes placeholders into the Project or changes simulation readiness.
+### Missing models and values
+
+`MISSING_MODEL_TARGET` and `MISSING_REQUIRED_PARAMETER` block structural output
+like every other extraction error. The editor's selected process can author
+configured defaults through one undoable Project transaction; Refresh applies
+only missing defaults before trying extraction again. If no configured default
+can resolve a field, the sidebar and Check Report show the located diagnostic
+and expose no partial netlist. Export never invents an identifier for an
+unknown electrical value.
+
+### Unfinished drawings
+
+An unfinished drawing is reported as `DEAD_END_NET`, one per node that a single
+instance pin reaches. Such a node
+is printed once and nothing else in the file ever reaches it, so a simulator
+meets a floating node rather than a circuit. Four single-pin nodes are not dead ends and carry no
+finding: a Cell port (its node continues outward to every instantiation), a
+global Net (shared with the rest of the design), an explicit `NoConnect` (the
+author saying the pin ends here), and a node with an authored or imported name
+(a declared signal such as a probe point, not leftover geometry — the test is
+that extraction did not have to invent the name).
+
+`createDesignNetlistExport` reports these findings without withholding
+output: its job is to say what the drawing currently says, so a preview of
+work in progress stays possible. Whether a netlist is fit to hand out is the
+caller's question, and `unfinishedDrawingDiagnostics` is how a caller asks
+it. The editor's Check Report, its live netlist panel, and the copy/export
+command all refuse on a non-empty answer, and `designExtractsNetlist` — the
+Gallery's mark ([community gallery](community-gallery.md)) — answers `false`.
 
 Existing conflicting bindings, missing hierarchy interfaces, unsupported devices,
 invalid waveforms, and incomplete connections remain blocking. This projection
@@ -400,13 +395,49 @@ and the explicit substrate rule belong only to the selected preset above.
 
 The editor's primary Netlist button copies immediately in its current format
 (SPICE by default) and opens the live right sidebar. That panel's Format select
-chooses the format, which is remembered with the browser-local configuration.
+chooses the format independently of the adjacent Process selector. The compact
+NMOS/PMOS/R/C/L selectors apply their target to that device family. Ideal R/C/L
+remain the default; selecting a reviewed physical passive uses its geometry,
+not a numerical conversion of an ideal resistance/capacitance/inductance.
+Authored W/L and values survive process changes, and reviewed SKY130 calls use
+the existing canonical unit/interface conversion. TSMC 28 maps `m` to `multi`;
+switching back restores `m`. Process selection preserves names and stable
+instance IDs; dialect naming happens only during extraction. Custom external
+blocks keep their own interfaces. Default restores the mapping the editor starts
+in and output preferences, without overwriting authored parameter values. A
+circuit drawn before a process was chosen says so: the panel counts the devices
+that still have no model — the same plan, counted rather than committed — and
+offers them in one undoable click, filling only what is missing. These choices are remembered locally.
 The adjacent menu offers Configuration…, Instances…, Check Report…, and Check
 and Save; it has no format choice. Clipboard rejection leaves selectable code
 and a status message, without a download fallback.
 
+The right Netlist editor is open by default. Its SPICE and SCS source allows
+editing device References, model targets and existing printed parameter values.
+A valid edit applies after a short typing pause or Enter (Shift+Enter inserts a
+line break). The printer supplies stable Document/Instance locations, including
+SPICE continuation lines; the caret highlights the corresponding canvas Instance
+and opens its Cell when necessary. It does not infer identity from Reference
+spelling, which may repeat across Cells.
+Explicit inspector actions (Q, double-clicking a component, Issues and import
+review) replace the default netlist panel. Canvas editing never requires closing
+the netlist first. A project panel is closed by the control that opened it —
+the toolbar button or the menu entry, both of which toggle — so the dock shows
+no close button over the panel's own controls, and the copy button keeps the
+right edge while the Format and Process selects give up width first.
+
+Source edits use one atomic Project transaction with per-Document revisions.
+Renaming preserves layout, wiring and IDs, updates bound labels, and leaves
+explicit display aliases unchanged. Duplicate names, invalid prefixes, malformed
+values and unsupported structure changes retain the draft with an error and
+leave the circuit unchanged. Connections, ports and device structure are edited
+on the canvas or in Project Code. Dirty source is never silently overwritten by
+canvas or Agent changes: conflicting live netlist changes require Reload. Copy
+in this panel is disabled until the draft is applied or discarded. The printed
+source and the circuit share undo/redo through those same transactions.
+
 The copy/export projection removes the strict printer's generated title and
-adds no diagnostic, preset, TODO-summary or library comments. It also accepts
+adds no diagnostic, preset or library comments. It also accepts
 an optional `portCase` (`upper` or `lower`), which the editor always supplies
 from its remembered choice, uppercase by default. Every formal Port name and
 the Cell-local node it owns, subcircuit-call pin names, and external-master
@@ -450,8 +481,8 @@ change either output.
 ## Incomplete and rejected examples
 
 A manually authored NMOS with W/L values but no model target produces a
-missing-target error in strict analysis. A structural export may mark its
-model `TODO_Main_M1_model` if all other electrical facts are present. Without a selected preset, export must not guess a model. With a preset, the
+missing-target error and no structural output. Without a selected preset,
+export must not guess a model. With a preset, the
 configured target and parameter defaults apply. The same
 device with an unconnected, unmarked drain still blocks output.
 
@@ -474,10 +505,9 @@ include; it never repairs a broken hierarchy or invents foundry model data.
 - focused editor clipboard/sidebar, bulk JSON, undo/redo and blocked-diagnostic flows
 - full mainline gate before non-document delivery
 
-## Deferred simulation-deck contract
+## Simulation boundary
 
-A later accepted contract may persist named simulation profiles containing
-explicit library references and path policy, corner/section, parameters,
-temperature, structured sources, analyses, options, and save selections. It
-composes with the DesignNetlistIR and does not add simulator commands to Net,
-Instance, Symbol, Route, or drawing contracts.
+[Simulation source authoring and compilation](simulation.md) compose explicit
+environment, source and analysis intent with the electrical projection.
+[Execution](simulation-execution.md) owns preparation and runs. Structural
+SPICE/Spectre export is not an executable deck and does not infer that setup.

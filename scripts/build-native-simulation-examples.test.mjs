@@ -9,7 +9,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseProject } from "../packages/project-protocol/src/index.js";
+import { withProjectComponentDefinitions } from "../packages/symbols/src/index.js";
+import {
+  parseProject,
+  canonicalConnectionIndexes,
+} from "../packages/project-protocol/src/index.js";
 import { compileSourceSimulation } from "../packages/netlist/src/simulation-source-compile.js";
 
 beforeAll(() => {
@@ -65,7 +69,9 @@ test.each([
         const reviewed = parseProject(readFileSync(item.sourcePath, "utf8"));
         // Includes every instance parameter/pin order, route, label, DUT/TB binding,
         // top Cell, folder and authored byte. Rendering does not rewrite the input.
-        expect(project).toEqual(reviewed);
+        expect(canonicalConnectionIndexes(project)).toEqual(
+          canonicalConnectionIndexes(withProjectComponentDefinitions(reviewed)),
+        );
         for (const doc of project.documents) {
           const inspection = JSON.parse(
             readFileSync(

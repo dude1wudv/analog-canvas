@@ -47,13 +47,24 @@ describe("loadGalleryFeed", () => {
     }) as typeof fetch;
     await loadGalleryFeed(capturing);
     await loadGalleryFeed(capturing, { author: "alice" });
+    await loadGalleryFeed(capturing, {
+      author: "alice",
+      ownerUserId: "account-alice",
+    });
     await loadGalleryFeed(capturing, { author: "alice", cursor: "c|1" });
     await loadGalleryFeed(capturing, { author: "alice", limit: 4 });
+    await loadGalleryFeed(capturing, { netlistable: true, liked: true });
+    // An unasked mark leaves the query alone, so the wall's own cache key and
+    // the worker's fast path stay what they were.
+    await loadGalleryFeed(capturing, { netlistable: false, liked: false });
     expect(urls).toEqual([
       "/api/gallery",
       "/api/gallery?author=alice",
+      "/api/gallery?author=alice&owner=account-alice",
       "/api/gallery?author=alice&cursor=c%7C1",
       "/api/gallery?author=alice&limit=4",
+      "/api/gallery?netlistable=1&liked=1",
+      "/api/gallery",
     ]);
   });
 
@@ -84,8 +95,8 @@ describe("loadGalleryAuthors", () => {
       return new Response(
         JSON.stringify({
           authors: [
-            { author: "Alice", count: 12 },
-            { author: "Bob", count: 3 },
+            { author: "Alice", ownerUserId: "account-alice", count: 12 },
+            { author: "Bob", ownerUserId: "account-bob", count: 3 },
           ],
         }),
         { status: 200 },
@@ -93,8 +104,8 @@ describe("loadGalleryAuthors", () => {
     }) as typeof fetch;
 
     expect(await loadGalleryAuthors(capturing)).toEqual([
-      { author: "Alice", count: 12 },
-      { author: "Bob", count: 3 },
+      { author: "Alice", ownerUserId: "account-alice", count: 12 },
+      { author: "Bob", ownerUserId: "account-bob", count: 3 },
     ]);
     expect(urls).toEqual(["/api/gallery/authors"]);
   });

@@ -1,3 +1,4 @@
+import { parseSavedProject } from "./editor-fixtures";
 import {
   readSimulationExperimentConfig,
   type ProjectSimulationFolder,
@@ -410,7 +411,7 @@ test("one Testbench persists several independently named folders", async ({
   ).toHaveAttribute("aria-invalid", "true");
   await expect(folders).toContainText("already exists");
   await folders.getByLabel("Folder name", { exact: true }).press("Escape");
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(),
   );
   expect(saved.simulationFolders).toHaveLength(existingSetupNames.length + 1);
@@ -455,7 +456,7 @@ test("one Testbench persists several independently named folders", async ({
   await expect(
     folders.getByRole("treeitem", { name: "Folder Bias sweep", exact: true }),
   ).toHaveCount(0);
-  const afterDelete = JSON.parse(
+  const afterDelete = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(),
   );
   expect(afterDelete.simulationFolders).toHaveLength(existingSetupNames.length);

@@ -1,5 +1,5 @@
 import { createRoutePath, routeBends, routeEnd } from "@icm/model";
-import { executeTransaction } from "@icm/edit-engine";
+import { executeTransaction, powerConnectionForSymbol } from "@icm/edit-engine";
 import {
   resolveAnnotationText,
   resolveDocumentLogicalNets,
@@ -28,6 +28,71 @@ import {
 const resolver = new InMemorySymbolResolver(builtInSymbols);
 
 describe("schematic clipboard", () => {
+  it("copies a local Power Rail with its formal Cell Pin ownership", () => {
+    const source = createEmptyDocument("source", "Source");
+    const created = executeTransaction(
+      source,
+      {
+        transactionId: "create-local-rail",
+        documentId: source.id,
+        expectedRevision: source.revision,
+        actor: { kind: "human", id: "test" },
+        edits: [
+          {
+            kind: "add_power_rail",
+            netId: "rail-net",
+            routeId: "rail-route",
+            startJunctionId: "rail-start",
+            endJunctionId: "rail-end",
+            labelId: "rail-label",
+            netName: "AVDD",
+            scope: "local",
+            powerDomain: "vdd",
+            start: { x: 0, y: 0 },
+            end: { x: 100, y: 0 },
+          },
+        ],
+      },
+      { symbolResolver: resolver },
+    );
+    if (!created.ok) throw new Error(created.error.message);
+    const clipboard = copySelection(created.document, [], [], {
+      routeIds: ["rail-route"],
+      junctionIds: [],
+      annotationIds: [],
+    });
+    expect(clipboard?.cellTerminals).toEqual([
+      expect.objectContaining({
+        name: "AVDD",
+        interfaceAnnotationId: "rail-label",
+      }),
+    ]);
+
+    const target = createEmptyDocument("target", "Target");
+    const proposal = proposePaste(target, clipboard!, { x: 200, y: 0 }, 1);
+    expect(proposal.errors).toEqual([]);
+    const pasted = executeTransaction(
+      target,
+      {
+        transactionId: "paste-local-rail",
+        documentId: target.id,
+        expectedRevision: target.revision,
+        actor: { kind: "human", id: "test" },
+        edits: proposal.edits,
+      },
+      { symbolResolver: resolver },
+    );
+    expect(pasted.ok, JSON.stringify(pasted)).toBe(true);
+    if (!pasted.ok) return;
+    const terminal = pasted.document.netlist!.terminals[0]!;
+    expect(terminal.name).toBe("AVDD");
+    expect(
+      pasted.document.annotations.some(
+        (annotation) => annotation.id === terminal.interfaceAnnotationId,
+      ),
+    ).toBe(true);
+  });
+
   it("copies inherited Ground authority onto the selected marker's new Base Net", () => {
     const document = createEmptyDocument("legacy-gnd", "Ground");
     document.instances.push(
@@ -392,23 +457,23 @@ describe("schematic clipboard", () => {
       interfaceInstanceIds: ["P1"],
     });
     expect(copiedTerminal).toMatchObject({
-      name: "VIN",
+      name: "Vout",
       direction: "input",
       interfaceInstanceIds: ["P1-copy-1"],
     });
     expect(copiedTerminal?.id).not.toBe(originalTerminal?.id);
     expect(copiedTerminal?.netId).not.toBe(originalTerminal?.netId);
     expect(result.document.nets).toHaveLength(2);
-    expect(
-      result.document.annotations.find(
-        (annotation) =>
-          annotation.anchor.kind === "object" &&
-          annotation.anchor.objectId === "P1-copy-1",
-      )?.binding,
-    ).toEqual({
+    const copiedAnnotation = result.document.annotations.find(
+      (annotation) =>
+        annotation.anchor.kind === "object" &&
+        annotation.anchor.objectId === "P1-copy-1",
+    );
+    expect(copiedAnnotation?.binding).toEqual({
       kind: "cell-terminal-name",
       terminalId: copiedTerminal?.id,
     });
+    expect(copiedAnnotation?.formatOverride).toBeUndefined();
 
     const rename = executeTransaction(
       result.document,
@@ -613,7 +678,11 @@ describe("schematic clipboard", () => {
       locked: false,
     });
 
-    const copied = copySelection(document, ["R1", "R2", "label-signal"]);
+    const copied = copySelection(document, ["R1", "R2"], [], {
+      routeIds: ["route-signal"],
+      junctionIds: [],
+      annotationIds: ["label-signal"],
+    });
     expect(copied?.routes).toHaveLength(1);
     const proposal = proposePaste(document, copied!, { x: 20, y: 20 }, 1);
     const result = executeTransaction(
@@ -847,9 +916,7 @@ describe("schematic clipboard", () => {
       y: 0,
     });
 
-    expect(preview.connectivityEvidence).toEqual([
-      expect.objectContaining({ id: "claim-r1", netId: "net-r1" }),
-    ]);
+    expect(preview.connectivityEvidence).toEqual([]);
     expect(preview.mosBulkDefaults).toBeUndefined();
     expect(preview.layoutGroups).toEqual([]);
     expect(preview.constraints).toEqual([]);
@@ -1136,7 +1203,7 @@ describe("schematic clipboard", () => {
     expect(pasted.instanceIds).toEqual(["R1-copy-2"]);
   });
 
-  it("preserves hand-edited label text on paste", () => {
+  it("resets a copied display alias to the fresh instance reference", () => {
     const document = createEmptyDocument("document-main", "Custom label");
     document.instances.push(resistorInstance("R1", "R1"));
     document.annotations.push(instanceLabel("R1", "R_load", false));
@@ -1147,7 +1214,7 @@ describe("schematic clipboard", () => {
       { x: 20, y: 0 },
       1,
     );
-    // "R" + subscript "load" is not the copied reference R1, so it survives.
+    // A copied device starts with the same live-name projection as Insert.
     const pastedLabel = proposal.edits.find(
       (
         edit,
@@ -1156,7 +1223,14 @@ describe("schematic clipboard", () => {
         { kind: "upsert_schematic_annotation" }
       > => edit.kind === "upsert_schematic_annotation",
     );
-    expect(flattenRichText(pastedLabel!.annotation.content!)).toBe("R_load");
+    expect(pastedLabel!.annotation.content).toBeUndefined();
+    expect(pastedLabel!.annotation.binding).toEqual({
+      kind: "instance-reference",
+      instanceId: proposal.instanceIds[0],
+    });
+    expect(
+      proposal.edits.find((edit) => edit.kind === "add_instance"),
+    ).toMatchObject({ instance: { reference: "R2" } });
     expect(proposal.instanceIds).toEqual(["R1-copy-1"]);
   });
 
@@ -1191,7 +1265,7 @@ describe("schematic clipboard", () => {
     });
   });
 
-  it("remaps an internal NoConnect to the copied instance", () => {
+  it("starts copied pins without source NoConnect declarations", () => {
     const document = createEmptyDocument("document-main", "NoConnect copy");
     document.instances.push({
       id: "R1",
@@ -1208,7 +1282,7 @@ describe("schematic clipboard", () => {
     });
 
     const copied = copySelection(document, ["R1"]);
-    expect(copied?.noConnects).toEqual(document.noConnects);
+    expect(copied?.noConnects).toEqual([]);
     const result = executeTransaction(
       document,
       {
@@ -1222,13 +1296,10 @@ describe("schematic clipboard", () => {
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.document.noConnects).toContainEqual({
-      id: "nc-r1-1-copy-1",
-      endpoint: { kind: "terminal", instanceId: "R1-copy-1", pinName: "1" },
-    });
+    expect(result.document.noConnects).toEqual(document.noConnects);
   });
 
-  it("keeps an implicit copied MOS bulk binding as a Cell-policy exception", () => {
+  it("does not carry a source MOS bulk binding into a fresh instance", () => {
     const document = createEmptyDocument("document-main", "Shared MOS bulk");
     document.instances.push(
       {
@@ -1287,12 +1358,8 @@ describe("schematic clipboard", () => {
     expect(result.document.nets[0]?.terminals).toEqual([
       { instanceId: "M1", pinName: "B" },
       { instanceId: "M2", pinName: "B" },
-      { instanceId: "M1-copy-1", pinName: "B" },
     ]);
-    expect(result.document.instances[2]?.mosBulkBinding).toEqual({
-      origin: "supply-default",
-      netId: "net-global-0",
-    });
+    expect(result.document.instances[2]?.mosBulkBinding).toBeUndefined();
   });
 
   it("leaves an ordinary copied boundary terminal disconnected", () => {
@@ -1521,16 +1588,46 @@ describe("captureDocumentComposition", () => {
     );
     if (!result.ok) throw new Error(JSON.stringify(result, null, 2));
 
-    expect(result.document.mosBulkDefaults).toBeUndefined();
+    // A pasted supply marker settles the body policy this Cell had none of,
+    // exactly as placing that marker by hand does. Without it every pasted
+    // body stays unresolved and the netlist cannot export the fourth node.
+    const supplyNetId = (domain: "ground" | "vdd") => {
+      const marker = fragment.instances.find(
+        (instance) =>
+          powerConnectionForSymbol(instance.symbolId)?.domain === domain,
+      )!;
+      const pinName = powerConnectionForSymbol(marker.symbolId)!.pinName;
+      const net = fragment.nets.find((candidate) =>
+        candidate.terminals.some(
+          (terminal) =>
+            terminal.instanceId === marker.id && terminal.pinName === pinName,
+        ),
+      )!;
+      return proposal.idRemap.nets[net.id]!;
+    };
+    // This example carries Ground markers but names VDD through a label, so
+    // only the NMOS policy follows from its markers.
+    expect(result.document.mosBulkDefaults).toEqual({
+      nmosNetId: supplyNetId("ground"),
+    });
     for (const sourceInstance of sourceBindings) {
       const copiedInstanceId = proposal.idRemap.instances[sourceInstance.id]!;
       const copiedNetId =
         proposal.idRemap.nets[sourceInstance.mosBulkBinding!.netId]!;
+      // A body whose Net became this Cell's default follows that policy, as
+      // a freshly inserted MOS does; the rest stay instance-owned.
       expect(
         result.document.instances.find(
           (instance) => instance.id === copiedInstanceId,
         )?.mosBulkBinding,
-      ).toEqual({ origin: "instance-override", netId: copiedNetId });
+      ).toEqual({
+        origin:
+          result.document.mosBulkDefaults?.nmosNetId === copiedNetId ||
+          result.document.mosBulkDefaults?.pmosNetId === copiedNetId
+            ? "cell-default"
+            : "instance-override",
+        netId: copiedNetId,
+      });
       expect(
         result.document.nets
           .find((net) => net.id === copiedNetId)
@@ -1541,6 +1638,35 @@ describe("captureDocumentComposition", () => {
           ),
       ).toBe(true);
     }
+  });
+
+  it("keeps a target Cell's own body policy when a composition is pasted", () => {
+    const source = createLibraryExampleProject(
+      "fully-differential-two-stage-op-amp",
+    )!.documents[0]!;
+    const target = createEmptyDocument("target-document", "Target");
+    target.nets.push({ id: "net-own-ground", terminals: [] });
+    target.mosBulkDefaults = { nmosNetId: "net-own-ground" };
+    const fragment = captureDocumentComposition(source)!;
+    const proposal = proposePaste(target, fragment, { x: 0, y: 0 }, 1);
+    expect(proposal.errors).toEqual([]);
+    const result = executeTransaction(
+      target,
+      {
+        transactionId: "compose-into-policy",
+        documentId: target.id,
+        expectedRevision: target.revision,
+        actor: { kind: "human", id: "test" },
+        edits: proposal.edits,
+      },
+      { symbolResolver: resolver },
+    );
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    // A paste settles policy the Cell lacks; it never overrules policy the
+    // Cell already has.
+    expect(result.document.mosBulkDefaults).toEqual({
+      nmosNetId: "net-own-ground",
+    });
   });
 
   it("closes a still-derived source Cell bulk default before composition", () => {
@@ -2333,7 +2459,7 @@ describe("a copy stands on its own", () => {
       result.document.netlist?.terminals.find((terminal) =>
         terminal.interfaceInstanceIds.includes(copyId),
       )?.name,
-    ).toBe("P12");
+    ).toBe("Vin");
 
     const secondProposal = proposePaste(
       result.document,
@@ -2359,7 +2485,7 @@ describe("a copy stands on its own", () => {
       secondResult.document.netlist?.terminals.find((terminal) =>
         terminal.interfaceInstanceIds.includes(secondCopyId),
       )?.name,
-    ).toBe("P12");
+    ).toBe("Vout");
   });
 
   it("keeps a copied drafting snapshot as one layout group", () => {

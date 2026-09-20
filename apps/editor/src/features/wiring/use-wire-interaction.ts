@@ -5,6 +5,7 @@ import type {
 } from "react";
 
 import { segmentDragPreviewPolyline } from "./segment-drag-preview";
+import { resolveWireDraftShape } from "./wire-draft-shape";
 import {
   wireDraftTargetIdsForSuffix,
   wirePassThroughContacts,
@@ -63,7 +64,6 @@ import {
   routeTapPoint,
   type RouteGeometryRecord,
 } from "./route-interaction-geometry";
-import { automaticWireDraftSteps } from "./automatic-wire-routing";
 
 export interface RouteStretchPreview {
   routeId: string;
@@ -78,6 +78,8 @@ export interface RouteStretchPreview {
     | "resize-route-end";
   start: Point;
   point: Point;
+  /** The drag origin the last successful segment plan used with `point`. */
+  origin?: Point;
   /**
    * Ids for whatever this drag has to author — the Junction a pin-anchored
    * end becomes, and the Route halves a landing splits. Allocated once when
@@ -153,6 +155,24 @@ export interface UseWireInteractionOptions {
 }
 
 /**
+ * The snapped grab point a segment drag plans from. A 45-degree segment moves
+ * along the dominant axis of `snapped - origin`, so the axis the pointer
+ * actually travelled along is decided here, before snapping, by giving the
+ * origin the target's coordinate on the other axis. Snapping both ends
+ * separately could otherwise turn a mostly vertical drag into a tie.
+ */
+function segmentDragOrigin(
+  start: Point,
+  pointer: Point,
+  snapped: Point,
+  grid: number,
+): Point {
+  return Math.abs(pointer.x - start.x) >= Math.abs(pointer.y - start.y)
+    ? { x: snapCoordinate(start.x, grid), y: snapped.y }
+    : { x: snapped.x, y: snapCoordinate(start.y, grid) };
+}
+
+/**
  * Owns wire sessions and route-specific drag lifecycles. The App remains the
  * cross-domain canvas pointer arbiter.
  */
@@ -214,7 +234,7 @@ export function useWireInteraction(capabilities: UseWireInteractionOptions) {
       options.setStatus("Wire cancelled because its source revision is stale");
       return;
     }
-    const plannedSteps = automaticWireDraftSteps(
+    const shape = resolveWireDraftShape(
       options.document,
       options.resolver,
       wire.source,
@@ -222,21 +242,22 @@ export function useWireInteraction(capabilities: UseWireInteractionOptions) {
       wire.steps,
       wire.routingMode,
       wire.cornerOrder,
+      options.visibleEndpoints,
     );
     const proposal = proposeWireCommitThroughContacts(
       wire.source,
       candidate,
-      plannedSteps.map((step) => step.point),
+      shape.steps.map((item) => item.point),
       wirePassThroughContacts(options.visibleEndpoints, {
         from: wire.source,
         to: candidate,
-        steps: plannedSteps,
+        steps: shape.steps,
       }),
       options.nextRoutingSuffix(),
       {
-        steps: plannedSteps,
+        steps: shape.steps,
         routingMode: wire.routingMode,
-        cornerOrder: wire.cornerOrder,
+        cornerOrder: shape.cornerOrder,
       },
     );
     const bulkEndpoint = [wire.source.endpoint, candidate.endpoint].find(
@@ -574,28 +595,42 @@ export function useWireInteraction(capabilities: UseWireInteractionOptions) {
         }
       } else {
         const grid = options.document.presentation.grid;
-        const planAt = (at: Point) =>
+        const planAt = (target: Point, origin: Point | undefined) =>
           proposeWireSegmentMove(
             options.document,
             options.resolver,
             record.route.id,
             preview.segmentIndex,
-            {
-              x: snapCoordinate(at.x, grid),
-              y: snapCoordinate(at.y, grid),
-            },
+            target,
+            origin,
           );
+        let refusal: string | null = null;
         const proposal = (() => {
           try {
-            return planAt(point);
+            const snapped = {
+              x: snapCoordinate(point.x, grid),
+              y: snapCoordinate(point.y, grid),
+            };
+            return planAt(
+              snapped,
+              segmentDragOrigin(preview.start, point, snapped, grid),
+            );
           } catch (error) {
             // Land on the furthest position the drag actually planned, which
             // is the geometry the preview was showing when the pointer went
             // past what the wire could do.
             if (preview.point === preview.start) throw error;
-            return planAt(preview.point);
+            refusal = error instanceof Error ? error.message : null;
+            return planAt(preview.point, preview.origin);
           }
         })();
+        // Nothing moved: say why, and add no empty undo step.
+        if (proposal.unchanged) {
+          options.setStatus(
+            refusal ?? `Route segment ${record.route.id} unchanged`,
+          );
+          return;
+        }
         const result = transactProposal(
           proposalFor(
             "route-geometry",
@@ -827,12 +862,14 @@ export function useWireInteraction(capabilities: UseWireInteractionOptions) {
             x: snapCoordinate(point.x, grid),
             y: snapCoordinate(point.y, grid),
           };
+          const origin = segmentDragOrigin(start, point, snapped, grid);
           const plan = proposeWireSegmentMove(
             options.document,
             options.resolver,
             routeId,
             segmentIndex,
             snapped,
+            origin,
           );
           const proposal = plan.preview?.routes.find(
             (candidate) => candidate.routeId === routeId,
@@ -842,6 +879,7 @@ export function useWireInteraction(capabilities: UseWireInteractionOptions) {
           // point used to plan once more, fail, and snap the wire back to
           // where it started, discarding everything the preview had shown.
           preview.point = snapped;
+          preview.origin = origin;
           // Draw what the plan will commit. Pinning the Route's original
           // endpoints here left a moved free end behind, so the closing leg
           // cut across at an angle and the drag read as a triangle.

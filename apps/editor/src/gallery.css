@@ -995,13 +995,21 @@
   color: var(--icm-text-muted);
 }
 
-/* A star says this circuit extracts to a netlist. It marks extra
-   completeness and gates nothing, so it is a quiet accent beside the name
-   rather than a badge competing with it. */
-.gallery-tile-star {
-  margin-left: 4px;
-  color: #c98a12;
-  font-size: 12px;
+/* This mark says the circuit extracts to a netlist. It records extra
+   completeness and gates nothing, so it stays a quiet accent beside the name
+   rather than a badge competing with it, and it never competes with the like
+   heart for the same meaning. */
+.gallery-tag-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.gallery-tile-netlist {
+  display: inline-flex;
+  margin-left: 5px;
+  color: #2f7d4f;
+  vertical-align: -1px;
 }
 
 .gallery-tile-like {
@@ -1340,4 +1348,90 @@ div.gallery-contributor-status {
    without shouting over Open and Version history. */
 .mine-card-delete {
   color: var(--icm-error);
+}
+
+/* The scan lives in the filter row: its own box would only indent what it
+   holds, so it passes its children straight to that row. The controls take the
+   free end beside the filter pills; everything the scan reports claims a full
+   line under them. */
+.gallery-duplicates {
+  display: contents;
+  font-size: 13px;
+}
+.gallery-duplicates-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-left: auto;
+  font-size: 13px;
+}
+.gallery-duplicates > p {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+.gallery-duplicates-results {
+  flex-basis: 100%;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--color-border, #d5d9df);
+  border-radius: 10px;
+  max-height: 65vh;
+  overflow: auto;
+}
+.gallery-duplicates-results > p {
+  margin: 0 0 10px;
+}
+.gallery-duplicate-group {
+  margin: 8px 0;
+}
+.gallery-duplicate-group summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 6px 0;
+}
+.gallery-duplicate-circuits {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 12px;
+  margin: 8px 0 16px;
+}
+.gallery-duplicate-circuits a {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: inherit;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.gallery-duplicate-circuit {
+  border: 1px solid var(--icm-border);
+  border-radius: 8px;
+  padding: 8px;
+}
+.gallery-duplicate-circuit[data-keep="true"] {
+  border-color: var(--icm-accent);
+}
+.gallery-duplicate-circuit label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.gallery-duplicate-circuits img {
+  width: 100%;
+  height: 120px;
+  object-fit: contain;
+  background: white;
+  border-radius: 6px;
+}
+.gallery-duplicate-badge {
+  font-size: 11px;
+  color: #8a530c;
+  background: #fff2cf;
+  border-radius: 4px;
+  padding: 2px 5px;
+  margin-left: 6px;
 }

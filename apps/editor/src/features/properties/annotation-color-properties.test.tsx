@@ -29,7 +29,7 @@ describe("annotation color properties", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="Text properties"');
+    expect(markup).toContain('aria-label="文本属性"');
     expect(markup).toContain("Annotation property code");
     expect(markup).toContain("auto");
     expect(markup).toContain("placement");

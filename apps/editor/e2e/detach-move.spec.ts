@@ -1,3 +1,4 @@
+import { parseSavedProject } from "./editor-fixtures";
 import { expect, test, type Page } from "@playwright/test";
 
 import { chooseComponent, downloadBytes } from "./editor-fixtures";
@@ -31,7 +32,7 @@ function routePoints(page: Page) {
 async function exportedTerminals(
   page: Page,
 ): Promise<Array<{ instanceId: string; pinName: string }>> {
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),

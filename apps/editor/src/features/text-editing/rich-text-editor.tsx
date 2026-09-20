@@ -28,6 +28,7 @@ export interface RichTextEditorProps {
   sizeScale: number;
   alignment: "start" | "middle" | "end";
   defaultBold?: boolean;
+  defaultItalic?: boolean;
   /**
    * A plain-only display (for example Symbol body text) edits its source
    * field. It is deliberately a plain editing surface rather than a fake
@@ -38,16 +39,18 @@ export interface RichTextEditorProps {
   multiline?: boolean;
   compact?: boolean;
   deleteLabel?: string;
+  showDelete?: boolean;
   onChange(content: RichTextDocument): void;
   onSizeChange(sizeScale: number): void;
   onAlignmentChange(alignment: "start" | "middle" | "end"): void;
   onCommit(): void;
   onCancel(): void;
+  onEscape?(): void;
   onDelete(): void;
   /** Electrical name represented by this editor, when Formula is constrained. */
   formulaSemanticText?: string;
-  /** Restore this visual annotation to its live Netlist Reference. */
-  onRestoreReference?(): RichTextDocument | undefined;
+  displayAlias?: boolean;
+  onDisplayAliasChange?(enabled: boolean): RichTextDocument | undefined;
   onLayoutHeightChange?(height: number): void;
 }
 
@@ -103,6 +106,9 @@ function toEditableHtml(document: RichTextDocument, disabled = false): string {
         if (run.style === "overbar") {
           return `<span data-rich-text-style="overbar">${children}</span>`;
         }
+        if (run.style === "lowercase" || run.style === "uppercase") {
+          return `<span data-rich-text-style="${run.style}">${children}</span>`;
+        }
         const tag =
           run.style === "italic"
             ? "em"
@@ -137,10 +143,23 @@ function elementBold(element: Element, inherited: boolean): boolean {
   return /^(strong|b)$/i.test(element.tagName) || inherited;
 }
 
+function elementItalic(element: Element, inherited: boolean): boolean {
+  const style = (element as HTMLElement).style?.fontStyle;
+  if (style === "normal") return false;
+  if (style === "italic" || style === "oblique") return true;
+  return /^(em|i)$/i.test(element.tagName) || inherited;
+}
+
 function selectionBold(range: Range): boolean {
   const node = range.commonAncestorContainer;
   const element = isElement(node) ? node : node.parentElement;
   return !!element && Number(getComputedStyle(element).fontWeight) >= 600;
+}
+
+function selectionItalic(range: Range): boolean {
+  const node = range.commonAncestorContainer;
+  const element = isElement(node) ? node : node.parentElement;
+  return !!element && getComputedStyle(element).fontStyle !== "normal";
 }
 
 function allTextBold(runs: RichTextRun[], bold = false): boolean {
@@ -175,18 +194,38 @@ function withoutBold(runs: RichTextRun[]): RichTextRun[] {
   });
 }
 
-function readChildren(element: Element, inheritedBold = false): RichTextRun[] {
+function readChildren(
+  element: Element,
+  inheritedBold = false,
+  inheritedItalic = false,
+): RichTextRun[] {
   const runs: RichTextRun[] = [];
   const bold = elementBold(element, inheritedBold);
-  for (const child of element.childNodes) runs.push(...readNode(child, bold));
+  const italic = elementItalic(element, inheritedItalic);
+  for (const child of element.childNodes)
+    runs.push(...readNode(child, bold, italic));
   return runs;
 }
 
-function readNode(node: Node, bold = false): RichTextRun[] {
+function readNode(node: Node, bold = false, italic = false): RichTextRun[] {
   if (node.nodeType === Node.TEXT_NODE) {
     if (!node.textContent) return [];
-    const text: RichTextRun = { kind: "text", value: node.textContent };
-    return [bold ? { kind: "span", style: "bold", children: [text] } : text];
+    // The editable wraps as `pre-wrap`, so a newline inside a text node is a
+    // line the author can see — whether the browser put it there for a
+    // line-break command or it arrived in pasted text. Rich text carries
+    // breaks as their own run, and SVG text has no newline of its own, so a
+    // literal one left in a value would silently flatten the line.
+    const wrap = (value: string): RichTextRun => {
+      let text: RichTextRun = { kind: "text", value };
+      if (bold) text = { kind: "span", style: "bold", children: [text] };
+      if (italic) text = { kind: "span", style: "italic", children: [text] };
+      return text;
+    };
+    const segments = node.textContent.split("\n");
+    return segments.flatMap((segment, index) => [
+      ...(index === 0 ? [] : [{ kind: "line-break" as const }]),
+      ...(segment ? [wrap(segment)] : []),
+    ]);
   }
   if (!isElement(node)) return [];
   const tag = node.tagName.toLowerCase();
@@ -212,7 +251,11 @@ function readNode(node: Node, bold = false): RichTextRun[] {
     );
     if (!numerator || !denominator) return [];
     const part = (element: Element): RichTextDocument => {
-      const runs = readChildren(element, elementBold(node, bold));
+      const runs = readChildren(
+        element,
+        elementBold(node, bold),
+        elementItalic(node, italic),
+      );
       return normalizeRichText({
         runs: runs.length ? runs : [{ kind: "text", value: " " }],
       });
@@ -225,13 +268,13 @@ function readNode(node: Node, bold = false): RichTextRun[] {
       },
     ];
   }
-  const children = readChildren(node, bold);
+  const children = readChildren(node, bold, italic);
   if (children.length === 0 && tag !== "div" && tag !== "p") return [];
   if (tag === "strong" || tag === "b") {
     return children;
   }
   if (tag === "em" || tag === "i") {
-    return [{ kind: "span", style: "italic", children }];
+    return children;
   }
   if (tag === "sub") {
     return [{ kind: "span", style: "subscript", children }];
@@ -241,6 +284,12 @@ function readNode(node: Node, bold = false): RichTextRun[] {
   }
   if (node.getAttribute("data-rich-text-style") === "overbar") {
     return [{ kind: "span", style: "overbar", children }];
+  }
+  if (node.getAttribute("data-rich-text-style") === "lowercase") {
+    return [{ kind: "span", style: "lowercase", children }];
+  }
+  if (node.getAttribute("data-rich-text-style") === "uppercase") {
+    return [{ kind: "span", style: "uppercase", children }];
   }
   if (tag === "div" || tag === "p") {
     return [...children, { kind: "line-break" }];
@@ -301,9 +350,10 @@ function normalizeEditableMarkup(editable: HTMLElement): void {
 function editableDocument(
   element: HTMLElement,
   defaultBold = false,
+  defaultItalic = false,
 ): RichTextDocument {
   const document: RichTextDocument = {
-    runs: readChildren(element, defaultBold),
+    runs: readChildren(element, defaultBold, defaultItalic),
   };
   if (document.runs.length === 0) {
     return { runs: [{ kind: "text", value: " " }] };
@@ -379,7 +429,6 @@ const FormulaMathfield = forwardRef<
         "before-virtual-keyboard-toggle",
         suppressVirtualKeyboard,
       );
-      field.focus();
     };
     void mount();
     return () => {
@@ -511,35 +560,49 @@ export function RichTextEditor({
   sizeScale,
   alignment,
   defaultBold = false,
+  defaultItalic = false,
   sourceOnly = false,
   multiline = true,
   compact = false,
   deleteLabel = "Delete",
+  showDelete = true,
   onChange,
   onSizeChange,
   onAlignmentChange,
   onCommit,
   onCancel,
+  onEscape,
   onDelete,
   formulaSemanticText,
-  onRestoreReference,
+  displayAlias,
+  onDisplayAliasChange,
   onLayoutHeightChange,
 }: RichTextEditorProps) {
   const shellRef = useRef<HTMLDivElement>(null);
   const editableRef = useRef<HTMLDivElement>(null);
   const sourceInputRef = useRef<HTMLTextAreaElement>(null);
+  const formulaSourceRef = useRef<HTMLTextAreaElement>(null);
   const formulaMathfieldRef = useRef<FormulaMathfieldHandle>(null);
   const selectionRangeRef = useRef<Range | null>(null);
   const editableInsertionSequenceRef = useRef(0);
   const existingFormula = soleRichTextMathRun(content);
   const [formulaOpen, setFormulaOpen] = useState(false);
   const [formulaDraft, setFormulaDraft] = useState(
-    existingFormula?.latex ?? "",
+    existingFormula?.latex ?? flattenRichText(content),
   );
   const [formulaDisplay, setFormulaDisplay] = useState<"inline" | "block">(
     existingFormula?.display ?? "inline",
   );
   const [formulaError, setFormulaError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!formulaOpen) return;
+    const frame = requestAnimationFrame(() => {
+      formulaSourceRef.current?.focus();
+      formulaSourceRef.current?.select();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [formulaOpen]);
 
   useLayoutEffect(() => {
     const shell = shellRef.current;
@@ -568,7 +631,9 @@ export function RichTextEditor({
 
   const sync = (): void => {
     if (editableRef.current)
-      onChange(editableDocument(editableRef.current, defaultBold));
+      onChange(
+        editableDocument(editableRef.current, defaultBold, defaultItalic),
+      );
   };
 
   const rememberSelection = (): void => {
@@ -644,7 +709,11 @@ export function RichTextEditor({
       // structure together with the selected companions, retaining local undo.
       const selected = document.createElement("div");
       selected.append(fragment!);
-      const current = editableDocument(selected, selectionBold(range));
+      const current = editableDocument(
+        selected,
+        selectionBold(range),
+        selectionItalic(range),
+      );
       const sole = current.runs.length === 1 ? current.runs[0] : undefined;
       const unbold = name === "bold" && allTextBold(current.runs);
       const next: RichTextDocument = unbold
@@ -717,6 +786,16 @@ export function RichTextEditor({
     const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
     if (!range || !editableRef.current.contains(range.commonAncestorContainer))
       return;
+    // Let the browser break the line. Placing the <br> by hand leaves the
+    // caret on the empty text node after it, which Chromium treats as having
+    // no visual position of its own: the next character is then typed back
+    // onto the previous line and the break slides to the end of the text.
+    // The browser also keeps its own trailing placeholder and native undo.
+    if (globalThis.document.execCommand("insertLineBreak")) {
+      rememberSelection();
+      sync();
+      return;
+    }
     range.deleteContents();
     const lineBreak = globalThis.document.createElement("br");
     range.insertNode(lineBreak);
@@ -829,7 +908,7 @@ export function RichTextEditor({
     if (disabled) return;
     const selection = window.getSelection()?.toString().trim();
     const formula = soleRichTextMathRun(content);
-    setFormulaDraft(formula?.latex ?? (selection || "V_{OUT}"));
+    setFormulaDraft(formula?.latex ?? (selection || flattenRichText(content)));
     setFormulaDisplay(formula?.display ?? "inline");
     setFormulaError(null);
     setFormulaOpen(true);
@@ -1033,20 +1112,22 @@ export function RichTextEditor({
               </div>
             </details>
             <button
+              className="rich-text-latex-button"
               type="button"
               aria-label="插入公式"
+              title="用 LaTeX 编辑完整标签"
               aria-pressed={formulaOpen}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
               onClick={openFormulaEditor}
             >
-              ƒx
+              LaTeX
             </button>
             <span className="rich-text-toolbar-separator" />
           </>
         ) : null}
         {!compact ? (
-          <>
+          <span className="rich-text-toolbar-size-controls">
             <button
               type="button"
               aria-label="减小字号"
@@ -1073,7 +1154,7 @@ export function RichTextEditor({
             >
               A+
             </button>
-          </>
+          </span>
         ) : null}
         {!compact ? (
           <span className="rich-text-toolbar-action-break" aria-hidden="true" />
@@ -1095,32 +1176,36 @@ export function RichTextEditor({
         >
           取消
         </button>
-        <button
-          type="button"
-          aria-label={`${deleteLabel} text`}
-          disabled={disabled}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={onDelete}
-        >
-          {deleteLabel}
-        </button>
-        {onRestoreReference ? (
+        {showDelete ? (
           <button
             type="button"
+            aria-label={`${deleteLabel} text`}
             disabled={disabled}
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              const restored = onRestoreReference();
-              if (restored && editableRef.current) {
-                editableRef.current.innerHTML = toEditableHtml(restored);
-                selectionRangeRef.current = null;
-              }
-              closeFormulaEditor();
-            }}
-            title="将此注释替换为当前网表实例名称"
+            onClick={onDelete}
           >
-            Use netlist name
+            {deleteLabel}
           </button>
+        ) : null}
+        {onDisplayAliasChange ? (
+          <label className="rich-text-display-alias">
+            <input
+              type="checkbox"
+              checked={displayAlias ?? false}
+              disabled={disabled}
+              onChange={(event) => {
+                const restored = onDisplayAliasChange(
+                  event.currentTarget.checked,
+                );
+                if (restored && editableRef.current) {
+                  editableRef.current.innerHTML = toEditableHtml(restored);
+                  selectionRangeRef.current = null;
+                }
+                closeFormulaEditor();
+              }}
+            />
+            Use display alias
+          </label>
         ) : null}
       </div>
       {formulaOpen && !sourceOnly ? (
@@ -1131,8 +1216,8 @@ export function RichTextEditor({
         >
           <div className="rich-text-formula-header">
             <div>
-              <strong>公式</strong>
-              <span>LaTeX 实时预览</span>
+              <strong>LaTeX</strong>
+              <span>直接输入源码，下方实时预览</span>
             </div>
             <button
               type="button"
@@ -1146,6 +1231,18 @@ export function RichTextEditor({
             className="rich-text-formula-scroll-region"
             data-testid="formula-scroll-region"
           >
+            <label className="rich-text-formula-source">
+              <span>LaTeX source</span>
+              <textarea
+                ref={formulaSourceRef}
+                autoFocus
+                value={formulaDraft}
+                aria-label="Formula LaTeX source"
+                spellCheck={false}
+                rows={3}
+                onChange={(event) => updateFormulaDraft(event.target.value)}
+              />
+            </label>
             <section className="rich-text-formula-preview">
               <span>预览</span>
               <FormulaMathfield
@@ -1204,16 +1301,6 @@ export function RichTextEditor({
                 ))}
               </div>
             </details>
-            <label className="rich-text-formula-source">
-              <span>LaTeX 源码</span>
-              <textarea
-                value={formulaDraft}
-                aria-label="公式 LaTeX 源码"
-                spellCheck={false}
-                rows={3}
-                onChange={(event) => updateFormulaDraft(event.target.value)}
-              />
-            </label>
             {formulaError ? (
               <div className="rich-text-formula-error" role="alert">
                 {formulaError}
@@ -1287,6 +1374,7 @@ export function RichTextEditor({
           style={{
             fontSize: `${15.116 * sizeScale}px`,
             fontWeight: defaultBold ? 700 : 400,
+            fontStyle: defaultItalic ? "italic" : "normal",
             // Mirror the committed alignment so centered labels edit centered.
             textAlign:
               alignment === "middle"
@@ -1304,7 +1392,7 @@ export function RichTextEditor({
               event.preventDefault();
             } else if (event.key === "Escape") {
               event.preventDefault();
-              onCommit();
+              (onEscape ?? onCommit)();
             } else if (event.key === "Enter" && event.shiftKey && multiline) {
               // Enter finishes the text everywhere; a deliberate modifier is
               // what asks for another line.

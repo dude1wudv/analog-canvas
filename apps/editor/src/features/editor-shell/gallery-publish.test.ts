@@ -1,3 +1,4 @@
+import { parseProject } from "@icm/project-protocol";
 import { createEmptyProject } from "@icm/model";
 import { describe, expect, it } from "vitest";
 
@@ -58,7 +59,7 @@ describe("publishProjectToGallery", () => {
     // The byline is the server's to set from the session, so the request
     // carries no author claim at all.
     expect(body).not.toHaveProperty("author");
-    expect(JSON.parse(body.projectText).schemaVersion).toBe(
+    expect(parseProject(body.projectText).schemaVersion).toBe(
       project.schemaVersion,
     );
   });

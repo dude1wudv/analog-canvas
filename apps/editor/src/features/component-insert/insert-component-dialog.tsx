@@ -307,7 +307,7 @@ export function InsertComponentDialog({
         masterName: choice.masterName ?? choice.symbol.name,
         parameters: {},
         initialRotation: 0,
-        showReference: true,
+        showReference: !choice.symbol.hierarchicalBlock,
         referenceText: null,
         showValue: true,
       });
@@ -355,7 +355,7 @@ export function InsertComponentDialog({
       }}
     >
       <div
-        className="insert-component-dialog"
+        className={`insert-component-dialog${cellsOnly ? " insert-cell-dialog" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="insert-component-title"

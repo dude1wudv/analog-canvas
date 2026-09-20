@@ -32,8 +32,7 @@
   overflow-x: auto;
 }
 
-.toolbar-row:has(.command-menu[open]),
-.toolbar-row:has(.arrow-style-picker[open]) {
+.toolbar-row:has(.command-menu[open]) {
   overflow: visible;
 }
 
@@ -42,9 +41,11 @@
   background: var(--icm-surface);
 }
 
-.draw-toolbar-project-spacer {
-  flex: 1 1 auto;
-  min-width: var(--icm-space-2);
+.draw-toolbar-panels {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
 }
 
 .draw-tool {
@@ -213,24 +214,41 @@
   display: grid;
   gap: 8px;
 }
+/* However many selects the row carries — Entry appears only for a Project with
+   more than one Cell — they share the width the panel has and wrap when it runs
+   out. Their shared prompt width keeps both select edges aligned after a wrap.
+   Actions stay together on the right and stack alongside the selects when
+   the panel is narrow. */
+.netlist-live-code {
+  container: netlist-panel / inline-size;
+}
 .netlist-code-controls {
-  display: grid;
-  grid-template-columns: minmax(112px, 0.8fr) minmax(0, 1fr) auto;
-  align-items: center;
+  --netlist-control-height: 30px;
+  display: flex;
+  align-items: flex-start;
   gap: 8px;
 }
-.netlist-code-controls label,
+.netlist-code-selects {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+.netlist-code-selects label,
 .netlist-device-mapping label {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
+  flex: 1 1 150px;
   gap: 6px;
   min-width: 0;
   color: var(--icm-text-muted);
   font-size: var(--icm-font-xs);
   font-weight: 600;
 }
-.netlist-code-controls select,
+.netlist-code-selects select,
 .netlist-device-mapping select {
   min-width: 0;
   width: 100%;
@@ -241,21 +259,42 @@
   color: var(--icm-text);
   font: inherit;
 }
-.netlist-code-controls select {
+.netlist-code-selects select {
+  box-sizing: border-box;
+  height: var(--netlist-control-height);
   padding-right: 14px;
   padding-left: 5px;
 }
-.netlist-code-controls label {
+.netlist-code-selects label {
+  grid-template-columns: 4rem minmax(0, 1fr);
   gap: 3px;
 }
-.netlist-code-controls button {
-  min-height: 30px;
+.netlist-code-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
 }
-.netlist-code-copy {
+.netlist-code-actions button {
+  box-sizing: border-box;
   display: inline-grid;
-  width: 30px;
+  flex: 0 0 auto;
+  width: var(--netlist-control-height);
+  height: var(--netlist-control-height);
+  min-height: var(--netlist-control-height);
   padding: 5px;
   place-items: center;
+}
+@container netlist-panel (max-width: 390px) {
+  .netlist-code-selects {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .netlist-code-selects label {
+    flex: 0 0 auto;
+  }
+  .netlist-code-actions {
+    flex-direction: column;
+  }
 }
 .netlist-port-case {
   display: inline-grid;
@@ -282,11 +321,12 @@
 .netlist-mapping-actions .netlist-default-action {
   min-width: 0;
 }
-.netlist-code-copy svg {
+.netlist-code-actions svg {
   width: 18px;
   height: 18px;
 }
-.netlist-default-action {
+.netlist-default-action,
+.netlist-fill-defaults {
   min-height: 30px;
   min-width: 76px;
 }
@@ -363,17 +403,30 @@
 .project-source-editor .cm-activeLineGutter {
   background: color-mix(in srgb, var(--icm-accent) 7%, transparent);
 }
+/* The live netlist takes the room the dock has. Its code area grows with the
+   netlist — ten lines at least — and stops growing only where the controls
+   under it begin, rather than at a share of the window that leaves the panel
+   half empty on a tall screen and scrolls on a short one. */
+.netlist-live-code {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
 .netlist-code-viewport {
-  min-height: 0;
+  /* As tall as the netlist, as far as the dock allows, ten lines at least. */
+  flex: 0 1 var(--netlist-editor-height);
+  min-height: 214px;
 }
 .netlist-code-viewport > .project-source-editor,
 .netlist-code-viewport > textarea {
-  height: var(--netlist-editor-height);
+  height: 100%;
   min-height: 0;
 }
 .netlist-device-mapping {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* Two model columns while they fit; one once the panel is dragged narrow,
+     so the model selects and Default stay whole instead of being clipped. */
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   align-items: center;
   gap: 8px;
   padding-top: 2px;
@@ -684,6 +737,34 @@
   white-space: nowrap;
 }
 
+.annotation-menu {
+  flex: 0 0 auto;
+}
+
+.annotation-menu > summary {
+  font-size: var(--icm-font-sm);
+}
+
+.annotation-palette {
+  grid-template-columns: repeat(4, 40px);
+  min-width: 0;
+  left: auto;
+  right: 0;
+  gap: 4px;
+}
+
+.annotation-palette button {
+  justify-content: center;
+  height: 40px;
+  padding: 5px;
+}
+
+.annotation-palette-art {
+  display: block;
+  width: 28px;
+  height: 28px;
+}
+
 .command-popover .export-submenu {
   position: relative;
 }
@@ -911,6 +992,46 @@
   background: var(--icm-surface);
 }
 
+/* The grid toggle sits with the zoom controls at the right end. */
+.statusbar-view-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--icm-space-2);
+}
+
+/* Background grid on/off, one click from the canvas. Same chip language as
+   the status items; pressed while the grid is shown. */
+.statusbar-grid-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--icm-space-1);
+  min-height: 28px;
+  padding: 0 10px 0 8px;
+  border: 1px solid var(--icm-border);
+  border-radius: 999px;
+  color: var(--icm-text-muted);
+  background: var(--icm-surface-muted);
+  box-shadow: none;
+  font-size: var(--icm-font-xs);
+  font-weight: 600;
+  line-height: var(--icm-line-tight);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.statusbar-grid-toggle:hover {
+  background: var(--icm-surface-hover);
+}
+
+.statusbar-grid-toggle[aria-pressed="true"] {
+  border-color: transparent;
+  color: var(--icm-accent);
+  background: var(--icm-accent-tint);
+  box-shadow: none;
+}
+
 .statusbar-analytics {
   margin-left: auto;
   color: var(--icm-text-muted);
@@ -1012,6 +1133,88 @@
   outline: 0;
 }
 
+/* An opened Gallery circuit keeps its public context beside its name. The
+   summary makes the byline and a note excerpt continuously visible; opening
+   it reveals the complete stored text without spending permanent menubar
+   width on publication metadata. */
+.app-gallery-entry-details {
+  position: relative;
+  min-width: 0;
+  color: var(--icm-text-muted);
+  font-size: var(--icm-font-xs);
+  line-height: var(--icm-line-tight);
+}
+
+.app-gallery-entry-details summary {
+  display: flex;
+  min-width: 0;
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+}
+
+.app-gallery-entry-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.app-gallery-entry-author {
+  flex: 0 0 auto;
+  color: var(--icm-text);
+  font-weight: 600;
+}
+
+.app-gallery-entry-description {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-chrome-main .app-brand-copy:has(.app-gallery-entry-details[open]) {
+  overflow: visible;
+}
+
+.app-gallery-entry-popover {
+  position: fixed;
+  z-index: 40;
+  top: calc(var(--icm-menubar-h) - 1px);
+  left: var(--icm-space-3);
+  width: min(28rem, calc(100vw - 24px));
+  max-height: calc(100dvh - var(--icm-menubar-h) - 12px);
+  padding: var(--icm-space-3);
+  overflow: auto;
+  border: 1px solid var(--icm-border-strong);
+  border-radius: var(--icm-radius-md);
+  color: var(--icm-text);
+  background: var(--icm-surface);
+  box-shadow: var(--icm-shadow-lg);
+  white-space: normal;
+}
+
+.app-gallery-entry-popover dl,
+.app-gallery-entry-popover dd {
+  margin: 0;
+}
+
+.app-gallery-entry-popover dl {
+  display: grid;
+  gap: var(--icm-space-3);
+}
+
+.app-gallery-entry-popover dt {
+  margin-bottom: var(--icm-space-1);
+  color: var(--icm-text-muted);
+  font-size: var(--icm-font-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.app-gallery-entry-popover dd {
+  line-height: var(--icm-line-normal);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .project-unsaved-indicator {
   color: var(--icm-accent);
   font-size: 0.62rem;
@@ -1059,6 +1262,18 @@
   .app-chrome-actions .tokenzhang-link-icon {
     width: 16px;
     height: 16px;
+  }
+
+  /* Half-width windows keep the grid toggle as a round icon button; its
+     tooltip and accessible name stay. */
+  .statusbar-grid-label {
+    display: none;
+  }
+
+  .statusbar-grid-toggle {
+    justify-content: center;
+    width: 28px;
+    padding: 0;
   }
 }
 

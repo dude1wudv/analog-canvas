@@ -1,3 +1,4 @@
+import { withProjectComponentDefinitions } from "@icm/symbols";
 import {
   createEmptyProject,
   CURRENT_PROJECT_SCHEMA_VERSION,
@@ -49,7 +50,9 @@ describe("independent mirror direction migration", () => {
       transform: { rotation: 90, mirror: "none" },
     });
 
-    const previous = JSON.parse(serializeProject(project)) as {
+    const previous = JSON.parse(
+      JSON.stringify(withProjectComponentDefinitions(project)),
+    ) as {
       schemaVersion: number;
       documents: Array<{
         instances: Array<{

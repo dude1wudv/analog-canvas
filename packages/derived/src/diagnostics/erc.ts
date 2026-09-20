@@ -9,19 +9,17 @@ import {
   validateLogicalNetContract,
 } from "../logical-net.js";
 import { resolveMosBulkConnection } from "../mos-bulk.js";
+import { resolveEndpointPoint } from "../endpoint.js";
+import { resolveDocumentRoutingGeometry } from "../resolved-route-geometry.js";
+import { findRouteSegmentsAtPoint } from "../route-query.js";
 import { directObjectLocator, type ObjectLocator } from "../object-locator.js";
 import type { Diagnostic, DiagnosticSeverity } from "./diagnostic.js";
+import { findExternalMasterCollisions } from "../master-names.js";
 
 /**
- * ERC engine (roadmap §8 R8). Emits the unified ADR 0015 `Diagnostic` envelope
- * with `domain: "erc"`, driven by the `ProjectConnectivityIndex` (WP-R2) and the
- * persisted `NoConnect` records (WP-R7). Electrical rules are kept strictly
- * separate from visual/routing observations (ADR 0015): a visual observation
- * count is never proof of electrical correctness.
- *
- * This first batch covers the name-conflict, NoConnect-conflict, and unconnected-
- * pin rules. Role-specific (floating gate/bulk), model-binding, and hierarchy
- * rules extend the same framework in follow-on targets.
+ * Electrical checks share endpoint assessment and the Diagnostic envelope.
+ * Electrical findings remain distinct from visual observations; observation
+ * counts are not evidence of electrical correctness (Net connectivity rationale).
  */
 
 /** Compatibility aliases for ERC consumers; their protocol is Diagnostic. */
@@ -49,7 +47,64 @@ export function runErcChecks(
     a.id.localeCompare(b.id, "en"),
   );
 
+  for (const collision of findExternalMasterCollisions(project, documents)) {
+    diagnostics.push({
+      id: `erc:master-name-collision:${collision.documentId}:${collision.instanceId}`,
+      domain: "erc",
+      code: "ERC_MASTER_NAME_COLLISION",
+      severity: "error",
+      confidence: "high",
+      gateEligible: true,
+      message: `External master ${collision.masterName} conflicts with local Cell ${collision.localName}; choose distinct exported master names`,
+      primary: directObjectLocator(
+        collision.documentId,
+        "instance",
+        collision.instanceId,
+      ),
+      related: [
+        directObjectLocator(
+          collision.localDocumentId,
+          "document",
+          collision.localDocumentId,
+        ),
+      ],
+      parameters: { masterName: collision.masterName },
+    });
+  }
+
   for (const document of documents) {
+    for (const issue of projectCellInterface(document.netlist).issues) {
+      const locations = issue.terminalIds.map((terminalId) => {
+        const terminal = document.netlist!.terminals.find(
+          (item) => item.id === terminalId,
+        )!;
+        return terminal.interfaceInstanceIds.length
+          ? directObjectLocator(
+              document.id,
+              "instance",
+              terminal.interfaceInstanceIds[0]!,
+            )
+          : terminal.interfaceAnnotationId
+            ? directObjectLocator(
+                document.id,
+                "annotation",
+                terminal.interfaceAnnotationId,
+              )
+            : directObjectLocator(document.id, "net", terminal.netId);
+      });
+      diagnostics.push({
+        id: `erc:cell-port-direction-conflict:${document.id}:${issue.portKey}`,
+        domain: "erc",
+        code: `ERC_${issue.code}`,
+        severity: "error",
+        confidence: "high",
+        gateEligible: true,
+        message: `Port ${issue.portName} has conflicting directions: ${issue.directions.join(", ")}`,
+        primary: locations[0]!,
+        related: locations.slice(1),
+        parameters: { portName: issue.portName },
+      });
+    }
     const docIndex = index.documents.get(document.id);
     const endpointConnectivity = createEndpointConnectivityClassifier(
       document,
@@ -71,6 +126,39 @@ export function runErcChecks(
         primary: directObjectLocator(document.id, "net", net.id),
         related: [],
         parameters: { netId: net.id },
+      });
+    }
+
+    // An Instance the Cell holds but the sheet does not draw is still a device:
+    // it keeps its reference, its Net terminals and its cards in the netlist,
+    // and a reader looking at the drawing cannot see any of that. The
+    // Placement Tray lists them; this says they are there at all.
+    const undrawn = document.instances.filter(
+      (instance) => instance.placement === null,
+    );
+    if (undrawn.length > 0) {
+      diagnostics.push({
+        id: `erc:instance-not-drawn:${document.id}`,
+        domain: "erc",
+        code: "ERC_INSTANCE_NOT_DRAWN",
+        severity: "warning",
+        confidence: "high",
+        gateEligible: false,
+        message: `${undrawn.length} ${
+          undrawn.length === 1 ? "Instance is" : "Instances are"
+        } in this Cell but not drawn on the sheet (${undrawn
+          .slice(0, 5)
+          .map((instance) => instance.reference ?? instance.id)
+          .join(
+            ", ",
+          )}${undrawn.length > 5 ? ", …" : ""}); the Placement Tray holds them`,
+        primary: directObjectLocator(document.id, "instance", undrawn[0]!.id),
+        related: undrawn
+          .slice(1)
+          .map((instance) =>
+            directObjectLocator(document.id, "instance", instance.id),
+          ),
+        parameters: { count: undrawn.length },
       });
     }
 
@@ -471,6 +559,14 @@ export function runErcChecks(
         });
       }
     }
+
+    reportPinsTouchingAnotherNet(
+      document,
+      docIndex,
+      logicalNets,
+      resolver,
+      diagnostics,
+    );
   }
 
   // A child interface can be shared by several parent instances. Preserve the
@@ -571,4 +667,102 @@ export function runErcChecks(
       a.code.localeCompare(b.code, "en") ||
       a.primary.objectId.localeCompare(b.primary.objectId, "en"),
   );
+}
+
+/**
+ * A pin the picture shows as wired while the model says it is not: its contact
+ * point sits exactly on another Net's wire or Junction dot.
+ *
+ * Drawing geometry never creates a connection, and a Crossing is not a
+ * Junction — so nothing repairs this and nothing else reports it. To the
+ * author the wire visibly reaches the pin; to the netlist the pin is on
+ * nothing, or on a different Net entirely. Only a terminal is judged: two
+ * Routes crossing is the ordinary, deliberate case the model already names.
+ */
+function reportPinsTouchingAnotherNet(
+  document: CircuitProject["documents"][number],
+  docIndex: ReturnType<ProjectConnectivityIndex["documents"]["get"]>,
+  logicalNets: ReturnType<typeof resolveDocumentLogicalNets>,
+  resolver: SymbolResolver,
+  diagnostics: ErcDiagnostic[],
+): void {
+  if (document.routes.length === 0 || document.instances.length === 0) return;
+  const geometry =
+    docIndex?.routingGeometry ??
+    resolveDocumentRoutingGeometry(document, resolver);
+  const routeById = new Map(document.routes.map((route) => [route.id, route]));
+  const logicalIdOf = (baseNetId: string | undefined): string | undefined =>
+    baseNetId ? logicalNets.byBaseNetId.get(baseNetId)?.id : undefined;
+  const netIdByTerminalKey = new Map<string, string>();
+  for (const net of document.nets)
+    for (const terminal of net.terminals)
+      netIdByTerminalKey.set(
+        `${terminal.instanceId}\u0000${terminal.pinName}`,
+        net.id,
+      );
+  const declaredOpen = new Set(
+    document.noConnects.flatMap((item) =>
+      item.endpoint.kind === "terminal"
+        ? [`${item.endpoint.instanceId}\u0000${item.endpoint.pinName}`]
+        : [],
+    ),
+  );
+
+  for (const instance of [...document.instances].sort((left, right) =>
+    left.id.localeCompare(right.id, "en"),
+  )) {
+    const resolved = resolver.resolve(
+      instance.symbolId,
+      instance.symbolVariantId,
+    );
+    if (!resolved) continue;
+    const hidden = new Set(resolved.variant?.hiddenPinNames ?? []);
+    for (const pin of resolved.definition.pins) {
+      if (hidden.has(pin.name)) continue;
+      const key = `${instance.id}\u0000${pin.name}`;
+      // An author who marked the pin open has already answered for it.
+      if (declaredOpen.has(key)) continue;
+      const point = resolveEndpointPoint(document, resolver, {
+        kind: "terminal",
+        instanceId: instance.id,
+        pinName: pin.name,
+      });
+      if (!point) continue;
+      const pinLogicalId = logicalIdOf(netIdByTerminalKey.get(key));
+      const foreign = findRouteSegmentsAtPoint(geometry, point).flatMap(
+        (address) => {
+          const route = routeById.get(address.routeId);
+          if (!route) return [];
+          const routeLogicalId = logicalIdOf(route.netId);
+          return routeLogicalId && routeLogicalId !== pinLogicalId
+            ? [{ route, netId: route.netId }]
+            : [];
+        },
+      );
+      const first = foreign[0];
+      if (!first) continue;
+      diagnostics.push({
+        id: `erc:touching-not-connected:${document.id}:${instance.id}:${pin.name}`,
+        domain: "erc",
+        code: "ERC_TOUCHING_NOT_CONNECTED",
+        severity: "warning",
+        confidence: "high",
+        gateEligible: false,
+        message: pinLogicalId
+          ? `Pin ${instance.id}.${pin.name} sits on a wire of Net ${first.netId} but belongs to a different Net`
+          : `Pin ${instance.id}.${pin.name} sits on a wire of Net ${first.netId} without being connected to it`,
+        primary: terminalLocator(document.id, instance.id, pin.name),
+        related: [
+          directObjectLocator(document.id, "route", first.route.id),
+          directObjectLocator(document.id, "net", first.netId),
+        ],
+        parameters: {
+          instanceId: instance.id,
+          pinName: pin.name,
+          routeId: first.route.id,
+          netId: first.netId,
+        },
+      });
+    }
+  }
 }

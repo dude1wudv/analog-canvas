@@ -43,24 +43,6 @@
   -webkit-user-select: text;
 }
 
-.net-label-editor input {
-  box-sizing: border-box;
-  width: 100%;
-  height: 28px;
-  padding: 3px 6px;
-  border: 0;
-  border-bottom: 2px solid var(--icm-accent);
-  border-radius: 2px 2px 0 0;
-  outline: none;
-  color: var(--icm-text);
-  background: var(--icm-surface);
-  box-shadow: 0 1px 4px rgb(15 23 42 / 16%);
-  font:
-    13px "Google Sans Code Variable",
-    ui-monospace,
-    monospace;
-}
-
 .inline-canvas-text-editor {
   box-sizing: border-box;
   width: 100%;
@@ -82,9 +64,6 @@
 
 .net-label-placement-preview {
   fill: var(--icm-accent);
-  font-size: 12px;
-  font-style: italic;
-  font-weight: 700;
   paint-order: stroke;
   stroke: var(--icm-surface);
   stroke-width: 3px;
@@ -157,22 +136,6 @@
 
 .analog-block-hit-target:hover:not(.selected) .analog-block-hit-outline {
   stroke: rgb(var(--icm-accent-rgb) / 22%);
-}
-
-.text-format-tools {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  flex-wrap: wrap;
-}
-
-.text-format-tools button {
-  min-width: auto;
-  padding: 0.2rem 0.45rem;
-}
-
-.text-format-tools small {
-  color: var(--icm-text-muted);
 }
 
 /* Selection traces the component's own lines instead of boxing it: the halo
@@ -482,6 +445,15 @@
   stroke-width: 1.5;
 }
 
+.wire-snap-target {
+  fill: var(--icm-accent);
+  fill-opacity: 0.3;
+  stroke: var(--icm-accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
 .selection-box {
   fill: var(--icm-accent-soft);
   stroke: var(--icm-accent);
@@ -709,7 +681,23 @@
   background: var(--icm-accent-tint);
 }
 
-.rich-text-floating-toolbar button[aria-label="Decrease text size"] {
+.rich-text-floating-toolbar .rich-text-latex-button {
+  min-width: 3.2rem;
+  font-family: "Google Sans Code Variable", monospace;
+  font-size: var(--icm-font-xs);
+}
+
+.rich-text-editor [data-rich-text-style="lowercase"] {
+  text-transform: lowercase;
+}
+
+.rich-text-editor [data-rich-text-style="uppercase"] {
+  text-transform: uppercase;
+}
+
+.rich-text-toolbar-size-controls {
+  display: inline-flex;
+  flex: 0 0 auto;
   margin-left: auto;
 }
 

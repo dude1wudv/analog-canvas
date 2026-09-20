@@ -21,10 +21,7 @@ import {
 describe("schema 36 to 37 migration (persisted SimulationSetup)", () => {
   const schema36Project = (): Record<string, unknown> => {
     const project = createEmptyProject("divider", "Divider");
-    const raw = JSON.parse(serializeProject(project)) as Record<
-      string,
-      unknown
-    >;
+    const raw = JSON.parse(JSON.stringify(project)) as Record<string, unknown>;
     const document = (raw.documents as Record<string, unknown>[])[0]!;
     (document.instances as unknown[]).push({
       id: "V1",
@@ -117,7 +114,7 @@ describe("schema 36 to 37 migration (persisted SimulationSetup)", () => {
   it("preserves a setup whose root was removed for prepare-time diagnostics", () => {
     const project = createEmptyProject("orphan", "Orphan");
     const candidate = {
-      ...JSON.parse(serializeProject(project)),
+      ...JSON.parse(JSON.stringify(project)),
       schemaVersion: 48,
       simulationSetups: [{ id: "setup-1", name: "Setup 1", ...setup() }],
     };

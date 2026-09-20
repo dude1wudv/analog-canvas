@@ -44,8 +44,13 @@ function responseIssueSummary(issues: readonly ResponseIssue[]): string {
     .join("; ");
 }
 
-/** Short receipt/read RPCs; the long executor HTTP request stays in the browser host. */
-export const SIMULATION_REQUEST_TIMEOUT_MS = 35_000;
+/**
+ * Every relayed call (circuit, files, simulation) is forwarded to the editor
+ * under the Worker's FORWARD_TIMEOUT_MS of 30 s. The client must outlive
+ * that so the relay's own 504 reaches the caller; a 30 s client timeout
+ * races the relay and masks the cause as a bare abort.
+ */
+export const REQUEST_TIMEOUT_MS = 35_000;
 
 export interface ClaimSuccess {
   sessionId: string;
@@ -99,7 +104,7 @@ export class AgentHttpClient {
   constructor(options: AgentHttpClientOptions) {
     this.baseUrlValue = options.baseUrl;
     this.fetchImpl = options.fetch ?? fetch;
-    this.timeoutMs = options.requestTimeoutMs ?? 30_000;
+    this.timeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
     this.rateLimitRetryAttempts = options.rateLimitRetryAttempts ?? 2;
     this.sleep =
       options.sleep ??
@@ -167,7 +172,9 @@ export class AgentHttpClient {
     }
     const parsed = AgentCircuitResponseSchema.safeParse(body);
     if (!parsed.success) {
-      throw invalidResponseFailure("Circuit response failed schema validation");
+      throw invalidResponseFailure(
+        `Circuit response failed schema validation: ${responseIssueSummary(parsed.error.issues)}. Check the server MCP manifest and reload a compatible adapter. Do not repeat a mutation blindly: it may already have committed. The connector remains valid unless the server revokes it.`,
+      );
     }
     return parsed.data;
   }
@@ -200,10 +207,10 @@ export class AgentHttpClient {
   /**
    * Invoke the browser-hosted Simulation Resource.
    *
-   * It gets its own timeout rather than the client-wide one: a run
-   * legitimately occupies the route's full 120 s ceiling, and a 30 s edit
-   * timeout would abandon runs that were about to answer -- while the
-   * deployment still paid for the container time.
+   * The 120 s simulation-level ceiling (`AGENT_SIMULATION_MAX_TIMEOUT_MS`)
+   * is a run-duration limit enforced inside the browser host, not this
+   * transport; each simulation HTTP step still answers within the shared
+   * client timeout, above the relay's own forward timeout.
    */
   async simulation(
     sessionId: string,
@@ -220,7 +227,6 @@ export class AgentHttpClient {
         },
         body: JSON.stringify(request),
       },
-      SIMULATION_REQUEST_TIMEOUT_MS,
     );
     const body: unknown = await response.json().catch(() => null);
     if (!response.ok) throw this.transportError(response.status, body);

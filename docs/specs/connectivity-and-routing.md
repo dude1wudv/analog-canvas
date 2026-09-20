@@ -50,6 +50,39 @@ reformat committed Routes. `power-rail` is the single exception: one straight,
 non-zero horizontal or vertical segment. All modes use the shared segment
 kernel, stable leg identity, and Route transaction.
 
+## Completed-edit connectivity
+
+Wire authoring submits endpoint identities and a path. It no longer needs to
+assign terminal membership or merge Base Nets before that path can be drawn.
+`set_route_path` and `route_orthogonal` validate geometry while staging; their
+`netId` is an identity hint, not an electrical connection. Committed Routes
+still carry the resolved Base-Net ID for existing readers and file formats.
+
+After the transaction's geometry and endpoint-follow edits are complete, the
+Edit Engine builds one transient connection graph from the surviving Routes
+and confirmed direct endpoint contacts. It partitions and merges Base Nets
+from this graph, retargets owned labels/interfaces and bulk bindings, then
+settles newly authored endpoint contacts and normalizes conductor coverage.
+Logical naming/scope resolution and final schema validation run on that final
+candidate. A replacement wire in the same transaction can therefore preserve
+a connection regardless of whether its old path was cut first or last.
+Repointing a Route releases the old pin when no remaining physical path holds
+it; reusing a Net ID on disconnected strokes does not connect those strokes.
+Interior-to-interior crossings still provide no connection edge.
+
+Pre-existing unrouted/imported membership remains explicit authoring intent
+supported by the runtime model: reconstruction preserves bridges between its
+previously separate physical components, not a clique between every terminal.
+Consequently a formerly routed edge is not restored merely from its old Net
+membership. `cut_connection` deliberately releases that Net's unrouted intent;
+`remove_route_geometry` and returning a part to the tray preserve it. Explicit
+Agent `connect_endpoints`/`merge_nets` remain logical authoring operations.
+Labels, power markers and Cell interfaces retain their separate logical role.
+
+This is an edit-commit boundary, not a passive read repair or a new persisted
+format. It does not remove legacy membership fields or rewrite Gallery files.
+Undo restores the whole committed document, including the derived membership.
+
 ## Authoring rules
 
 - Starting and ending a wire on terminals or explicit Junctions creates or
@@ -174,17 +207,42 @@ kernel, stable leg identity, and Route transaction.
 
 Routes may present as `wire`, `bulk-dashed`, or `power-rail`; presentation does
 not alter Net identity. `bulk-dashed` is used for explicit MOS B routing.
-Manual MOS instances without explicit B membership first use a configured
-cell-default Net; without one, bulk remains unresolved in the editable graph.
-Netlist extraction uses actual membership, including materialized defaults;
-an omitted B without explicit NoConnect reports `MISSING_PIN_NET`.
+A manual MOS instance without explicit B membership resolves its body in a
+fixed order: a configured cell-default Net, and failing that the supply the author
+already drew — the Cell's single Net in that power domain, ground for an NMOS
+body and the positive supply for a PMOS body, reported as `supply-default`.
+That fallback needs no per-Cell configuration, which is what makes a pasted
+copy, an imported drawing, and a drawing made before the policy existed all
+behave like one drawn today. A Net is in a power domain because something
+authored says so — a placed `ground` or `vdd-port` marker, or a name claim
+carrying that domain (a rail, a formal Cell Pin declared as a supply). It is
+never read from a Net's spelling, from device polarity, or from proximity. A Cell holding no wired
+marker of that domain, or more than one (AVDD beside VDD, AGND beside DGND),
+has no answer — the body stays unresolved and the Cell default must name one,
+because choosing between two authored supplies is the author's decision. An
+unwired marker names no Net, so it neither answers nor competes.
+Pasting a supply marker settles a body default the target Cell does not have
+yet, exactly as placing that marker does, and never overrules one it has. A
+body left alone on a Net that its own policy binding named, with no geometry,
+no name claim and no Cell terminal, is policy residue from a paste or from a
+deleted marker, and it is read as residue rather than as a connection: the
+body resolves through the ordinary order above, so a matched pair cannot end
+up with one body on the supply and the other on a node nothing else reaches.
+Reading it that way changes no membership — the Net stays until an edit prunes
+it — and reconciliation returns the body to the configured default on the next
+edit.
+Netlist extraction uses actual membership, including materialized defaults,
+and resolves a body that policy answers but never materialized through the
+same order above; `MISSING_PIN_NET` is reported for an omitted B without
+explicit NoConnect only when that order has no answer.
 Starting a `bulk-dashed` route from B treats a configured default membership as
 unowned; committing clears the binding before connecting the explicit Net.
 Deleting the explicit route may reconcile only an explicitly configured cell
 default. Source-bound/imported MOS instances keep their fourth-node evidence;
-when absent, the same missing-terminal rule applies. Legacy persisted
-`supply-default` bindings are readable compatibility data, not a current
-authoring policy. Cross-Document composition materializes an effective source
+when absent, the same missing-terminal rule applies. `supply-default` is a resolution status derived on
+read, not authored state: nothing writes a new `supply-default` binding, and
+persisted ones from an earlier release stay readable compatibility data —
+which is why a body carrying one is never read as residue. Cross-Document composition materializes an effective source
 `cell-default` as an `instance-override`: the copied B membership remains fixed
 to its copied Base Net and neither consumes nor changes the target Document's
 Cell default.
@@ -209,6 +267,13 @@ VDD markers on that Net do not require a drawn trunk or matching label and do
 not produce a flightline. Named local Nets still require route, contact, or
 label evidence for their visible connectivity.
 
+A Cell may state a supply as its own Pin. A formal terminal standing on a
+supply marker carries that supply's global identity, so a Cell holding a VDD
+Pin and a VDD rail has one VDD, not two Nets spelled the same; the Pin and the
+global node are one thing under one name, as SPICE ground `0` already was.
+Every other formal Pin landing on a global Net stays the accident
+`FORMAL_PORT_GLOBAL_NET_CONFLICT` reports.
+
 Legacy Projects may have several supply markers sharing one inherited claim.
 Before a Wire cut, each marker on the affected Base Net materializes the
 unambiguous current supply name and scope as its own claim. Copy and flattened
@@ -226,6 +291,56 @@ or unknown supply is not recovered. The import is marked dirty and advances
 the repaired Document revision once; parsing, Cloud opens and recovery remain
 exact. This is a bounded legacy import repair, not a runtime source-equivalence
 rule. Physical membership and authored geometry are never joined by it.
+
+## Wire cut lifecycle
+
+`cut_connection` requires one existing unlocked Route. Removing a bridge
+partitions the affected Base Net by remaining explicit Routes and confirmed
+direct contacts; global, imported, and logical-name Evidence never suppress
+that physical split. A redundant cycle keeps the original Base Net.
+The component containing the deleted Route's first surviving endpoint retains
+the original Base-Net ID (start before end); if neither endpoint survives,
+the first deterministic component is primary. Detached components receive
+deterministic new IDs. Newly orphaned Junction endpoints are removed unless
+still owned by annotations or layout references. Route-anchored annotations
+must be removed by a preceding typed edit in the same transaction.
+
+The [Edit Engine](edit-engine.md#operations-and-state-transitions) owns
+transaction atomicity, revision and Undo. GUI deletion supplies the annotation
+closure before cutting; geometry-only removal is a distinct explicit edit.
+
+## Shared read and diagnostic boundary
+
+[ProjectConnectivityIndex](../../packages/derived/src/connectivity-index.ts)
+is a derived read model, not persisted connectivity. Document contexts are
+reused by identity, revision and resolver; guidance is derived once per
+Document. Project aggregation does not promise constant-time rebuilding.
+Selection is not electrical input.
+
+Search, trace and diagnostic navigation share the model's ObjectLocator and
+HierarchyFrame contracts. Paths distinguish concrete callers of reused Cells;
+an unresolved path never selects a guessed occurrence. Logical-Net IDs are
+revision-scoped representatives and must be refreshed after edits.
+
+Endpoint readiness separates physical membership from accepted intent, so a
+singleton pin is not connected merely because it has a Base Net. ERC and
+downstream checks consume the shared assessment rather than another stored
+status. One ERC check reads geometry rather than membership:
+`ERC_TOUCHING_NOT_CONNECTED` reports an instance pin whose contact point lies
+on a Route of a different Logical Net. Geometry never creates a connection and
+a Crossing is not a Junction, so nothing repairs that arrangement and nothing
+else reports it — the author sees a wire reaching the pin while the netlist
+sees the pin on another Net or on nothing. It judges terminals only: two
+Routes crossing is the ordinary case the model already names, and a pin the
+author declared `NoConnect` has been answered for. `ERC_INSTANCE_NOT_DRAWN`
+counts the Instances a Cell holds that the sheet does not draw: they keep their
+reference, their Net terminals and their netlist cards while nothing on the
+sheet shows them, so the warning names them and the Placement Tray — which
+lists every undrawn Instance, not only imported ones — is where they are placed
+or deleted. The [diagnostic envelope](../../packages/derived/src/diagnostics/diagnostic.ts)
+keeps domains, confidence, severity and gate eligibility distinct.
+[Editor interaction](editor-interaction.md) owns explicit checking and stale
+result/navigation behavior; checks do not veto Save.
 
 ## Imported routing guidance
 
@@ -256,9 +371,17 @@ coordinates.
 
 ## Net naming and lifecycle
 
-Base Nets remain physical connectivity; Logical Nets are derived from
-owner-addressed `name-claim` evidence. Reusing a spelling never merges Route
-geometry.
+Base Nets remain physical connectivity. The pure Logical-Net resolver joins
+distinct Base Nets through folded authoritative names in the same scope or
+matching formal Cell-Pin names. The [model](schematic-model.md#electrical-authority)
+owns those declarations and their marker identities. Reusing a spelling never
+merges Route geometry. `net-name-hint` and `spice-source` are provenance only
+and never join Nets.
+
+Equal-folded local and global claims on an already-connected group derive an
+effective global scope without rewriting either owner. Disconnected
+local/global claims remain separate; different-name scope combinations and
+incompatible power claims remain explicit errors.
 
 The strict `connect_endpoints` primitive does not implicitly merge two Base
 Nets. The authoring planner explicitly emits `merge_nets` first. If their
@@ -269,10 +392,11 @@ formal Cell interfaces, and labels on other Base Nets remain. Incompatible
 power domains are rejected, and any unresolved contract conflict still rejects
 the atomic transaction.
 
-This describes the implemented boundary, not a settled policy that joining
-should always discard names. In particular, retiring a label can change remote
-name-based connectivity; the [Net-join naming decision](../roadmap/README.md#net-join-naming-decision)
-remains open.
+This is the accepted explicit-join behavior: neither conflicting ordinary Label
+is chosen as the surviving name. Retiring these owners can remove name-based
+connections to remote Base Nets; those remote Labels are not themselves deleted.
+The resulting Logical Nets are derived from the remaining owners. Label removal
+and connection are one atomic, undoable operation.
 
 Name claims resolve by scope and folded name inside the containing Document.
 Flattened Document composition copies those owner-addressed claims into the

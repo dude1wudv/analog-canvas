@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -38,17 +38,10 @@ describe("analytics persistence identity", () => {
     });
   });
 
-  it("keeps Preview isolated under the same analytics contract", () => {
-    const config = readWranglerConfig("wrangler.preview.jsonc");
-    expect(config.name).toBe("interactive-circuit-maker-preview");
-    expect(config.durable_objects.bindings).toContainEqual({
-      name: "ANALYTICS",
-      class_name: "AnalyticsDO",
-    });
-    expect(config.migrations).toContainEqual({
-      tag: "v1",
-      new_sqlite_classes: ["AnalyticsDO"],
-    });
+  it("does not carry the retired Preview analytics namespace", () => {
+    expect(existsSync(resolve(process.cwd(), "wrangler.preview.jsonc"))).toBe(
+      false,
+    );
   });
 
   it("locks the object, cookies, routes, and Worker entrypoint export", () => {

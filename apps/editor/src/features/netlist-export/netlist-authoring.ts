@@ -1,4 +1,6 @@
 import type {
+  CircuitProject,
+  Instance,
   InstanceNetlistBinding,
   InstanceNetlistData,
   SchematicDocument,
@@ -8,6 +10,7 @@ import {
   deviceDescriptor,
   nextReference,
   referencePolicyForSymbol,
+  referencePolicyForInstance,
   subcircuitDescriptor,
 } from "@icm/devices";
 
@@ -52,6 +55,78 @@ export function nextInstanceReference(
   );
 }
 
+/** Insert and Copy both create a fresh device from authored settings only. */
+export function createNewInstance(
+  document: SchematicDocument,
+  template: Pick<
+    Instance,
+    | "symbolId"
+    | "symbolVariantId"
+    | "placement"
+    | "netlist"
+    | "styleOverride"
+    | "signalFlowParameters"
+  >,
+  options: {
+    id?: string | undefined;
+    reference?: string | undefined;
+    project?: Pick<CircuitProject, "componentDefinitions"> | undefined;
+  } = {},
+): Instance {
+  const {
+    symbolId,
+    symbolVariantId,
+    placement,
+    netlist,
+    styleOverride,
+    signalFlowParameters,
+  } = structuredClone(template);
+  const instance: Instance = {
+    id: options.id ?? nextInstanceId(document, symbolId),
+    symbolId,
+    placement,
+    ...(symbolVariantId ? { symbolVariantId } : {}),
+    ...(netlist ? { netlist } : {}),
+    ...(styleOverride ? { styleOverride } : {}),
+    ...(signalFlowParameters ? { signalFlowParameters } : {}),
+  };
+  const reference =
+    options.reference ??
+    nextReference(
+      createReferenceIndex(document, options.project),
+      referencePolicyForInstance(instance, options.project),
+    );
+  if (reference) instance.reference = reference;
+  return instance;
+}
+
+export function nextCellPinName(
+  document: SchematicDocument,
+  reservedNames: ReadonlySet<string> = new Set(),
+  appearance: "hollow" | "filled" = "hollow",
+): string {
+  const occupied = new Set(
+    (document.netlist?.terminals ?? []).map((terminal) =>
+      terminal.name.trim().toLowerCase(),
+    ),
+  );
+  const unavailable = (name: string): boolean =>
+    occupied.has(name.toLowerCase()) || reservedNames.has(name.toLowerCase());
+  if (appearance === "filled") {
+    let ordinal = 1;
+    while (unavailable(`VB${ordinal}`)) ordinal += 1;
+    return `VB${ordinal}`;
+  }
+  let pair = 1;
+  while (true) {
+    for (const base of ["Vin", "Vout"] as const) {
+      const name = pair === 1 ? base : `${base}${pair}`;
+      if (!unavailable(name)) return name;
+    }
+    pair += 1;
+  }
+}
+
 function rawParameters(
   parameterValues: Readonly<Record<string, string>>,
 ): Record<string, string> {
@@ -84,13 +159,25 @@ function defaultBinding(symbolId: string): InstanceNetlistBinding | undefined {
   return undefined;
 }
 
+/**
+ * The netlist record a freshly placed Instance carries.
+ *
+ * `modelTarget` is the model the process in hand names for this device, so a
+ * transistor drawn while working in a process is bound to that process from
+ * the moment it lands, rather than blocking export until someone opens the
+ * Netlist panel and picks the process again. A device that takes no explicit
+ * model ignores it.
+ */
 export function initialInstanceNetlist(
   symbolId: string,
   parameterValues: Readonly<Record<string, string>>,
+  modelTarget?: string,
 ): InstanceNetlistData | undefined {
   const policy = referencePolicyForSymbol(symbolId);
   if (policy.kind === "none") return undefined;
-  const binding = defaultBinding(symbolId);
+  const binding = modelTarget
+    ? bindingForEditedModel(symbolId, modelTarget)
+    : defaultBinding(symbolId);
   return {
     ...(binding ? { binding } : {}),
     parameters: rawParameters(parameterValues),

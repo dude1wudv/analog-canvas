@@ -2,6 +2,7 @@ import { createRoutePath, deriveStableId } from "@icm/model";
 import type { RouteEndpoint, SchematicDocument } from "@icm/model";
 import {
   deriveDirectContactDelta,
+  deriveDocumentContactEvidence,
   endpointKey,
   isVisibleEndpoint,
   isMosBulkTerminal,
@@ -9,6 +10,7 @@ import {
   resolveEndpointConnection,
   resolveEndpointPoint,
 } from "@icm/derived";
+import type { DocumentContactEvidence } from "@icm/derived";
 import type { SymbolResolver } from "@icm/symbols";
 
 import { buildManualWirePath } from "./routing-planner.js";
@@ -16,6 +18,7 @@ import {
   endpointOwnerNetId,
   netEndpointGroups,
 } from "./transaction-routing.js";
+import type { ContactEvidenceHint } from "./transaction-result.js";
 
 export interface DirectContactReconciliation {
   geometryChanged: boolean;
@@ -71,9 +74,10 @@ function endpointsSharePhysicalComponent(
   resolver: SymbolResolver,
   netId: string,
   endpoints: readonly [RouteEndpoint, RouteEndpoint],
+  contactEvidence?: DocumentContactEvidence,
 ): boolean {
   const [leftKey, rightKey] = endpoints.map(endpointKey);
-  return netEndpointGroups(document, netId, resolver).some(
+  return netEndpointGroups(document, netId, resolver, contactEvidence).some(
     (group) => group.includes(leftKey!) && group.includes(rightKey!),
   );
 }
@@ -125,8 +129,22 @@ export function reconcileTransformDirectContacts(
   resolver: SymbolResolver,
   transactionId: string,
   changedObjectIds: Set<string>,
+  beforeContactEvidence?: ContactEvidenceHint,
 ): DirectContactReconciliation {
-  const delta = deriveDirectContactDelta(before, draft, resolver);
+  // The reconciliation below asks `netEndpointGroups` — which derives the whole
+  // Document's contact evidence to answer one Net's question — once per lost
+  // pair. Deriving the draft's evidence once and handing it to both callers
+  // turns (2 + lost pairs) full derivations into two, so the cost no longer
+  // grows with how many contacts the edit breaks.
+  const draftContactEvidence = deriveDocumentContactEvidence(draft, resolver);
+  const delta = deriveDirectContactDelta(before, draft, resolver, {
+    // Only an identity match is safe: the payload carries no revision of its
+    // own, and evidence from another Document would answer from stale geometry.
+    ...(beforeContactEvidence?.document === before
+      ? { before: beforeContactEvidence.evidence }
+      : {}),
+    after: draftContactEvidence,
+  });
   let geometryChanged = false;
   const changedRouteIds: string[] = [];
 
@@ -141,6 +159,7 @@ export function reconcileTransformDirectContacts(
         resolver,
         leftOwner,
         pair.endpoints,
+        draftContactEvidence,
       )
     ) {
       continue;

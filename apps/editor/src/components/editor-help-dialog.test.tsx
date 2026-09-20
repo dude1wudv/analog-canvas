@@ -12,8 +12,8 @@ describe("EditorHelpDialog", () => {
     );
 
     expect(markup).toContain('role="dialog"');
-    expect(markup).toContain("About Analog Canvas");
-    expect(markup).toContain("Version <strong>0.9.2</strong>");
+    expect(markup).toContain("关于 Analog Canvas");
+    expect(markup).toContain("版本 <strong>0.9.2</strong>");
     expect(markup).toContain(
       'href="https://github.com/dude1wudv/analog-canvas"',
     );

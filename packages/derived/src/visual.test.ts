@@ -14,6 +14,26 @@ import {
 const resolver = new InMemorySymbolResolver(builtInSymbols);
 
 describe("visual quality diagnostics", () => {
+  it.each([true, false])(
+    "counts only rendered annotations in overlap diagnostics (visible=%s)",
+    (visible) => {
+      const document = createEmptyDocument("labels", "Labels");
+      document.annotations = ["a", "b"].map((id) => ({
+        id,
+        kind: "instance-label",
+        content: { runs: [{ kind: "text", value: "M1" }] },
+        anchor: { kind: "free", position: { x: 100, y: 100 } },
+        alignment: "middle",
+        rotation: 0,
+        locked: false,
+        visible: id === "a" || visible,
+      }));
+      const overlaps = diagnoseVisualQuality(document, resolver).filter(
+        (d) => d.code === "VISUAL_LABEL_OVERLAP",
+      );
+      expect(overlaps).toHaveLength(visible ? 1 : 0);
+    },
+  );
   it("reuses default diagnostics for one immutable revision", () => {
     const document = createEmptyDocument("cached", "Cached diagnostics");
     document.instances.push({
@@ -112,54 +132,42 @@ describe("visual quality diagnostics", () => {
     expect(document.instances[0]!.placement!.position).toEqual({ x: 0, y: 0 });
   });
 
-  it("flags only non-standard wire angles and identifies protected routes", () => {
-    const document = createEmptyDocument("doc", "Wire angle diagnostics");
-    document.nets.push(
-      { id: "n1", terminals: [] },
-      { id: "n2", terminals: [] },
-    );
-    document.junctions.push(
-      { id: "j1", netId: "n1", position: { x: 0, y: 0 } },
-      { id: "j2", netId: "n1", position: { x: 30, y: 30 } },
-      { id: "j3", netId: "n2", position: { x: 0, y: 60 } },
-      { id: "j4", netId: "n2", position: { x: 40, y: 80 } },
-    );
-    document.routes.push(
-      createRoutePath({
-        id: "intentional-45",
-        netId: "n1",
-        start: { kind: "junction", junctionId: "j1" },
-        end: { kind: "junction", junctionId: "j2" },
-        bends: [],
-        modes: ["manual"],
-      }),
-      createRoutePath({
-        id: "legacy-angled",
-        netId: "n2",
-        start: { kind: "junction", junctionId: "j3" },
-        end: { kind: "junction", junctionId: "j4" },
-        bends: [],
-        modes: ["trunk"],
-      }),
-    );
+  it.each(["manual", "locked", "trunk"] as const)(
+    "accepts arbitrary wire angles for %s routes without diagnostics",
+    (mode) => {
+      const document = createEmptyDocument("doc", "Wire angle diagnostics");
+      document.nets.push(
+        { id: "n1", terminals: [] },
+        { id: "n2", terminals: [] },
+      );
+      document.junctions.push(
+        { id: "j1", netId: "n1", position: { x: 0, y: 0 } },
+        { id: "j2", netId: "n1", position: { x: 30, y: 30 } },
+        { id: "j3", netId: "n2", position: { x: 0, y: 60 } },
+        { id: "j4", netId: "n2", position: { x: 40, y: 80 } },
+      );
+      document.routes.push(
+        createRoutePath({
+          id: "intentional-45",
+          netId: "n1",
+          start: { kind: "junction", junctionId: "j1" },
+          end: { kind: "junction", junctionId: "j2" },
+          bends: [],
+          modes: ["manual"],
+        }),
+        createRoutePath({
+          id: "free-angled",
+          netId: "n2",
+          start: { kind: "junction", junctionId: "j3" },
+          end: { kind: "junction", junctionId: "j4" },
+          bends: [],
+          modes: [mode],
+        }),
+      );
 
-    expect(
-      diagnoseVisualQuality(document, resolver).filter(
-        (item) => item.code === "VISUAL_NON_STANDARD_WIRE_ANGLE",
-      ),
-    ).toEqual([
-      expect.objectContaining({
-        objectIds: ["legacy-angled"],
-        category: "structural",
-        gateEligible: true,
-        parameters: {
-          segmentIndexes: "0",
-          segmentCount: 1,
-          repairable: false,
-        },
-      }),
-    ]);
-  });
+      expect(diagnoseVisualQuality(document, resolver)).toEqual([]);
+    },
+  );
 
   it("ignores empty instance-label suppressors in overlap diagnostics", () => {
     const document = createEmptyDocument("doc", "Suppressed labels");

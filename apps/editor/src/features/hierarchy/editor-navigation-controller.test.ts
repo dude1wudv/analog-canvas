@@ -1,5 +1,10 @@
-import { buildProjectConnectivityIndex } from "@icm/derived";
-import { createEmptyProject, createRoutePath } from "@icm/model";
+import { buildProjectConnectivityIndex, traceHierarchyNet } from "@icm/derived";
+import { hierarchyParameterFixture } from "../../../../../netlists/hierarchy-parameters/fixture";
+import {
+  createEmptyProject,
+  createEmptyDocument,
+  createRoutePath,
+} from "@icm/model";
 import { builtInSymbols, createProjectSymbolResolver } from "@icm/symbols";
 import { describe, expect, it, vi } from "vitest";
 
@@ -46,6 +51,156 @@ function dependencies(
 }
 
 describe("editor navigation controller", () => {
+  it("follows a traced parent pin into the correct repeated Cell occurrence and back", () => {
+    const input = dependencies();
+    const project = hierarchyParameterFixture();
+    const parent = project.documents[0]!;
+    const resolver = createProjectSymbolResolver(project, builtInSymbols);
+    const index = buildProjectConnectivityIndex(project, resolver);
+    const parentNet = parent.nets.find((net) =>
+      net.terminals.some(
+        (item) => item.instanceId === "X2" && item.pinName === "IN",
+      ),
+    )!;
+    const trace = traceHierarchyNet(index, parent.id, parentNet.id);
+    if (!trace) throw new Error("Expected parent trace");
+    const down = trace.hops.find(
+      (hop) => hop.direction === "down" && hop.frame.instanceId === "X2",
+    )!;
+    expect(down).toBeDefined();
+    const controller = createEditorNavigationController({
+      ...input,
+      project,
+      document: parent,
+      resolver,
+      connectivityIndex: index,
+      openDocument: (id) => project.documents.find((item) => item.id === id),
+    });
+    controller.navigateTraceHop(down);
+    expect(input.setDocumentStack).toHaveBeenLastCalledWith(
+      down.to.hierarchyPath,
+    );
+    expect(down.to.hierarchyPath.at(-1)?.instanceId).toBe("X2");
+    expect(input.setHighlightedNetOrigin).toHaveBeenLastCalledWith(down.to);
+    const returnTrace = traceHierarchyNet(
+      index,
+      down.to.documentId,
+      down.to.netId,
+      undefined,
+      down.to.hierarchyPath,
+    );
+    if (!returnTrace) throw new Error("Expected child trace");
+    const up = returnTrace.hops.find(
+      (hop) => hop.direction === "up" && hop.frame.instanceId === "X2",
+    )!;
+    expect(up).toBeDefined();
+    controller.navigateTraceHop(up);
+    expect(input.setDocumentStack).toHaveBeenLastCalledWith([]);
+    expect(input.setHighlightedNetOrigin).toHaveBeenLastCalledWith(up.to);
+  });
+  it.each([1, 2])(
+    "opens a definition without inventing any of its %i caller paths",
+    (count) => {
+      const input = dependencies();
+      const child = createEmptyDocument("child", "Child");
+      input.project.documents.push(child);
+      for (let index = 0; index < count; index++)
+        input.document.instances.push({
+          id: `X${index}`,
+          symbolId: "unresolved-block",
+          placement: null,
+          netlist: {
+            parameters: {},
+            binding: { kind: "subcircuit", childDocumentId: child.id },
+          },
+        });
+      input.connectivityIndex = buildProjectConnectivityIndex(
+        input.project,
+        input.resolver,
+      );
+      createEditorNavigationController(input).selectDocumentFromHierarchy(
+        child.id,
+      );
+      expect(input.setDocumentStack).toHaveBeenCalledWith([]);
+      expect(input.setStatus).toHaveBeenCalledWith("Opened Cell Child");
+    },
+  );
+
+  it("opens and focuses a caller in an unreferenced parent definition", () => {
+    const input = dependencies();
+    const parent = createEmptyDocument("detached", "Detached");
+    parent.instances.push({
+      id: "X1",
+      symbolId: "unresolved-block",
+      placement: { position: { x: 500, y: 300 }, rotation: 0, mirror: "none" },
+      netlist: {
+        parameters: {},
+        binding: { kind: "subcircuit", childDocumentId: input.document.id },
+      },
+    });
+    input.project.documents.push(parent);
+    createEditorNavigationController(input).jumpToCaller(parent.id, "X1");
+    expect(input.setDocumentStack).toHaveBeenCalledWith([]);
+    expect(input.selectOnly).toHaveBeenCalledWith("instance", ["X1"]);
+    expect(input.setViewBox).toHaveBeenLastCalledWith(
+      { x: 420, y: 240, width: 160, height: 120 },
+      parent.presentation.grid,
+    );
+    expect(input.setCellManagerOpen).toHaveBeenCalledWith(false);
+  });
+
+  it("returns to the actual parent instance and preserves an explicit locator path only while valid", () => {
+    const input = dependencies();
+    const parent = input.document;
+    const child = createEmptyDocument("child", "Child");
+    input.project.documents.push(child);
+    parent.instances.push({
+      id: "X1",
+      symbolId: "unresolved-block",
+      placement: null,
+      netlist: {
+        parameters: {},
+        binding: { kind: "subcircuit", childDocumentId: child.id },
+      },
+    });
+    const path = [
+      {
+        parentDocumentId: parent.id,
+        instanceId: "X1",
+        childDocumentId: child.id,
+      },
+    ];
+    const controller = createEditorNavigationController({
+      ...input,
+      document: child,
+      documentStack: path,
+    });
+    controller.returnToParentDocument();
+    expect(input.selectOnly).toHaveBeenCalledWith("instance", ["X1"]);
+    controller.navigateToLocator(
+      {
+        documentId: child.id,
+        hierarchyPath: path,
+        kind: "document",
+        objectId: child.id,
+      },
+      "found",
+    );
+    expect(input.setDocumentStack).toHaveBeenLastCalledWith(path);
+    parent.instances = parent.instances.filter(
+      (instance) => instance.id !== "X1",
+    );
+    controller.navigateToLocator(
+      {
+        documentId: child.id,
+        hierarchyPath: path,
+        kind: "document",
+        objectId: child.id,
+      },
+      "found",
+    );
+    expect(input.setDocumentStack).toHaveBeenLastCalledWith([]);
+  });
   it("owns search-result focus and closes the search session", () => {
     const input = dependencies();
     const controller = createEditorNavigationController(input);

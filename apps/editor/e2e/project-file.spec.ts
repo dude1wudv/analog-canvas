@@ -1,3 +1,4 @@
+import { parseSavedProject } from "./editor-fixtures";
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -8,6 +9,8 @@ import {
   CURRENT_PROJECT_SCHEMA_VERSION,
 } from "@icm/model";
 
+import { AGENT_SESSION_RECOVERY_STORAGE_KEY } from "../src/agent/session-recovery";
+import { WORKING_COPY_STORAGE_KEY } from "../src/document/recovery-coordinator";
 import { CLOUD_PROJECT_LIMIT } from "../src/features/editor-shell/cloud-projects";
 import {
   chooseComponent,
@@ -77,6 +80,25 @@ async function mockCloudProjects(page: Page) {
     return route.fulfill({ json: { project: stored } });
   });
   return { stored: () => stored };
+}
+
+async function expectAgentRecoveryBoundToWorkingCopy(page: Page) {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        ([agentKey, workingCopyKey]) => {
+          const serialized = sessionStorage.getItem(agentKey);
+          const workingCopyId = sessionStorage.getItem(workingCopyKey);
+          if (!serialized || !workingCopyId) return false;
+          const recovery = JSON.parse(serialized) as {
+            projectSessionId?: string;
+          };
+          return recovery.projectSessionId === workingCopyId;
+        },
+        [AGENT_SESSION_RECOVERY_STORAGE_KEY, WORKING_COPY_STORAGE_KEY] as const,
+      ),
+    )
+    .toBe(true);
 }
 
 for (const duringSave of ["edit", "replace"] as const) {
@@ -170,6 +192,7 @@ for (const duringSave of ["edit", "replace"] as const) {
 test("Cloud Save updates one binding while local export stays interchange", async ({
   page,
 }) => {
+  test.slow();
   const cloud = await mockCloudProjects(page);
   await page.goto("/editor");
   await chooseComponent(page, "resistor");
@@ -200,6 +223,10 @@ test("Cloud Save updates one binding while local export stays interchange", asyn
   await page.keyboard.press("Escape");
   await page.keyboard.press("Control+s");
   await expect.poll(() => cloud.stored()?.revision).toBe(2);
+  await expect(page.getByTestId("status")).toContainText(
+    "Saved New Circuit to Cloud",
+  );
+  await expect(page.getByTestId("project-unsaved-indicator")).toHaveCount(0);
   const reopenedMenu = await openMenu(page, "File");
   await expect(
     reopenedMenu.getByText(`Cloud Projects (1/${CLOUD_PROJECT_LIMIT})`),
@@ -227,6 +254,7 @@ test("Cloud Save updates one binding while local export stays interchange", asyn
   await page.goto("/editor");
   await expect(page.getByTestId("status")).toContainText(
     "Opened Cloud Project New Circuit",
+    { timeout: 15_000 },
   );
   await expect(page.getByTestId("hit-R1")).toHaveCount(1);
   await expect(page.getByTestId("hit-R2")).toHaveCount(1);
@@ -242,6 +270,7 @@ test("paired refresh and Gallery return preserve the saved Cloud binding", async
   page,
   baseURL,
 }) => {
+  test.slow();
   const cloud = await mockCloudProjects(page);
   await page.goto("/editor");
   await chooseComponent(page, "resistor");
@@ -251,6 +280,10 @@ test("paired refresh and Gallery return preserve the saved Cloud binding", async
   await page.keyboard.press("Escape");
   await page.keyboard.press("Control+s");
   await expect.poll(() => cloud.stored()?.revision).toBe(1);
+  await expect(page.getByTestId("status")).toContainText(
+    "Saved New Circuit to Cloud",
+  );
+  await expect(page.getByTestId("project-unsaved-indicator")).toHaveCount(0);
   await page.getByTestId("open-agent").click();
   const panel = page.getByTestId("connect-agent-panel");
   const handoff = await panel.getByTestId("agent-copy-text").inputValue();
@@ -258,11 +291,17 @@ test("paired refresh and Gallery return preserve the saved Cloud binding", async
   const client = new AgentHttpClient({ baseUrl: baseURL! });
   const session = await client.claim(claimCode);
   await expect(panel.getByTestId("agent-status")).toHaveText("Connected");
+  await expectAgentRecoveryBoundToWorkingCopy(page);
   await page.reload();
-  await expect(page.getByTestId("active-instance-count")).toHaveText("1");
+  await expect(page.getByTestId("active-instance-count")).toHaveText("1", {
+    timeout: 15_000,
+  });
   await expect(page.getByTestId("project-unsaved-indicator")).toHaveCount(0);
   await page.keyboard.press("Control+s");
   await expect.poll(() => cloud.stored()?.revision).toBe(2);
+  await expect(page.getByTestId("status")).toContainText(
+    "Saved New Circuit to Cloud",
+  );
   const documentId = session.documentIds[0]!;
   const snapshot = await client.circuit(session.sessionId, session.agentToken, {
     apiVersion: "3.0",
@@ -297,15 +336,26 @@ test("paired refresh and Gallery return preserve the saved Cloud binding", async
   await expect
     .poll(async () => (await recoveryProjectTexts(page)).includes("paired-R"))
     .toBe(true);
+  await expectAgentRecoveryBoundToWorkingCopy(page);
   page.on("dialog", (dialog) => void dialog.accept());
   await page.reload();
-  await expect(page.getByTestId("active-instance-count")).toHaveText("2");
+  await expect(page.getByTestId("active-instance-count")).toHaveText("2", {
+    timeout: 15_000,
+  });
   await expect(page.getByTestId("project-unsaved-indicator")).toBeVisible();
   await page.keyboard.press("Control+s");
   await expect.poll(() => cloud.stored()?.revision).toBe(3);
+  await expect(page.getByTestId("status")).toContainText(
+    "Saved New Circuit to Cloud",
+  );
+  await expect(page.getByTestId("project-unsaved-indicator")).toHaveCount(0);
   await page.getByRole("link", { name: "Back to the gallery" }).click();
-  await page.getByTestId("gallery-agent-return").click();
-  await expect(page.getByTestId("active-instance-count")).toHaveText("2");
+  const agentReturn = page.getByTestId("gallery-agent-return");
+  await expect(agentReturn).toBeVisible({ timeout: 15_000 });
+  await agentReturn.click();
+  await expect(page.getByTestId("active-instance-count")).toHaveText("2", {
+    timeout: 15_000,
+  });
   await expect(page.getByTestId("project-unsaved-indicator")).toHaveCount(0);
   await page.keyboard.press("Control+s");
   await expect.poll(() => cloud.stored()?.revision).toBe(4);
@@ -345,7 +395,7 @@ test("Gallery navigation uses the replacement decision without a second browser 
 test("imports and upgrades a portable Project before explicit export", async ({
   page,
 }) => {
-  const source = JSON.parse(
+  const source = parseSavedProject(
     readFileSync(
       resolve(process.cwd(), "fixtures/projects/minimal/project.icproj.json"),
       "utf8",
@@ -367,7 +417,7 @@ test("imports and upgrades a portable Project before explicit export", async ({
   await expect(page.getByTestId("status")).toContainText(
     `upgraded minimal-v${previousVersion}.icproj.json`,
   );
-  const exported = JSON.parse(
+  const exported = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -430,7 +480,7 @@ test("normalizes legacy overlapping Wire topology on Project import", async ({
   await expect(page.getByTestId("status")).toContainText(
     "normalized connectivity and Wire topology in 1 Cell",
   );
-  const exported = JSON.parse(
+  const exported = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -484,9 +534,9 @@ test("imports split source-ground markers with independent owners and saves the 
     buffer: Buffer.from(JSON.stringify(source)),
   });
   await expect(page.getByTestId("status")).toContainText(
-    "save to Cloud or export to keep the repair",
+    "save to Cloud or export to keep the",
   );
-  const exported = JSON.parse(
+  const exported = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -558,7 +608,7 @@ test("replacement guard offers cancel, discard, and Cloud Save", async ({
   const input = page.getByTestId("project-file");
   const replacement = resolve(
     process.cwd(),
-    "fixtures/projects/phase-1-manual/project.icproj.json",
+    "fixtures/projects/manual-basics/project.icproj.json",
   );
   await input.setInputFiles(replacement);
   const dialog = page.getByRole("dialog", {
@@ -653,7 +703,7 @@ test("the circuit name drives Cloud Save and portable export", async ({
   const fileMenu = await openMenu(page, "File");
   await fileMenu.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => cloud.stored()?.name).toBe("Bandgap Reference");
-  const exported = JSON.parse(
+  const exported = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),

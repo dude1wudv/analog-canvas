@@ -137,21 +137,20 @@ export function EditorHelpDialog({
               可删除所选对象；布线时则删除 最近一个折点。
             </p>
             <p>
-              “编辑”菜单提供三种可撤销的 Cell 操作：<strong>清除图形</strong>
-              会移除 Route 与绘图几何对象，但保留逻辑对象；
-              <strong>重置 Cell 放置</strong>
-              会将实例放回待放置区并移除 Route
+              Cell 管理器中的<strong>重置 Cell</strong>区分三种可撤销操作：
+              <strong>清除图形</strong>会移除 Route
+              与绘图几何对象，但保留逻辑对象；
+              <strong>重置 Cell 放置</strong>会将实例放回待放置区并移除 Route
               几何对象，同时保留器件、网络和端口；
               <strong>重置 Cell 内容</strong>
               会移除接口以外的电气内容，同时保留正式 Cell
-              接口。每个命令都会预览影响，并可通过“撤销”恢复。
+              接口。每个命令都会预览影响， 并可通过“撤销”恢复。
             </p>
             <h3>层次化 Cell</h3>
             <p>
               使用<strong>管理 Cell…</strong>创建可复用的 Cell，再通过
               <strong>放置 Cell</strong>将其实例添加到画布。选中层次化模块后按
-              <kbd>E</kbd> 或双击即可进入。使用<strong>返回上级</strong>或
-              <kbd>Shift+E</kbd> 返回父 Cell。
+              <kbd>E</kbd> 或双击即可进入。按 <kbd>Shift+E</kbd> 返回父 Cell。
             </p>
             <h3>视图与绘图工具</h3>
             <p>

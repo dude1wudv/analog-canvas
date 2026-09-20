@@ -22,7 +22,10 @@
 import { projectTextHasMeaningfulContent } from "./project-content";
 import { useEffect, useRef, useState } from "react";
 
-import { serializeProject } from "@icm/project-protocol";
+import {
+  CURRENT_PROJECT_FILE_VERSION,
+  serializeProject,
+} from "@icm/project-protocol";
 import type { CircuitProject } from "@icm/model";
 
 import {
@@ -289,7 +292,7 @@ export function createRecoveryCoordinator(
       generation: "latest",
       projectId: project.id,
       projectName: project.name,
-      projectSchemaVersion: project.schemaVersion,
+      projectSchemaVersion: CURRENT_PROJECT_FILE_VERSION,
       topDocumentId: project.topDocumentId,
       documentRevisions,
       source: currentSource,

@@ -1,37 +1,34 @@
+import type { MouseEvent as ReactMouseEvent, Ref } from "react";
+
 import {
-  useLayoutEffect,
-  useRef,
-  useState,
-  type MouseEvent as ReactMouseEvent,
-  type Ref,
-} from "react";
+  razaviTextbookProfile,
+  type Flightline,
+  type SchematicStyleProfile,
+} from "@icm/derived";
+import type { GridRect, Point, RichTextDocument } from "@icm/model";
+import { renderRichTextDocument } from "@icm/render-svg";
 
-import type { Flightline } from "@icm/derived";
-import type { GridRect, Point } from "@icm/model";
-
+import { CanvasTextEditorOverlay } from "../features/text-editing/canvas-text-editor-overlay";
 import type { WireDraftPreview } from "../features/wiring/wire-draft-preview";
 import { serializePolylinePoints } from "./canvas-geometry";
 
-export function EditorWiringOverlay({
-  netLabelPlacement,
-  netLabelEditorInputRef,
-  onNetLabelDraftChange,
-  onNetLabelSubmit,
-  onNetLabelEscape,
-  flightlines,
-  onFlightlineClick,
-  wireDraftPreview,
-  bulkRoutePreview,
-  snapGuideLayerRef,
-  viewBox,
-}: {
-  netLabelPlacement: {
-    phase: "naming" | "placing";
-    draft: string;
-    position: Point;
-  } | null;
-  netLabelEditorInputRef: Ref<HTMLInputElement>;
-  onNetLabelDraftChange: (value: string) => void;
+export interface NetLabelPlacementState {
+  phase: "naming" | "placing";
+  content: RichTextDocument;
+  sizeScale: number;
+  alignment: "start" | "middle" | "end";
+  position: Point;
+}
+
+export interface EditorWiringOverlayProps {
+  netLabelPlacement: NetLabelPlacementState | null;
+  onNetLabelTextChange: (
+    change: Partial<{
+      content: RichTextDocument;
+      sizeScale: number;
+      alignment: "start" | "middle" | "end";
+    }>,
+  ) => void;
   onNetLabelSubmit: () => void;
   onNetLabelEscape: () => void;
   flightlines: readonly Flightline[];
@@ -40,103 +37,103 @@ export function EditorWiringOverlay({
     flightline: Flightline,
   ) => void;
   wireDraftPreview: WireDraftPreview;
+  wireSnapTarget?: Point | undefined;
   bulkRoutePreview: boolean;
   snapGuideLayerRef: Ref<SVGGElement>;
   viewBox: GridRect;
-}) {
-  const labelAnchorRef = useRef<SVGGElement | null>(null);
-  const [pixelsPerUnit, setPixelsPerUnit] = useState<number | null>(null);
-  useLayoutEffect(() => {
-    const svg = labelAnchorRef.current?.ownerSVGElement;
-    if (!svg || viewBox.width <= 0 || viewBox.height <= 0) return;
-    const measure = () => {
-      const rect = svg.getBoundingClientRect();
-      setPixelsPerUnit(
-        Math.min(rect.width / viewBox.width, rect.height / viewBox.height),
-      );
-    };
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(svg);
-    return () => observer.disconnect();
-  }, [netLabelPlacement?.phase, viewBox.height, viewBox.width]);
-  const labelScale =
-    pixelsPerUnit && pixelsPerUnit > 0
-      ? 1 / pixelsPerUnit
-      : (viewBox.width * 0.26) / 164;
-  const labelWidth = Math.max(
-    0,
-    Math.min(164, (viewBox.width - 16) / labelScale),
+  styleProfile?: SchematicStyleProfile;
+}
+
+type NetLabelEditorOverlayProps = Pick<
+  EditorWiringOverlayProps,
+  | "netLabelPlacement"
+  | "onNetLabelTextChange"
+  | "onNetLabelSubmit"
+  | "onNetLabelEscape"
+  | "viewBox"
+>;
+
+/**
+ * The naming surface is composed separately at the end of the SVG overlay.
+ * Keeping it out of the wiring layer prevents later transparent hit targets
+ * from intercepting text selection and toolbar gestures.
+ */
+export function NetLabelEditorOverlay({
+  netLabelPlacement,
+  onNetLabelTextChange,
+  onNetLabelSubmit,
+  onNetLabelEscape,
+  viewBox,
+}: NetLabelEditorOverlayProps) {
+  if (netLabelPlacement?.phase !== "naming") return null;
+  return (
+    <g data-testid="net-label-editor" data-layer="net-label-editor-overlay">
+      <CanvasTextEditorOverlay
+        session={{
+          owner: "annotation",
+          id: "pending-net-label",
+          content: netLabelPlacement.content,
+          sizeScale: netLabelPlacement.sizeScale,
+          alignment: netLabelPlacement.alignment,
+          defaultBold: true,
+          defaultItalic: true,
+          bound: true,
+          bindingKind: "net-name",
+        }}
+        bounds={{
+          x: netLabelPlacement.position.x,
+          y: netLabelPlacement.position.y,
+          width: 1,
+          height: 1,
+        }}
+        viewBox={viewBox}
+        disabled={false}
+        onUpdate={onNetLabelTextChange}
+        onCommit={onNetLabelSubmit}
+        onCancel={onNetLabelEscape}
+        onEscape={onNetLabelEscape}
+        onDelete={onNetLabelEscape}
+        showDelete={false}
+      />
+    </g>
   );
-  const labelHeight = 30;
-  const labelX = netLabelPlacement
-    ? Math.max(
-        viewBox.x + 8,
-        Math.min(
-          viewBox.x + viewBox.width - labelWidth * labelScale - 8,
-          netLabelPlacement.position.x + 8,
-        ),
-      )
-    : 0;
-  const labelY = netLabelPlacement
-    ? Math.max(
-        viewBox.y + 8,
-        Math.min(
-          viewBox.y + viewBox.height - labelHeight * labelScale - 8,
-          netLabelPlacement.position.y - labelHeight * labelScale - 8,
-        ),
-      )
-    : 0;
+}
+
+export function EditorWiringOverlay({
+  netLabelPlacement,
+  flightlines,
+  onFlightlineClick,
+  wireDraftPreview,
+  wireSnapTarget,
+  bulkRoutePreview,
+  snapGuideLayerRef,
+  styleProfile = razaviTextbookProfile,
+}: EditorWiringOverlayProps) {
+  const previewFontSize =
+    styleProfile.typography.netFontSize * (netLabelPlacement?.sizeScale ?? 1);
   return (
     <>
-      {netLabelPlacement?.phase === "naming" ? (
-        <g
-          ref={labelAnchorRef}
-          transform={`translate(${labelX} ${labelY}) scale(${labelScale})`}
-        >
-          <foreignObject
-            data-testid="net-label-editor"
-            width={labelWidth}
-            height={labelHeight}
-          >
-            <form
-              className="net-label-editor"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => event.stopPropagation()}
-              onSubmit={(event) => {
-                event.preventDefault();
-                onNetLabelSubmit();
-              }}
-            >
-              <input
-                ref={netLabelEditorInputRef}
-                aria-label="Net Label"
-                autoComplete="off"
-                value={netLabelPlacement.draft}
-                onChange={(event) =>
-                  onNetLabelDraftChange(event.currentTarget.value)
-                }
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    onNetLabelEscape();
-                  }
-                }}
-              />
-            </form>
-          </foreignObject>
-        </g>
-      ) : null}
       {netLabelPlacement?.phase === "placing" ? (
         <g data-testid="net-label-placement-preview" pointerEvents="none">
           <text
             className="net-label-placement-preview"
             x={netLabelPlacement.position.x}
             y={netLabelPlacement.position.y}
-          >
-            {netLabelPlacement.draft}
-          </text>
+            textAnchor={netLabelPlacement.alignment}
+            fontSize={previewFontSize}
+            dangerouslySetInnerHTML={{
+              __html: renderRichTextDocument(
+                netLabelPlacement.content,
+                styleProfile,
+                {
+                  lineOriginX: netLabelPlacement.position.x,
+                  fontSize: previewFontSize,
+                  defaultBold: true,
+                  defaultItalic: true,
+                },
+              ),
+            }}
+          />
         </g>
       ) : null}
       {flightlines.map((flightline) => (
@@ -189,6 +186,16 @@ export function EditorWiringOverlay({
             />
           ))
         : null}
+      {wireSnapTarget ? (
+        <circle
+          data-testid="wire-snap-target"
+          className="wire-snap-target"
+          cx={wireSnapTarget.x}
+          cy={wireSnapTarget.y}
+          r={5}
+          pointerEvents="none"
+        />
+      ) : null}
       <g ref={snapGuideLayerRef} data-layer="snap-guides" />
     </>
   );

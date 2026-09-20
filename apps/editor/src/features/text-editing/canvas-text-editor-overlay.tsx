@@ -24,8 +24,13 @@ export interface CanvasTextEditorOverlayProps {
   onUpdate(change: TextEditingUpdate): void;
   onCommit(): void;
   onCancel(): void;
+  onEscape?(): void;
   onDelete(): void;
-  onRestoreReference?(): TextEditingSession["content"] | undefined;
+  deleteLabel?: string;
+  showDelete?: boolean;
+  onDisplayAliasChange?(
+    enabled: boolean,
+  ): TextEditingSession["content"] | undefined;
 }
 
 /**
@@ -164,8 +169,11 @@ export function CanvasTextEditorOverlay({
   onUpdate,
   onCommit,
   onCancel,
+  onEscape,
   onDelete,
-  onRestoreReference,
+  deleteLabel,
+  showDelete,
+  onDisplayAliasChange,
 }: CanvasTextEditorOverlayProps) {
   const anchorRef = useRef<SVGGElement | null>(null);
   const [canvasSize, setCanvasSize] = useState<{
@@ -234,6 +242,7 @@ export function CanvasTextEditorOverlay({
     // syntax. Offering bold, an overbar or the formula tool on a field that
     // cannot store any of them would promise formatting the commit drops.
     session.owner === "instance-formula" ||
+    (Boolean(session.visualInstanceId) && !session.displayAlias) ||
     (session.bound &&
       session.bindingKind !== "net-name" &&
       session.bindingKind !== "cell-terminal-name");
@@ -318,6 +327,7 @@ export function CanvasTextEditorOverlay({
           sizeScale={session.sizeScale}
           alignment={session.alignment}
           defaultBold={session.defaultBold ?? false}
+          defaultItalic={session.defaultItalic ?? false}
           sourceOnly={sourceOnly}
           multiline={!session.bound}
           onChange={(content) => onUpdate({ content })}
@@ -325,12 +335,18 @@ export function CanvasTextEditorOverlay({
           onAlignmentChange={(alignment) => onUpdate({ alignment })}
           onCommit={onCommit}
           onCancel={onCancel}
+          {...(onEscape ? { onEscape } : {})}
           onDelete={onDelete}
+          {...(deleteLabel ? { deleteLabel } : {})}
+          {...(showDelete !== undefined ? { showDelete } : {})}
           {...(session.bound && !sourceOnly
             ? { formulaSemanticText: flattenRichText(session.content) }
             : {})}
-          {...(session.visualInstanceId && onRestoreReference
-            ? { onRestoreReference }
+          {...(session.visualInstanceId && onDisplayAliasChange
+            ? {
+                displayAlias: session.displayAlias ?? false,
+                onDisplayAliasChange,
+              }
             : {})}
           onLayoutHeightChange={handleLayoutHeightChange}
         />

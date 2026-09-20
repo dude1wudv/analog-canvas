@@ -25,7 +25,6 @@ describe("production deploys only from a release (ADR 0057)", () => {
     expect(workflow).toContain("ref: ${{ inputs.sha || github.ref }}");
   });
 
-
   it("has no staging job and deploys no environment", () => {
     // env.staging inherited the production custom domain on 2026-09-03 and
     // took the public site down; the preview replaced it (ADR 0057).

@@ -10,6 +10,7 @@ import {
   createRoutingOperationPlan,
   executeTransaction,
   gridAlignmentDiagnostics,
+  powerConnectionForSymbol,
   type OperationIdRemap,
   type RoutingOperationPlan,
 } from "@icm/edit-engine";
@@ -18,6 +19,7 @@ import { translateDraftingObject } from "@icm/edit-engine";
 import type { SchematicEdit } from "@icm/edit-engine";
 import type {
   Annotation,
+  CircuitProject,
   CellNetlistTerminal,
   ConnectivityEvidence,
   DraftingObject,
@@ -46,7 +48,13 @@ import {
   type PlacementOrientationOperation,
 } from "../../interaction/shortcut-orientation";
 
+import {
+  createNewInstance,
+  nextCellPinName,
+} from "../netlist-export/netlist-authoring";
+
 export interface SchematicClipboard {
+  context?: import("./project-copy").CopyContext;
   intent: "clone-selection" | "compose-document";
   sourceDocumentId: string;
   sourceGrid: number;
@@ -625,8 +633,11 @@ export function clipboardPreviewDocument(
           annotationIds.has(annotation.id),
         );
         const cellTerminals =
-          result.document.netlist?.terminals.filter((terminal) =>
-            terminal.interfaceInstanceIds.some((id) => instanceIds.has(id)),
+          result.document.netlist?.terminals.filter(
+            (terminal) =>
+              terminal.interfaceInstanceIds.some((id) => instanceIds.has(id)) ||
+              (terminal.interfaceAnnotationId !== undefined &&
+                annotationIds.has(terminal.interfaceAnnotationId)),
           ) ?? [];
         const netIds = new Set([
           ...Object.values(proposal.idRemap.nets),
@@ -814,10 +825,8 @@ export function copySelection(
       annotationIds: routingSelection?.annotationIds ?? [],
     },
     {
-      // Supplying the visual routing selection is an explicit copy contract:
-      // only those Routes travel. Legacy/programmatic callers that omit it
-      // retain connected-subgraph capture.
-      includeImplicitInstanceRoutes: routingSelection === undefined,
+      // Only explicitly selected wires travel with a new component.
+      includeImplicitInstanceRoutes: false,
     },
   );
   const netIds = new Set(capture.clonedNetIds);
@@ -831,12 +840,29 @@ export function copySelection(
   ]);
   const annotations = document.annotations.filter(
     (annotation) =>
-      (annotation.netId !== undefined && attachedIds.has(annotation.netId)) ||
+      routingSelection?.annotationIds.includes(annotation.id) ||
       (annotation.anchor.kind === "object" &&
         attachedIds.has(annotation.anchor.objectId)) ||
       (annotation.anchor.kind === "route" &&
         routeIds.has(annotation.anchor.routeId)),
   );
+  const copiedTerminalKeys = new Set(
+    document.routes
+      .filter((route) => routeIds.has(route.id))
+      .flatMap((route) => [route.start, routeEnd(route)])
+      .filter((endpoint) => endpoint.kind === "terminal")
+      .map((endpoint) => `${endpoint.instanceId}\0${endpoint.pinName}`),
+  );
+  const ownedMarkerIds = new Set([
+    ...(document.netlist?.terminals.flatMap(
+      (terminal) => terminal.interfaceInstanceIds,
+    ) ?? []),
+    ...document.connectivityEvidence.flatMap((evidence) =>
+      evidence.kind === "name-claim" && evidence.owner.kind === "power-marker"
+        ? [evidence.owner.objectId]
+        : [],
+    ),
+  ]);
   const annotationIds = new Set(annotations.map((annotation) => annotation.id));
   const copiedLayoutObjectIds = new Set<string>([
     ...selectedIds,
@@ -854,7 +880,7 @@ export function copySelection(
       copiedLayoutObjectIds.has(objectId),
     ),
   );
-  return structuredClone({
+  const clipboard: SchematicClipboard = structuredClone({
     intent: "clone-selection",
     sourceDocumentId: document.id,
     sourceGrid: document.presentation.grid,
@@ -864,8 +890,17 @@ export function copySelection(
         const interfaceInstanceIds = terminal.interfaceInstanceIds.filter(
           (instanceId) => selectedIds.has(instanceId),
         );
-        return interfaceInstanceIds.length > 0
-          ? [{ ...terminal, interfaceInstanceIds }]
+        const interfaceAnnotationId = terminal.interfaceAnnotationId;
+        return interfaceInstanceIds.length > 0 ||
+          (interfaceAnnotationId !== undefined &&
+            annotationIds.has(interfaceAnnotationId))
+          ? [
+              {
+                ...terminal,
+                interfaceInstanceIds,
+                ...(interfaceAnnotationId ? { interfaceAnnotationId } : {}),
+              },
+            ]
           : [];
       }) ?? [],
     formalParameters: [],
@@ -877,8 +912,13 @@ export function copySelection(
         // explicitly selected Route promotes its whole net to internal, but
         // that net can still land on instances outside the copy, and their
         // terminals would map to nothing at paste time.
-        terminals: net.terminals.filter((terminal) =>
-          selectedIds.has(terminal.instanceId),
+        terminals: net.terminals.filter(
+          (terminal) =>
+            selectedIds.has(terminal.instanceId) &&
+            (ownedMarkerIds.has(terminal.instanceId) ||
+              copiedTerminalKeys.has(
+                `${terminal.instanceId}\0${terminal.pinName}`,
+              )),
         ),
       })),
     routes: document.routes.filter((route) => routeIds.has(route.id)),
@@ -886,17 +926,13 @@ export function copySelection(
       junctionIds.has(junction.id),
     ),
     annotations,
-    noConnects: document.noConnects.filter(
-      (noConnect) =>
-        noConnect.endpoint.kind === "terminal" &&
-        selectedIds.has(noConnect.endpoint.instanceId),
-    ),
+    noConnects: [],
     connectivityEvidence: document.connectivityEvidence.filter((evidence) => {
       if (!netIds.has(evidence.netId)) return false;
-      if (evidence.kind !== "name-claim") return true;
+      if (evidence.kind !== "name-claim") return false;
       switch (evidence.owner.kind) {
         case "global-declaration":
-          return true;
+          return false;
         case "net-label":
           return annotationIds.has(evidence.owner.annotationId);
         case "power-marker":
@@ -910,6 +946,89 @@ export function copySelection(
     layoutGroups,
     constraints,
   });
+  // A copied supply marker starts with the same VDD/ground name as Insert.
+  // Explicitly copied rails and standalone net labels remain authored objects.
+  for (const evidence of clipboard.connectivityEvidence) {
+    if (
+      evidence.kind !== "name-claim" ||
+      evidence.owner.kind !== "power-marker"
+    )
+      continue;
+    const ownerId = evidence.owner.objectId;
+    const owner = clipboard.instances.find(
+      (instance) => instance.id === ownerId,
+    );
+    const power = owner && powerConnectionForSymbol(owner.symbolId);
+    if (!power) continue;
+    evidence.name = power.name;
+    evidence.scope = power.scope;
+    for (const annotation of clipboard.annotations) {
+      if (
+        annotation.binding?.kind === "net-name" &&
+        annotation.binding.netId === evidence.netId &&
+        annotation.formatOverride
+      ) {
+        annotation.formatOverride = rewriteRichTextPlainText(
+          annotation.formatOverride,
+          power.name,
+        );
+      }
+    }
+  }
+  // Two selected Port markers must not retain a shared invisible source Net.
+  // Their selected wires, when present, remain the only reason to share it.
+  for (const instance of clipboard.instances) {
+    if (
+      clipboard.routes.some((route) =>
+        [route.start, routeEnd(route)].some(
+          (endpoint) =>
+            endpoint.kind === "terminal" && endpoint.instanceId === instance.id,
+        ),
+      )
+    )
+      continue;
+    const terminal = clipboard.cellTerminals.find((candidate) =>
+      candidate.interfaceInstanceIds.includes(instance.id),
+    );
+    const net = clipboard.nets.find((candidate) =>
+      candidate.terminals.some(
+        (endpoint) => endpoint.instanceId === instance.id,
+      ),
+    );
+    if (!terminal || !net || net.terminals.length < 2) continue;
+    const netId = `${net.id}-insert-${instance.id}`;
+    clipboard.nets.push({
+      id: netId,
+      terminals: net.terminals.filter(
+        (endpoint) => endpoint.instanceId === instance.id,
+      ),
+    });
+    net.terminals = net.terminals.filter(
+      (endpoint) => endpoint.instanceId !== instance.id,
+    );
+    terminal.netId = netId;
+    for (const annotation of clipboard.annotations) {
+      if (
+        annotation.anchor.kind !== "object" ||
+        annotation.anchor.objectId !== instance.id
+      )
+        continue;
+      if (annotation.netId === net.id) annotation.netId = netId;
+      if (annotation.binding?.kind === "net-name")
+        annotation.binding.netId = netId;
+      if (annotation.binding?.kind === "cell-terminal-name")
+        annotation.binding.terminalId = terminal.id;
+    }
+    for (const evidence of clipboard.connectivityEvidence) {
+      if (
+        evidence.kind === "name-claim" &&
+        evidence.owner.kind === "power-marker" &&
+        evidence.owner.objectId === instance.id
+      )
+        evidence.netId = netId;
+    }
+  }
+  return clipboard;
 }
 
 function uniqueCopyId(
@@ -1039,6 +1158,7 @@ export function proposePaste(
   clipboard: SchematicClipboard,
   offset: Point,
   sequence: number,
+  project?: Pick<CircuitProject, "componentDefinitions">,
 ): PasteProposal {
   const occupied = new Set<string>(
     [
@@ -1063,7 +1183,7 @@ export function proposePaste(
           occupied,
         )
       : undefined;
-  const referenceIndex = createReferenceIndex(document);
+  const referenceIndex = createReferenceIndex(document, project);
   const reservedReferences = new Set<string>();
   const occupiedReferences = new Set(
     document.instances.flatMap((instance) =>
@@ -1071,7 +1191,10 @@ export function proposePaste(
     ),
   );
   const instanceReferences = new Map(
-    clipboard.instances.flatMap((instance) => {
+    (clipboard.intent === "compose-document"
+      ? clipboard.instances
+      : []
+    ).flatMap((instance) => {
       if (!instance.reference) return [];
       if (
         clipboard.intent === "compose-document" &&
@@ -1081,7 +1204,7 @@ export function proposePaste(
         reservedReferences.add(instance.reference.toLowerCase());
         return [[instance.id, instance.reference] as const];
       }
-      const policy = referencePolicyForInstance(instance);
+      const policy = referencePolicyForInstance(instance, project);
       if (policy.kind === "none") {
         const reference = nextUnconstrainedReference(
           instance.reference,
@@ -1108,6 +1231,24 @@ export function proposePaste(
       pastedInstanceId(instance, sequence, occupied),
     ]),
   );
+  const freshInstances = new Map<string, Instance>();
+  if (clipboard.intent === "clone-selection") {
+    instanceReferences.clear();
+    const allocationDocument = {
+      ...document,
+      instances: [...document.instances],
+    };
+    for (const source of clipboard.instances) {
+      const instance = createNewInstance(allocationDocument, source, {
+        id: instanceIds.get(source.id)!,
+        project,
+      });
+      freshInstances.set(source.id, instance);
+      allocationDocument.instances.push(instance);
+      if (instance.reference)
+        instanceReferences.set(source.id, instance.reference);
+    }
+  }
   const routeIds = new Map(
     clipboard.routes.map((route) => [
       route.id,
@@ -1190,7 +1331,7 @@ export function proposePaste(
   const sourceNeedsCellInterface =
     clipboard.cellTerminals.length > 0 || clipboard.formalParameters.length > 0;
   if (sourceNeedsCellInterface && !document.netlist) {
-    if (clipboard.intent === "compose-document") {
+    if (clipboard.intent === "compose-document" || clipboard.context) {
       interfaceEdits.push({
         kind: "create_cell_interface",
         name: document.name,
@@ -1200,7 +1341,7 @@ export function proposePaste(
     }
   }
   if (
-    clipboard.intent === "compose-document" &&
+    (clipboard.intent === "compose-document" || clipboard.context) &&
     clipboard.formalParameters.length > 0
   ) {
     const merged = structuredClone(document.netlist?.formalParameters ?? []);
@@ -1231,14 +1372,14 @@ export function proposePaste(
     ...clipboard.instances.map((instance): SchematicEdit => ({
       kind: "add_instance",
       instance: {
-        ...structuredClone(instance),
+        ...structuredClone(freshInstances.get(instance.id) ?? instance),
         id: instanceIds.get(instance.id)!,
         ...(instanceReferences.has(instance.id)
           ? {
               reference: instanceReferences.get(instance.id)!,
             }
           : {}),
-        ...(instance.mosBulkBinding
+        ...(clipboard.intent === "compose-document" && instance.mosBulkBinding
           ? {
               mosBulkBinding: {
                 ...instance.mosBulkBinding,
@@ -1267,6 +1408,8 @@ export function proposePaste(
     })),
   );
 
+  const reservedPortNames = new Set<string>();
+  const terminalNames = new Map<string, string>();
   for (const terminal of clipboard.cellTerminals) {
     const copiedMarkerIds = terminal.interfaceInstanceIds.flatMap(
       (instanceId) => {
@@ -1274,14 +1417,36 @@ export function proposePaste(
         return copiedId ? [copiedId] : [];
       },
     );
-    if (copiedMarkerIds.length === 0) continue;
+    const copiedAnnotationId = terminal.interfaceAnnotationId
+      ? annotationIds.get(terminal.interfaceAnnotationId)
+      : undefined;
+    if (copiedMarkerIds.length === 0 && !copiedAnnotationId) continue;
+    const copiedPort = clipboard.instances.find((instance) =>
+      terminal.interfaceInstanceIds.includes(instance.id),
+    );
+    const name =
+      clipboard.intent === "clone-selection" && copiedPort
+        ? copiedPort.symbolId === "vdd-port"
+          ? "VDD"
+          : nextCellPinName(
+              document,
+              reservedPortNames,
+              copiedPort.symbolId === "port-filled" ? "filled" : "hollow",
+            )
+        : terminal.name;
+    reservedPortNames.add(name.toLowerCase());
+    terminalNames.set(terminal.id, name);
     edits.push({
       kind: "add_cell_terminal",
       terminal: {
         ...terminal,
+        name,
         id: terminalIds.get(terminal.id)!,
         netId: netIds.get(terminal.netId) ?? terminal.netId,
         interfaceInstanceIds: copiedMarkerIds,
+        ...(copiedAnnotationId
+          ? { interfaceAnnotationId: copiedAnnotationId }
+          : {}),
       },
     });
   }
@@ -1319,7 +1484,9 @@ export function proposePaste(
   // An implicit MOS bulk binding is a Cell policy, not a copied boundary
   // Wire. Re-materialize that one declared policy connection explicitly;
   // ordinary boundary terminals never enter this loop.
-  for (const instance of clipboard.instances) {
+  for (const instance of clipboard.intent === "compose-document"
+    ? clipboard.instances
+    : []) {
     const binding = instance.mosBulkBinding;
     if (!binding || netIds.has(binding.netId)) continue;
     const sourceNet = document.nets.find((net) => net.id === binding.netId);
@@ -1343,6 +1510,41 @@ export function proposePaste(
         pinName: sourceBulk.pinName,
       },
     });
+  }
+  // A pasted supply marker settles Cell body policy exactly as placing that
+  // marker by hand does. Without this, a Cell assembled by pasting has no
+  // body default at all, every MOS body stays unresolved, and the netlist
+  // refuses to export the fourth node.
+  for (const domain of ["ground", "vdd"] as const) {
+    const configured =
+      domain === "ground"
+        ? document.mosBulkDefaults?.nmosNetId
+        : document.mosBulkDefaults?.pmosNetId;
+    if (configured) continue;
+    const marker = clipboard.instances.find(
+      (instance) =>
+        powerConnectionForSymbol(instance.symbolId)?.domain === domain,
+    );
+    const connection = marker
+      ? powerConnectionForSymbol(marker.symbolId)
+      : undefined;
+    const markerNet = connection
+      ? clipboard.nets.find((net) =>
+          net.terminals.some(
+            (terminal) =>
+              terminal.instanceId === marker!.id &&
+              terminal.pinName === connection.pinName,
+          ),
+        )
+      : undefined;
+    const netId = markerNet ? netIds.get(markerNet.id) : undefined;
+    if (!netId) continue;
+    edits.push(
+      domain === "ground"
+        ? { kind: "set_mos_bulk_defaults", nmosNetId: netId }
+        : { kind: "set_mos_bulk_defaults", pmosNetId: netId },
+      { kind: "reconcile_mos_bulk" },
+    );
   }
   edits.push(
     ...clipboard.noConnects.map((noConnect): SchematicEdit => {
@@ -1443,6 +1645,30 @@ export function proposePaste(
   edits.push(
     ...clipboard.annotations.map((annotation): SchematicEdit => {
       const clone = structuredClone(annotation);
+      if (
+        clipboard.intent === "clone-selection" &&
+        clone.kind === "instance-label" &&
+        clone.anchor.kind === "object" &&
+        instanceReferences.has(clone.anchor.objectId) &&
+        (!clone.binding || clone.binding.kind === "instance-reference")
+      ) {
+        clone.binding = {
+          kind: "instance-reference",
+          instanceId: clone.anchor.objectId,
+        };
+        delete clone.content;
+      }
+      if (
+        clipboard.intent === "clone-selection" &&
+        clone.binding?.kind === "cell-terminal-name"
+      ) {
+        const name = terminalNames.get(clone.binding.terminalId);
+        if (name && clone.formatOverride)
+          clone.formatOverride = rewriteRichTextPlainText(
+            clone.formatOverride,
+            name,
+          );
+      }
       if (
         clone.binding?.kind === "instance-reference" &&
         clone.formatOverride
@@ -1594,7 +1820,7 @@ export function proposePaste(
       },
     });
   }
-  if (clipboard.intent === "compose-document") {
+  if (clipboard.intent === "compose-document" || clipboard.context) {
     const gridErrors = edits.flatMap((edit) =>
       gridAlignmentDiagnostics(edit, document.presentation.grid),
     );

@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { createEmptyProject, CURRENT_PROJECT_SCHEMA_VERSION } from "@icm/model";
 
 import { tryParseProjectWithMetadata } from "./load.js";
-import { serializeProject } from "./save.js";
 import {
   upgradeSchema32To33,
   upgradeSchema32To33WithReport,
@@ -12,7 +11,7 @@ import {
 function schema32Project(): Record<string, unknown> {
   const current = createEmptyProject("connectivity", "Connectivity");
   return {
-    ...(JSON.parse(serializeProject(current)) as Record<string, unknown>),
+    ...(JSON.parse(JSON.stringify(current)) as Record<string, unknown>),
     schemaVersion: 32,
   };
 }
