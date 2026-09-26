@@ -1,9 +1,16 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import assert from "node:assert/strict";
 
@@ -11,11 +18,9 @@ const { version } = JSON.parse(await readFile(resolve("package.json"), "utf8"));
 const { version: mcpVersion } = JSON.parse(
   await readFile(resolve("config/agent-mcp-distribution.json"), "utf8"),
 );
-const releaseRoot = resolve(
-  `output/release/interactive-circuit-maker-v${version}`,
-);
+const releaseRoot = resolve(`output/release/analog-canvas-v${version}`);
 // Also verify the independently downloaded immutable release, not just a build.
-const executable = process.argv[2]
+const packagedExecutable = process.argv[2]
   ? resolve(process.argv[2])
   : resolve(
       releaseRoot,
@@ -24,6 +29,11 @@ const executable = process.argv[2]
     );
 const children = [];
 const temporary = await mkdtemp(join(tmpdir(), "analog-mcp-smoke-"));
+// The installed process gets neither a checkout nor workspace node_modules.
+const executable = join(temporary, "analog-canvas-mcp.mjs");
+await copyFile(packagedExecutable, executable);
+const cliCwd = join(temporary, "unrelated-startup");
+await mkdir(cliCwd);
 const connectorPath = join(temporary, "connector.json");
 const exportPath = join(temporary, "exported-project.json");
 const importPath = join(temporary, "import-project.json");
@@ -33,9 +43,48 @@ const sessionId = "release-session";
 const connectorToken = "release-connector-token";
 let revision = 5;
 let resumeCount = 0;
+let lastCircuitWorkspace;
 const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>', "utf8");
 const projectBytes = Buffer.from('{"release":true}\n', "utf8");
 const sha256 = (data) => createHash("sha256").update(data).digest("hex");
+const tableBytes = Buffer.from("time [s],v(out) [V]\n0,1\n1,2\n");
+const tableArtifact = {
+  id: "release-table",
+  fileId: "release-table",
+  name: "tran.csv",
+  role: "table",
+  mediaType: "text/csv",
+  byteLength: tableBytes.byteLength,
+  sha256: sha256(tableBytes),
+};
+const resultCatalog = {
+  schemaVersion: 1,
+  runId: "spec-run",
+  preparedId: "spec-prepared",
+  inputRevision: "spec-input",
+  execution: "completed",
+  collection: "complete",
+  files: [tableArtifact],
+  datasets: [
+    {
+      id: "tran-0",
+      analysisIndex: 0,
+      analysis: "tran",
+      plotName: "Transient",
+      pointCount: 2,
+      axis: { name: "time", unit: "s" },
+      signals: [{ name: "v(out)", unit: "V", quantity: "voltage" }],
+      representations: [
+        {
+          artifactId: tableArtifact.id,
+          fileId: tableArtifact.fileId,
+          selector: "",
+        },
+      ],
+    },
+  ],
+};
+let tableDownloads = 0;
 
 function credential(agentToken) {
   return {
@@ -192,6 +241,29 @@ function snapshot() {
           locked: false,
           visible: false,
         },
+        {
+          id: "release-case-label",
+          kind: "net-label",
+          netId: "release-net",
+          content: {
+            runs: [
+              {
+                kind: "span",
+                style: "uppercase",
+                children: [{ kind: "text", value: "v" }],
+              },
+              {
+                kind: "span",
+                style: "lowercase",
+                children: [{ kind: "text", value: "DD" }],
+              },
+            ],
+          },
+          anchor: { kind: "free", position: { x: 40, y: 0 } },
+          rotation: 0,
+          alignment: "start",
+          locked: false,
+        },
       ],
       drafting: {
         objects: [
@@ -247,7 +319,25 @@ async function requestBody(request) {
 const relay = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", "http://localhost");
   let result;
-  if (url.pathname === "/api/agent/claims") {
+  if (
+    url.pathname === `/api/agent/sessions/${sessionId}/artifacts/release-table`
+  ) {
+    tableDownloads++;
+    const offset = Number(
+      request.headers.range?.match(/^bytes=(\d+)-$/u)?.[1] ?? 0,
+    );
+    response.writeHead(offset ? 206 : 200, {
+      "content-type": "text/csv",
+      "content-length": tableBytes.byteLength - offset,
+      ...(offset
+        ? {
+            "content-range": `bytes ${offset}-${tableBytes.byteLength - 1}/${tableBytes.byteLength}`,
+          }
+        : {}),
+    });
+    response.end(tableBytes.subarray(offset));
+    return;
+  } else if (url.pathname === "/api/agent/claims") {
     result = json(credential("claim-bearer"));
   } else if (url.pathname === "/api/agent/connectors/resume") {
     const body = await requestBody(request);
@@ -274,101 +364,133 @@ const relay = createServer(async (request, response) => {
       observedAt: Date.now(),
       expiresAt: Date.now() + 60_000,
     });
+  } else if (url.pathname.endsWith("/projects")) {
+    const body = await requestBody(request);
+    result = json({
+      apiVersion: "3.0",
+      requestId: body.requestId,
+      operation: "workspace",
+      ok: true,
+      result: {
+        action: "list",
+        activeWorkspaceId: "release-tab",
+        projects: [
+          {
+            workspaceId: "release-tab",
+            projectId: "release-project",
+            name: "Release smoke",
+            cloudProjectId: "release-cloud-project",
+            dirty: false,
+            structureRevision: 0,
+            cells: [{ documentId: "main", name: "Main", revision: 0 }],
+          },
+        ],
+      },
+    });
   } else if (url.pathname.endsWith("/simulation")) {
     const body = await requestBody(request);
     result =
-      body.operation === "capabilities"
+      body.operation === "catalog"
         ? json({
             apiVersion: "3.0",
             requestId: body.requestId,
-            operation: "capabilities",
+            operation: "catalog",
             ok: true,
-            capabilities: {
-              configured: true,
-              inputs: ["source"],
-              analyses: ["op", "ac"],
-              parsedAnalyses: ["op", "ac"],
-              rawfileCollection: "native-multi-ascii",
-              profiles: [
-                {
-                  id: "native-release-fixture",
-                  engine: "vacask",
-                  corners: ["tt"],
-                  dependencies: [
-                    { id: "fixture-models", sha256: "c".repeat(64) },
-                  ],
-                  modelSymbols: [
-                    {
+            catalog: resultCatalog,
+          })
+        : body.operation === "capabilities"
+          ? json({
+              apiVersion: "3.0",
+              requestId: body.requestId,
+              operation: "capabilities",
+              ok: true,
+              capabilities: {
+                configured: true,
+                inputs: ["source"],
+                analyses: ["op", "ac"],
+                parsedAnalyses: ["op", "ac"],
+                rawfileCollection: "native-multi-ascii",
+                profiles: [
+                  {
+                    id: "native-release-fixture",
+                    engine: "vacask",
+                    corners: ["tt"],
+                    dependencies: [
+                      { id: "fixture-models", sha256: "c".repeat(64) },
+                    ],
+                    modelSymbols: [
+                      {
+                        dependencyId: "fixture-models",
+                        sha256: "c".repeat(64),
+                        section: "tt",
+                        masters: [
+                          {
+                            name: "fixture_nfet",
+                            primitives: [
+                              { path: ["core"], module: "sp_bsim4v8" },
+                            ],
+                          },
+                        ],
+                      },
+                    ],
+                    modelLibrary: {
                       dependencyId: "fixture-models",
-                      sha256: "c".repeat(64),
-                      section: "tt",
-                      masters: [
-                        {
-                          name: "fixture_nfet",
-                          primitives: [
-                            { path: ["core"], module: "sp_bsim4v8" },
-                          ],
-                        },
-                      ],
+                      defaultSection: "tt",
+                      defaultScale: 1e-6,
                     },
-                  ],
-                  modelLibrary: {
-                    dependencyId: "fixture-models",
-                    defaultSection: "tt",
-                    defaultScale: 1e-6,
+                  },
+                ],
+                maxInputBytes: 2097152,
+                maxTimeoutMs: 120000,
+                cancel: true,
+              },
+            })
+          : json({
+              apiVersion: "3.0",
+              requestId: body.requestId,
+              operation: "read",
+              ok: true,
+              run: {
+                id: "spec-run",
+                preparedId: "spec-prepared",
+                inputRevision: "spec-input",
+                state: "finished",
+                artifacts: [],
+                outputData: {
+                  schemaVersion: 1,
+                  analyses: [],
+                  diagnostics: [],
+                  specs: {
+                    schemaVersion: 1,
+                    runId: "spec-run",
+                    preparedId: "spec-prepared",
+                    inputDigest: "a".repeat(64),
+                    results: [
+                      {
+                        id: "run.cir:2:1",
+                        name: "peak",
+                        group: "Bias checks",
+                        occurrence: 1,
+                        source: {
+                          path: "run.cir",
+                          line: 2,
+                          text: "* @spec peak <= 1.8 unit=V",
+                        },
+                        unit: "V",
+                        expected: { kind: "limit", operator: "<=", value: 1.8 },
+                        value: 1.7,
+                        judgment: "pass",
+                        reason: "satisfied",
+                        detail: "Meets the authored specification.",
+                        logLine: 5,
+                      },
+                    ],
                   },
                 },
-              ],
-              maxInputBytes: 2097152,
-              maxTimeoutMs: 120000,
-              cancel: true,
-            },
-          })
-        : json({
-            apiVersion: "3.0",
-            requestId: body.requestId,
-            operation: "read",
-            ok: true,
-            run: {
-              id: "spec-run",
-              preparedId: "spec-prepared",
-              inputRevision: "spec-input",
-              state: "finished",
-              artifacts: [],
-              outputData: {
-                schemaVersion: 1,
-                analyses: [],
-                diagnostics: [],
-                specs: {
-                  schemaVersion: 1,
-                  runId: "spec-run",
-                  preparedId: "spec-prepared",
-                  inputDigest: "a".repeat(64),
-                  results: [
-                    {
-                      id: "run.cir:2:1",
-                      name: "peak",
-                      group: "Bias checks",
-                      occurrence: 1,
-                      source: {
-                        path: "run.cir",
-                        line: 2,
-                        text: "* @spec peak <= 1.8 unit=V",
-                      },
-                      unit: "V",
-                      expected: { kind: "limit", operator: "<=", value: 1.8 },
-                      value: 1.7,
-                      judgment: "pass",
-                      reason: "satisfied",
-                      detail: "Meets the authored specification.",
-                      logLine: 5,
-                    },
-                  ],
-                },
               },
-            },
-          });
+            });
   } else if (url.pathname.endsWith("/circuit")) {
+    lastCircuitWorkspace = request.headers["x-agent-workspace"];
     const body = await requestBody(request);
     if (body.operation === "capabilities") {
       result = json({
@@ -397,15 +519,31 @@ const relay = createServer(async (request, response) => {
         },
       });
     } else if (body.operation === "snapshot") {
-      result = json({
-        apiVersion: "3.0",
-        requestId: body.requestId,
-        operation: "snapshot",
-        ok: true,
-        revision,
-        snapshot: snapshot(),
-        diagnostics: [],
-      });
+      // Model an older strict Editor: it rejects unknown projections rather
+      // than silently returning the full form. The client must then retry the
+      // established full request while preserving the same session.
+      result =
+        body.projection === "state" || body.projection === "folder-directory"
+          ? json({
+              apiVersion: "3.0",
+              requestId: body.requestId,
+              operation: "error",
+              ok: false,
+              error: {
+                code: "INVALID_REQUEST",
+                message: "Request does not match the Circuit API schema",
+              },
+              diagnostics: [],
+            })
+          : json({
+              apiVersion: "3.0",
+              requestId: body.requestId,
+              operation: "snapshot",
+              ok: true,
+              revision,
+              snapshot: snapshot(),
+              diagnostics: [],
+            });
     } else if (body.operation === "transact") {
       const fromRevision = revision;
       if (!body.dryRun) revision += 1;
@@ -446,7 +584,24 @@ const relay = createServer(async (request, response) => {
     }
   } else if (url.pathname.endsWith("/files")) {
     const body = await requestBody(request);
-    if (body.operation === "download") {
+    if (
+      body.operation === "simulation-input" &&
+      body.input.action === "download"
+    ) {
+      result = json({
+        apiVersion: "3.0",
+        requestId: body.requestId,
+        operation: "simulation-input",
+        ok: true,
+        result: {
+          ok: true,
+          artifact: tableArtifact,
+          download: {
+            path: `/api/agent/sessions/${sessionId}/artifacts/release-table`,
+          },
+        },
+      });
+    } else if (body.operation === "download") {
       result = json({
         apiVersion: "3.0",
         requestId: body.requestId,
@@ -495,11 +650,15 @@ const apiBaseUrl = `http://127.0.0.1:${address.port}`;
 
 async function httpCommand(command, input = {}) {
   const child = spawn(process.execPath, [executable, "--http", command], {
+    cwd: cliCwd,
     stdio: ["pipe", "pipe", "pipe"],
     env: {
       ...process.env,
       ANALOG_CANVAS_API_URL: apiBaseUrl,
       ANALOG_CANVAS_MCP_CONNECTOR: connectorPath,
+      LOCALAPPDATA: join(temporary, "data"),
+      XDG_DATA_HOME: join(temporary, "data"),
+      ANALOG_CANVAS_TASK_DIR: join(temporary, "task"),
     },
     timeout: 30_000,
   });
@@ -522,11 +681,15 @@ async function httpCommand(command, input = {}) {
 
 function startMcp() {
   const child = spawn(process.execPath, [executable], {
+    cwd: temporary,
     stdio: ["pipe", "pipe", "pipe"],
     env: {
       ...process.env,
       ANALOG_CANVAS_API_URL: apiBaseUrl,
       ANALOG_CANVAS_MCP_CONNECTOR: connectorPath,
+      LOCALAPPDATA: join(temporary, "data"),
+      XDG_DATA_HOME: join(temporary, "data"),
+      ANALOG_CANVAS_TASK_DIR: join(temporary, "task"),
     },
   });
   children.push(child);
@@ -601,20 +764,107 @@ try {
       "Packaged MCP is missing independent parameter display controls",
     );
   if (
-    listed.tools.length !== 19 ||
+    listed.tools.length !== 36 ||
     ![
       "project_cells",
+      "gallery_circuits",
+      "project_code",
+      "netlist_code",
       "simulation",
       "simulation_folder",
       "simulation_output",
       "simulation_measurement",
       "simulation_device_operating_point",
       "simulation_files",
+      "describe_tool",
+      "simulation_source",
+      "simulation_edit",
+      "simulation_data",
+      "simulation_plot",
+      "simulation_results",
+      "simulation_run",
+      "simulation_batch",
+      "circuit_place",
+      "circuit_wire",
+      "circuit_transform",
+      "circuit_selection",
+      "circuit_text",
+      "circuit_properties",
     ].every((name) => listed.tools.some((tool) => tool.name === name))
   )
     throw new Error("Packaged MCP tool surface mismatch");
+  const formats = await first.tool("describe_tool", {
+    tool: "simulation_plot",
+    field: "/request/formats",
+  });
+  assert.equal(formats.contractVersion, mcpVersion);
+  assert.deepEqual(formats.variants[0].schema.items.enum, [
+    "png",
+    "svg",
+    "pdf",
+  ]);
+  const edits = await first.tool("describe_tool", {
+    editKind: "set_cell_symbol_presentation",
+  });
+  assert.equal(edits.inputSchema["x-transaction"].form, "structureEdits");
   await first.tool("connect", { claimCode: `${sessionId}.claim` });
-  const nativeCapabilities = await first.tool("simulation", {
+  const patches = await first.tool("describe_tool", {
+    tool: "simulation_edit",
+    field: "/request/patches",
+  });
+  assert.equal(patches.variants[0].required, false);
+  const invalidRangeReply = await first.request("tools/call", {
+    name: "simulation_plot",
+    arguments: {
+      request: {
+        action: "prepare-plot",
+        runId: "run",
+        name: "invalid-range",
+        panels: [
+          {
+            analysisIndex: 0,
+            signals: [{ signal: "v(out)" }],
+            xRange: [0, 1, 2],
+          },
+        ],
+      },
+    },
+  });
+  assert.equal(invalidRangeReply.isError, true);
+  const invalidRange = JSON.parse(invalidRangeReply.content[0].text);
+  assert.deepEqual(invalidRange.error.issues[0].path, [
+    "request",
+    "panels",
+    0,
+    "xRange",
+  ]);
+  assert.equal(
+    invalidRange.error.issues[0].message,
+    "Expected exactly two numbers: [minimum, maximum].",
+  );
+  const plot = await first.tool("simulation_plot", {
+    request: {
+      action: "prepare-plot",
+      runId: "spec-run",
+      name: "release-plot",
+      formats: ["png", "svg"],
+      panels: [
+        { analysisIndex: 0, signals: [{ signal: "v(out)" }], xRange: [0, 1] },
+      ],
+    },
+  });
+  assert.equal(plot.imageStatus, "not-generated");
+  assert.equal(plot.dataStatus, "complete");
+  assert(plot.directory.startsWith(join(temporary, "task", ".analog-canvas")));
+  const base = await first.tool("simulation_data", {
+    request: { action: "workspace" },
+  });
+  const sync = await first.tool("simulation_data", {
+    request: { action: "sync", runId: "spec-run" },
+  });
+  assert.equal(sync.transfer.reused, 1);
+  assert.equal(tableDownloads, 1);
+  const nativeCapabilities = await first.tool("simulation_run", {
     request: { operation: "capabilities" },
   });
   assert.equal(
@@ -631,7 +881,7 @@ try {
       .primitives[0].module,
     "sp_bsim4v8",
   );
-  const simulation = await first.tool("simulation", {
+  const simulation = await first.tool("simulation_run", {
     request: { operation: "read", runId: "spec-run" },
   });
   assert.equal(
@@ -687,7 +937,7 @@ try {
       },
     ],
   });
-  await first.tool("apply_actions", {
+  await first.tool("circuit_place", {
     actions: [
       {
         kind: "place-component",
@@ -740,6 +990,38 @@ try {
     4,
     "A fresh get_context must resume without another claim",
   );
+  // Two independent installed CLI processes share only task-local identity.
+  // No in-process MCP handler or current working directory can preserve this.
+  const bound = await httpCommand("project_cells", {
+    action: "bind-workspace",
+    workspaceId: "release-tab",
+  });
+  assert.equal(JSON.parse(bound.content[0].text).workspaceId, "release-tab");
+  const boundRead = await httpCommand("get_context");
+  assert.equal(boundRead.isError, undefined, JSON.stringify(boundRead));
+  assert.equal(
+    lastCircuitWorkspace,
+    "release-tab",
+    "Next CLI process lost the task target",
+  );
+  await httpCommand("project_cells", {
+    action: "bind-workspace",
+    workspaceId: null,
+  });
+  const cliSync = JSON.parse(
+    (
+      await httpCommand("simulation_data", {
+        request: { action: "sync", runId: "spec-run" },
+      })
+    ).content[0].text,
+  );
+  assert.equal(cliSync.basePath, base.basePath);
+  assert.equal(cliSync.transfer.reused, 1);
+  assert.equal(
+    tableDownloads,
+    1,
+    "Fresh CLI must reuse the installed MCP's data despite a different cwd",
+  );
   await restarted.tool("disconnect");
   await restarted.close();
   if ((await readFile(connectorPath).catch(() => null)) !== null) {
@@ -748,6 +1030,46 @@ try {
   if ((await readFile(exportPath, "utf8")) !== projectBytes.toString("utf8")) {
     throw new Error("Packaged MCP export did not preserve file bytes");
   }
+  // No connector or network is needed to edit and execute the local plot copy.
+  await writeFile(
+    plot.scriptPath,
+    (await readFile(plot.scriptPath, "utf8")) +
+      "\n# Local user customization\n",
+  );
+  const offlineBase = JSON.parse(
+    (
+      await httpCommand("simulation_data", {
+        request: { action: "workspace" },
+        basePath: base.basePath,
+      })
+    ).content[0].text,
+  );
+  assert.equal(offlineBase.basePath, base.basePath);
+  const python = process.env.ANALOG_CANVAS_SMOKE_PYTHON;
+  if (python) {
+    execFileSync(python, plot.execution.check.args, {
+      cwd: cliCwd,
+      stdio: "pipe",
+    });
+    execFileSync(python, plot.execution.args, { cwd: cliCwd, stdio: "pipe" });
+    assert.equal(
+      (await readFile(join(plot.directory, "figure.png")))
+        .subarray(0, 8)
+        .toString("hex"),
+      "89504e470d0a1a0a",
+    );
+    assert(
+      (await readFile(join(plot.directory, "figure.svg"), "utf8")).includes(
+        "<svg",
+      ),
+    );
+    process.stdout.write(
+      "Installed-package offline PNG/SVG execution passed.\n",
+    );
+  } else
+    process.stdout.write(
+      "Plot files prepared; image execution not tested (set ANALOG_CANVAS_SMOKE_PYTHON).\n",
+    );
   process.stdout.write("Packaged MCP release smoke passed.\n");
 } finally {
   // A compatibility rejection must fail promptly, including when testing an

@@ -28,6 +28,7 @@ function CellName({
   return (
     <input
       className="cell-manager-name"
+      autoComplete="off"
       aria-label="Cell name"
       value={draft}
       onChange={(event) => setDraft(event.currentTarget.value)}
@@ -66,7 +67,6 @@ export function CellManagerDialog({
   onReorder,
   onDelete,
   onJumpToCaller,
-  onFormatPortLabels,
   onSetPortDirection,
   onMovePort,
   onEditParameter,
@@ -92,7 +92,6 @@ export function CellManagerDialog({
   onReorder(documentIds: string[], topDocumentId: string): void;
   onDelete(documentId: string): void;
   onJumpToCaller(documentId: string, instanceId: string): void;
-  onFormatPortLabels(documentId: string): void;
   onSetPortDirection(
     documentId: string,
     portId: string,
@@ -239,7 +238,7 @@ export function CellManagerDialog({
             onClick={onClose}
             aria-label="Close Cell Manager"
           >
-            Close
+            关闭
           </button>
         </header>
 
@@ -346,7 +345,7 @@ export function CellManagerDialog({
                     >
                       <span>
                         <strong>{cell.name}</strong>
-                        {cell.isTop ? <em>Top</em> : null}
+                        {cell.isTop ? <em>顶层</em> : null}
                       </span>
                       <small>
                         {cell.portCount} ports · {cell.callers.length} callers
@@ -502,7 +501,7 @@ export function CellManagerDialog({
                       }
                       onClick={() => setDeleteId(selectedEntry.id)}
                     >
-                      Delete
+                      删除
                     </button>
                   </div>
                 </header>
@@ -511,9 +510,6 @@ export function CellManagerDialog({
                   cell={selectedDocument}
                   project={project}
                   callerCount={selectedEntry.callers.length}
-                  onFormatPortLabels={() =>
-                    onFormatPortLabels(selectedEntry.id)
-                  }
                   onSetPortDirection={(portId, direction) =>
                     onSetPortDirection(selectedEntry.id, portId, direction)
                   }
@@ -626,7 +622,7 @@ export function CellManagerDialog({
                 </div>
                 <footer className="editor-action-dialog-actions">
                   <button type="button" onClick={dismissActionDialog}>
-                    Cancel
+                    取消
                   </button>
                   <button
                     type="button"
@@ -674,7 +670,7 @@ export function CellManagerDialog({
                 </div>
                 <footer className="editor-action-dialog-actions">
                   <button type="button" autoFocus onClick={dismissActionDialog}>
-                    Cancel
+                    取消
                   </button>
                   <button
                     type="button"
@@ -690,6 +686,7 @@ export function CellManagerDialog({
               </section>
             ) : (
               <form
+                autoComplete="off"
                 className="editor-action-dialog"
                 role="dialog"
                 aria-modal="true"
@@ -710,6 +707,7 @@ export function CellManagerDialog({
                     <span>Cell name</span>
                     <input
                       id="cell-name-input"
+                      autoComplete="off"
                       autoFocus
                       value={draftName}
                       onChange={(event) =>
@@ -720,14 +718,14 @@ export function CellManagerDialog({
                 </div>
                 <footer className="editor-action-dialog-actions">
                   <button type="button" onClick={dismissActionDialog}>
-                    Cancel
+                    取消
                   </button>
                   <button
                     type="submit"
                     className="primary"
                     disabled={draftName.trim().length === 0}
                   >
-                    Create
+                    创建
                   </button>
                 </footer>
               </form>

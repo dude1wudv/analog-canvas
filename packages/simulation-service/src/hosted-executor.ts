@@ -19,6 +19,7 @@ export function decodeHostedExecutionPayload(
     executedFiles,
     executedDeck,
     cancelled,
+    collectionStatus,
     ...value
   } = body ?? {};
   const output = validateExecutionOutput(input, {
@@ -28,6 +29,7 @@ export function decodeHostedExecutionPayload(
     executedFiles,
     executedDeck,
     cancelled,
+    collectionStatus,
   });
   const result = output.result;
   // Older executor images projected padded short vectors as sweep samples.
@@ -84,10 +86,24 @@ export function createHostedExecutor(
         true,
       );
     }
-    const payload = (await response.json().catch(() => null)) as Record<
-      string,
-      unknown
-    > | null;
+    let payload: Record<string, unknown> | null;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new ExecutionFailure(
+        {
+          code:
+            stage === "cancel"
+              ? "cancel-response-unknown"
+              : "RUN_RESPONSE_UNKNOWN",
+          message:
+            "The executor response was incomplete or unreadable. Read this run; do not submit a new start.",
+          stage,
+          recovery: "retry-same-request",
+        },
+        true,
+      );
+    }
     if (!response.ok) {
       const code =
         typeof payload?.reason === "string"
@@ -104,9 +120,11 @@ export function createHostedExecutor(
           recovery:
             code === "simulator-busy"
               ? "retry-after"
-              : ["simulator-unreachable", "cancel-response-unknown"].includes(
-                    code,
-                  )
+              : [
+                    "simulator-unreachable",
+                    "cancel-response-unknown",
+                    "executor-receipt-invalid",
+                  ].includes(code)
                 ? "retry-same-request"
                 : [
                       "simulation-not-configured",
@@ -129,7 +147,7 @@ export function createHostedExecutor(
               }
             : {}),
         },
-        code === "simulator-unreachable",
+        code === "simulator-unreachable" || code === "executor-receipt-invalid",
       );
     }
     return payload;

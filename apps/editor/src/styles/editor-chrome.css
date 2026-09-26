@@ -106,7 +106,6 @@
 }
 
 .toolbar-button,
-.menubar-help,
 .command-menu summary {
   min-height: var(--icm-control-h);
   border: 1px solid transparent;
@@ -128,7 +127,6 @@
 }
 
 .toolbar-button:hover:not(:disabled),
-.menubar-help:hover:not(:disabled),
 .command-menu summary:hover {
   border-color: transparent;
   background: var(--icm-surface-hover);
@@ -140,12 +138,6 @@
   color: var(--icm-accent);
   background: var(--icm-accent-tint);
   box-shadow: none;
-}
-
-.menubar-help {
-  height: var(--icm-control-h);
-  padding: 0 10px;
-  white-space: nowrap;
 }
 
 /* The check report had no styles at all, so each finding rendered its code
@@ -296,30 +288,12 @@
     flex-direction: column;
   }
 }
-.netlist-port-case {
-  display: inline-grid;
-  align-items: center;
-  justify-items: center;
-  width: 36px;
-  padding: 4px;
-  color: var(--icm-text-muted);
-  font-size: var(--icm-font-xs);
-  font-weight: 600;
-  white-space: nowrap;
-}
-.netlist-port-case code {
-  color: var(--icm-text);
-  font: inherit;
-  text-transform: none;
-}
 .netlist-mapping-actions {
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr);
+  display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
-}
-.netlist-mapping-actions .netlist-default-action {
-  min-width: 0;
 }
 .netlist-code-actions svg {
   width: 18px;
@@ -333,6 +307,55 @@
 .netlist-profile-code p {
   font-size: 12px;
   color: var(--icm-text-dim);
+}
+/* Every finding that keeps the netlist from being taken away, each one a
+   button to its object on the canvas. */
+.netlist-issues {
+  display: grid;
+  gap: 4px;
+}
+.netlist-profile-code .netlist-issues-heading {
+  margin: 0;
+  color: var(--icm-error);
+}
+/* Six findings show at once and the rest scroll, so a drawing with dozens
+   of unfinished nets still leaves the code its room. */
+.netlist-issues ul {
+  display: grid;
+  gap: 2px;
+  max-height: 168px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.netlist-issue {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--icm-border);
+  border-radius: var(--icm-radius-sm);
+  background: var(--icm-surface);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.netlist-issue:hover,
+.netlist-issue:focus-visible {
+  border-color: var(--icm-error);
+  background: var(--icm-surface-hover);
+}
+.netlist-issue-message {
+  flex: 1;
+  color: var(--icm-error);
+}
+.netlist-issue-target {
+  color: var(--icm-text-muted);
+  white-space: nowrap;
 }
 .project-source-editor,
 .project-code-panel > textarea,
@@ -377,6 +400,16 @@
 }
 .project-source-editor .cm-editor.cm-focused {
   outline: none;
+}
+/* The code of each part selected on the canvas. */
+.project-source-editor .cm-code-highlight {
+  background: rgb(var(--icm-accent-rgb) / 12%);
+  box-shadow: inset 3px 0 0 rgb(var(--icm-accent-rgb) / 70%);
+}
+/* A line a finding names, such as a draft card with a ?. Selected too, it
+   keeps the yellow and gains the selection's bar. */
+.project-source-editor .cm-code-warning {
+  background: rgb(var(--icm-warning-rgb) / 24%);
 }
 .project-source-editor .cm-scroller {
   overflow: auto;
@@ -640,28 +673,6 @@
   position: relative;
 }
 
-.netlist-copy-group {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-}
-
-.netlist-copy-group > .netlist-copy {
-  gap: 5px;
-  border-radius: var(--icm-radius-sm) 0 0 var(--icm-radius-sm);
-}
-
-.netlist-copy-group .command-menu > summary {
-  padding: 0 7px;
-  border-radius: 0 var(--icm-radius-sm) var(--icm-radius-sm) 0;
-  border-left-color: var(--icm-border);
-}
-
-.netlist-copy-group .command-popover {
-  left: auto;
-  right: 0;
-}
-
 .netlist-format,
 .netlist-extension {
   color: var(--icm-text-muted);
@@ -675,9 +686,9 @@
 .command-menu summary {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   height: var(--icm-control-h);
-  padding: 0 10px;
+  padding: 0 8px;
   cursor: pointer;
   list-style: none;
   white-space: nowrap;
@@ -718,6 +729,33 @@
   box-shadow:
     0 0 0 1px rgb(15 15 15 / 3%),
     0 12px 32px rgb(15 15 15 / 12%);
+}
+
+/* Only the variable Cloud Project list scrolls; File commands and flyouts stay reachable. */
+.file-command-popover {
+  display: flex;
+  flex-direction: column;
+  width: min(22rem, calc(100vw - var(--icm-space-6)));
+  max-height: calc(100dvh - 4rem);
+}
+
+.file-command-popover > :not(.cloud-project-list) {
+  flex-shrink: 0;
+}
+
+.cloud-project-list {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(21rem, 42dvh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--icm-text-disabled) transparent;
+  scrollbar-width: thin;
+}
+
+.cloud-project-list .cloud-project-command {
+  width: 100%;
 }
 
 .command-popover button,
@@ -791,8 +829,32 @@
   display: none;
 }
 
+@media (min-width: 481px) and (max-width: 780px) {
+  .file-command-popover .export-submenu-options {
+    right: 100%;
+    left: auto;
+  }
+}
+
 @media (max-width: 480px) {
   .command-popover .export-submenu-options {
+    position: static;
+    margin-left: 12px;
+    box-shadow: none;
+  }
+}
+
+/* An unusually short viewport cannot hold even the fixed actions. */
+@media (max-height: 380px) {
+  .file-command-popover {
+    overflow-y: auto;
+  }
+
+  .file-command-popover .cloud-project-list {
+    flex-shrink: 0;
+  }
+
+  .file-command-popover .export-submenu-options {
     position: static;
     margin-left: 12px;
     box-shadow: none;
@@ -806,6 +868,12 @@
   width: min(22rem, calc(100vw - var(--icm-space-6)));
   min-width: 0;
   max-width: 100%;
+}
+.cloud-project-command:has(.inline-confirm[data-expanded]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.cloud-project-command > .inline-confirm {
+  align-self: center;
 }
 
 .command-popover .cloud-project-open {
@@ -992,7 +1060,7 @@
   background: var(--icm-surface);
 }
 
-/* The grid toggle sits with the zoom controls at the right end. */
+/* On-demand canvas hints and the grid toggle sit with the view controls. */
 .statusbar-view-controls {
   display: flex;
   flex: 0 0 auto;
@@ -1000,8 +1068,9 @@
   gap: var(--icm-space-2);
 }
 
-/* Background grid on/off, one click from the canvas. Same chip language as
-   the status items; pressed while the grid is shown. */
+/* On-canvas references and background-grid visibility are one-click chips;
+   the pressed treatment means their corresponding layer is currently shown. */
+.statusbar-hints-toggle,
 .statusbar-grid-toggle {
   display: inline-flex;
   flex: 0 0 auto;
@@ -1021,10 +1090,12 @@
   cursor: pointer;
 }
 
+.statusbar-hints-toggle:hover,
 .statusbar-grid-toggle:hover {
   background: var(--icm-surface-hover);
 }
 
+.statusbar-hints-toggle[aria-pressed="true"],
 .statusbar-grid-toggle[aria-pressed="true"] {
   border-color: transparent;
   color: var(--icm-accent);
@@ -1042,6 +1113,20 @@
 }
 
 .statusbar-analytics:hover {
+  color: var(--icm-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.15rem;
+}
+
+.statusbar-change-log {
+  flex: 0 0 auto;
+  color: var(--icm-text-muted);
+  font-size: var(--icm-font-xs);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.statusbar-change-log:hover {
   color: var(--icm-accent);
   text-decoration: underline;
   text-underline-offset: 0.15rem;
@@ -1111,108 +1196,103 @@
   background: var(--icm-border);
 }
 
-/* The circuit name is edited where it is read, so the field carries no chrome
-   until it is hovered or focused. */
-.app-project-name {
-  min-width: 4rem;
-  max-width: 14rem;
-  padding: 0 0.15rem;
-  border: 1px solid transparent;
-  border-radius: var(--icm-radius-sm);
-  background: transparent;
-  color: inherit;
-  font: inherit;
+/* Project titles are variable-length content, never menubar layout inputs. */
+.app-chrome-main .app-brand,
+.app-chrome-main .gallery-home-link,
+.project-menu,
+.hierarchy-entry {
+  flex: 0 0 auto;
 }
 
-.app-project-name:hover {
-  border-color: var(--icm-border);
-}
-
-.app-project-name:focus {
-  border-color: var(--icm-accent);
-  outline: 0;
-}
-
-/* An opened Gallery circuit keeps its public context beside its name. The
-   summary makes the byline and a note excerpt continuously visible; opening
-   it reveals the complete stored text without spending permanent menubar
-   width on publication metadata. */
-.app-gallery-entry-details {
-  position: relative;
+.project-menu .project-menu-popover {
+  position: fixed;
+  top: calc(var(--icm-menubar-h) + 4px);
+  left: 12px;
+  box-sizing: border-box;
+  width: min(24rem, calc(100vw - 24px));
   min-width: 0;
+  max-height: calc(100dvh - var(--icm-menubar-h) - 16px);
+  overflow: auto;
+  gap: 14px;
+  padding: 14px;
+}
+
+.project-menu-name {
+  display: grid;
+  gap: 6px;
+}
+
+.project-menu-name > span,
+.project-menu-heading,
+.project-menu-metadata dt {
   color: var(--icm-text-muted);
   font-size: var(--icm-font-xs);
-  line-height: var(--icm-line-tight);
+  font-weight: 500;
 }
 
-.app-gallery-entry-details summary {
-  display: flex;
+.project-menu-name input {
+  box-sizing: border-box;
+  width: 100%;
   min-width: 0;
-  cursor: pointer;
-  list-style: none;
-  white-space: nowrap;
+  padding: 7px 9px;
+  font-size: var(--icm-font-md);
 }
 
-.app-gallery-entry-details summary::-webkit-details-marker {
-  display: none;
-}
-
-.app-gallery-entry-author {
-  flex: 0 0 auto;
-  color: var(--icm-text);
-  font-weight: 600;
-}
-
-.app-gallery-entry-description {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.app-chrome-main .app-brand-copy:has(.app-gallery-entry-details[open]) {
-  overflow: visible;
-}
-
-.app-gallery-entry-popover {
-  position: fixed;
-  z-index: 40;
-  top: calc(var(--icm-menubar-h) - 1px);
-  left: var(--icm-space-3);
-  width: min(28rem, calc(100vw - 24px));
-  max-height: calc(100dvh - var(--icm-menubar-h) - 12px);
-  padding: var(--icm-space-3);
-  overflow: auto;
-  border: 1px solid var(--icm-border-strong);
-  border-radius: var(--icm-radius-md);
-  color: var(--icm-text);
-  background: var(--icm-surface);
-  box-shadow: var(--icm-shadow-lg);
-  white-space: normal;
-}
-
-.app-gallery-entry-popover dl,
-.app-gallery-entry-popover dd {
+.project-menu-metadata {
+  display: grid;
+  gap: 10px;
   margin: 0;
 }
 
-.app-gallery-entry-popover dl {
+.project-menu-metadata > div {
   display: grid;
-  gap: var(--icm-space-3);
+  grid-template-columns: 5rem minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
 }
 
-.app-gallery-entry-popover dt {
-  margin-bottom: var(--icm-space-1);
-  color: var(--icm-text-muted);
-  font-size: var(--icm-font-xs);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.app-gallery-entry-popover dd {
-  line-height: var(--icm-line-normal);
+.project-menu-metadata dd {
+  margin: 0;
+  font-size: var(--icm-font-sm);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.project-menu-projects {
+  display: grid;
+  gap: 6px;
+}
+
+.project-menu-projects button {
+  padding-block: 7px;
+  align-items: baseline;
+}
+
+.project-menu-projects button[aria-checked="true"] {
+  color: var(--icm-accent);
+  background: var(--icm-surface-hover);
+}
+
+.project-menu-check {
+  width: 1em;
+  flex: 0 0 auto;
+}
+
+.project-menu-option-name {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.project-menu-dirty {
+  margin-left: auto;
+  color: var(--icm-accent);
+  font-size: 0.6rem;
+}
+
+.project-menu-publication {
+  padding-top: 12px;
+  border-top: 1px solid var(--icm-border);
 }
 
 .project-unsaved-indicator {
@@ -1291,8 +1371,7 @@
     padding-inline: 0.25rem;
   }
   .command-menu summary,
-  .toolbar-button,
-  .menubar-help {
+  .toolbar-button {
     padding-inline: 0.35rem;
   }
 }
@@ -1303,22 +1382,6 @@
   .app-command-surface {
     flex-shrink: 0;
   }
-}
-
-/* Preview is an environment identity, not a warning repeated above every
-   editing action. Keep it visible but subordinate to the Project name. */
-.app-channel-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 1.5rem;
-  padding: 0 0.45rem;
-  border: 1px solid #c47a1b;
-  border-radius: 999px;
-  color: #8a4b00;
-  font-size: 0.72rem;
-  font-weight: 650;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
 }
 
 /* The editor reuses the account contract from Gallery without importing the
@@ -1361,6 +1424,32 @@
   overflow: hidden;
   font-weight: 600;
   text-overflow: ellipsis;
+}
+
+/* The account (or Sign in) widens the right side. Its role chip and the bug
+   report's wording yield first, then the long publish label and the name's
+   width, so the commands never run under the account. */
+@media (max-width: 1320px) {
+  .app-chrome-actions:has(.account-menu, .account-signin) .account-owner-badge,
+  .app-chrome-actions:has(.account-menu, .account-signin) .bug-report-label {
+    display: none;
+  }
+
+  .app-chrome-actions:has(.account-menu, .account-signin) .bug-report-link {
+    width: var(--icm-control-h);
+    padding: 0;
+  }
+}
+
+@media (max-width: 1020px) {
+  .app-chrome:has(.app-chrome-actions :is(.account-menu, .account-signin))
+    .publish-label-long {
+    display: none;
+  }
+
+  .app-chrome-actions .account-name {
+    max-width: 7rem;
+  }
 }
 
 .app-chrome-actions .account-signin,

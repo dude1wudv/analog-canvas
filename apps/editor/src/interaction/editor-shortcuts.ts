@@ -34,8 +34,12 @@ export type EditorShortcutIntent =
   | { kind: "run-command"; command: EditorCommandRequest }
   | { kind: "block-browser-refresh" }
   | { kind: "block-browser-bookmark" }
-  | { kind: "save" | "open" }
+  | { kind: "save" | "open" | "paste-selection" }
   | { kind: "edit-net-label" | "toggle-display-settings" }
+  | {
+      kind: "toggle-panel";
+      panel: "gallery" | "library" | "netlist";
+    }
   | { kind: "toggle-net-highlight" }
   | { kind: "edit-component-definition" }
   | {
@@ -102,7 +106,7 @@ export function resolveEditorShortcut(
     return {
       kind: "run-command",
       command: {
-        id: event.shiftKey ? "search.open" : "selection.filter.open",
+        id: event.shiftKey ? "selection.filter.open" : "search.open",
       },
     };
   }
@@ -234,6 +238,7 @@ export function resolveEditorShortcut(
     }
     const blockedCommands: Record<string, string> = {
       c: "Copy",
+      v: "Paste",
       q: "Properties",
       m: "Move",
       t: "Text",
@@ -245,7 +250,8 @@ export function resolveEditorShortcut(
       delete: "Delete",
       backspace: "Delete",
     };
-    const command = blockedCommands[key];
+    const command =
+      key === "v" && event.shiftKey ? undefined : blockedCommands[key];
     return command ? { kind: "blocked-interaction-command", command } : null;
   }
 
@@ -266,9 +272,20 @@ export function resolveEditorShortcut(
       : { kind: "hierarchy-selection-required" };
   }
 
+  if (plain && key === "g") {
+    return { kind: "toggle-panel", panel: "gallery" };
+  }
+  if (plain && key === "b") {
+    return { kind: "toggle-panel", panel: "library" };
+  }
+  if (plain && key === "n") {
+    return { kind: "toggle-panel", panel: "netlist" };
+  }
   if (plain && key === "c") {
     return { kind: "run-command", command: { id: "selection.copy" } };
   }
+  if (plain && !event.shiftKey && key === "v")
+    return { kind: "paste-selection" };
   if (plain && key === "m") {
     // Shift+M is Virtuoso's move-without-wires. `plain` allows Shift through,
     // so this branch must read it rather than let it fall to a plain Move.

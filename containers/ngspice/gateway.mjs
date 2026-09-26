@@ -1,5 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 const PORT = Number(process.env.PORT ?? 8080);
 const EXECUTOR_URL = new URL(
@@ -84,11 +86,52 @@ const server = createServer(async (request, response) => {
       ...(body
         ? {
             body,
-            headers: { "content-type": "application/json" },
+            headers: {
+              "content-type": "application/json",
+              ...(request.headers["x-analog-execution-transfer"] ===
+              "receipt-v1"
+                ? { "x-analog-execution-transfer": "receipt-v1" }
+                : {}),
+            },
           }
         : {}),
       signal: AbortSignal.timeout(140_000),
     });
+    const receipt = result.headers.get("x-analog-simulation-receipt");
+    if (receipt && result.ok && result.body) {
+      const declared = Number(result.headers.get("content-length"));
+      if (receipt.length > 8192 || declared > MAX_RESPONSE_BYTES) {
+        await result.body.cancel();
+        send(
+          response,
+          502,
+          Buffer.from('{"error":"executor-response-too-large"}'),
+        );
+        return;
+      }
+      response.writeHead(result.status, {
+        "content-type": "application/json",
+        "cache-control": "no-store",
+        "x-analog-simulation-receipt": receipt,
+      });
+      let bytes = 0;
+      await pipeline(
+        Readable.fromWeb(result.body),
+        new Transform({
+          transform(chunk, _encoding, callback) {
+            bytes += chunk.length;
+            callback(
+              bytes > MAX_RESPONSE_BYTES
+                ? new Error("executor-response-too-large")
+                : null,
+              chunk,
+            );
+          },
+        }),
+        response,
+      );
+      return;
+    }
     const bytes = Buffer.from(await result.arrayBuffer());
     if (bytes.byteLength > MAX_RESPONSE_BYTES) {
       send(
@@ -104,6 +147,10 @@ const server = createServer(async (request, response) => {
         : {}),
     });
   } catch (error) {
+    if (response.headersSent || response.destroyed) {
+      response.destroy();
+      return;
+    }
     const status = error?.status === 413 ? 413 : 502;
     const code = status === 413 ? "request-too-large" : "executor-unreachable";
     send(response, status, Buffer.from(JSON.stringify({ error: code })));

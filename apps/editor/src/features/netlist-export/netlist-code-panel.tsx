@@ -15,9 +15,10 @@ import {
 import {
   planNetlistCodeEdit,
   netlistInstanceAtLine,
+  netlistInstanceRanges,
 } from "./netlist-code-edit";
-import type { PrintedNetlistInstance } from "@icm/netlist";
-import type { CircuitProject } from "@icm/model";
+import type { NetlistDiagnostic, PrintedNetlistInstance } from "@icm/netlist";
+import type { CircuitProject, ObjectLocator } from "@icm/model";
 import {
   inferNetlistProcess,
   netlistProcessPendingInstances,
@@ -37,49 +38,86 @@ import {
 import { createDefaultNetlistExportPreferences } from "./netlist-export-preferences";
 import {
   createDesignNetlistExport,
+  createDraftNetlistPreview,
   unfinishedDrawingDiagnostics,
   type NetlistFormat,
   type NetlistNamingProfile,
-  type NetlistPortCase,
 } from "@icm/netlist";
 
 const ProjectTextEditor = lazy(
   () => import("../project-code/project-text-editor"),
 );
 
+/**
+ * What a finding is about, to tell equal messages apart: the part (and pin)
+ * it names, and the Cell when that is not the one being exported.
+ */
+export function netlistIssueTarget(
+  project: CircuitProject,
+  locator: ObjectLocator,
+  rootDocumentId: string,
+): string | null {
+  const document = project.documents.find(
+    (item) => item.id === locator.documentId,
+  );
+  const endpoint = locator.endpoint;
+  const instanceId =
+    locator.kind === "instance"
+      ? locator.objectId
+      : endpoint?.kind === "terminal"
+        ? endpoint.instanceId
+        : null;
+  const instance = instanceId
+    ? document?.instances.find((item) => item.id === instanceId)
+    : undefined;
+  const part = instance
+    ? `${instance.reference ?? instance.id}${
+        endpoint?.kind === "terminal" ? `.${endpoint.pinName}` : ""
+      }`
+    : null;
+  const cell =
+    document && document.id !== rootDocumentId ? `in ${document.name}` : null;
+  return [part, cell].filter(Boolean).join(" ") || null;
+}
+
 /** Live structural output. Diagnostics belong outside the copyable code. */
 export function NetlistCodePanel({
   project,
+  onDirtyChange,
   rootDocumentId,
   onRootChange,
   format,
   namingProfile,
-  portCase,
   onFormatChange,
-  onPortCaseChange,
-  onCopy,
   onReset,
+  onCopy,
   configurationError,
   onApply,
   onFocusInstance,
+  selection,
+  onNavigateDiagnostic,
   profiles,
   selectedProcess,
   onProcessChange,
   onDeviceTargetChange,
 }: {
+  onDirtyChange?(dirty: boolean): void;
   project: CircuitProject;
   rootDocumentId?: string | undefined;
   onRootChange?(documentId: string): void;
   format: NetlistFormat;
   namingProfile: NetlistNamingProfile;
-  portCase: NetlistPortCase;
   onFormatChange(format: NetlistFormat): void;
-  onPortCaseChange(portCase: NetlistPortCase): void;
-  onCopy(): void;
   onReset(): void;
+  /** Puts the current netlist on the clipboard, as the Netlist menu's Copy does. */
+  onCopy(): void;
   configurationError: string | null;
   onApply(edits: ProjectStructureEdit[]): boolean;
   onFocusInstance(instance: PrintedNetlistInstance | null): void;
+  /** Parts selected on the canvas: their printed lines are lit and shown. */
+  selection?: { documentId: string; instanceIds: readonly string[] };
+  /** Show a finding's object on the canvas. */
+  onNavigateDiagnostic?(diagnostic: NetlistDiagnostic): void;
   profiles: Record<NetlistProfileId, NetlistExportProfile>;
   selectedProcess: NetlistProfileId;
   onProcessChange(id: NetlistProfileId): void;
@@ -134,7 +172,6 @@ export function NetlistCodePanel({
         : createDesignNetlistExport(project, {
             format,
             namingProfile,
-            portCase,
             includeLocations: true,
             ...(rootDocumentId ? { rootDocumentId } : {}),
           }),
@@ -142,34 +179,64 @@ export function NetlistCodePanel({
       project,
       format,
       namingProfile,
-      portCase,
       configurationError,
       rootDocumentId,
       compileRevision,
     ],
   );
+  // A drawing that does not extract yet still shows what it says: a draft,
+  // read-only, with ? where the drawing is silent and its flagged cards in
+  // yellow. Copy and export keep waiting for the strict netlist.
+  const draftPreview = useMemo(
+    () =>
+      result?.status === "blocked"
+        ? createDraftNetlistPreview(project, {
+            format,
+            namingProfile,
+            ...(rootDocumentId ? { rootDocumentId } : {}),
+          })
+        : null,
+    [project, format, namingProfile, rootDocumentId, result],
+  );
   const unfinished = result
     ? unfinishedDrawingDiagnostics(result.diagnostics)
     : [];
+  // Every finding that keeps this netlist from being taken away, not only the
+  // first: blocking errors, or, when the text still prints, what makes the
+  // drawing unfinished. Each one leads to its object on the canvas.
+  const issues: NetlistDiagnostic[] = configurationError
+    ? []
+    : result?.status === "blocked"
+      ? result.diagnostics.filter((item) => item.severity === "error")
+      : unfinished;
   const error = configurationError
     ? `Fix Netlist configuration: ${configurationError}`
-    : result?.status === "blocked"
-      ? (result.diagnostics.find((item) => item.severity === "error")
-          ?.message ?? "Resolve the Check Report findings before copying")
-      : // The text below is still what the drawing says; it is just not a
-        // netlist anybody should take away yet.
-        (unfinished[0]?.message ?? null);
+    : result?.status === "blocked" && issues.length === 0
+      ? "Resolve the Check Report findings before copying"
+      : null;
+  const exportRoot = rootDocumentId ?? project.topDocumentId;
   const source = result?.status === "ready" ? result.file.text : "";
   const [draft, setDraft] = useState(source);
   const [editBaseline, setEditBaseline] = useState(source);
   const [applyError, setApplyError] = useState<string | null>(null);
   const ownApply = useRef(false);
   const dirty = draft !== editBaseline;
+  useLayoutEffect(() => {
+    onDirtyChange?.(dirty);
+    return () => onDirtyChange?.(false);
+  }, [dirty, onDirtyChange]);
+
   const conflict = dirty && source !== editBaseline;
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const focusRef = useRef(onFocusInstance);
   focusRef.current = onFocusInstance;
+  const [cursorInstance, setCursorInstance] =
+    useState<PrintedNetlistInstance | null>(null);
+  const focusInstance = (instance: PrintedNetlistInstance | null) => {
+    setCursorInstance(instance);
+    onFocusInstance(instance);
+  };
   useEffect(() => () => focusRef.current(null), []);
   useLayoutEffect(() => {
     if (!dirty || ownApply.current) {
@@ -241,7 +308,7 @@ export function NetlistCodePanel({
     if (!apply({ fillMissingDefaults: true })) return;
     setCompileRevision((revision) => revision + 1);
     setApplyError(null);
-    onFocusInstance(null);
+    focusInstance(null);
   }
   const applyRef = useRef(apply);
   applyRef.current = apply;
@@ -251,18 +318,66 @@ export function NetlistCodePanel({
     return () => clearTimeout(timer);
   }, [draft, dirty, conflict]);
   function focus(position: number) {
-    if (result?.status !== "ready") return onFocusInstance(null);
+    if (draftPreview)
+      return focusInstance(
+        netlistInstanceAtLine(
+          draftPreview.text,
+          position,
+          draftPreview.locations.instances,
+        ),
+      );
+    if (result?.status !== "ready") return focusInstance(null);
     const plan = planNetlistCodeEdit(project, result, draftRef.current);
-    onFocusInstance(
+    focusInstance(
       plan.ok
         ? netlistInstanceAtLine(draftRef.current, position, plan.instances)
         : null,
     );
   }
+  // The code and the canvas light the same parts: those selected on the
+  // canvas, and the one the cursor names here. A part picked on the canvas
+  // takes over from the cursor's, and only a new pick scrolls the code.
+  const selectionKey = selection
+    ? `${selection.documentId}\u0000${selection.instanceIds.join("\u0000")}`
+    : "";
+  useEffect(() => {
+    if (selection?.instanceIds.length) setCursorInstance(null);
+    // Keyed by content: the same ids in a new array are the same pick.
+  }, [selectionKey]);
+  const highlightedRanges = useMemo(() => {
+    let instances: readonly PrintedNetlistInstance[];
+    if (draftPreview) instances = draftPreview.locations.instances;
+    else {
+      if (result?.status !== "ready") return [];
+      const plan = planNetlistCodeEdit(project, result, draft);
+      if (!plan.ok) return [];
+      instances = plan.instances;
+    }
+    return [
+      ...(selection
+        ? netlistInstanceRanges(
+            instances,
+            selection.documentId,
+            selection.instanceIds,
+          )
+        : []),
+      ...(cursorInstance
+        ? netlistInstanceRanges(instances, cursorInstance.documentId, [
+            cursorInstance.instanceId,
+          ])
+        : []),
+      ...(draftPreview?.flagged ?? []).map((card) => ({
+        from: card.startOffset,
+        to: card.endOffset,
+        tone: "warning" as const,
+      })),
+    ];
+  }, [project, result, draft, draftPreview, selectionKey, cursorInstance]);
   const editError = conflict
     ? "The canvas or Agent changed the netlist. Reload before applying your draft."
     : applyError;
-  const lineCount = draft.split(/\r\n?|\n/u).length;
+  const shown = draftPreview ? draftPreview.text : draft;
+  const lineCount = shown.split(/\r\n?|\n/u).length;
   return (
     <section
       className="netlist-profile-code netlist-live-code"
@@ -340,13 +455,19 @@ export function NetlistCodePanel({
               />
             </svg>
           </button>
+          {/* Copying is at hand beside the code it copies. An unapplied draft
+              is not the circuit yet, so copying waits for Apply or Discard. */}
           <button
             type="button"
             className="netlist-code-copy"
             data-testid="copy-netlist-panel"
             aria-label="Copy netlist"
-            title="Copy netlist"
-            disabled={dirty}
+            title={
+              draftPreview
+                ? "Copy netlist · finish each ? first"
+                : "Copy netlist"
+            }
+            disabled={dirty || !!draftPreview}
             onClick={onCopy}
           >
             <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -375,7 +496,7 @@ export function NetlistCodePanel({
           fallback={
             <textarea
               aria-label="Loading Netlist code editor"
-              value={draft}
+              value={shown}
               readOnly
             />
           }
@@ -383,8 +504,11 @@ export function NetlistCodePanel({
           <ProjectTextEditor
             ariaLabel="Netlist code"
             language="netlist"
-            value={draft}
-            invalid={!!error || !!editError}
+            value={shown}
+            readOnly={!!draftPreview}
+            invalid={
+              !draftPreview && (!!error || issues.length > 0 || !!editError)
+            }
             onChange={(text) => {
               draftRef.current = text;
               setDraft(text);
@@ -394,6 +518,8 @@ export function NetlistCodePanel({
             onModEnter={apply}
             onBlur={() => applyRef.current()}
             onCursorChange={focus}
+            highlightedRanges={highlightedRanges}
+            revealHighlight={selectionKey}
           />
         </Suspense>
       </div>
@@ -458,17 +584,6 @@ export function NetlistCodePanel({
           );
         })}
         <div className="netlist-mapping-actions">
-          <button
-            type="button"
-            className="netlist-port-case"
-            aria-label={`Port names: ${portCase === "upper" ? "uppercase" : "lowercase"}`}
-            title={`Use ${portCase === "upper" ? "lowercase" : "uppercase"} port names`}
-            onClick={() =>
-              onPortCaseChange(portCase === "upper" ? "lower" : "upper")
-            }
-          >
-            <code>{portCase === "upper" ? "ABC" : "abc"}</code>
-          </button>
           {pendingDefaults > 0 ? (
             <button
               type="button"
@@ -493,7 +608,7 @@ export function NetlistCodePanel({
               if (applyProcess(profiles[fallback.selected])) onReset();
             }}
           >
-            Default
+            默认
           </button>
         </div>
       </div>
@@ -505,7 +620,7 @@ export function NetlistCodePanel({
               setDraft(source);
               setEditBaseline(source);
               setApplyError(null);
-              onFocusInstance(null);
+              focusInstance(null);
             }}
           >
             Reload
@@ -515,9 +630,51 @@ export function NetlistCodePanel({
       {editError ? <p role="alert">{editError}</p> : null}
       {processError ? <p role="alert">{processError}</p> : null}
       <p className="netlist-edit-hint">
-        Edit names, models and values · Enter to apply
+        {draftPreview
+          ? "Draft · each ? is something the drawing does not say yet"
+          : "Edit names, models and values · Enter to apply"}
       </p>
       {error ? <p role="alert">{error}</p> : null}
+      {issues.length ? (
+        <div
+          className="netlist-issues"
+          role="alert"
+          data-testid="netlist-issues"
+        >
+          <p className="netlist-issues-heading">
+            {issues.length === 1 ? "1 issue" : `${issues.length} issues`} ·
+            click one to show it on the canvas
+          </p>
+          <ul>
+            {issues.map((issue, index) => {
+              const target = netlistIssueTarget(
+                project,
+                issue.primary,
+                exportRoot,
+              );
+              return (
+                <li
+                  key={`${issue.code}\u0000${issue.primary.objectId}\u0000${index}`}
+                >
+                  <button
+                    type="button"
+                    className="netlist-issue"
+                    data-testid="netlist-issue"
+                    onClick={() => onNavigateDiagnostic?.(issue)}
+                  >
+                    <span className="netlist-issue-message">
+                      {issue.message}
+                    </span>
+                    {target ? (
+                      <span className="netlist-issue-target">{target}</span>
+                    ) : null}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
     </section>
   );
 }

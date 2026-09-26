@@ -77,6 +77,13 @@ The product set is exactly the reviewed, Reference-calibrated entries:
 - `voltage-source`, `pulse-voltage-source`, `current-source`; the two-terminal
   Digital Clock composes the calibrated independent voltage-source body with
   the Figure 16.8 clock-pulse mark and owns its timing semantics separately;
+- `battery`, the drawing-only single-cell plate symbol extracted from
+  _Fundamentals of Microelectronics_ Figure 3.11(a). Its long/short plate
+  lengths, spacing, and stroke ratio use the circular voltage source in the
+  same panel as the scale reference. Its authoring-only descriptor assigns an
+  editable `B`-series Reference and a side annotation, with `targetPolicy:
+  "none"`: placing it does not create a DC source or physical battery model,
+  and netlist export still requires an explicit electrical mapping;
 - `resistor`, `capacitor`, `inductor-compact`, their adjustable siblings
   `variable-resistor`, `variable-capacitor`, and `variable-inductor` (the base
   body plus one diagonal adjustment arrow), `port`, and `port-filled`;
@@ -135,6 +142,21 @@ The product set is exactly the reviewed, Reference-calibrated entries:
   in `scripts/lib/anchor-logic-body.mjs`; raw PDF evidence and the DFF/delay
   geometry are unchanged. Pin names and order stay fixed, but changed pin
   columns can require manual repair of historical routes;
+- the AND, NAND, OR, NOR, XOR and XNOR gates each have internal,
+  house-provenance 3/4-input siblings derived from their reviewed two-input
+  outlines without resizing the body or changing an output bubble. Three-input
+  leads use y=-10,0,10; four-input leads use the shared 2-unit electrical
+  lattice at y=-12,-4,4,12. All leads run straight into the existing body;
+  curved OR/XOR-family connection points are calculated from the reviewed
+  rear Bézier contour. Ordinary placement and free drawing still snap to 10
+  units. These siblings do not claim an exact textbook 3/4-input witness.
+  The Library retains one tile per gate family, and each Instance selects
+  2, 3 or 4 inputs in Properties. Every arity has its own Symbol and ordered
+  black-box subcircuit ports; switching updates the Symbol and default target
+  atomically. Existing pins and Nets survive an upgrade. A downgrade retires
+  only a deleted wire's anonymous singleton Net; authored connections, Routes,
+  No Connects and import/interface owners on removed pins still block it.
+  Black-box targets require an external implementation to simulate;
 - triangular Analog Blocks (`opamp`, fully differential amps, voltage amps,
   comparators, and their lettered/polarity variants) share a user-requested
   equilateral outline with three 60-unit sides and a 60-degree apex. Its left
@@ -151,6 +173,17 @@ The product set is exactly the reviewed, Reference-calibrated entries:
   past the apex. The shared construction lives in `scripts/lib/analog-triangle.mjs`,
   and the op-amp
   generator also projects the comparator bodies;
+- `opamp-wide` and `opamp-differential-wide` sit beside their compact versions
+  in Analog Blocks. The 40-unit entries display **Op Amp** and **FD Amp**;
+  the existing 20-unit entries display **Op Amp S** and **FD Amp S**. Tooltips
+  explain the spacing; stored IDs and circuit instance names remain unchanged.
+  Wide uses 40-unit input/output pairs in the same 60-unit
+  equilateral body, keeping six-unit polarity marks inward of the pin rows; the existing 20-unit versions keep all original geometry.
+  Input/output polarity swaps and internal body text have matching Wide states.
+  `scripts/lib/wide-amplifier.mjs` derives each complete definition from its
+  compact counterpart during `components:generate`/`components:check`, sharing
+  subcircuit targets, port order and all electrical configuration. Projects
+  retain the chosen Symbol ID; adding Wide never moves existing pins or routes;
 - the Analog Blocks library includes the reference-calibrated single-input
   `transconductance` symbol and its user-requested house companion
   `differential-transconductance`. Both display `g_m` without a default unary

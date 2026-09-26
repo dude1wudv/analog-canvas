@@ -1,13 +1,9 @@
-import { createFormalExportSource, safeExportBaseName } from "@icm/exporters";
+import { createBrowserFormalExportSource } from "@icm/exporters";
 import {
   createDesignNetlistExport,
   unfinishedDrawingDiagnostics,
 } from "@icm/netlist";
-import type {
-  NetlistFormat,
-  NetlistNamingProfile,
-  NetlistPortCase,
-} from "@icm/netlist";
+import type { NetlistFormat, NetlistNamingProfile } from "@icm/netlist";
 import type { CircuitProject, SchematicDocument } from "@icm/model";
 import type { SymbolResolver } from "@icm/symbols";
 import { prepareDocumentFormulaArtifacts } from "../text-editing/formula-artifacts";
@@ -31,7 +27,7 @@ async function preparedFormalExportSource(
 ) {
   const prepared = await prepareDocumentFormulaArtifacts(document);
   try {
-    return createFormalExportSource(document, resolver, {
+    return await createBrowserFormalExportSource(document, resolver, {
       title: projectName,
     });
   } finally {
@@ -65,14 +61,12 @@ export function planDesignNetlistExport({
   format,
   project,
   namingProfile = "native",
-  portCase,
   electricalWarningsPresent = false,
   rootDocumentId,
 }: {
   format: NetlistFormat;
   project: CircuitProject;
   namingProfile?: NetlistNamingProfile;
-  portCase?: NetlistPortCase;
   electricalWarningsPresent?: boolean;
   rootDocumentId?: string;
 }): DesignNetlistExportPlan {
@@ -80,7 +74,6 @@ export function planDesignNetlistExport({
     format,
     namingProfile,
     ...(rootDocumentId ? { rootDocumentId } : {}),
-    ...(portCase ? { portCase } : {}),
   });
   if (result.status === "blocked") {
     return {
@@ -151,21 +144,6 @@ export async function createVisualExportArtifact(
     extension: "pdf",
     report: `Exported PDF revision ${document.revision}`,
   };
-}
-
-/** Deliver a prepared artifact through the browser download surface. */
-export function requestBrowserDownload(
-  artifact: EditorExportArtifact,
-  baseName: string,
-): void {
-  const url = URL.createObjectURL(
-    new Blob([artifact.bytes], { type: artifact.mediaType }),
-  );
-  const anchor = window.document.createElement("a");
-  anchor.href = url;
-  anchor.download = `${safeExportBaseName(baseName)}.${artifact.extension}`;
-  anchor.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 /**

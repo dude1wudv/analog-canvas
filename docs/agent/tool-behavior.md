@@ -3,8 +3,14 @@
 The Circuit resource has four operations: `capabilities`, `snapshot`, `transact`
 and `render`. File, Simulation and Project are separate advertised resources.
 Capabilities reports versions, permissions, limits, transaction forms and edit
-kinds; it does not return a Project Index. A Snapshot contains the selected
-Document and Project context. Use the current transport schema for exact fields.
+kinds; it does not return a Project Index. Snapshot has one protocol operation
+with several projections: `bootstrap` contains connection identities and counts;
+`state` contains the current Document revision, counts and optional diagnostic
+items; `folder-directory` lists saved experiment metadata without source text;
+`geometry` selects authored objects; `pins` resolves selected instances' endpoints
+and bulk; and the default `full` projection contains
+the selected Document and Project editing context. Use the current transport
+schema for exact fields.
 
 ## Transactions
 
@@ -15,6 +21,14 @@ Document and Project context. Use the current transport schema for exact fields.
   not advance revision. Semantic focus changes do not mutate Project data.
 - Snapshot is read-only evidence, not a replacement Project payload. GUI and
   Agent changes use the same edit validation and locks.
+- `diagnosticDeltaDetail:"compact"` retains current and added diagnostics but
+  replaces removed bodies with `removedIds` (stable diagnostic identities).
+  Raw HTTP defaults to full; MCP edits default to compact and accept `detail:"full"`.
+  An empty compact `removed` array does not mean no diagnostics were removed.
+- Clean full Snapshots may be reused across unchanged reads and transaction
+  planning. Every mutation still supplies `expectedRevision` (and structure
+  revision when required); stale rejection, not a precautionary reread before
+  every operation, is the authoritative concurrency boundary.
 
 For MCP calls the helper constructs the envelope. Raw HTTP callers construct it
 from published OpenAPI. A built-in catalog describes available assets, never
@@ -31,6 +45,13 @@ Persisted Routes contain a starting endpoint and stable-ID legs to bends or an
 endpoint. A route-segment attachment uses `{routeId, legId}` and the actual
 point; a derived segmentIndex is not a stable identifier across revisions.
 Segment modes such as manual, locked or trunk do not compute an autoroute.
+`wire-at` selects a tap by `point` on the evolving wire batch, optionally
+restricted by `net` or a member `{instanceId,pinName}`; `net` selects the
+nearest existing conductor to the other anchor. These selectors use the same
+wire planner, including a trunk created earlier in the batch, without an
+intermediate Snapshot. A `free` anchor is not an implicit tap. Crossings of
+different Nets may remain ordinary crossings, but a tap that would join them
+is rejected; specifying a Net does not make a Junction electrically isolated.
 
 A crossing does not connect Nets by itself. Real branches use explicit
 Junctions; a bend is not a branch. For normal wiring, the shared wire planner

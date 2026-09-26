@@ -3,10 +3,12 @@ import mcpDistribution from "../config/agent-mcp-distribution.json";
 import {
   SESSION_STATE_KEY,
   fileOperationScopes,
+  projectOperationScopes,
   simulationOperationScopes,
 } from "./agent-session-runtime";
 import {
   AgentFileResourceRequestSchema,
+  AgentProjectResourceRequestSchema,
   AgentSimulationResourceRequestSchema,
 } from "@icm/agent-adapter";
 
@@ -42,6 +44,27 @@ const limits: Partial<AgentSessionLimits> = {
   rateLimit: { windowMs: 60_000, maxRequests: 10 },
 };
 
+it("requires import and all existing edit scopes for staged Cell body writes", () => {
+  expect(
+    fileOperationScopes({
+      apiVersion: "3.0",
+      requestId: "body",
+      operation: "import-cell",
+      candidateId: "c",
+      sourceDocumentId: "s",
+      targetDocumentId: "t",
+      mode: "append",
+      expectedStructureRevision: 0,
+      expectedRevision: 0,
+    }),
+  ).toEqual([
+    "project.import",
+    "circuit.edit.geometry",
+    "circuit.edit.connectivity",
+    "circuit.edit.presentation",
+  ]);
+});
+
 it("requires no spending grant for static authoring help without relaxing run access", () => {
   const scopes = (op: object) =>
     simulationOperationScopes(
@@ -57,6 +80,13 @@ it("requires no spending grant for static authoring help without relaxing run ac
     scopes({ operation: "start", preparedId: "p", digest: "a".repeat(64) }),
   ).toEqual(["simulation.run"]);
   expect(scopes({ operation: "read", runId: "r" })).toEqual(["simulation.run"]);
+  expect(scopes({ operation: "catalog", runId: "r" })).toEqual([
+    "simulation.run",
+  ]);
+  expect(scopes({ operation: "history-usage" })).toEqual(["simulation.run"]);
+  expect(scopes({ operation: "history-delete", runId: "r" })).toEqual([
+    "simulation.run",
+  ]);
 });
 
 it("uses existing Project write authorization for Project-owned simulation source only", () => {
@@ -89,6 +119,56 @@ it("uses existing Project write authorization for Project-owned simulation sourc
       expectedRevision: 0,
     }),
   ).toEqual(["simulation.run", "project.import"]);
+});
+
+it("opens a staged import under the Project import scope", () => {
+  expect(
+    fileOperationScopes(
+      AgentFileResourceRequestSchema.parse({
+        apiVersion: "3.0",
+        requestId: "open-candidate",
+        operation: "open",
+        candidateId: "candidate-1",
+      }),
+    ),
+  ).toEqual(["project.import"]);
+});
+
+it("authorizes Gallery, Project Code and Netlist operations by their real effects", () => {
+  const scopes = (operation: Record<string, unknown>) =>
+    projectOperationScopes(
+      AgentProjectResourceRequestSchema.parse({
+        apiVersion: "3.0",
+        requestId: "projects",
+        ...operation,
+      }),
+    );
+  expect(scopes({ operation: "list-gallery" })).toEqual(["circuit.snapshot"]);
+  expect(
+    scopes({ operation: "read-gallery-entries", galleryEntryIds: ["g1"] }),
+  ).toEqual(["circuit.snapshot"]);
+  expect(scopes({ operation: "read-project-code" })).toEqual([
+    "project.download",
+  ]);
+  expect(
+    scopes({
+      operation: "replace-project-code",
+      projectCode: "{}",
+      expectedStructureRevision: 0,
+    }),
+  ).toEqual([
+    "circuit.edit.geometry",
+    "circuit.edit.connectivity",
+    "circuit.edit.presentation",
+  ]);
+  expect(
+    scopes({
+      operation: "replace-netlist",
+      netlist: ".end\n",
+      expectedStructureRevision: 0,
+    }),
+  ).toEqual(["circuit.edit.connectivity", "circuit.edit.presentation"]);
+  expect(scopes({ operation: "list-projects" })).toEqual(["project.import"]);
 });
 
 function folder() {
@@ -490,6 +570,7 @@ describe("public Agent session routes", () => {
     expect(Object.keys(contract.paths).sort()).toEqual([
       "/api/agent/claims",
       "/api/agent/connectors/resume",
+      "/api/agent/sessions/{sessionId}/artifacts/{fileId}",
       "/api/agent/sessions/{sessionId}/circuit",
       "/api/agent/sessions/{sessionId}/files",
       "/api/agent/sessions/{sessionId}/projects",
@@ -808,6 +889,81 @@ describe("public Agent session routes", () => {
     expect(put).not.toHaveBeenCalled();
   });
 
+  it("fails a request owned by the replaced editor socket without waiting for its timeout", async () => {
+    const { env, objects, sockets } = routedFixture();
+    const createdResponse = await routeAgentSessionRequest(
+      new Request("https://editor.example/api/agent/sessions", {
+        method: "POST",
+        headers: {
+          origin: "https://editor.example",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          projectSessionId: "project:replacement",
+          projectId: "project",
+          documentIds: ["document-main"],
+          scopes: ["circuit.snapshot"],
+        }),
+      }),
+      env,
+    );
+    const created = (await createdResponse!.json()) as {
+      session: { sessionId: string; claimCode: string };
+    };
+    const claimResponse = await routeAgentSessionRequest(
+      new Request("https://editor.example/api/agent/claims", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ claimCode: created.session.claimCode }),
+      }),
+      env,
+    );
+    const claim = (await claimResponse!.json()) as { agentToken: string };
+    let forwarded!: () => void;
+    const wasForwarded = new Promise<void>((resolve) => {
+      forwarded = resolve;
+    });
+    const oldSocket = {
+      readyState: WebSocket.OPEN,
+      send: () => forwarded(),
+      close: vi.fn(),
+    } as unknown as WebSocket;
+    sockets.set(created.session.sessionId, [oldSocket]);
+    const responsePromise = routeAgentSessionRequest(
+      new Request(
+        `https://editor.example/api/agent/sessions/${created.session.sessionId}/circuit`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${claim.agentToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            apiVersion: "3.0",
+            requestId: "request-on-old-socket",
+            operation: "snapshot",
+            documentId: "document-main",
+          }),
+        },
+      ),
+      env,
+    );
+    await wasForwarded;
+    const replacement = {
+      readyState: WebSocket.OPEN,
+      send: vi.fn(),
+    } as unknown as WebSocket;
+    sockets.set(created.session.sessionId, [oldSocket, replacement]);
+
+    await objects.get(created.session.sessionId)!.webSocketClose(oldSocket);
+
+    const response = await responsePromise;
+    expect(response?.status).toBe(503);
+    expect(await response!.json()).toMatchObject({
+      error: { code: "EDITOR_DISCONNECTED" },
+    });
+  });
+
   it("acknowledges a session-bound browser heartbeat outside business dispatch", async () => {
     const storage = new MemoryStorage();
     const object = new AgentSessionDO(
@@ -829,7 +985,7 @@ describe("public Agent session routes", () => {
     );
     const send = vi.fn();
     await object.webSocketMessage(
-      { send } as unknown as WebSocket,
+      { send, readyState: WebSocket.OPEN } as unknown as WebSocket,
       JSON.stringify({
         protocolVersion: "1.0",
         sessionId: "session-heartbeat",
@@ -849,6 +1005,38 @@ describe("public Agent session routes", () => {
       sessionId: "session-heartbeat",
       kind: "heartbeat-ack",
       nonce: "heartbeat-1",
+    });
+    const before = await storage.get<{ expiresAt: number }>(SESSION_STATE_KEY);
+    const heartbeat = {
+      protocolVersion: "1.0",
+      sessionId: "session-heartbeat",
+      kind: "heartbeat",
+      nonce: "context-2",
+      contextRevision: "gallery",
+      projectId: "no-active-project",
+      documentIds: [],
+    };
+    await object.webSocketMessage(
+      { send, readyState: WebSocket.OPEN } as unknown as WebSocket,
+      JSON.stringify(heartbeat),
+    );
+    expect(await storage.get(SESSION_STATE_KEY)).toMatchObject({
+      contextRevision: "gallery",
+      documentIds: [],
+      expiresAt: before!.expiresAt,
+    });
+    // A closing transport cannot resurrect its old Project roster.
+    await object.webSocketMessage(
+      { send, readyState: WebSocket.CLOSED } as unknown as WebSocket,
+      JSON.stringify({
+        ...heartbeat,
+        contextRevision: "old",
+        documentIds: ["old-cell"],
+      }),
+    );
+    expect(await storage.get(SESSION_STATE_KEY)).toMatchObject({
+      contextRevision: "gallery",
+      documentIds: [],
     });
   });
 

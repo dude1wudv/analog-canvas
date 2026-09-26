@@ -8,7 +8,12 @@ import {
 } from "react";
 import type { CircuitProject } from "@icm/model";
 
-import { formatProjectCode, validateProjectCode } from "./project-code";
+import {
+  formatProjectCode,
+  validateProjectCode,
+  planProjectCodeCommit,
+} from "./project-code";
+import { projectCodeInstanceRanges } from "./project-code-ranges";
 
 const ProjectTextEditor = lazy(() => import("./project-text-editor"));
 
@@ -20,10 +25,22 @@ export interface ProjectCodeApplyOutcome {
 /** Complete Project JSON, kept separate from per-object Properties. */
 export function ProjectCodePanel({
   project,
+  selection,
+  onDirtyChange,
   onApply,
 }: {
+  onDirtyChange?(dirty: boolean): void;
   project: CircuitProject;
-  onApply(source: string, baseline: string): ProjectCodeApplyOutcome;
+  /** Parts selected on the canvas, whose whole JSON the code lights. */
+  selection?: { documentId: string; instanceIds: readonly string[] };
+  onApply(
+    source: string,
+    baseline: string,
+    planners: {
+      formatProjectCode: typeof formatProjectCode;
+      planProjectCodeCommit: typeof planProjectCodeCommit;
+    },
+  ): ProjectCodeApplyOutcome;
 }) {
   const baseline = useMemo(() => formatProjectCode(project), [project]);
   const [draft, setDraft] = useState(baseline);
@@ -41,6 +58,28 @@ export function ProjectCodePanel({
       setError(null);
     }
   }, [baseline, dirty]);
+
+  useLayoutEffect(() => {
+    onDirtyChange?.(dirty);
+    return () => onDirtyChange?.(false);
+  }, [dirty, onDirtyChange]);
+
+  const selectionKey = selection
+    ? `${selection.documentId}\u0000${selection.instanceIds.join("\u0000")}`
+    : "";
+  const highlightedRanges = useMemo(
+    () =>
+      selection
+        ? projectCodeInstanceRanges(
+            draft,
+            selection.documentId,
+            selection.instanceIds,
+          )
+        : [],
+    // The selection is read through its key; a new array of the same ids
+    // is the same selection.
+    [draft, selectionKey],
+  );
 
   const changedOutsideDraft = dirty && editBaseline !== baseline;
   const parsed = validateProjectCode(draft, project.id);
@@ -65,7 +104,10 @@ export function ProjectCodePanel({
       );
       return;
     }
-    const outcome = onApply(draft, editBaseline);
+    const outcome = onApply(draft, editBaseline, {
+      formatProjectCode,
+      planProjectCodeCommit,
+    });
     if (!outcome.ok) {
       setError(outcome.message ?? "The Project edit was rejected");
       return;
@@ -96,7 +138,7 @@ export function ProjectCodePanel({
           onClick={apply}
           disabled={!dirty || !parsed.ok || changedOutsideDraft}
         >
-          Apply
+          应用
         </button>
       </div>
       <Suspense
@@ -115,6 +157,8 @@ export function ProjectCodePanel({
           invalid={!!error || changedOutsideDraft}
           onChange={change}
           onModEnter={apply}
+          highlightedRanges={highlightedRanges}
+          revealHighlight={selectionKey}
         />
       </Suspense>
       {changedOutsideDraft ? (

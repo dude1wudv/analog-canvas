@@ -102,6 +102,16 @@ export const AgentFileResourceRequestSchema = z.discriminatedUnion(
     FileRequestBaseSchema.extend({
       operation: z.literal("inspect"),
       candidateId: StableIdSchema,
+      documentId: StableIdSchema.optional(),
+    }),
+    FileRequestBaseSchema.extend({
+      operation: z.literal("import-cell"),
+      candidateId: StableIdSchema,
+      sourceDocumentId: StableIdSchema,
+      targetDocumentId: StableIdSchema,
+      mode: z.enum(["replace-body", "append"]),
+      expectedStructureRevision: z.number().int().nonnegative(),
+      expectedRevision: z.number().int().nonnegative(),
     }),
     FileRequestBaseSchema.extend({
       operation: z.literal("discard"),
@@ -110,6 +120,11 @@ export const AgentFileResourceRequestSchema = z.discriminatedUnion(
     FileRequestBaseSchema.extend({
       operation: z.literal("request-approval"),
       candidateId: StableIdSchema,
+    }),
+    FileRequestBaseSchema.extend({
+      operation: z.literal("open"),
+      candidateId: StableIdSchema,
+      background: z.boolean().optional(),
     }),
   ],
 );
@@ -125,6 +140,16 @@ export const AgentFileCandidateSummarySchema = z.strictObject({
   projectName: z.string().min(1),
   documentCount: z.number().int().nonnegative(),
   instanceCount: z.number().int().nonnegative(),
+  documents: z
+    .array(
+      z.strictObject({
+        id: StableIdSchema,
+        name: z.string(),
+        instanceCount: z.number().int().nonnegative(),
+        terminalNames: z.array(z.string()),
+      }),
+    )
+    .optional(),
   diagnostics: z.array(
     z.strictObject({
       severity: z.enum(["warning", "error"]),
@@ -150,6 +175,20 @@ export const AgentFileResourceResponseSchema = z.union([
     operation: z.enum(["stage", "inspect"]),
     ok: z.literal(true),
     candidate: AgentFileCandidateSummarySchema,
+    documentCode: z
+      .string()
+      .optional()
+      .describe(
+        "Canonical staged SchematicDocument JSON, only for an explicit inspect.documentId; not a live document.",
+      ),
+  }),
+  FileResponseBaseSchema.extend({
+    operation: z.literal("import-cell"),
+    ok: z.literal(true),
+    targetDocumentId: StableIdSchema,
+    importedDocumentIds: z.array(StableIdSchema),
+    structureRevision: z.number().int().nonnegative(),
+    revision: z.number().int().nonnegative(),
   }),
   FileResponseBaseSchema.extend({
     operation: z.literal("discard"),
@@ -163,6 +202,10 @@ export const AgentFileResourceResponseSchema = z.union([
     approval: z.literal("pending-human"),
   }),
   FileResponseBaseSchema.extend({
+    operation: z.literal("open"),
+    ok: z.literal(true),
+  }),
+  FileResponseBaseSchema.extend({
     operation: z.enum([
       "error",
       "download",
@@ -170,7 +213,9 @@ export const AgentFileResourceResponseSchema = z.union([
       "inspect",
       "discard",
       "request-approval",
+      "open",
       "simulation-input",
+      "import-cell",
     ]),
     ok: z.literal(false),
     error: z.strictObject({

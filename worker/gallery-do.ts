@@ -1,3 +1,10 @@
+import { formulaPreviewNeedsRefresh } from "./gallery-preview";
+import {
+  readGalleryCuration,
+  type GalleryAttention,
+  type GalleryCuration,
+} from "./gallery-curation";
+import taxonomy from "../config/gallery-taxonomy.json";
 // Community example gallery: publish-first with an admin recycle bin.
 //
 // Trust boundary: the only accepted input is Project JSON that passes the
@@ -52,6 +59,36 @@ import {
 import { type CircuitProject } from "@icm/model";
 
 import type { AuthNamespaceLike } from "./auth";
+
+const GALLERY_TAG_GROUPS = Object.entries(taxonomy.tagsByGroup);
+const GALLERY_TAG_ALIASES: Record<string, string> = {
+  op: "operational amplifier",
+  osc: "oscillator",
+  bgr: "bandgap",
+  dcdc: "dc-dc",
+  "d-latch": "d latch",
+  levelshifter: "level shifter",
+  sha: "sample and hold",
+  "switch capacitor": "switched capacitor",
+  cts: "charge transfer switch",
+  "v-i": "voltage to current",
+  vtc: "voltage to time",
+  tdc: "time to digital",
+  "gain-boost": "gain boosting",
+  "low-dropout": "ldo",
+  dropout: "ldo",
+  "linear regulator": "regulator",
+  "bootstrapped cts": "charge transfer switch",
+};
+
+function galleryTagGroup(tag: string): string {
+  const normalized = tag.toLowerCase();
+  const key = GALLERY_TAG_ALIASES[normalized] ?? normalized;
+  return (
+    GALLERY_TAG_GROUPS.find(([, values]) => values.includes(key))?.[0] ??
+    "Custom & legacy"
+  );
+}
 
 /**
  * A circuit's id is its address, so it is short enough to read out loud and
@@ -110,6 +147,8 @@ export interface CloudProjectSummary {
   updatedAt: string;
   revision: number;
   schemaVersion: number;
+  galleryEntryId: string | null;
+  favorite: boolean;
 }
 
 interface CloudProjectRow {
@@ -118,6 +157,8 @@ interface CloudProjectRow {
   updated_at: string;
   revision: number;
   schema_version: number;
+  gallery_entry_id: string | null;
+  favorite: number;
 }
 
 interface StoredProjectRow {
@@ -127,7 +168,8 @@ interface StoredProjectRow {
 }
 export const GALLERY_MAX_NAME_LENGTH = 120;
 export const GALLERY_MAX_AUTHOR_LENGTH = 40;
-export const GALLERY_MAX_DESCRIPTION_LENGTH = 300;
+/** Room for notes and a full citation, DOI included; tiles show three lines. */
+export const GALLERY_MAX_DESCRIPTION_LENGTH = 1000;
 /**
  * Publishes one account may make in a UTC day. Anti-garbage protection, not a
  * pace limit: ten stopped an ordinary afternoon of posting a chapter's worth
@@ -149,12 +191,16 @@ export const GALLERY_DAILY_SUBMISSION_LIMIT = 100;
  * of deleting their own entry outright in one step.
  */
 export const GALLERY_RECYCLED_KEEP_PER_ACCOUNT = 25;
-export const GALLERY_MAX_TAGS = 5;
-export const GALLERY_MAX_TAG_LENGTH = 24;
+export const GALLERY_MAX_TAGS = 12;
+export const GALLERY_MAX_TAG_LENGTH = 32;
 /** How many previous states each Gallery entry retains. */
-export const GALLERY_MAX_VERSIONS_PER_ENTRY = 2;
+export const GALLERY_MAX_VERSIONS_PER_ENTRY = 3;
 export const GALLERY_DEFAULT_LIST_LIMIT = 30;
 export const GALLERY_MAX_LIST_LIMIT = 60;
+/** Entries per netlist page, and the Project Code characters one may carry. */
+export const GALLERY_NETLIST_PAGE_LIMIT = 100;
+export const GALLERY_NETLIST_MAX_PAGE_LIMIT = 200;
+export const GALLERY_NETLIST_PAGE_CHARACTERS = 8_000_000;
 
 export interface SvgPreviewDimensions {
   width: number;
@@ -241,6 +287,11 @@ export type GalleryNamespaceLike = {
 };
 
 export type GalleryEnv = {
+  /**
+   * Read-only, Gallery-only credential for the private off-site backup job
+   * and for reading the public Gallery's netlists by script.
+   */
+  GALLERY_BACKUP_TOKEN?: string;
   GALLERY: GalleryNamespaceLike;
   /** Sessions are the only identity: publishing requires one. */
   AUTH?: AuthNamespaceLike;
@@ -249,6 +300,9 @@ export type GalleryEnv = {
 };
 
 export interface GalleryEntrySummary {
+  curationRevision: number;
+  attention?: GalleryAttention;
+  assessedPreviewRevision?: string;
   id: string;
   name: string;
   author: string;
@@ -283,7 +337,10 @@ export interface GalleryEntrySummary {
  * inner whitespace collapsed, `[a-z0-9 +/-]` only, capped in length and
  * count, deduplicated.
  */
-export function sanitizeGalleryTags(value: unknown): string[] {
+export function sanitizeGalleryTags(
+  value: unknown,
+  limit = GALLERY_MAX_TAGS,
+): string[] {
   if (!Array.isArray(value)) return [];
   const tags: string[] = [];
   for (const raw of value) {
@@ -297,7 +354,7 @@ export function sanitizeGalleryTags(value: unknown): string[] {
       .trim();
     if (tag.length === 0 || tags.includes(tag)) continue;
     tags.push(tag);
-    if (tags.length === GALLERY_MAX_TAGS) break;
+    if (tags.length === limit) break;
   }
   return tags;
 }
@@ -313,6 +370,7 @@ function unwrapTags(stored: string | null): string[] {
 }
 
 interface EntryRow {
+  curation_json: string;
   id: string;
   name: string;
   author: string;
@@ -346,6 +404,7 @@ type EntrySummaryRow = Pick<
   | "owner_user_id"
   | "schema_version"
   | "tags"
+  | "curation_json"
   | "netlistable"
   | "preview_revision"
   | "preview_width"
@@ -372,8 +431,17 @@ const PREVIEW_DIMENSIONS_MIGRATION = "2026-09-02-gallery-preview-dimensions";
 
 function summaryOf(
   row: EntrySummaryRow & { likes?: number; liked_by_viewer?: number },
+  includeAttention = false,
 ): GalleryEntrySummary {
+  const curation = readGalleryCuration(row.curation_json);
   return {
+    curationRevision: curation?.revision ?? 0,
+    ...(includeAttention && curation?.attention
+      ? {
+          attention: curation.attention,
+          assessedPreviewRevision: curation.assessedPreviewRevision,
+        }
+      : {}),
     id: row.id,
     name: row.name,
     author: row.author,
@@ -398,9 +466,27 @@ function summaryOf(
   };
 }
 
+/** Republication invalidates in-flight metadata writes even if the SVG stays identical. */
+function advanceCurationRevision(row: EntryRow, at: string): string {
+  const previous = readGalleryCuration(row.curation_json);
+  return JSON.stringify({
+    attention: previous?.attention ?? null,
+    assessedPreviewRevision: previous?.assessedPreviewRevision ?? "",
+    updatedAt: previous?.updatedAt ?? at,
+    updatedBy: previous?.updatedBy ?? "",
+    source: previous?.source ?? "manual",
+    revision: (previous?.revision ?? 0) + 1,
+  });
+}
+
+/** An entry whose curation asks its author to look again. */
+const NEEDS_ATTENTION =
+  "json_extract(CASE WHEN e.curation_json = '' THEN '{}' ELSE e.curation_json END, '$.attention.status') = 'needs-attention'";
+
 /** Storage-only Durable Object; policy lives in `routeGalleryRequest`. */
 export class GalleryDO {
   private readonly sql: SqlStorage;
+  private readonly backupEpoch = crypto.randomUUID();
 
   constructor(private readonly state: DurableObjectStateLike) {
     this.sql = state.storage.sql;
@@ -474,7 +560,7 @@ export class GalleryDO {
       ON gallery_entry_versions(entry_id, version_no)
     `);
     // A signed-in account's private, stable Projects. Save updates one row;
-    // it never consumes another slot or creates implicit version history.
+    // each changed save keeps the three preceding revisions separately.
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS cloud_projects (
         id TEXT PRIMARY KEY,
@@ -492,6 +578,20 @@ export class GalleryDO {
       CREATE INDEX IF NOT EXISTS idx_cloud_projects_user
       ON cloud_projects(user_id, updated_at)
     `);
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS cloud_project_versions (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        saved_at TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        project_text TEXT NOT NULL,
+        preview_svg TEXT NOT NULL DEFAULT ''
+      ) WITHOUT ROWID
+    `);
+    this.sql.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cloud_project_versions
+      ON cloud_project_versions(project_id, revision)`);
     // One-time conversion of the retired rolling workspace shelf. Old rows
     // become stable Projects at revision 1; no compatibility route remains.
     try {
@@ -509,6 +609,8 @@ export class GalleryDO {
     }
     // Additive columns for pre-existing databases.
     for (const alteration of [
+      "ALTER TABLE gallery_entries ADD COLUMN curation_json TEXT NOT NULL DEFAULT ''",
+      "ALTER TABLE gallery_entry_versions ADD COLUMN curation_json TEXT NOT NULL DEFAULT ''",
       "ALTER TABLE gallery_entries ADD COLUMN reject_reason TEXT",
       "ALTER TABLE gallery_entries ADD COLUMN reviewed_at TEXT",
       "ALTER TABLE gallery_entries ADD COLUMN reviewed_by TEXT",
@@ -521,6 +623,8 @@ export class GalleryDO {
       "ALTER TABLE gallery_entries ADD COLUMN preview_width REAL",
       "ALTER TABLE gallery_entries ADD COLUMN preview_height REAL",
       "ALTER TABLE cloud_projects ADD COLUMN preview_svg TEXT NOT NULL DEFAULT ''",
+      "ALTER TABLE cloud_projects ADD COLUMN gallery_entry_id TEXT",
+      "ALTER TABLE cloud_projects ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0",
     ]) {
       try {
         this.sql.exec(alteration);
@@ -528,6 +632,15 @@ export class GalleryDO {
         // Column already present.
       }
     }
+    // Counts and contributor roll-ups scan metadata across the filtered wall.
+    // Cover those reads without visiting wide rows containing Project/SVG text.
+    // Keep after the additive columns for existing databases. No query, cursor,
+    // permission, freshness or result ordering changes; SQLite maintains this
+    // index atomically with the same writes that update Gallery metadata.
+    this.sql.exec(`
+      CREATE INDEX IF NOT EXISTS idx_gallery_entries_feed_stats
+      ON gallery_entries(status, owner_user_id, author, netlistable, tags, curation_json)
+    `);
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS data_migrations (
         id TEXT PRIMARY KEY,
@@ -646,8 +759,19 @@ export class GalleryDO {
     switch (operation) {
       case "submit":
         return this.submit(body);
+      case "topology-inventory":
+        return Response.json({
+          ids: this.sql
+            .exec<{ id: string }>(
+              "SELECT id FROM gallery_entries WHERE status = 'public' ORDER BY id",
+            )
+            .toArray()
+            .map((row) => row.id),
+        });
       case "list":
         return this.list(body);
+      case "catalog":
+        return this.catalog();
       case "entry":
         return this.entry(String(body.id), "public");
       case "any-entry":
@@ -678,14 +802,22 @@ export class GalleryDO {
         return this.allIds();
       case "netlistable-refresh":
         return this.refreshNetlistable(body);
+      case "curate":
+        return this.curate(body);
       case "tags":
-        return this.tagCounts();
+        return this.tagCounts(body);
       case "authors":
         return this.authorCounts();
       case "rename-owner":
         return this.renameOwner(body);
       case "update-entry":
         return this.updateEntry(body);
+      case "label-looks-read":
+        return this.labelLooksRead(String(body.id));
+      case "netlist-sources":
+        return this.netlistSources(body);
+      case "label-looks-store":
+        return this.labelLooksStore(body);
       case "replace-entry":
         return this.replaceEntry(body);
       case "versions":
@@ -702,6 +834,14 @@ export class GalleryDO {
         );
       case "cloud-project-create":
         return this.cloudProjectCreate(body);
+      case "cloud-project-favorite":
+        return this.cloudProjectFavorite(body);
+      case "cloud-project-versions":
+        return this.cloudProjectVersions(
+          String(body.userId),
+          String(body.id),
+          body.versionId,
+        );
       case "cloud-project-update":
         return this.cloudProjectUpdate(body);
       case "cloud-project-list":
@@ -793,7 +933,78 @@ export class GalleryDO {
     return crypto.randomUUID();
   }
 
+  /** Private publication metadata; never infer a link from names or circuit bytes. */
+  private publicationBindingError(
+    body: Record<string, unknown>,
+  ): Response | null {
+    if (body.cloudProjectId === undefined) return null;
+    const cloud = this.sql
+      .exec<{ gallery_entry_id: string | null }>(
+        "SELECT gallery_entry_id FROM cloud_projects WHERE id = ? AND user_id = ?",
+        String(body.cloudProjectId),
+        String(body.userId),
+      )
+      .toArray()[0];
+    if (!cloud)
+      return Response.json(
+        { error: "cloud-project-not-found" },
+        { status: 404 },
+      );
+    if (cloud.gallery_entry_id !== body.expectedGalleryEntryId) {
+      return Response.json(
+        { error: "publication-link-conflict" },
+        { status: 409 },
+      );
+    }
+    return null;
+  }
+
+  private bindPublication(
+    body: Record<string, unknown>,
+    entryId: string,
+  ): void {
+    if (body.cloudProjectId === undefined) return;
+    // Changing the source retires only this account's previous draft binding.
+    // Private drawings remain intact, and stale tabs fail the expected-link check.
+    this.sql.exec(
+      "UPDATE cloud_projects SET gallery_entry_id = NULL WHERE user_id = ? AND gallery_entry_id = ? AND id <> ?",
+      String(body.userId),
+      entryId,
+      String(body.cloudProjectId),
+    );
+    this.sql.exec(
+      "UPDATE cloud_projects SET gallery_entry_id = ? WHERE id = ? AND user_id = ?",
+      entryId,
+      String(body.cloudProjectId),
+      String(body.userId),
+    );
+  }
+
+  private cloudGalleryTargetError(
+    body: Record<string, unknown>,
+  ): Response | null {
+    if (body.galleryEntryId === undefined) return null;
+    const entry = this.sql
+      .exec<{ owner_user_id: string | null }>(
+        "SELECT owner_user_id FROM gallery_entries WHERE id = ?",
+        String(body.galleryEntryId),
+      )
+      .toArray()[0];
+    if (
+      !entry ||
+      (body.mayEditGallery !== true && entry.owner_user_id !== body.userId)
+    ) {
+      return Response.json(
+        { error: "gallery-link-forbidden" },
+        { status: 403 },
+      );
+    }
+    return null;
+  }
+
   private submit(body: Record<string, unknown>): Response {
+    const bindingError = this.publicationBindingError(body);
+    if (bindingError) return bindingError;
     const entry = body.entry as EntryRow;
     const previewRevision = sha256Hex(entry.svg_text);
     const previewDimensions = svgPreviewDimensions(entry.svg_text);
@@ -862,6 +1073,7 @@ export class GalleryDO {
         previewDimensions?.width ?? null,
         previewDimensions?.height ?? null,
       );
+      this.bindPublication(body, entry.id);
       this.sweepRecycledRows(entry.owner_user_id ?? "");
       return { status: "stored" as const };
     });
@@ -871,12 +1083,20 @@ export class GalleryDO {
     return Response.json({ id: entry.id, previewRevision });
   }
 
-  private list(body: Record<string, unknown>): Response {
-    const limit = Math.min(
-      Math.max(Number(body.limit) || GALLERY_DEFAULT_LIST_LIMIT, 1),
-      GALLERY_MAX_LIST_LIMIT,
-    );
-    const cursor = typeof body.cursor === "string" ? body.cursor : null;
+  /**
+   * The wall's narrowing, shared by the feed and its tag counts so a filter
+   * means the same in both: Needs attention, With netlist and Liked narrow
+   * the counts exactly as they narrow the wall. The tag counts leave out the
+   * tag selection itself, or checking one tag would zero every other.
+   */
+  private feedConditions(
+    body: Record<string, unknown>,
+    options: { tags: boolean },
+  ): {
+    conditions: string[];
+    bindings: (string | number)[];
+    viewerId: string;
+  } {
     const author =
       typeof body.author === "string" && body.author.length > 0
         ? body.author
@@ -885,7 +1105,6 @@ export class GalleryDO {
       typeof body.ownerUserId === "string" && body.ownerUserId.length > 0
         ? body.ownerUserId
         : null;
-    // The viewer id leads the bindings because its sub-select comes first.
     const viewerId = typeof body.viewerId === "string" ? body.viewerId : "";
     const conditions = ["e.status = 'public'"];
     const bindings: (string | number)[] = [];
@@ -896,10 +1115,19 @@ export class GalleryDO {
       conditions.push("e.author = ?");
       bindings.push(author);
     }
-    const tags = sanitizeGalleryTags(body.tags);
-    if (tags.length > 0) {
-      conditions.push(`(${tags.map(() => "e.tags LIKE ?").join(" OR ")})`);
-      for (const tag of tags) bindings.push(`%,${tag},%`);
+    if (options.tags) {
+      const tags = sanitizeGalleryTags(body.tags, 256);
+      if (tags.length > 0) {
+        conditions.push(`(${tags.map(() => "e.tags LIKE ?").join(" OR ")})`);
+        for (const tag of tags) bindings.push(`%,${tag},%`);
+      }
+    }
+    if (body.attention === true) {
+      conditions.push(NEEDS_ATTENTION);
+      if (body.isAdmin !== true) {
+        conditions.push("e.owner_user_id = ?");
+        bindings.push(viewerId);
+      }
     }
     if (body.netlistable === true) conditions.push("e.netlistable = 1");
     // Whose likes: the session's, so a signed-out reader asking for their
@@ -911,17 +1139,43 @@ export class GalleryDO {
       );
       bindings.push(viewerId);
     }
+    return { conditions, bindings, viewerId };
+  }
+
+  private list(body: Record<string, unknown>): Response {
+    const limit = Math.min(
+      Math.max(Number(body.limit) || GALLERY_DEFAULT_LIST_LIMIT, 1),
+      GALLERY_MAX_LIST_LIMIT,
+    );
+    const cursor = typeof body.cursor === "string" ? body.cursor : null;
+    // The viewer id leads the bindings because its sub-select comes first.
+    const { conditions, bindings, viewerId } = this.feedConditions(body, {
+      tags: true,
+    });
     // The whole filtered wall's size, not the page's: counted before the
     // cursor narrows the query, so every page carries the same total.
-    const total = Number(
-      this.sql
-        .exec<{ total: number }>(
-          `SELECT COUNT(*) AS total FROM gallery_entries e
-           WHERE ${conditions.join(" AND ")}`,
-          ...bindings,
-        )
-        .toArray()[0]!.total,
-    );
+    const counts = this.sql
+      .exec<{
+        total: number;
+        attention: number;
+        netlistable: number;
+        liked: number;
+      }>(
+        `SELECT COUNT(*) AS total,
+           COUNT(CASE WHEN e.netlistable = 1 THEN 1 END) AS netlistable,
+           COUNT(CASE WHEN EXISTS (SELECT 1 FROM gallery_likes
+             WHERE entry_id = e.id AND user_id = ?) THEN 1 END) AS liked,
+           COUNT(CASE WHEN ? != '' AND (? = 1 OR e.owner_user_id = ?)
+             AND ${NEEDS_ATTENTION} THEN 1 END) AS attention
+         FROM gallery_entries e WHERE ${conditions.join(" AND ")}`,
+        viewerId,
+        viewerId,
+        body.isAdmin === true ? 1 : 0,
+        viewerId,
+        ...bindings,
+      )
+      .toArray()[0]!;
+    const authors = this.contributorCounts(conditions, bindings);
     if (cursor) {
       conditions.push("(e.created_at || '|' || e.id) < ?");
       bindings.push(cursor);
@@ -930,7 +1184,7 @@ export class GalleryDO {
       .exec<EntrySummaryRow & { likes: number; liked_by_viewer: number }>(
         `SELECT e.id, e.name, e.author, e.description, e.created_at,
            e.owner_user_id,
-           e.schema_version, e.tags, e.netlistable, e.preview_revision,
+           e.schema_version, e.tags, e.curation_json, e.netlistable, e.preview_revision,
            e.preview_width, e.preview_height,
            (SELECT COUNT(*) FROM gallery_likes WHERE entry_id = e.id) AS likes,
            (SELECT COUNT(*) FROM gallery_likes
@@ -947,7 +1201,60 @@ export class GalleryDO {
       rows.length > limit && page.length > 0
         ? `${page.at(-1)!.created_at}|${page.at(-1)!.id}`
         : null;
-    return Response.json({ entries: page.map(summaryOf), nextCursor, total });
+    return Response.json({
+      entries: page.map((row) =>
+        summaryOf(
+          row,
+          body.isAdmin === true ||
+            (!!viewerId && viewerId === row.owner_user_id),
+        ),
+      ),
+      nextCursor,
+      total: Number(counts.total),
+      authors,
+      filterCounts: {
+        attention: Number(counts.attention),
+        netlistable: Number(counts.netlistable),
+        liked: Number(counts.liked),
+      },
+    });
+  }
+
+  /** Complete public metadata index for server-rendered, directly readable pages. */
+  private catalog(): Response {
+    const rows = this.sql
+      .exec<EntrySummaryRow & { likes: number }>(
+        `SELECT e.id, e.name, e.author, e.description, e.created_at,
+           e.owner_user_id, e.schema_version, e.tags, e.curation_json,
+           e.netlistable, e.preview_revision, e.preview_width, e.preview_height,
+           (SELECT COUNT(*) FROM gallery_likes WHERE entry_id = e.id) AS likes
+         FROM gallery_entries e WHERE e.status = 'public'
+         ORDER BY e.name COLLATE NOCASE ASC, e.name ASC, e.id ASC`,
+      )
+      .toArray();
+    const entries = rows.map((row) => summaryOf(row));
+    const tagCounts = new Map<string, number>();
+    const groupCounts = new Map<string, number>();
+    for (const entry of entries) {
+      for (const tag of entry.tags) {
+        tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+      }
+      for (const group of new Set(entry.tags.map(galleryTagGroup))) {
+        groupCounts.set(group, (groupCounts.get(group) ?? 0) + 1);
+      }
+    }
+    return Response.json({
+      entries,
+      total: entries.length,
+      netlistable: entries.filter((entry) => entry.netlistable).length,
+      tags: [...tagCounts.entries()]
+        .sort((left, right) => left[0].localeCompare(right[0], "en"))
+        .map(([tag, count]) => ({ tag, count, group: galleryTagGroup(tag) })),
+      groups: [...groupCounts.entries()]
+        .sort((left, right) => left[0].localeCompare(right[0], "en"))
+        .map(([group, count]) => ({ group, count })),
+      authors: this.contributorCounts(["e.status = 'public'"], []),
+    });
   }
 
   /** Minimum row needed to decide whether an immutable preview cache hit is valid. */
@@ -982,6 +1289,16 @@ export class GalleryDO {
       ownerUserId: row.owner_user_id,
       previewRevision: row.preview_revision || "legacy",
       svgText: row.svg_text,
+      ...(formulaPreviewNeedsRefresh(row.svg_text)
+        ? {
+            projectText: this.sql
+              .exec<{ project_text: string }>(
+                "SELECT project_text FROM gallery_entries WHERE id = ?",
+                id,
+              )
+              .one().project_text,
+          }
+        : {}),
     });
   }
 
@@ -997,7 +1314,7 @@ export class GalleryDO {
       return Response.json({ error: "not-found" }, { status: 404 });
     }
     return Response.json({
-      entry: summaryOf(row),
+      entry: summaryOf(row, true),
       status: row.status,
       ownerUserId: row.owner_user_id,
       submitterEmail: row.submitter_email,
@@ -1021,8 +1338,8 @@ export class GalleryDO {
     this.sql.exec(
       `INSERT INTO gallery_entry_versions(
         id, entry_id, version_no, name, author, description, tags,
-        schema_version, project_text, svg_text, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        schema_version, project_text, svg_text, created_at, curation_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       shortId(),
       row.id,
       lastVersion + 1,
@@ -1034,11 +1351,64 @@ export class GalleryDO {
       row.project_text,
       row.svg_text,
       at,
+      row.curation_json ?? "",
     );
     pruneGalleryEntryVersions(this.sql, row.id);
   }
 
+  private curate(body: Record<string, unknown>): Response {
+    const row = this.sql
+      .exec<EntryRow>(
+        "SELECT * FROM gallery_entries WHERE id = ?",
+        String(body.id),
+      )
+      .toArray()[0];
+    if (!row) return Response.json({ error: "not-found" }, { status: 404 });
+    const previous = readGalleryCuration(row.curation_json);
+    if (
+      body.expectedPreviewRevision !== (row.preview_revision || "legacy") ||
+      body.expectedCurationRevision !== (previous?.revision ?? 0)
+    ) {
+      return Response.json(
+        {
+          error: "stale-curation",
+          message: "The circuit or its review changed. Reload before saving.",
+        },
+        { status: 409 },
+      );
+    }
+    const curation: GalleryCuration = {
+      attention: body.attention as GalleryAttention | null,
+      revision: (previous?.revision ?? 0) + 1,
+      assessedPreviewRevision: String(body.expectedPreviewRevision),
+      updatedAt: String(body.at),
+      updatedBy: String(body.userId),
+      source: body.source === "visual-audit" ? "visual-audit" : "manual",
+    };
+    this.state.storage.transactionSync(() => {
+      this.snapshotEntry(row, String(body.at));
+      this.sql.exec(
+        "UPDATE gallery_entries SET tags = ?, curation_json = ? WHERE id = ?",
+        wrapTags(sanitizeGalleryTags(body.tags)),
+        JSON.stringify(curation),
+        row.id,
+      );
+    });
+    return Response.json({
+      entry: summaryOf(
+        {
+          ...row,
+          tags: wrapTags(sanitizeGalleryTags(body.tags)),
+          curation_json: JSON.stringify(curation),
+        },
+        true,
+      ),
+    });
+  }
+
   private replaceEntry(body: Record<string, unknown>): Response {
+    const bindingError = this.publicationBindingError(body);
+    if (bindingError) return bindingError;
     const row = this.sql
       .exec<EntryRow>(
         "SELECT * FROM gallery_entries WHERE id = ?",
@@ -1050,13 +1420,14 @@ export class GalleryDO {
     const previewRevision = sha256Hex(svgText);
     const previewDimensions = svgPreviewDimensions(svgText);
     this.state.storage.transactionSync(() => {
+      this.bindPublication(body, row.id);
       this.snapshotEntry(row, String(body.at ?? row.created_at));
       this.sql.exec(
         `UPDATE gallery_entries
          SET name = ?, author = ?, description = ?, project_text = ?,
              svg_text = ?, schema_version = ?, status = ?, tags = ?,
              netlistable = ?, netlistable_version = ?, preview_revision = ?,
-             preview_width = ?, preview_height = ?
+             preview_width = ?, preview_height = ?, curation_json = ?
          WHERE id = ?`,
         String(body.name),
         String(body.author),
@@ -1071,6 +1442,7 @@ export class GalleryDO {
         previewRevision,
         previewDimensions?.width ?? null,
         previewDimensions?.height ?? null,
+        advanceCurationRevision(row, String(body.at ?? row.created_at)),
         row.id,
       );
     });
@@ -1207,6 +1579,7 @@ export class GalleryDO {
         author: string;
         description: string;
         tags: string | null;
+        curation_json: string;
         schema_version: number;
         project_text: string;
         svg_text: string;
@@ -1235,6 +1608,16 @@ export class GalleryDO {
     const netlistable = designExtractsNetlist(restoredProject) ? 1 : 0;
     const previewRevision = sha256Hex(version.svg_text);
     const previewDimensions = svgPreviewDimensions(version.svg_text);
+    const restoredCuration = readGalleryCuration(version.curation_json);
+    const restoredReview: GalleryCuration = {
+      attention: restoredCuration?.attention ?? null,
+      revision: (readGalleryCuration(entry.curation_json)?.revision ?? 0) + 1,
+      assessedPreviewRevision:
+        restoredCuration?.assessedPreviewRevision ?? previewRevision,
+      updatedAt: String(body.at),
+      updatedBy: String(body.reviewerId ?? ""),
+      source: "manual",
+    };
     this.state.storage.transactionSync(() => {
       this.snapshotEntry(entry, String(body.at));
       this.sql.exec(
@@ -1242,7 +1625,7 @@ export class GalleryDO {
          SET name = ?, author = ?, description = ?, project_text = ?,
              svg_text = ?, schema_version = ?, tags = ?, netlistable = ?,
              netlistable_version = ?, preview_revision = ?, preview_width = ?,
-             preview_height = ?
+             preview_height = ?, curation_json = ?
          WHERE id = ?`,
         version.name,
         entry.author,
@@ -1256,6 +1639,7 @@ export class GalleryDO {
         previewRevision,
         previewDimensions?.width ?? null,
         previewDimensions?.height ?? null,
+        JSON.stringify(restoredReview),
         entry.id,
       );
     });
@@ -1282,8 +1666,21 @@ export class GalleryDO {
   }
 
   private cloudProjectCreate(body: Record<string, unknown>): Response {
+    const linkError = this.cloudGalleryTargetError(body);
+    if (linkError) return linkError;
     const userId = String(body.userId);
     const id = String(body.id);
+    const galleryEntryId =
+      typeof body.galleryEntryId === "string" &&
+      !this.sql
+        .exec<{ id: string }>(
+          "SELECT id FROM cloud_projects WHERE user_id = ? AND gallery_entry_id = ? LIMIT 1",
+          userId,
+          body.galleryEntryId,
+        )
+        .toArray().length
+        ? body.galleryEntryId
+        : null;
     const count = this.sql
       .exec<{ count: number }>(
         "SELECT COUNT(*) AS count FROM cloud_projects WHERE user_id = ?",
@@ -1299,8 +1696,8 @@ export class GalleryDO {
     this.sql.exec(
       `INSERT INTO cloud_projects
          (id, user_id, name, created_at, updated_at, revision,
-          schema_version, project_text, preview_svg)
-       VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+          schema_version, project_text, preview_svg, gallery_entry_id)
+       VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
       id,
       userId,
       String(body.name),
@@ -1309,11 +1706,34 @@ export class GalleryDO {
       Number(body.schemaVersion),
       String(body.projectText),
       String(body.previewSvg ?? ""),
+      galleryEntryId,
     );
     return Response.json(
       { project: this.cloudProjectOpenPayload(userId, id) },
       { status: 201 },
     );
+  }
+
+  private cloudProjectFavorite(body: Record<string, unknown>): Response {
+    const id = String(body.id);
+    const userId = String(body.userId);
+    if (
+      !this.sql
+        .exec<{ id: string }>(
+          "SELECT id FROM cloud_projects WHERE id = ? AND user_id = ?",
+          id,
+          userId,
+        )
+        .toArray().length
+    )
+      return Response.json({ error: "not-found" }, { status: 404 });
+    this.sql.exec(
+      "UPDATE cloud_projects SET favorite = ? WHERE id = ? AND user_id = ?",
+      body.favorite === true ? 1 : 0,
+      id,
+      userId,
+    );
+    return Response.json({ project: this.cloudProjectOpenPayload(userId, id) });
   }
 
   private cloudProjectUpdate(body: Record<string, unknown>): Response {
@@ -1322,7 +1742,7 @@ export class GalleryDO {
     const expectedRevision = Number(body.expectedRevision);
     const current = this.sql
       .exec<CloudProjectRow & { project_text: string }>(
-        `SELECT id, name, updated_at, revision, schema_version, project_text
+        `SELECT id, name, updated_at, revision, schema_version, project_text, gallery_entry_id, favorite
          FROM cloud_projects WHERE id = ? AND user_id = ?`,
         id,
         userId,
@@ -1352,22 +1772,90 @@ export class GalleryDO {
       );
     }
     const nextRevision = current.revision + 1;
-    this.sql.exec(
-      `UPDATE cloud_projects
+    this.state.storage.transactionSync(() => {
+      this.sql.exec(
+        `INSERT INTO cloud_project_versions
+        (id, project_id, revision, name, saved_at, schema_version, project_text, preview_svg)
+        SELECT id || ':' || revision, id, revision, name, updated_at, schema_version, project_text, preview_svg
+        FROM cloud_projects WHERE id = ? AND user_id = ?`,
+        id,
+        userId,
+      );
+      this.sql.exec(
+        `UPDATE cloud_projects
        SET name = ?, updated_at = ?, revision = ?, schema_version = ?,
            project_text = ?, preview_svg = ?
        WHERE id = ? AND user_id = ? AND revision = ?`,
-      String(body.name),
-      String(body.updatedAt),
-      nextRevision,
-      Number(body.schemaVersion),
-      String(body.projectText),
-      String(body.previewSvg ?? ""),
-      id,
-      userId,
-      expectedRevision,
-    );
+        String(body.name),
+        String(body.updatedAt),
+        nextRevision,
+        Number(body.schemaVersion),
+        String(body.projectText),
+        String(body.previewSvg ?? ""),
+        id,
+        userId,
+        expectedRevision,
+      );
+      this.pruneCloudProjectVersions();
+    });
     return Response.json({ project: this.cloudProjectOpenPayload(userId, id) });
+  }
+
+  private pruneCloudProjectVersions(): void {
+    this.sql.exec(`DELETE FROM cloud_project_versions
+      WHERE id NOT IN (
+        SELECT id FROM (
+          SELECT id, ROW_NUMBER() OVER (PARTITION BY project_id ORDER BY revision DESC) AS rank
+          FROM cloud_project_versions
+        ) WHERE rank <= 3
+      ) OR project_id NOT IN (SELECT id FROM cloud_projects)`);
+  }
+
+  private cloudProjectVersions(
+    userId: string,
+    id: string,
+    versionId: unknown,
+  ): Response {
+    const current = this.cloudProjectOpenPayload(userId, id);
+    if (!current) return Response.json({ error: "not-found" }, { status: 404 });
+    if (typeof versionId === "string") {
+      const version = this.sql
+        .exec<{
+          project_text: string;
+          preview_svg: string;
+          name: string;
+          schema_version: number;
+        }>(
+          "SELECT * FROM cloud_project_versions WHERE project_id = ? AND id = ?",
+          id,
+          versionId,
+        )
+        .toArray()[0];
+      return version
+        ? Response.json({ version, currentRevision: current.revision })
+        : Response.json({ error: "not-found" }, { status: 404 });
+    }
+    const versions = this.sql
+      .exec<{
+        id: string;
+        revision: number;
+        name: string;
+        saved_at: string;
+      }>(
+        `SELECT id, revision, name, saved_at FROM cloud_project_versions
+        WHERE project_id = ? ORDER BY revision DESC`,
+        id,
+      )
+      .toArray()
+      .map((row) => ({
+        versionId: row.id,
+        versionNo: row.revision,
+        name: row.name,
+        createdAt: row.saved_at,
+        author: "",
+        tags: [],
+      }));
+    return Response.json({ versions, revision: current.revision });
   }
 
   private cloudProjectSummary(row: CloudProjectRow): CloudProjectSummary {
@@ -1377,13 +1865,15 @@ export class GalleryDO {
       updatedAt: row.updated_at,
       revision: row.revision,
       schemaVersion: row.schema_version,
+      galleryEntryId: row.gallery_entry_id ?? null,
+      favorite: row.favorite === 1,
     };
   }
 
   private cloudProjectRows(userId: string): CloudProjectSummary[] {
     return this.sql
       .exec<CloudProjectRow>(
-        `SELECT id, name, updated_at, revision, schema_version
+        `SELECT id, name, updated_at, revision, schema_version, gallery_entry_id, favorite
          FROM cloud_projects
          WHERE user_id = ? ORDER BY updated_at DESC, id DESC LIMIT ?`,
         userId,
@@ -1458,6 +1948,8 @@ export class GalleryDO {
       updatedAt: row.updated_at,
       revision: row.revision,
       schemaVersion: row.schema_version,
+      galleryEntryId: row.gallery_entry_id ?? null,
+      favorite: row.favorite === 1,
       projectText: row.project_text,
     };
   }
@@ -1473,11 +1965,17 @@ export class GalleryDO {
     const existing = this.cloudProjectOpenPayload(userId, id);
     if (!existing)
       return Response.json({ error: "not-found" }, { status: 404 });
-    this.sql.exec(
-      "DELETE FROM cloud_projects WHERE id = ? AND user_id = ?",
-      id,
-      userId,
-    );
+    this.state.storage.transactionSync(() => {
+      this.sql.exec(
+        "DELETE FROM cloud_project_versions WHERE project_id = ?",
+        id,
+      );
+      this.sql.exec(
+        "DELETE FROM cloud_projects WHERE id = ? AND user_id = ?",
+        id,
+        userId,
+      );
+    });
     return Response.json({
       deleted: id,
       projects: this.cloudProjectRows(userId),
@@ -1493,14 +1991,24 @@ export class GalleryDO {
       galleryEntries: { name: "gallery_entries", keys: ["id"] },
       galleryEntryVersions: { name: "gallery_entry_versions", keys: ["id"] },
       cloudProjects: { name: "cloud_projects", keys: ["id"] },
+      cloudProjectVersions: { name: "cloud_project_versions", keys: ["id"] },
       galleryLikes: { name: "gallery_likes", keys: ["entry_id", "user_id"] },
     };
+    if (
+      body.scope === "gallery" &&
+      String(body.table).startsWith("cloudProject")
+    ) {
+      return Response.json({ error: "invalid-table" }, { status: 400 });
+    }
     if (body.table === "inventory") {
+      const selected = Object.entries(tables).filter(
+        ([key]) => body.scope !== "gallery" || !key.startsWith("cloudProject"),
+      );
       return Response.json({
         format: "analog-canvas-gallery-backup-inventory-v1",
         exportedAt: new Date().toISOString(),
         tables: Object.fromEntries(
-          Object.entries(tables).map(([key, table]) => [
+          selected.map(([key, table]) => [
             key,
             this.sql
               .exec<{ count: number }>(
@@ -1509,6 +2017,21 @@ export class GalleryDO {
               .toArray()[0]!.count,
           ]),
         ),
+        ...(body.scope === "gallery"
+          ? {
+              // Any SQL mutation or DO restart invalidates a paginated capture.
+              // Counts alone cannot detect a same-count edit or delete/reinsert.
+              snapshotRevision: `${this.backupEpoch}:${this.sql.exec<{ n: number }>("SELECT total_changes() AS n").one().n}`,
+              schema: selected.flatMap(([, table]) =>
+                this.sql
+                  .exec<{ type: string; name: string; sql: string }>(
+                    "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = ? AND type IN ('table', 'index') AND sql IS NOT NULL ORDER BY type DESC, name",
+                    table.name,
+                  )
+                  .toArray(),
+              ),
+            }
+          : {}),
       });
     }
     if (body.table != null) {
@@ -1562,6 +2085,9 @@ export class GalleryDO {
         galleryEntryVersions: this.sql
           .exec<Record<string, unknown>>("SELECT * FROM gallery_entry_versions")
           .toArray(),
+        cloudProjectVersions: this.sql
+          .exec<Record<string, unknown>>("SELECT * FROM cloud_project_versions")
+          .toArray(),
         cloudProjects: this.sql
           .exec<Record<string, unknown>>("SELECT * FROM cloud_projects")
           .toArray(),
@@ -1584,7 +2110,16 @@ export class GalleryDO {
     const galleryEntries = tableRows(tables?.galleryEntries);
     const galleryEntryVersions = tableRows(tables?.galleryEntryVersions);
     const cloudProjects = tableRows(tables?.cloudProjects);
-    if (!galleryEntries || !galleryEntryVersions || !cloudProjects) {
+    const cloudProjectVersions =
+      tables?.cloudProjectVersions === undefined
+        ? []
+        : tableRows(tables.cloudProjectVersions);
+    if (
+      !galleryEntries ||
+      !galleryEntryVersions ||
+      !cloudProjects ||
+      !cloudProjectVersions
+    ) {
       return Response.json(
         { restored: false, error: "invalid-backup-tables" },
         { status: 400 },
@@ -1594,6 +2129,7 @@ export class GalleryDO {
       this.sql.exec("DELETE FROM gallery_entries");
       this.sql.exec("DELETE FROM gallery_entry_versions");
       this.sql.exec("DELETE FROM cloud_projects");
+      this.sql.exec("DELETE FROM cloud_project_versions");
       for (const row of galleryEntries) {
         const values = rowValues(row, [
           "id",
@@ -1625,20 +2161,21 @@ export class GalleryDO {
            (id, name, author, description, created_at, schema_version, status,
             recycled_at, owner_user_id, submitter_email, submitter_provider,
             project_text, svg_text, reject_reason, reviewed_at, reviewed_by,
-            tags, netlistable, preview_revision, preview_width, preview_height)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            tags, netlistable, preview_revision, preview_width, preview_height, curation_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           ...values,
           sha256Hex(svgText),
           previewDimensions?.width ?? null,
           previewDimensions?.height ?? null,
+          typeof row.curation_json === "string" ? row.curation_json : "",
         );
       }
       for (const row of galleryEntryVersions) {
         this.sql.exec(
           `INSERT INTO gallery_entry_versions
            (id, entry_id, version_no, name, author, description, tags,
-            schema_version, project_text, svg_text, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            schema_version, project_text, svg_text, created_at, curation_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           ...rowValues(row, [
             "id",
             "entry_id",
@@ -1652,6 +2189,7 @@ export class GalleryDO {
             "svg_text",
             "created_at",
           ]),
+          typeof row.curation_json === "string" ? row.curation_json : "",
         );
       }
       deleteOrphanGalleryData(this.sql);
@@ -1660,8 +2198,8 @@ export class GalleryDO {
         this.sql.exec(
           `INSERT INTO cloud_projects
            (id, user_id, name, created_at, updated_at, revision,
-            schema_version, project_text)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            schema_version, project_text, gallery_entry_id, favorite, preview_svg)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           ...rowValues(row, [
             "id",
             "user_id",
@@ -1672,22 +2210,65 @@ export class GalleryDO {
             "schema_version",
             "project_text",
           ]),
+          typeof row.gallery_entry_id === "string"
+            ? row.gallery_entry_id
+            : null,
+          row.favorite === 1 ? 1 : 0,
+          typeof row.preview_svg === "string" ? row.preview_svg : "",
         );
       }
+      for (const row of cloudProjectVersions) {
+        const parent = cloudProjects.find(
+          (project) => project.id === row.project_id,
+        );
+        if (
+          !parent ||
+          typeof row.revision !== "number" ||
+          !Number.isInteger(row.revision) ||
+          row.revision < 1 ||
+          Number(parent.revision) <= row.revision
+        )
+          throw new Error("Invalid Shelf history parent or revision");
+        this.sql.exec(
+          `INSERT INTO cloud_project_versions
+          (id, project_id, revision, name, saved_at, schema_version, project_text, preview_svg)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          ...rowValues(row, [
+            "id",
+            "project_id",
+            "revision",
+            "name",
+            "saved_at",
+            "schema_version",
+            "project_text",
+            "preview_svg",
+          ]),
+        );
+      }
+      this.pruneCloudProjectVersions();
       return this.sql
         .exec<{ count: number }>(
           "SELECT COUNT(*) AS count FROM gallery_entry_versions",
         )
         .one().count;
     });
+    const retainedCloudVersions = this.sql
+      .exec<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM cloud_project_versions",
+      )
+      .one().count;
     return Response.json({
       restored: true,
       records:
-        galleryEntries.length + retainedVersionCount + cloudProjects.length,
+        galleryEntries.length +
+        retainedVersionCount +
+        cloudProjects.length +
+        retainedCloudVersions,
       tables: {
         galleryEntries: galleryEntries.length,
         galleryEntryVersions: retainedVersionCount,
         cloudProjects: cloudProjects.length,
+        cloudProjectVersions: retainedCloudVersions,
       },
     });
   }
@@ -1799,6 +2380,14 @@ export class GalleryDO {
         rows: this.sql
           .exec<StoredProjectRow>(
             "SELECT id, schema_version, project_text FROM cloud_projects",
+          )
+          .toArray(),
+      },
+      {
+        table: "cloud_project_versions",
+        rows: this.sql
+          .exec<StoredProjectRow>(
+            "SELECT id, schema_version, project_text FROM cloud_project_versions",
           )
           .toArray(),
       },
@@ -2313,47 +2902,68 @@ export class GalleryDO {
     });
   }
 
-  /** Distinct public tags with counts, most frequent first (G4 menu). */
-  private tagCounts(): Response {
+  /** Public tag counts plus deduplicated circuit totals for each visual group. */
+  private tagCounts(body: Record<string, unknown>): Response {
+    const { conditions, bindings } = this.feedConditions(body, {
+      tags: false,
+    });
     const rows = this.sql
       .exec<{ tags: string | null }>(
-        "SELECT tags FROM gallery_entries WHERE status = 'public'",
+        `SELECT e.tags FROM gallery_entries e WHERE ${conditions.join(" AND ")}`,
+        ...bindings,
       )
       .toArray();
     const counts = new Map<string, number>();
+    const groupCounts = new Map<string, number>();
     for (const row of rows) {
-      for (const tag of unwrapTags(row.tags)) {
+      const rowTags = unwrapTags(row.tags);
+      for (const tag of rowTags) {
         counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      }
+      for (const group of new Set(rowTags.map(galleryTagGroup))) {
+        groupCounts.set(group, (groupCounts.get(group) ?? 0) + 1);
       }
     }
     const tags = [...counts.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "en"))
       .map(([tag, count]) => ({ tag, count }));
-    return Response.json({ tags });
+    const groups = [...groupCounts.entries()].map(([group, count]) => ({
+      group,
+      count,
+    }));
+    return Response.json({ tags, groups });
   }
 
   /** Public contributors ranked by visible circuits and keyed by identity. */
   private authorCounts(): Response {
+    return Response.json({
+      authors: this.contributorCounts(["e.status = 'public'"], []),
+    });
+  }
+
+  private contributorCounts(
+    conditions: readonly string[],
+    bindings: readonly (string | number)[],
+  ) {
     const rows = this.sql
       .exec<{
         author: string;
         owner_user_id: string | null;
         count: number;
       }>(
-        `SELECT MAX(author) AS author, owner_user_id, COUNT(*) AS count
-         FROM gallery_entries
-         WHERE status = 'public' AND TRIM(author) <> ''
-         GROUP BY COALESCE(NULLIF(owner_user_id, ''), 'legacy:' || author)
+        `SELECT MAX(e.author) AS author, e.owner_user_id, COUNT(*) AS count
+         FROM gallery_entries e
+         WHERE ${conditions.join(" AND ")} AND TRIM(e.author) <> ''
+         GROUP BY COALESCE(NULLIF(e.owner_user_id, ''), 'legacy:' || e.author)
          ORDER BY count DESC, author COLLATE NOCASE ASC, author ASC`,
+        ...bindings,
       )
       .toArray();
-    return Response.json({
-      authors: rows.map((row) => ({
-        author: row.author,
-        ownerUserId: row.owner_user_id,
-        count: Number(row.count),
-      })),
-    });
+    return rows.map((row) => ({
+      author: row.author,
+      ownerUserId: row.owner_user_id,
+      count: Number(row.count),
+    }));
   }
 
   /**
@@ -2437,6 +3047,128 @@ export class GalleryDO {
     return Response.json({ ids: rows.map((row) => row.id) });
   }
 
+  /** The one Gallery row a label-look maintenance pass reads. */
+  private labelLooksRead(id: string): Response {
+    const row = this.sql
+      .exec<{ status: string; project_text: string }>(
+        "SELECT status, project_text FROM gallery_entries WHERE id = ?",
+        id,
+      )
+      .toArray()[0];
+    if (!row) return Response.json({ error: "not-found" }, { status: 404 });
+    return Response.json({ status: row.status, projectText: row.project_text });
+  }
+
+  /**
+   * One page of public entries' Project Code, in id order, for the netlist
+   * read. A page ends at `limit` entries or once its Project Code passes the
+   * size budget, so one response stays well inside a Worker's memory however
+   * large the drawings are. Sizes are read first and the page's text second,
+   * by id range, so the rows past the budget are never loaded.
+   */
+  private netlistSources(body: Record<string, unknown>): Response {
+    const limit = Math.min(
+      Math.max(Math.trunc(Number(body.limit)) || GALLERY_NETLIST_PAGE_LIMIT, 1),
+      GALLERY_NETLIST_MAX_PAGE_LIMIT,
+    );
+    const id = typeof body.id === "string" && body.id ? body.id : null;
+    const sizes = this.sql
+      .exec<{ id: string; size: number }>(
+        `SELECT id, LENGTH(project_text) AS size FROM gallery_entries
+         WHERE status = 'public' AND id ${id ? "=" : ">"} ?
+         ORDER BY id LIMIT ?`,
+        id ?? (typeof body.after === "string" ? body.after : ""),
+        limit + 1,
+      )
+      .toArray();
+    let count = 0;
+    let characters = 0;
+    while (
+      count < Math.min(limit, sizes.length) &&
+      (count === 0 ||
+        characters + sizes[count]!.size <= GALLERY_NETLIST_PAGE_CHARACTERS)
+    ) {
+      characters += sizes[count]!.size;
+      count += 1;
+    }
+    const last = sizes[count - 1]?.id;
+    const rows =
+      last === undefined
+        ? []
+        : this.sql
+            .exec<{
+              id: string;
+              name: string;
+              author: string;
+              tags: string | null;
+              created_at: string;
+              netlistable: number;
+              project_text: string;
+            }>(
+              `SELECT id, name, author, tags, created_at, netlistable,
+                 project_text
+               FROM gallery_entries
+               WHERE status = 'public' AND id >= ? AND id <= ? ORDER BY id`,
+              sizes[0]!.id,
+              last,
+            )
+            .toArray();
+    return Response.json({
+      entries: rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        author: row.author,
+        tags: unwrapTags(row.tags),
+        createdAt: row.created_at,
+        netlistable: row.netlistable === 1,
+        projectText: row.project_text,
+      })),
+      nextCursor: count < sizes.length ? last : null,
+    });
+  }
+
+  /**
+   * Store one server-verified label-look change: the Project and its
+   * re-rendered preview, only if the row still holds exactly the Project
+   * that was checked. History, byline, status, tags and likes are untouched.
+   */
+  private labelLooksStore(body: Record<string, unknown>): Response {
+    const row = this.sql
+      .exec<EntryRow>(
+        "SELECT * FROM gallery_entries WHERE id = ?",
+        String(body.id),
+      )
+      .toArray()[0];
+    if (!row) return Response.json({ error: "not-found" }, { status: 404 });
+    if (row.project_text !== String(body.originalProjectText))
+      return Response.json(
+        { error: "concurrent-change", id: row.id },
+        { status: 409 },
+      );
+    const svgText = String(body.svgText);
+    const previewRevision = sha256Hex(svgText);
+    const previewDimensions = svgPreviewDimensions(svgText);
+    // Synchronous DO operation: no await between compare and update. The SQL
+    // predicate also protects against future refactors introducing an await.
+    this.sql.exec(
+      `UPDATE gallery_entries
+       SET project_text = ?, schema_version = ?, svg_text = ?,
+           preview_revision = ?, preview_width = ?, preview_height = ?,
+           curation_json = ?
+       WHERE id = ? AND project_text = ?`,
+      String(body.projectText),
+      Number(body.schemaVersion),
+      svgText,
+      previewRevision,
+      previewDimensions?.width ?? null,
+      previewDimensions?.height ?? null,
+      advanceCurationRevision(row, String(body.at ?? row.created_at)),
+      row.id,
+      row.project_text,
+    );
+    return Response.json({ id: row.id, previewRevision });
+  }
+
   private updateEntry(body: Record<string, unknown>): Response {
     const row = this.sql
       .exec<EntryRow>(
@@ -2451,7 +3183,7 @@ export class GalleryDO {
     this.sql.exec(
       `UPDATE gallery_entries
        SET project_text = ?, schema_version = ?, svg_text = ?,
-           preview_revision = ?, preview_width = ?, preview_height = ?
+           preview_revision = ?, preview_width = ?, preview_height = ?, curation_json = ?
        WHERE id = ?`,
       String(body.projectText),
       Number(body.schemaVersion),
@@ -2459,6 +3191,7 @@ export class GalleryDO {
       previewRevision,
       previewDimensions?.width ?? null,
       previewDimensions?.height ?? null,
+      advanceCurationRevision(row, String(body.at ?? row.created_at)),
       String(body.id),
     );
     return Response.json({ id: row.id, previewRevision });

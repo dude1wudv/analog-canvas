@@ -158,6 +158,9 @@ describe("Razavi symbol catalog", () => {
       ]),
     ).toEqual([
       ["and-gate", "reviewed", "razavi-reference-v1"],
+      ["and-gate-3", "reviewed", "house"],
+      ["and-gate-4", "reviewed", "house"],
+      ["battery", "reviewed", "razavi-reference-v1"],
       ["buffer", "reviewed", "razavi-reference-v1"],
       ["capacitor", "reviewed", "razavi-reference-v1"],
       ["closed-switch", "reviewed", "razavi-reference-v1"],
@@ -189,24 +192,50 @@ describe("Razavi symbol catalog", () => {
       ["xfmr", "reviewed", "razavi-reference-v1"],
       ["inverter", "reviewed", "razavi-reference-v1"],
       ["nand-gate", "reviewed", "razavi-reference-v1"],
+      ["nand-gate-3", "reviewed", "house"],
+      ["nand-gate-4", "reviewed", "house"],
       ["nmos", "reviewed", "razavi-reference-v1"],
       ["nor-gate", "reviewed", "razavi-reference-v1"],
+      ["nor-gate-3", "reviewed", "house"],
+      ["nor-gate-4", "reviewed", "house"],
       ["npn", "reviewed", "razavi-reference-v1"],
       ["opamp", "reviewed", "razavi-reference-v1"],
+      ["opamp-wide", "reviewed", "razavi-reference-v1"],
       ["opamp-lettered", "reviewed", "razavi-reference-v1"],
+      ["opamp-wide-lettered", "reviewed", "razavi-reference-v1"],
       ["opamp-lettered-inputs-swapped", "reviewed", "razavi-reference-v1"],
+      ["opamp-wide-lettered-inputs-swapped", "reviewed", "razavi-reference-v1"],
       ["opamp-inputs-swapped", "reviewed", "razavi-reference-v1"],
+      ["opamp-wide-inputs-swapped", "reviewed", "razavi-reference-v1"],
       ["opamp-differential", "reviewed", "razavi-reference-v1"],
+      ["opamp-differential-wide", "reviewed", "razavi-reference-v1"],
       ["opamp-differential-lettered", "reviewed", "razavi-reference-v1"],
+      ["opamp-differential-wide-lettered", "reviewed", "razavi-reference-v1"],
       [
         "opamp-differential-lettered-inputs-swapped",
         "reviewed",
         "razavi-reference-v1",
       ],
+      [
+        "opamp-differential-wide-lettered-inputs-swapped",
+        "reviewed",
+        "razavi-reference-v1",
+      ],
       ["opamp-differential-inputs-swapped", "reviewed", "razavi-reference-v1"],
+      [
+        "opamp-differential-wide-inputs-swapped",
+        "reviewed",
+        "razavi-reference-v1",
+      ],
       ["opamp-differential-crossed", "reviewed", "razavi-reference-v1"],
+      ["opamp-differential-wide-crossed", "reviewed", "razavi-reference-v1"],
       [
         "opamp-differential-crossed-lettered",
+        "reviewed",
+        "razavi-reference-v1",
+      ],
+      [
+        "opamp-differential-wide-crossed-lettered",
         "reviewed",
         "razavi-reference-v1",
       ],
@@ -216,11 +245,23 @@ describe("Razavi symbol catalog", () => {
         "razavi-reference-v1",
       ],
       [
+        "opamp-differential-wide-crossed-lettered-inputs-swapped",
+        "reviewed",
+        "razavi-reference-v1",
+      ],
+      [
         "opamp-differential-crossed-inputs-swapped",
         "reviewed",
         "razavi-reference-v1",
       ],
+      [
+        "opamp-differential-wide-crossed-inputs-swapped",
+        "reviewed",
+        "razavi-reference-v1",
+      ],
       ["or-gate", "reviewed", "razavi-reference-v1"],
+      ["or-gate-3", "reviewed", "house"],
+      ["or-gate-4", "reviewed", "house"],
       ["pmos", "reviewed", "razavi-reference-v1"],
       ["pnp", "reviewed", "razavi-reference-v1"],
       ["port", "reviewed", "razavi-reference-v1"],
@@ -239,7 +280,11 @@ describe("Razavi symbol catalog", () => {
       ["voltage-controlled-switch", "reviewed", "house"],
       ["voltage-source", "reviewed", "razavi-reference-v1"],
       ["xnor-gate", "reviewed", "razavi-reference-v1"],
+      ["xnor-gate-3", "reviewed", "house"],
+      ["xnor-gate-4", "reviewed", "house"],
       ["xor-gate", "reviewed", "razavi-reference-v1"],
+      ["xor-gate-3", "reviewed", "house"],
+      ["xor-gate-4", "reviewed", "house"],
       ["zener-diode", "reviewed", "razavi-reference-v1"],
       ["adc", "reviewed", "house"],
       ["dac", "reviewed", "house"],
@@ -261,6 +306,54 @@ describe("Razavi symbol catalog", () => {
         entry.assetHash,
       );
     }
+  });
+
+  it("keeps the PDF-scaled battery drawing-only with an authoring reference", () => {
+    const component = JSON.parse(
+      readFileSync(resolve(assetRoot, "battery.json"), "utf8"),
+    );
+    const battery = requireRazaviCatalogSymbol("battery");
+    const voltage = requireRazaviCatalogSymbol("voltage-source");
+    const circle = voltage.primitives.find(
+      (primitive) => primitive.kind === "circle",
+    );
+    const plates = battery.primitives.filter(
+      (primitive) => primitive.kind === "polygon",
+    );
+    expect(component.electrical).toMatchObject({
+      referencePrefix: "B",
+      targetPolicy: "none",
+      parameters: [],
+    });
+    expect(component.electrical).not.toHaveProperty("sourceWaveformDefault");
+    expect(battery.pins.map((pin) => [pin.name, pin.at])).toEqual([
+      ["+", { x: 0, y: -20 }],
+      ["-", { x: 0, y: 20 }],
+    ]);
+    expect(circle?.kind).toBe("circle");
+    expect(plates).toHaveLength(2);
+    const [longPlate, shortPlate] = plates;
+    if (circle?.kind !== "circle" || !longPlate || !shortPlate) return;
+    const width = (plate: (typeof plates)[number]) =>
+      Math.max(...plate.points.map((point) => point.x)) -
+      Math.min(...plate.points.map((point) => point.x));
+    const centerY = (plate: (typeof plates)[number]) =>
+      (Math.max(...plate.points.map((point) => point.y)) +
+        Math.min(...plate.points.map((point) => point.y))) /
+      2;
+    // Figure 3.11(a): 15.477/8.061-pt plates and a 3.388-pt gap,
+    // normalized using its adjacent 10.842-pt voltage-source circle.
+    expect(width(longPlate) / (2 * circle.radius)).toBeCloseTo(
+      15.477 / 10.842,
+      3,
+    );
+    expect(width(shortPlate) / (2 * circle.radius)).toBeCloseTo(
+      8.061 / 10.842,
+      3,
+    );
+    expect(
+      (centerY(shortPlate) - centerY(longPlate)) / (2 * circle.radius),
+    ).toBeCloseTo(3.388 / 10.842, 3);
   });
 
   it("uses semantic roles except where pinned PDF evidence requires an exact stroke", () => {
@@ -489,7 +582,7 @@ describe("Razavi symbol catalog", () => {
         symbol.id,
       ),
     );
-    expect(family).toHaveLength(20);
+    expect(family).toHaveLength(32);
     for (const symbol of family)
       for (const primitive of symbol.primitives) {
         if (primitive.kind !== "path") continue;
@@ -513,7 +606,7 @@ describe("Razavi symbol catalog", () => {
       }
   });
 
-  it("uses one equilateral triangle, pair spacing, and visible leads across Analog Blocks", () => {
+  it("uses one equilateral triangle and visible leads across both Analog Block spacings", () => {
     const opamp = requireRazaviCatalogSymbol("opamp");
     const opampTriangle = opamp.primitives.find(
       (primitive) =>
@@ -526,7 +619,7 @@ describe("Razavi symbol catalog", () => {
     const family = razaviCatalogSymbols.filter((symbol) =>
       /^(?:opamp|voltage-amplifier|comparator)(?:-|$)/u.test(symbol.id),
     );
-    expect(family).toHaveLength(18);
+    expect(family).toHaveLength(30);
     for (const { id: symbolId } of family) {
       const candidate = requireRazaviCatalogSymbol(symbolId);
       const triangle = candidate.primitives.find(
@@ -736,7 +829,7 @@ describe("Razavi symbol catalog", () => {
   });
 
   it("uses reviewed catalog objects as the sole built-in product library", () => {
-    expect(razaviCatalogSymbols).toHaveLength(70);
+    expect(razaviCatalogSymbols).toHaveLength(95);
     for (const catalogSymbol of razaviProductSymbols) {
       expect(
         builtInSymbols.find((symbol) => symbol.id === catalogSymbol.id),
@@ -749,6 +842,7 @@ describe("Razavi symbol catalog", () => {
   it("lists only reviewed Reference-calibrated assets in the product library", () => {
     expect(razaviProductSymbols.map((symbol) => symbol.id)).toEqual([
       "and-gate",
+      "battery",
       "buffer",
       "capacitor",
       "closed-switch",
@@ -780,7 +874,9 @@ describe("Razavi symbol catalog", () => {
       "nor-gate",
       "npn",
       "opamp",
+      "opamp-wide",
       "opamp-differential",
+      "opamp-differential-wide",
       "or-gate",
       "pmos",
       "pnp",
@@ -2035,6 +2131,104 @@ describe("Razavi symbol catalog", () => {
 });
 
 describe("logic-gate and comparator family", () => {
+  it("keeps the AND body fixed and connects four equally spaced input pins with straight leads", () => {
+    const base = requireRazaviCatalogSymbol("and-gate");
+    for (const [count, inputYs] of [
+      [3, [-10, 0, 10]],
+      [4, [-12, -4, 4, 12]],
+    ] as const) {
+      const id = `and-gate-${count}`;
+      const symbol = requireRazaviCatalogSymbol(id);
+      expect(symbol.pins.map((pin) => pin.name)).toEqual([
+        ...["A", "B", "C", "D"].slice(0, count),
+        "Y",
+      ]);
+      expect(symbol.pins.slice(0, count).map((pin) => pin.at.y)).toEqual(
+        inputYs,
+      );
+      expect(symbol.viewBox).toEqual(base.viewBox);
+      expect(symbol.primitives[count]).toEqual(base.primitives[2]);
+      expect(
+        symbol.primitives.slice(0, count).map((primitive) => primitive.kind),
+      ).toEqual(Array(count).fill("line"));
+      if (count === 4)
+        expect(
+          symbol.primitives
+            .slice(0, count)
+            .map((primitive) =>
+              primitive.kind === "line" ? [primitive.from, primitive.to] : null,
+            ),
+        ).toEqual([
+          [
+            { x: -30, y: -12 },
+            { x: -20, y: -12 },
+          ],
+          [
+            { x: -30, y: -4 },
+            { x: -20, y: -4 },
+          ],
+          [
+            { x: -30, y: 4 },
+            { x: -20, y: 4 },
+          ],
+          [
+            { x: -30, y: 12 },
+            { x: -20, y: 12 },
+          ],
+        ]);
+      expect(getRazaviCatalogEntry(id)).toMatchObject({
+        provenance: "house",
+        palette: false,
+      });
+      expect(
+        razaviProductSymbols.some((candidate) => candidate.id === id),
+      ).toBe(false);
+    }
+  });
+  it.each(["nand-gate", "or-gate", "nor-gate", "xor-gate", "xnor-gate"])(
+    "derives straight 3/4-input leads without resizing the %s body or bubble",
+    (family) => {
+      const base = requireRazaviCatalogSymbol(family);
+      for (const [count, inputYs] of [
+        [3, [-10, 0, 10]],
+        [4, [-12, -4, 4, 12]],
+      ] as const) {
+        const id = `${family}-${count}`;
+        const symbol = requireRazaviCatalogSymbol(id);
+        expect(symbol.viewBox).toEqual(base.viewBox);
+        expect(symbol.primitives.slice(count)).toEqual(
+          base.primitives.slice(2),
+        );
+        expect(symbol.pins.map((pin) => pin.name)).toEqual([
+          ...["A", "B", "C", "D"].slice(0, count),
+          "Y",
+        ]);
+        expect(symbol.pins.slice(0, count).map((pin) => pin.at.y)).toEqual(
+          inputYs,
+        );
+        for (const [index, lead] of symbol.primitives
+          .slice(0, count)
+          .entries()) {
+          expect(lead.kind).toBe("line");
+          if (lead.kind !== "line") continue;
+          expect(lead.from).toEqual({ x: -30, y: inputYs[index] });
+          expect(lead.to.y).toBe(inputYs[index]);
+          expect(lead.to.x).toBeGreaterThanOrEqual(-20);
+          expect(lead.to.x).toBeLessThanOrEqual(
+            family === "nand-gate" ? -20 : -12,
+          );
+        }
+        expect(getRazaviCatalogEntry(id)).toMatchObject({
+          provenance: "house",
+          palette: false,
+          generation: { sourceSymbolId: family, inputCount: count },
+        });
+        expect(
+          razaviProductSymbols.some((candidate) => candidate.id === id),
+        ).toBe(false);
+      }
+    },
+  );
   const twoInputGates = [
     "and-gate",
     "or-gate",
@@ -2245,6 +2439,17 @@ describe("logic-gate and comparator family", () => {
       style: { strokeRole: "emphasis" },
     });
   });
+
+  it.each(["and-gate", "nand-gate"])(
+    "strokes the %s outer contour as one closed path",
+    (symbolId) => {
+      const bodyPaths = requireRazaviCatalogSymbol(symbolId).primitives.filter(
+        (primitive) => primitive.kind === "path",
+      );
+      expect(bodyPaths).toHaveLength(1);
+      expect(bodyPaths[0]?.data.trimEnd()).toMatch(/\sZ$/u);
+    },
+  );
 
   it("keeps logic gates in the reviewed component-family scale", () => {
     const nand = requireRazaviCatalogSymbol("nand-gate");
@@ -2545,7 +2750,8 @@ describe("left-anchored digital gates", () => {
       );
       const paths = symbol.primitives.filter((p) => p.kind === "path");
       const sourcePaths = source.primitives.filter((p) => p.kind === "path");
-      expect(paths).toHaveLength(sourcePaths.length);
+      const joinedBody = id === "and-gate" || id === "nand-gate";
+      expect(paths).toHaveLength(joinedBody ? 1 : sourcePaths.length);
       const left = Math.min(
         ...paths.flatMap((p) => pathPoints(p.data).map((point) => point.x)),
       );
@@ -2553,16 +2759,57 @@ describe("left-anchored digital gates", () => {
       const dx =
         pathPoints(paths[0]!.data)[0]!.x -
         pathPoints(sourcePaths[0]!.data)[0]!.x;
-      for (const [index, path] of paths.entries()) {
-        const original = sourcePaths[index]!;
-        expect(path.style).toEqual(original.style);
+      if (joinedBody) {
+        const straight = pathPoints(sourcePaths[0]!.data);
+        const curve = pathPoints(sourcePaths[1]!.data);
+        const joined = pathPoints(paths[0]!.data);
+        expect(paths[0]!.style).toEqual(sourcePaths[0]!.style);
+        expect(joined).toHaveLength(curve.length + 2);
+        expect(joined[0]!.x - straight[0]!.x).toBeCloseTo(dx, 5);
+        expect(joined[0]!.y).toBeCloseTo(straight[0]!.y, 8);
+        for (const point of joined.slice(1, 3)) {
+          expect(point).toEqual(joined[0]);
+        }
+        if (id === "and-gate") {
+          for (const point of joined.slice(1, 6)) {
+            expect(point.y).toBeCloseTo(straight[0]!.y, 8);
+          }
+        }
+        for (
+          let index = id === "and-gate" ? 6 : 3;
+          index < curve.length - 3;
+          index++
+        ) {
+          expect(joined[index]!.x - curve[index]!.x).toBeCloseTo(dx, 5);
+          expect(joined[index]!.y).toBeCloseTo(curve[index]!.y, 8);
+        }
+        expect(joined[curve.length - 1]!.x - straight[3]!.x).toBeCloseTo(dx, 5);
+        expect(joined[curve.length - 1]!.y).toBeCloseTo(straight[3]!.y, 8);
+        for (const [index, sourcePoint] of [
+          straight[2]!,
+          straight[1]!,
+        ].entries()) {
+          const point = joined[curve.length + index]!;
+          expect(point.x - sourcePoint.x).toBeCloseTo(dx, 5);
+          expect(point.y).toBeCloseTo(sourcePoint.y, 8);
+        }
+      } else {
+        for (const [index, path] of paths.entries()) {
+          const original = sourcePaths[index]!;
+          expect(path.style).toEqual(original.style);
+          const points = pathPoints(path.data);
+          const originalPoints = pathPoints(original.data);
+          expect(points).toHaveLength(originalPoints.length);
+          for (const [i, point] of points.entries()) {
+            expect(point.x - originalPoints[i]!.x).toBeCloseTo(dx, 5);
+            expect(point.y).toBeCloseTo(originalPoints[i]!.y, 8);
+          }
+        }
+      }
+      for (const path of paths) {
         const points = pathPoints(path.data);
-        const originalPoints = pathPoints(original.data);
-        expect(points).toHaveLength(originalPoints.length);
         expect(path.bounds).toBeDefined();
-        for (const [i, point] of points.entries()) {
-          expect(point.x - originalPoints[i]!.x).toBeCloseTo(dx, 5);
-          expect(point.y).toBeCloseTo(originalPoints[i]!.y, 8);
+        for (const point of points) {
           const bounds = path.bounds!;
           expect(point.x).toBeGreaterThanOrEqual(bounds.x - 0.000001);
           expect(point.x).toBeLessThanOrEqual(

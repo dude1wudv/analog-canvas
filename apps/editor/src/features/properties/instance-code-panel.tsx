@@ -5,8 +5,10 @@ import { formatInstanceCode, planInstanceCode } from "./instance-code";
 
 export function InstanceCodePanel({
   project,
+  onDirtyChange,
   onApply,
 }: {
+  onDirtyChange?(dirty: boolean): void;
   project: CircuitProject;
   onApply(edits: ProjectStructureEdit[]): boolean;
 }) {
@@ -14,6 +16,10 @@ export function InstanceCodePanel({
   const [draft, setDraft] = useState(baseline);
   const [error, setError] = useState<string | null>(null);
   const ownEdit = useRef(false);
+  useLayoutEffect(() => {
+    onDirtyChange?.(error !== null);
+    return () => onDirtyChange?.(false);
+  }, [error, onDirtyChange]);
   useLayoutEffect(() => {
     // Preserve pasted subsets, whitespace and caret after our own commit.
     // External edits and project undo/redo replace the displayed baseline.
@@ -43,7 +49,7 @@ export function InstanceCodePanel({
   }
   return (
     <section className="netlist-profile-code" aria-label="Instance code">
-      <h2>Instances</h2>
+      <h2>实例</h2>
       <p>
         Edit or paste JSON to update the circuit. Keys are Cell and instance
         IDs; symbol is read-only. Omitted instances stay unchanged. Removing a

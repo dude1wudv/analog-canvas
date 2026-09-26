@@ -93,8 +93,15 @@ function deadEndNodeDiagnostics(
 
 /** Change only formal interface spelling and the internal nodes they own. */
 function applyPortCase(ir: DesignNetlistIR, portCase: NetlistPortCase): void {
-  const spell = (name: string) =>
-    portCase === "upper" ? name.toUpperCase() : name.toLowerCase();
+  const spell = (name: string) => {
+    // `_bar` is a semantic display marker, not part of the cased signal name.
+    const overbar = name.length > 4 && name.endsWith("_bar");
+    const body = overbar ? name.slice(0, -4) : name;
+    return (
+      (portCase === "upper" ? body.toUpperCase() : body.toLowerCase()) +
+      (overbar ? "_bar" : "")
+    );
+  };
   for (const cell of ir.cells) {
     const netRenames = new Map<string, string>();
     for (const port of cell.ports) {
@@ -146,8 +153,12 @@ function applyPortCase(ir: DesignNetlistIR, portCase: NetlistPortCase): void {
  * 4 also resolves unconnected schematic MOS bodies without supply symbols.
  * 5 refuses missing model targets and required parameters instead of emitting
  * placeholder identifiers.
+ * 6 writes Greek letters in Net, Pin, device and Cell names as their standard
+ * names, so a circuit named with them now extracts.
+ * 7 writes drawn switches as SPICE `S` cards on the phase their label names,
+ * so a switched-capacitor circuit whose switches carry phases now extracts.
  */
-export const NETLIST_MARK_RULE_VERSION = 5;
+export const NETLIST_MARK_RULE_VERSION = 7;
 
 export function designExtractsNetlist(
   project: CircuitProject,

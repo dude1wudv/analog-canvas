@@ -52,6 +52,8 @@ export const AnnotationTextBindingSchema = z.discriminatedUnion("kind", [
     instanceId: StableIdSchema,
     /** One live named parameter; omitted retains the device's aggregate Value. */
     parameter: NetlistParameterNameSchema.optional(),
+    /** False keeps the named parameter label visible without drawing its value. */
+    showValue: z.literal(false).optional(),
   }),
   z.strictObject({ kind: z.literal("net-name"), netId: StableIdSchema }),
   z.strictObject({
@@ -76,7 +78,7 @@ export const AnnotationSchema = z
     // marker authoring; all semantic annotation producers write `binding`.
     content: RichTextDocumentSchema.optional(),
     binding: AnnotationTextBindingSchema.optional(),
-    /** Same-text RichText formatting for an editable semantic name binding. */
+    /** Same-text RichText formatting for a bound name or displayed value. */
     formatOverride: RichTextDocumentSchema.optional(),
     anchor: VisualAnchorSchema,
     netId: StableIdSchema.optional(),
@@ -101,6 +103,7 @@ export const AnnotationSchema = z
     if (
       annotation.formatOverride &&
       annotation.binding?.kind !== "instance-reference" &&
+      annotation.binding?.kind !== "instance-value" &&
       annotation.binding?.kind !== "net-name" &&
       annotation.binding?.kind !== "cell-terminal-name"
     ) {
@@ -108,7 +111,18 @@ export const AnnotationSchema = z
         code: z.ZodIssueCode.custom,
         path: ["formatOverride"],
         message:
-          "RichText format overrides require an editable Instance, Net, or Cell-terminal name binding",
+          "RichText format overrides require an Instance name/value, Net, or Cell-terminal name binding",
+      });
+    }
+    if (
+      annotation.binding?.kind === "instance-value" &&
+      annotation.binding.showValue !== undefined &&
+      annotation.binding.parameter === undefined
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["binding", "showValue"],
+        message: "showValue is only valid on a named parameter display",
       });
     }
     if (annotation.markerKind && annotation.kind !== "route-marker") {

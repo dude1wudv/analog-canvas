@@ -105,6 +105,114 @@ describe("instance-owned portable source", () => {
     );
   });
 
+  it("round-trips a label-only named parameter display from schema 61", () => {
+    const before = createEmptyProject("parameter-display", "Parameter display");
+    const document = before.documents[0]!;
+    const instance = {
+      id: "T1",
+      symbolId: "tcoil",
+      reference: "T1",
+      netlist: { parameters: { l1: "2n", l2: "3n", k: "0.9", cb: "1p" } },
+      placement: {
+        position: { x: 100, y: 100 },
+        rotation: 0 as const,
+        mirror: "none" as const,
+      },
+    };
+    document.instances.push(instance);
+    const parameter = "l1";
+    document.annotations.push({
+      id: "owned-parameter-label-only",
+      kind: "instance-value",
+      binding: {
+        kind: "instance-value",
+        instanceId: instance.id,
+        parameter,
+        showValue: false,
+      },
+      anchor: {
+        kind: "object",
+        objectId: instance.id,
+        localOffset: { x: 0, y: 20 },
+        fallbackPosition: { x: 10, y: 40 },
+      },
+      alignment: "start",
+      rotation: 0,
+      locked: false,
+    });
+    const portable = withProjectComponentDefinitions(before);
+
+    const source = JSON.parse(serializeProject(portable));
+    expect(source.schemaVersion).toBe(63);
+    const encodedInstance = source.documents[0].instances.find(
+      (item: any) => item.id === instance.id,
+    );
+    expect(
+      encodedInstance.labels.find(
+        (label: any) => label.id === "owned-parameter-label-only",
+      ).bind,
+    ).toEqual({ parameter, showValue: false });
+    expect(
+      parseProject(JSON.stringify(source)).documents[0]!.annotations.find(
+        (annotation) => annotation.id === "owned-parameter-label-only",
+      )?.binding,
+    ).toEqual({
+      kind: "instance-value",
+      instanceId: instance.id,
+      parameter,
+      showValue: false,
+    });
+
+    source.schemaVersion = 60;
+    expect(() => parseProject(JSON.stringify(source))).toThrow(
+      /Unknown field: showValue/,
+    );
+  });
+
+  it("round-trips a Symbol body text's authored look in schema 62", () => {
+    const before = createEmptyProject("body-text", "Body text");
+    const formulaFormat = {
+      runs: [
+        {
+          kind: "span" as const,
+          style: "bold" as const,
+          children: [
+            { kind: "text" as const, value: "ADC" },
+            {
+              kind: "span" as const,
+              style: "subscript" as const,
+              children: [{ kind: "text" as const, value: "1" }],
+            },
+          ],
+        },
+      ],
+    };
+    before.documents[0]!.instances.push({
+      id: "X1",
+      symbolId: "adc",
+      reference: "X1",
+      signalFlowParameters: { formula: "ADC1", formulaFormat },
+      placement: {
+        position: { x: 100, y: 100 },
+        rotation: 0,
+        mirror: "none",
+      },
+    });
+    const source = JSON.parse(
+      serializeProject(withProjectComponentDefinitions(before)),
+    );
+    expect(source.schemaVersion).toBe(63);
+    expect(
+      parseProject(JSON.stringify(source)).documents[0]!.instances[0]!
+        .signalFlowParameters,
+    ).toEqual({ formula: "ADC1", formulaFormat });
+
+    source.schemaVersion = 61;
+    expect(() => parseProject(JSON.stringify(source))).toThrow(
+      /requires Project schema 62/,
+    );
+  });
+
   it("retains orphan placement, cross-owner anchors, rich text, hidden labels, and arbitrary IDs", () => {
     const project = createEmptyProject("owned", "Owned");
     const d = project.documents[0]!;

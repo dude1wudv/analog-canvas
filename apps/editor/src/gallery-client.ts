@@ -1,3 +1,14 @@
+import type { GalleryAttention } from "../../../worker/gallery-curation";
+
+/** Bundled teaching circuits are a loopback fallback, not hosted Gallery data. */
+export function localhostExamplesEnabled(
+  hostname = globalThis.location?.hostname ?? "",
+): boolean {
+  return (
+    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]"
+  );
+}
+
 const GALLERY_CHANGE_CHANNEL = "analog-canvas-gallery-change-v1";
 
 export interface GalleryChange {
@@ -53,7 +64,7 @@ export function galleryPreviewUrl(
 ): string {
   const path = `/api/gallery/${entryId}/preview.svg`;
   return validPreviewRevision(previewRevision)
-    ? `${path}?v=${encodeURIComponent(previewRevision)}`
+    ? `${path}?v=${encodeURIComponent(previewRevision)}&render=formula-sans-v2`
     : path;
 }
 
@@ -159,6 +170,9 @@ export function subscribeGalleryRefresh(
  */
 
 export interface GalleryFeedEntry {
+  curationRevision?: number;
+  attention?: GalleryAttention;
+  assessedPreviewRevision?: string;
   id: string;
   name: string;
   author: string;
@@ -183,33 +197,126 @@ export interface GalleryFeedEntry {
   likedByViewer?: boolean;
 }
 
+export interface GalleryQuickFilterCounts {
+  attention: number;
+  netlistable: number;
+  liked: number;
+}
+
 export interface GalleryFeedPage {
   entries: GalleryFeedEntry[];
   nextCursor: string | null;
   /** Whole filtered wall's size; null while a pre-totals API answers. */
   total: number | null;
+  /** Counts across the filtered wall, before pagination, scoped to this viewer. */
+  filterCounts?: GalleryQuickFilterCounts;
+  /** Contributors to the filtered wall, before pagination. */
+  authors?: GalleryAuthorOption[];
 }
 
+/** A Gallery read's answer when only signed-in readers may see the Gallery. */
+export const GALLERY_SIGN_IN_REQUIRED = "sign-in-required";
+export type GalleryFeedResult =
+  GalleryFeedPage | null | typeof GALLERY_SIGN_IN_REQUIRED;
+
 export interface GalleryFeedState {
-  status: "loading" | "ready" | "unavailable";
+  status: "loading" | "ready" | "unavailable" | "signed-out";
   entries: GalleryFeedEntry[];
   nextCursor: string | null;
   total: number | null;
+  /** Counts across the filtered wall, before pagination, scoped to this viewer. */
+  filterCounts?: GalleryQuickFilterCounts;
+  /** Contributors to the filtered wall, before pagination. */
+  authors?: GalleryAuthorOption[];
+}
+
+function normalizeGallerySearchText(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+/** One insertion, deletion, replacement, or adjacent transposition. */
+function galleryTokensWithinOneEdit(left: string, right: string): boolean {
+  const lengthDifference = left.length - right.length;
+  if (Math.abs(lengthDifference) > 1) return false;
+  if (left === right) return true;
+  if (lengthDifference === 0) {
+    const mismatches: number[] = [];
+    for (let index = 0; index < left.length; index++) {
+      if (left[index] === right[index]) continue;
+      mismatches.push(index);
+      if (mismatches.length > 2) return false;
+    }
+    if (mismatches.length === 1) return true;
+    const [first, second] = mismatches;
+    return (
+      second === first! + 1 &&
+      left[first!] === right[second!] &&
+      left[second!] === right[first!]
+    );
+  }
+  const shorter = lengthDifference < 0 ? left : right;
+  const longer = lengthDifference < 0 ? right : left;
+  let shorterIndex = 0;
+  let longerIndex = 0;
+  let skipped = false;
+  while (shorterIndex < shorter.length && longerIndex < longer.length) {
+    if (shorter[shorterIndex] === longer[longerIndex]) {
+      shorterIndex++;
+      longerIndex++;
+      continue;
+    }
+    if (skipped) return false;
+    skipped = true;
+    longerIndex++;
+  }
+  return true;
+}
+
+function gallerySearchTokenMatches(query: string, candidate: string): boolean {
+  if (candidate.includes(query)) return true;
+  // Keep short circuit acronyms precise: fuzzy matching OTA against every
+  // three-letter neighbour creates more noise than it removes.
+  if (query.length < 4 || candidate.length < 4) return false;
+  if (!/^[a-z0-9]+$/u.test(query) || !/^[a-z0-9]+$/u.test(candidate)) {
+    return false;
+  }
+  return galleryTokensWithinOneEdit(query, candidate);
 }
 
 /**
- * Whether one entry answers a search. Case-insensitive substring over the
- * fields a person would search by: what it is called, who drew it, what it
- * says about itself, and how it is tagged.
+ * Whether one entry answers a search over its name, author, description and
+ * tags. Exact case-insensitive containment wins first; otherwise every query
+ * word may tolerate one small Latin-letter typo.
  */
 export function galleryEntryMatchesQuery(
   entry: Pick<GalleryFeedEntry, "name" | "author" | "description" | "tags">,
-  normalizedQuery: string,
+  query: string,
 ): boolean {
+  const normalizedQuery = normalizeGallerySearchText(query);
   if (!normalizedQuery) return true;
-  return [entry.name, entry.author, entry.description, ...(entry.tags ?? [])]
+  const fields = [
+    entry.name,
+    entry.author,
+    entry.description,
+    ...(entry.tags ?? []),
+  ]
     .filter((field): field is string => Boolean(field))
-    .some((field) => field.toLowerCase().includes(normalizedQuery));
+    .map(normalizeGallerySearchText)
+    .filter(Boolean);
+  if (fields.some((field) => field.includes(normalizedQuery))) return true;
+  const candidates = fields.flatMap((field) => field.split(" "));
+  return normalizedQuery
+    .split(" ")
+    .every((token) =>
+      candidates.some((candidate) =>
+        gallerySearchTokenMatches(token, candidate),
+      ),
+    );
 }
 
 /** Tag menu entries, newest count first, as the wall's tag bar shows them. */
@@ -218,11 +325,97 @@ export interface GalleryTagOption {
   count: number;
 }
 
-/** One public byline and its contribution to the whole Gallery wall. */
+export interface GalleryTagGroupOption {
+  group: string;
+  count: number;
+}
+
+export interface GalleryTagSummary {
+  tags: GalleryTagOption[];
+  groups: GalleryTagGroupOption[];
+}
+
+export interface GalleryLandingPreload {
+  feed?: Promise<GalleryFeedResult>;
+  tags: Promise<GalleryTagSummary>;
+  /** The filters the preloaded tag counts answer; see galleryTagScope. */
+  tagsScope?: string;
+}
+
+/** The wall filters that also narrow the tag counts beside it. */
+export interface GalleryTagFilters {
+  netlistable?: boolean;
+  liked?: boolean;
+  attention?: boolean;
+}
+
+/** One stable key per combination of the filters that narrow tag counts. */
+export function galleryTagScope(filters: GalleryTagFilters): string {
+  return new URLSearchParams([
+    ...(filters.netlistable ? [["netlistable", "1"]] : []),
+    ...(filters.liked ? [["liked", "1"]] : []),
+    ...(filters.attention ? [["attention", "1"]] : []),
+  ]).toString();
+}
+
+/** One public byline and its contribution to the current Gallery results. */
 export interface GalleryAuthorOption {
   author: string;
   ownerUserId?: string | null;
   count: number;
+}
+
+function contributorKey(
+  entry: Pick<GalleryAuthorOption, "author" | "ownerUserId">,
+): string {
+  return entry.ownerUserId
+    ? `owner:${entry.ownerUserId}`
+    : `legacy:${entry.author}`;
+}
+
+function rankContributors(
+  authors: GalleryAuthorOption[],
+): GalleryAuthorOption[] {
+  return authors.sort(
+    (a, b) => b.count - a.count || a.author.localeCompare(b.author),
+  );
+}
+
+/** Search uses the same matching entries as the cards, including on older APIs. */
+export function galleryAuthorsOf(
+  entries: readonly GalleryFeedEntry[],
+): GalleryAuthorOption[] {
+  const authors = new Map<string, GalleryAuthorOption>();
+  for (const entry of entries) {
+    if (!entry.author.trim()) continue;
+    const key = contributorKey(entry);
+    const previous = authors.get(key);
+    authors.set(key, {
+      author:
+        previous && previous.author > entry.author
+          ? previous.author
+          : entry.author,
+      ownerUserId: entry.ownerUserId ?? null,
+      count: (previous?.count ?? 0) + 1,
+    });
+  }
+  return rankContributors([...authors.values()]);
+}
+
+/** Keep full-page aggregates current while a local removal awaits a refresh. */
+export function removeGalleryAuthorEntry(
+  authors: readonly GalleryAuthorOption[],
+  entry: GalleryFeedEntry,
+): GalleryAuthorOption[] {
+  return rankContributors(
+    authors
+      .map((author) =>
+        entry.author.trim() && contributorKey(author) === contributorKey(entry)
+          ? { ...author, count: author.count - 1 }
+          : author,
+      )
+      .filter((author) => author.count > 0),
+  );
 }
 
 export async function loadGalleryFeed(
@@ -237,9 +430,11 @@ export async function loadGalleryFeed(
     /** Only circuits the signed-in viewer has liked. */
     liked?: boolean;
     limit?: number;
+    attention?: boolean;
   } = {},
-): Promise<GalleryFeedPage | null> {
+): Promise<GalleryFeedResult> {
   const params = new URLSearchParams();
+  if (options.attention) params.set("attention", "1");
   if (options.author) params.set("author", options.author);
   if (options.ownerUserId) params.set("owner", options.ownerUserId);
   if (options.tags && options.tags.length > 0) {
@@ -255,17 +450,41 @@ export async function loadGalleryFeed(
       `/api/gallery${query ? `?${query}` : ""}`,
       { credentials: "same-origin" },
     );
+    // The Gallery is for signed-in readers; say so instead of "unavailable".
+    if (response.status === 401) return GALLERY_SIGN_IN_REQUIRED;
     if (!response.ok) return null;
     const payload = (await response.json()) as {
       entries?: GalleryFeedEntry[];
       nextCursor?: unknown;
       total?: unknown;
+      filterCounts?: GalleryQuickFilterCounts;
+      authors?: GalleryAuthorOption[];
     };
     return {
       entries: payload.entries ?? [],
       nextCursor:
         typeof payload.nextCursor === "string" ? payload.nextCursor : null,
       total: typeof payload.total === "number" ? payload.total : null,
+      ...(Array.isArray(payload.authors) &&
+      payload.authors.every(
+        (author) =>
+          author &&
+          typeof author.author === "string" &&
+          (author.ownerUserId == null ||
+            typeof author.ownerUserId === "string") &&
+          Number.isSafeInteger(author.count) &&
+          author.count > 0,
+      )
+        ? { authors: payload.authors }
+        : {}),
+      ...(payload.filterCounts &&
+      ["attention", "netlistable", "liked"].every((key) => {
+        const count =
+          payload.filterCounts![key as keyof GalleryQuickFilterCounts];
+        return Number.isSafeInteger(count) && count >= 0;
+      })
+        ? { filterCounts: payload.filterCounts }
+        : {}),
     };
   } catch {
     return null;
@@ -290,22 +509,34 @@ export async function loadGalleryAuthors(
   }
 }
 
-/** The tag menu's options. An unreachable worker leaves the menu empty. */
+/** The grouped tag menu. An unreachable worker leaves the menu empty. */
+export async function loadGalleryTagSummary(
+  fetchLike: typeof fetch = fetch,
+  options: GalleryTagFilters = {},
+): Promise<GalleryTagSummary> {
+  try {
+    // Needs attention, With netlist and Liked narrow the tag counts exactly
+    // as they narrow the wall.
+    const scope = galleryTagScope(options);
+    const response = await fetchLike(
+      `/api/gallery/tags${scope ? `?${scope}` : ""}`,
+      {
+        credentials: "same-origin",
+      },
+    );
+    if (!response.ok) return { tags: [], groups: [] };
+    const payload = (await response.json()) as Partial<GalleryTagSummary>;
+    return { tags: payload.tags ?? [], groups: payload.groups ?? [] };
+  } catch {
+    return { tags: [], groups: [] };
+  }
+}
+
+/** Backward-compatible tag-only reader for the Editor's narrow Gallery dock. */
 export async function loadGalleryTags(
   fetchLike: typeof fetch = fetch,
 ): Promise<GalleryTagOption[]> {
-  try {
-    const response = await fetchLike("/api/gallery/tags", {
-      credentials: "same-origin",
-    });
-    if (!response.ok) return [];
-    const payload = (await response.json()) as {
-      tags?: GalleryTagOption[];
-    };
-    return payload.tags ?? [];
-  } catch {
-    return [];
-  }
+  return (await loadGalleryTagSummary(fetchLike)).tags;
 }
 
 /**

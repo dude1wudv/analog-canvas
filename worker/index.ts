@@ -1,3 +1,8 @@
+import {
+  routeTopologyTaskRequest,
+  type TopologyTaskEnv,
+} from "./topology-task";
+export { TopologyTaskDO } from "./topology-task";
 import { handleNetlistConversionRequest } from "../packages/spice/src/conversion-request.js";
 import {
   routeAnalyticsRequest,
@@ -8,8 +13,10 @@ import {
   type AgentSessionNamespaceLike,
 } from "./agent-session";
 import {
+  galleryReadableDocument,
   refreshNetlistMarks,
   routeGalleryRequest,
+  type GalleryReadableDocument,
   type GalleryNamespaceLike,
 } from "./gallery";
 import { routeSimulationRequest, type SimulationEnv } from "./simulation";
@@ -42,7 +49,8 @@ export { GalleryDO } from "./gallery";
 export { AuthDO } from "./auth";
 export { SimulationControlDO } from "./simulation-control-do";
 
-type Env = ComponentLibraryEnv &
+type Env = TopologyTaskEnv &
+  ComponentLibraryEnv &
   SimulationEnv &
   SimulationOperationsEnv &
   ChannelEnv & {
@@ -50,6 +58,7 @@ type Env = ComponentLibraryEnv &
     AGENT_SESSION: AgentSessionNamespaceLike;
     AGENT_ALLOWED_ORIGIN?: string;
     GALLERY: GalleryNamespaceLike;
+    GALLERY_BACKUP_TOKEN?: string;
     AUTH: AuthNamespaceLike;
     GH_OAUTH_CLIENT_ID?: string;
     GH_OAUTH_CLIENT_SECRET?: string;
@@ -112,6 +121,9 @@ async function route(request: Request, env: Env): Promise<Response> {
   const authResponse = await routeAuthRequest(request, env);
   if (authResponse) return authResponse;
 
+  const topologyResponse = await routeTopologyTaskRequest(request, env);
+  if (topologyResponse) return topologyResponse;
+
   const galleryResponse = await routeGalleryRequest(request, env);
   if (galleryResponse) return galleryResponse;
 
@@ -133,7 +145,70 @@ async function route(request: Request, env: Env): Promise<Response> {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
-  return serveAsset(request, env);
+  return servePublicDocument(request, env);
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+export function injectGalleryReadableDocument(
+  shell: string,
+  readable: GalleryReadableDocument,
+): string {
+  const title = escapeHtml(readable.title);
+  const description = escapeHtml(readable.description);
+  return shell
+    .replace(/<title>.*?<\/title>/isu, `<title>${title}</title>`)
+    .replace(
+      "</head>",
+      `<meta name="description" content="${description}">${readable.headHtml}</head>`,
+    )
+    .replace(
+      '<div id="root"></div>',
+      `<div id="root">${readable.bodyHtml}</div>`,
+    );
+}
+
+/** Add real public Gallery facts to the first HTML response before React enhances it. */
+async function servePublicDocument(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const response = await serveAsset(request, env);
+  if (
+    request.method !== "GET" ||
+    response.status !== 200 ||
+    !(response.headers.get("content-type") ?? "")
+      .toLowerCase()
+      .includes("text/html")
+  ) {
+    return response;
+  }
+  let readable: Awaited<ReturnType<typeof galleryReadableDocument>>;
+  try {
+    readable = await galleryReadableDocument(request, env);
+  } catch {
+    // The interactive application remains available during a Gallery read outage.
+    return response;
+  }
+  if (!readable) return response;
+  const shell = await response.text();
+  const html = injectGalleryReadableDocument(shell, readable);
+  const headers = new Headers(response.headers);
+  headers.delete("content-encoding");
+  headers.delete("content-length");
+  headers.delete("etag");
+  headers.set(
+    "cache-control",
+    "public, max-age=60, stale-while-revalidate=300",
+  );
+  return new Response(html, { status: response.status, headers });
 }
 
 /**

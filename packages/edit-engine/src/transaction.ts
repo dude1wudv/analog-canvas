@@ -56,7 +56,7 @@ import {
   physicalContactLicenseForTransaction,
   preferredPhysicalMergeTarget,
   pruneUnreachableLocalNet,
-  reconcileMaterializedMosBulkBindings,
+  reconcileMosBulkAfterConnectivity,
   removeNoConnectForEndpoint,
   retargetConnectivityEvidenceOwner,
   revokeInvalidatedSupplyBulkDefaults,
@@ -688,10 +688,23 @@ export function executeTransaction(
         document,
         draft,
         resolver,
-        transaction.transactionId,
         changedObjectIds,
+        {
+          explicitlyAuthoredRouteIds,
+          deferNetPrune,
+          reject: (code, message, diagnostics, objectIds) =>
+            rejectTransaction(
+              document,
+              code,
+              message,
+              diagnostics,
+              [],
+              objectIds,
+            ),
+        },
         context.beforeContactEvidence,
       );
+      if (directContact.rejection) return directContact.rejection;
       geometryChanged ||= directContact.geometryChanged;
       for (const routeId of directContact.changedRouteIds) {
         changedRouteIds.add(routeId);
@@ -794,7 +807,6 @@ export function executeTransaction(
           const netId = uniquePhysicalContactId(
             draft,
             "net",
-            transaction.transactionId,
             [endpointKey(operation.left), endpointKey(operation.right)]
               .sort((left, right) => left.localeCompare(right, "en"))
               .join("--"),
@@ -915,7 +927,6 @@ export function executeTransaction(
       const secondRouteId = uniquePhysicalContactId(
         draft,
         "route",
-        transaction.transactionId,
         `${seed}:second`,
       );
       const split = splitRoute(
@@ -1058,12 +1069,12 @@ export function executeTransaction(
     deferNetPrune,
   );
   connectivityChanged ||= invalidatedBulkDefault;
-  const reconciledBulkBinding = reconcileMaterializedMosBulkBindings(
+  const reconciledBulkConnectivity = reconcileMosBulkAfterConnectivity(
     draft,
     changedObjectIds,
     deferNetPrune,
   );
-  connectivityChanged ||= reconciledBulkBinding;
+  connectivityChanged ||= reconciledBulkConnectivity;
   const netCountBeforeDeferredPrune = draft.nets.length;
   const evidenceCountBeforeDeferredPrune = draft.connectivityEvidence.length;
   for (const netId of deferredNetPruneIds) {

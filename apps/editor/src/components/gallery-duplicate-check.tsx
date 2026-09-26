@@ -123,7 +123,7 @@ export function GalleryDuplicateCheck({
         </button>
         {running ? (
           <button type="button" className="gallery-tag-option" onClick={stop}>
-            Cancel
+            取消
           </button>
         ) : null}
         <span role="status">

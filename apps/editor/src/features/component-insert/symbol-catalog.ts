@@ -13,7 +13,6 @@ import {
   isAnnotationPaletteSymbol,
 } from "./annotation-preview-symbols";
 import { vddRailPreviewSymbol } from "./vdd-rail-preview-symbol";
-import { TIMING_UI_ENABLED } from "../simulation/timing-ui";
 
 /**
  * Reach order rather than taxonomy order: the devices placed most often in a
@@ -91,11 +90,13 @@ export function symbolCategory(symbolId: string): string {
       "adc",
       "dac",
       "opamp",
+      "opamp-wide",
       "opamp-lettered",
       "voltage-amplifier-lettered",
       "transconductance",
       "differential-transconductance",
       "opamp-differential",
+      "opamp-differential-wide",
       "opamp-differential-lettered",
       "opamp-differential-crossed",
       "opamp-differential-crossed-lettered",
@@ -162,20 +163,27 @@ export function symbolCategory(symbolId: string): string {
  * Library display names, where the catalog's own name does not say what the
  * entry is *for*.
  *
- * Port artwork has one meaning: an independently authored Cell Pin. Hollow
- * and filled entries are appearance variants, never shared interface objects.
+ * The hollow Port is a Cell Pin. The filled marker is a Bias Voltage Port.
+ * Both remain independently authored interface objects in the current model.
  */
 const LIBRARY_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+  opamp: "Op Amp S",
+  "opamp-wide": "Op Amp",
+  "opamp-differential": "FD Amp S",
+  "opamp-differential-wide": "FD Amp",
   "depletion-nmos": "D-NMOS",
   "depletion-pmos": "D-PMOS",
   "externally-controlled-switch": "Ctrl SW",
   port: "Cell Pin",
-  "port-filled": "Cell Pin (filled)",
   "zener-diode": "Zener",
 };
 
 /** One line saying what an entry does, where the name alone leaves a doubt. */
 const LIBRARY_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  opamp: "Compact Op Amp — input pin spacing: 20",
+  "opamp-wide": "Op Amp — input pin spacing: 40",
+  "opamp-differential": "Compact FD Amp — input/output pin spacing: 20",
+  "opamp-differential-wide": "FD Amp — input/output pin spacing: 40",
   "d-flip-flop-reset":
     "Rising-edge D flip-flop with an active-high asynchronous reset",
   "voltage-controlled-switch":
@@ -183,7 +191,8 @@ const LIBRARY_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "externally-controlled-switch":
     "Three-terminal switch: P/N carry the path; CTRL is one external logic-control pin",
   port: "A terminal on this Cell interface — the parent circuit connects to it",
-  "port-filled": "An independent Cell Pin with a solid appearance",
+  "port-filled":
+    "A solid bias-voltage port, typically used for VB-style bias nodes",
 };
 
 export function libraryDisplayName(symbolId: string, fallback: string): string {
@@ -194,19 +203,14 @@ export function libraryDescription(symbolId: string): string | undefined {
   return LIBRARY_DESCRIPTIONS[symbolId];
 }
 
-export function paletteSymbols(
-  _styleProfileId: string,
-  timingUiEnabled = TIMING_UI_ENABLED,
-): SymbolDefinition[] {
+export function paletteSymbols(_styleProfileId: string): SymbolDefinition[] {
   const symbols = [
     vddRailPreviewSymbol,
     ...razaviProductSymbols,
     ...annotationPreviewSymbols,
     ...expandedDeviceSymbols,
   ];
-  return timingUiEnabled
-    ? symbols
-    : symbols.filter((symbol) => symbol.id !== "pulse-voltage-source");
+  return symbols.filter((symbol) => symbol.id !== "pulse-voltage-source");
 }
 
 /**
@@ -271,7 +275,9 @@ const SYMBOL_ORDER: readonly string[] = [
   // a differential amplifier between them. A reader looking for one converter
   // is looking for the pair, so they sit together, after the amplifiers and
   // comparators an analog schematic reaches for far more often.
+  "opamp-wide",
   "opamp",
+  "opamp-differential-wide",
   "opamp-differential",
   "voltage-amplifier",
   "transconductance",
@@ -281,6 +287,7 @@ const SYMBOL_ORDER: readonly string[] = [
   "dac",
   "annotation-arrow",
   "annotation-line",
+  "annotation-polyline",
   "annotation-rectangle",
   "annotation-circle",
   "annotation-polarity-both",
@@ -297,7 +304,7 @@ function symbolRank(symbolId: string): number {
 function searchableText(symbol: SymbolDefinition): string {
   const formula = symbol.formulaPresentation?.defaultFormula ?? "";
   return normalizeSignalFlowFormula(
-    `${symbol.name} ${symbol.id} ${formula}`,
+    `${libraryDisplayName(symbol.id, symbol.name)} ${symbol.name} ${symbol.id} ${formula}`,
   ).toLowerCase();
 }
 
@@ -305,7 +312,6 @@ export function componentCatalog(
   styleProfileId: string,
   query: string,
   recentSymbolIds: readonly string[] = [],
-  timingUiEnabled = TIMING_UI_ENABLED,
 ): ComponentCatalogGroup[] {
   const normalizedQuery = normalizeSignalFlowFormula(
     query.trim(),
@@ -313,7 +319,7 @@ export function componentCatalog(
   const recentRank = new Map(
     recentSymbolIds.map((symbolId, index) => [symbolId, index]),
   );
-  const symbols = paletteSymbols(styleProfileId, timingUiEnabled)
+  const symbols = paletteSymbols(styleProfileId)
     .filter(
       (symbol) =>
         normalizedQuery.length === 0 ||
@@ -338,9 +344,8 @@ export function componentCatalog(
 export function findPaletteSymbol(
   styleProfileId: string,
   symbolId: string,
-  timingUiEnabled = TIMING_UI_ENABLED,
 ): SymbolDefinition | undefined {
-  return paletteSymbols(styleProfileId, timingUiEnabled).find(
+  return paletteSymbols(styleProfileId).find(
     (symbol) => symbol.id === symbolId,
   );
 }

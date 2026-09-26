@@ -1,10 +1,16 @@
-import { createEmptyDocument } from "@icm/model";
-import { InMemorySymbolResolver, builtInSymbols } from "@icm/symbols";
+import { createEmptyDocument, transformPoint } from "@icm/model";
+import {
+  InMemorySymbolResolver,
+  builtInSymbols,
+  getRazaviCatalogEntry,
+} from "@icm/symbols";
 import { describe, expect, it } from "vitest";
 
 import {
   defaultInstanceLabelPlacement,
   hasDifferentialInputs,
+  instanceLabelInkBounds,
+  instanceLabelMetrics,
   isBjtSymbol,
   isMosSymbol,
 } from "./instance-label-placement.js";
@@ -53,6 +59,75 @@ function placedDefaultLabel(
 }
 
 describe("instance label placement", () => {
+  const metrics = instanceLabelMetrics(profile);
+  // Every family a label is drawn for: Analog Blocks, gates, registers, delay
+  // cells, converters and the devices.
+  const families = [
+    ...new Set([
+      ...builtInSymbols
+        .filter(
+          (symbol) =>
+            getRazaviCatalogEntry(symbol.id)?.category === "analog-block",
+        )
+        .map((symbol) => symbol.id),
+      "nmos",
+      "pmos",
+      "npn",
+      "resistor",
+      "capacitor",
+      "inductor",
+      "inverter",
+      "buffer",
+      "or-gate",
+      "nand-gate",
+      "d-flip-flop",
+      "delay-cell",
+      "adc",
+      "dac",
+    ]),
+  ];
+  it.each(families)(
+    "keeps the %s label one gap from the artwork on every side",
+    (symbolId) => {
+      const bounds = instanceLabelInkBounds(resolver.resolve(symbolId)!);
+      for (const rotation of [0, 90, 180, 270] as const) {
+        for (const mirror of [
+          "none",
+          "horizontal",
+          "vertical",
+          "both",
+        ] as const) {
+          const corners = [
+            { x: bounds.x, y: bounds.y },
+            { x: bounds.x + bounds.width, y: bounds.y },
+            { x: bounds.x, y: bounds.y + bounds.height },
+            { x: bounds.x + bounds.width, y: bounds.y + bounds.height },
+          ].map((point) =>
+            transformPoint(point, { x: 100, y: 100 }, { rotation, mirror }),
+          );
+          const left = Math.min(...corners.map((point) => point.x));
+          const right = Math.max(...corners.map((point) => point.x));
+          const top = Math.min(...corners.map((point) => point.y));
+          const bottom = Math.max(...corners.map((point) => point.y));
+          const label = placedDefaultLabel(symbolId, rotation, mirror);
+          // The label's ink: capitals above its baseline, a subscript below.
+          const gap =
+            label.alignment === "start"
+              ? label.position.x - right
+              : label.alignment === "end"
+                ? left - label.position.x
+                : label.position.y > bottom
+                  ? label.position.y - metrics.capHeight - bottom
+                  : top - (label.position.y + metrics.subscriptDrop);
+          expect(
+            Math.abs(gap - metrics.gap),
+            `${rotation} ${mirror}`,
+          ).toBeLessThanOrEqual(0.5);
+        }
+      }
+    },
+  );
+
   it("uses the MOS channel-side rule for NPN and PNP names", () => {
     const document = createEmptyDocument("labels", "Labels");
     for (const symbolId of ["npn", "pnp"] as const) {
@@ -76,16 +151,12 @@ describe("instance label placement", () => {
           y: expect.any(Number),
         },
       });
-      const localBounds = visibleSymbolInkBounds(resolved);
-      expect(label!.position.x).toBe(
-        Math.round(
-          (instance.placement.position.x +
-            localBounds.x +
-            localBounds.width +
-            10) /
-            10,
-        ) * 10,
-      );
+      const localBounds = instanceLabelInkBounds(resolved);
+      const gap =
+        label!.position.x -
+        (instance.placement.position.x + localBounds.x + localBounds.width);
+      expect(Math.abs(gap - metrics.gap)).toBeLessThanOrEqual(0.5);
+      expect(label!.position.y).toBe(105);
     }
   });
 
@@ -110,28 +181,66 @@ describe("instance label placement", () => {
 
   it("places passive, source, and Port labels on their semantic sides", () => {
     expect(placedDefaultLabel("resistor")).toMatchObject({
-      position: { x: 120, y: 110 },
+      position: { x: 109, y: 105 },
+      alignment: "start",
+    });
+    expect(placedDefaultLabel("inductor-compact")).toMatchObject({
+      position: { x: 112, y: 105 },
       alignment: "start",
     });
     expect(placedDefaultLabel("variable-resistor")).toMatchObject({
-      position: { x: 130, y: 110 },
+      position: { x: 116, y: 105 },
       alignment: "start",
     });
     expect(placedDefaultLabel("voltage-source")).toMatchObject({
-      position: { x: 120, y: 110 },
+      position: { x: 115, y: 105 },
       alignment: "start",
     });
+    expect(placedDefaultLabel("battery")).toMatchObject({
+      position: { x: expect.any(Number), y: 105 },
+      alignment: "start",
+    });
+    expect(placedDefaultLabel("battery").position.x).toBeGreaterThan(115);
+    expect(placedDefaultLabel("battery", 90)).toMatchObject({
+      position: { x: 100, y: expect.any(Number) },
+      alignment: "middle",
+    });
     expect(placedDefaultLabel("capacitor", 90)).toMatchObject({
-      position: { x: 90, y: 130 },
+      position: { x: 100, y: 123 },
       alignment: "middle",
     });
     expect(placedDefaultLabel("port")).toMatchObject({
-      position: { x: 80, y: 110 },
+      position: { x: 80, y: 105 },
       alignment: "end",
     });
   });
 
-  it("keeps quarter-turned resistor and capacitor labels on one row", () => {
+  it.each(["port", "port-filled"])(
+    "puts a %s name squarely beside it, away from its wire",
+    (symbolId) => {
+      // The Pin sits at (100, 100) with its wire at the Symbol origin; the
+      // capitals are centred on it (baseline 0.35 em low) and not snapped.
+      expect(placedDefaultLabel(symbolId, 0)).toEqual({
+        position: { x: 80, y: 105 },
+        alignment: "end",
+      });
+      expect(placedDefaultLabel(symbolId, 180)).toEqual({
+        position: { x: 120, y: 105 },
+        alignment: "start",
+      });
+      // Vertical Pins take the name directly above or below, centred.
+      expect(placedDefaultLabel(symbolId, 90)).toEqual({
+        position: { x: 100, y: 76 },
+        alignment: "middle",
+      });
+      expect(placedDefaultLabel(symbolId, 270)).toEqual({
+        position: { x: 100, y: 130 },
+        alignment: "middle",
+      });
+    },
+  );
+
+  it("centers quarter-turned passive labels with the same clearance", () => {
     const resistor = resolver.resolve("resistor");
     if (!resistor) throw new Error("Missing resistor Symbol");
     expect(visibleSymbolInkBounds(resistor)).toEqual({
@@ -142,11 +251,19 @@ describe("instance label placement", () => {
     });
 
     for (const rotation of [90, 270] as const) {
-      const placements = ["resistor", "capacitor"].map((symbolId) =>
-        placedDefaultLabel(symbolId, rotation),
-      );
-
-      expect(placements[0]!.position.y).toBe(placements[1]!.position.y);
+      for (const symbolId of ["resistor", "capacitor"]) {
+        const label = placedDefaultLabel(symbolId, rotation);
+        const bounds = instanceLabelInkBounds(resolver.resolve(symbolId)!);
+        const edge = bounds.x + bounds.width;
+        // Below, the capitals keep the gap; above, the subscript does, so
+        // R₂ over a part never touches it.
+        const gap =
+          rotation === 90
+            ? label.position.y - metrics.capHeight - (100 + edge)
+            : 100 - edge - (label.position.y + metrics.subscriptDrop);
+        expect(Math.abs(gap - metrics.gap)).toBeLessThanOrEqual(0.5);
+        expect(label.position.x).toBe(100);
+      }
     }
   });
 
@@ -165,26 +282,26 @@ describe("instance label placement", () => {
 
   it("uses visible MOS edges through variants, rotations, and mirrors", () => {
     expect(placedDefaultLabel("nmos")).toMatchObject({
-      position: { x: 120, y: 110 },
+      position: { x: 115, y: 105 },
       alignment: "start",
     });
     expect(
       placedDefaultLabel("nmos", 0, "none", "textbook-3terminal"),
-    ).toMatchObject({ position: { x: 120, y: 110 }, alignment: "start" });
+    ).toMatchObject({ position: { x: 115, y: 105 }, alignment: "start" });
     expect(
       placedDefaultLabel("nmos", 90, "none", "textbook-3terminal"),
     ).toMatchObject({
-      position: { x: 90, y: 140 },
+      position: { x: 100, y: 125 },
       alignment: "middle",
     });
     expect(
       placedDefaultLabel("nmos", 270, "none", "textbook-3terminal"),
     ).toMatchObject({
-      position: { x: 110, y: 70 },
+      position: { x: 100, y: 80 },
       alignment: "middle",
     });
     expect(placedDefaultLabel("nmos", 0, "horizontal")).toMatchObject({
-      position: { x: 80, y: 110 },
+      position: { x: 85, y: 105 },
       alignment: "end",
     });
   });
@@ -209,6 +326,20 @@ describe("instance label placement", () => {
     expect(value.alignment).toBe("middle");
     expect(value.position.x).toBe(reference.position.x);
     expect(value.position.y - reference.position.y).toBe(30);
+  });
+
+  it("stacks the value row away from the part when the label sits above it", () => {
+    const reference = placedDefaultLabel("resistor", 270);
+    const value = placedDefaultLabel(
+      "resistor",
+      270,
+      "none",
+      undefined,
+      "value",
+    );
+    expect(reference.alignment).toBe("middle");
+    expect(value.position.x).toBe(reference.position.x);
+    expect(reference.position.y - value.position.y).toBe(30);
   });
 
   it("keeps a mirrored MOS value slot beside the mirrored channel side", () => {

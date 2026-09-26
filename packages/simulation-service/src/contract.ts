@@ -49,6 +49,16 @@ export const ProblemSchema = z.strictObject({
   retryAfterMs: z.number().nonnegative().optional(),
   correlationId: Id.optional(),
   currentRevision: z.number().int().nonnegative().optional(),
+  fileEdit: z
+    .strictObject({
+      applied: z.literal(false),
+      path: z.string().optional(),
+      operationIndex: z.number().int().nonnegative().optional(),
+      operation: z.enum(["replace", "patch", "write", "remove"]).optional(),
+      matchCount: z.number().int().nonnegative().optional(),
+      expectedRevision: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
   diagnostics: z
     .array(
       z.strictObject({
@@ -75,12 +85,160 @@ export function problem(
 }
 export const ArtifactRefSchema = z.strictObject({
   id: Id,
+  /** Stable evidence identity; id is the current session's read locator. */
+  fileId: Id.optional(),
   name: z.string(),
   mediaType: z.string(),
   byteLength: z.number().int().nonnegative(),
   sha256: Digest,
+  /** Producer-assigned semantics; optional only for historical archives. */
+  role: z
+    .enum([
+      "source",
+      "prepared",
+      "source-map",
+      "execution-input",
+      "executed",
+      "raw",
+      "result",
+      "table",
+      "specs",
+      "log",
+      "diagnostics",
+      "manifest",
+    ])
+    .optional(),
+  sourcePath: z.string().optional(),
+  analysisIndex: z.number().int().nonnegative().optional(),
 });
 export type ArtifactRef = z.infer<typeof ArtifactRefSchema>;
+export const SimulationSignalTargetsSchema = z.record(
+  z.string(),
+  z.array(
+    z.strictObject({
+      rootDocumentId: Id,
+      documentId: Id,
+      netId: Id,
+      occurrence: z.array(Id),
+      terminal: z
+        .strictObject({ instanceId: Id, pinName: z.string().min(1).max(128) })
+        .optional(),
+    }),
+  ),
+);
+export const ResultCatalogSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  runId: Id,
+  preparedId: Id,
+  inputRevision: z.string(),
+  /** Present for new runs; historical catalogs may predate source ownership. */
+  source: z.lazy(() => InputSourceSchema).optional(),
+  /** Missing on historical catalogs: do not infer permission to auto-prune. */
+  retentionPolicy: z.literal("cache").optional(),
+  signalTargets: SimulationSignalTargetsSchema.optional(),
+  execution: z.enum([
+    "pending",
+    "completed",
+    "completed-with-dropped-input",
+    "failed",
+    "timed-out",
+    "cancelled",
+    "lost",
+  ]),
+  collection: z.enum(["pending", "complete", "partial"]),
+  error: ProblemSchema.optional(),
+  files: z.array(ArtifactRefSchema),
+  datasets: z.array(
+    z.strictObject({
+      id: Id,
+      analysisIndex: z.number().int().nonnegative(),
+      analysis: z.enum(["op", "dc", "ac", "tran", "noise"]),
+      plotName: z.string(),
+      pointCount: z.number().int().nonnegative(),
+      axis: z
+        .strictObject({ name: z.string(), unit: z.string().nullable() })
+        .optional(),
+      signals: z.array(
+        z.strictObject({
+          name: z.string(),
+          quantity: z.string(),
+          unit: z.string().nullable(),
+        }),
+      ),
+      scalars: z
+        .array(
+          z.strictObject({
+            name: z.string(),
+            quantity: z.string(),
+            unit: z.string().nullable(),
+            representations: z.array(
+              z.strictObject({
+                artifactId: Id,
+                fileId: Id,
+                selector: z.string(),
+              }),
+            ),
+          }),
+        )
+        .optional(),
+      representations: z.array(
+        z.strictObject({
+          artifactId: Id,
+          fileId: Id,
+          selector: z.string(),
+        }),
+      ),
+    }),
+  ),
+});
+export type ResultCatalog = z.infer<typeof ResultCatalogSchema>;
+export const SimulationHistoryEntrySchema = ResultCatalogSchema.pick({
+  runId: true,
+  preparedId: true,
+  inputRevision: true,
+  source: true,
+  execution: true,
+  collection: true,
+}).extend({
+  storedAt: z.number(),
+  storage: z.enum(["persistent", "memory"]),
+  fileCount: z.number().int().nonnegative(),
+  byteLength: z.number().int().nonnegative(),
+  retention: z.enum([
+    "saved",
+    "cache",
+    "catalog-only",
+    "session-only",
+    "unverified",
+  ]),
+  archiveCount: z.number().int().nonnegative(),
+});
+export type SimulationHistoryEntry = z.infer<
+  typeof SimulationHistoryEntrySchema
+>;
+export const SimulationHistoryUsageSchema = z.strictObject({
+  fileCount: z.number().int().nonnegative(),
+  byteLength: z.number().int().nonnegative(),
+  unreferencedFileCount: z.number().int().nonnegative(),
+  unreferencedBytes: z.number().int().nonnegative(),
+  catalogCount: z.number().int().nonnegative(),
+  fileLimit: z.number().int().positive(),
+  byteLimit: z.number().int().positive(),
+  /** Browser evidence can remain pending reclamation while another tab uses it. */
+  cleanupDeferred: z.boolean(),
+});
+export const SimulationHistoryDeletionSchema = z.strictObject({
+  runId: Id,
+  dryRun: z.boolean(),
+  deleted: z.boolean(),
+  retention: SimulationHistoryEntrySchema.shape.retention,
+  archiveCount: z.number().int().nonnegative(),
+  fileCount: z.number().int().nonnegative(),
+  byteLength: z.number().int().nonnegative(),
+  reclaimedFiles: z.number().int().nonnegative(),
+  reclaimedBytes: z.number().int().nonnegative(),
+  cleanupDeferred: z.boolean(),
+});
 export const VectorSchema = z.strictObject({
   probeId: Id,
   vector: z.string(),
@@ -168,25 +326,7 @@ export const PreparedSchema = z.strictObject({
   vectors: z.array(VectorSchema),
   signalNames: z.record(z.string(), z.string()).optional(),
   /** Canvas addresses captured with the prepared input, never resolved by display label. */
-  signalTargets: z
-    .record(
-      z.string(),
-      z.array(
-        z.strictObject({
-          rootDocumentId: Id,
-          documentId: Id,
-          netId: Id,
-          occurrence: z.array(Id),
-          terminal: z
-            .strictObject({
-              instanceId: Id,
-              pinName: z.string().min(1).max(128),
-            })
-            .optional(),
-        }),
-      ),
-    )
-    .optional(),
+  signalTargets: SimulationSignalTargetsSchema.optional(),
   outputs: z.array(CompiledOutputSchema),
   deviceOperatingPoints: z.array(CompiledDeviceOperatingPointSchema),
   measurements: z.array(SimulationMeasurementSpecSchema).optional(),
@@ -416,10 +556,19 @@ export const SimulationOperationSchema = z.discriminatedUnion("operation", [
     name: z.string().min(1).max(128).optional(),
     context: z.enum(["circuit", "control"]).optional(),
   }),
-  z.strictObject({ operation: z.literal("capabilities") }),
+  z.strictObject({
+    operation: z.literal("capabilities"),
+    detail: z.enum(["summary", "full"]).optional(),
+    profileId: Id.optional(),
+  }),
   z.strictObject({
     operation: z.literal("prepare"),
     source: InputSourceSchema,
+  }),
+  z.strictObject({
+    operation: z.literal("run"),
+    source: InputSourceSchema,
+    timeoutMs: z.number().int().positive().max(120000).optional(),
   }),
   z.strictObject({
     operation: z.literal("start"),
@@ -428,6 +577,26 @@ export const SimulationOperationSchema = z.discriminatedUnion("operation", [
     timeoutMs: z.number().int().positive().max(120000).optional(),
   }),
   z.strictObject({ operation: z.literal("read"), runId: Id }),
+  z.strictObject({
+    operation: z.literal("catalog"),
+    runId: Id,
+    section: z.enum(["files", "datasets"]).optional(),
+    offset: z.number().int().nonnegative().optional(),
+    limit: z.number().int().min(1).max(1000).optional(),
+  }),
+  z.strictObject({
+    operation: z.literal("history"),
+    limit: z.number().int().min(1).max(100).default(10),
+    cursor: Id.optional(),
+  }),
+  z.strictObject({ operation: z.literal("history-usage") }),
+  z.strictObject({
+    operation: z.literal("history-delete"),
+    runId: Id,
+    dryRun: z.boolean().optional(),
+    /** Explicitly include manually saved or unclassified legacy archives. */
+    includeSaved: z.boolean().optional(),
+  }),
   z.strictObject({ operation: z.literal("cancel"), runId: Id }),
   z
     .strictObject({
@@ -519,6 +688,16 @@ export const NativeModelLibrarySymbolsSchema: z.ZodType<NativeModelLibrarySymbol
       .max(256),
   });
 export const CapabilitiesSchema = z.strictObject({
+  discovery: z
+    .strictObject({
+      detail: z.enum(["summary", "full"]),
+      fullRequest: z.strictObject({
+        operation: z.literal("capabilities"),
+        detail: z.literal("full"),
+        profileId: Id.optional(),
+      }),
+    })
+    .optional(),
   configured: z.boolean(),
   /** Explicit collection protocol; absent on pre-source deployments. */
   rawfileCollection: z
@@ -618,6 +797,48 @@ export const RunSchema = z.strictObject({
   state: z.enum(["running", "cancelling", "finished", "cancelled", "lost"]),
   inputStatus: z.enum(["unchanged", "changed", "unavailable"]).optional(),
   resultPreview: z.boolean().optional(),
+  details: z
+    .strictObject({
+      operation: z.literal("catalog"),
+      runId: Id,
+      execution: ResultCatalogSchema.shape.execution.optional(),
+      collection: ResultCatalogSchema.shape.collection.optional(),
+      datasetCount: z.number().int().nonnegative().optional(),
+      analyses: z
+        .array(
+          ResultCatalogSchema.shape.datasets.element.pick({
+            analysisIndex: true,
+            analysis: true,
+            plotName: true,
+            pointCount: true,
+            axis: true,
+          }),
+        )
+        .optional(),
+      fileCount: z.number().int().nonnegative().optional(),
+      diagnostics: z
+        .strictObject({
+          total: z.number().int().nonnegative(),
+          shown: z.number().int().nonnegative(),
+          textMayBeShortened: z.boolean(),
+        })
+        .optional(),
+      outputDiagnostics: z.number().int().nonnegative().optional(),
+      specs: z
+        .strictObject({
+          available: z.boolean(),
+          total: z.number().int().nonnegative(),
+          passed: z.number().int().nonnegative(),
+          failed: z.number().int().nonnegative(),
+          notEvaluated: z.number().int().nonnegative(),
+          unconstrained: z.number().int().nonnegative(),
+        })
+        .optional(),
+      /** Server-produced observational counters; names are versioned in the workflow docs. */
+      timing: z.unknown().optional(),
+    })
+    .optional(),
+  catalog: ResultCatalogSchema.optional(),
   result: SimulationResultSchema.optional(),
   outputData: SimulationOutputDataSchema.optional(),
   error: ProblemSchema.optional(),
@@ -652,7 +873,12 @@ export const SimulationBatchSchema = z.strictObject({
     "cancelled",
   ]),
   createdAt: z.number(),
-  expiresAt: z.number(),
+  expiresAt: z
+    .number()
+    .nullable()
+    .describe(
+      "Unused preparation expiry; null after completion. Not an evidence retention deadline.",
+    ),
   items: z.array(SimulationBatchItemSchema).min(1).max(16),
 });
 export type SimulationBatch = z.infer<typeof SimulationBatchSchema>;
@@ -674,6 +900,27 @@ export const SimulationReplySchema = z.union([
   z.strictObject({ ok: z.literal(true), capabilities: CapabilitiesSchema }),
   z.strictObject({ ok: z.literal(true), prepared: PreparedSchema }),
   z.strictObject({ ok: z.literal(true), run: RunSchema }),
+  z.strictObject({
+    ok: z.literal(true),
+    catalog: ResultCatalogSchema,
+    page: z
+      .strictObject({
+        section: z.enum(["files", "datasets"]),
+        total: z.number().int().nonnegative(),
+        nextOffset: z.number().int().nonnegative().nullable(),
+      })
+      .optional(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    runs: z.array(SimulationHistoryEntrySchema),
+    nextCursor: Id.nullable(),
+  }),
+  z.strictObject({ ok: z.literal(true), usage: SimulationHistoryUsageSchema }),
+  z.strictObject({
+    ok: z.literal(true),
+    deletion: SimulationHistoryDeletionSchema,
+  }),
   z.strictObject({ ok: z.literal(true), batch: SimulationBatchSchema }),
   z.strictObject({
     ok: z.literal(true),

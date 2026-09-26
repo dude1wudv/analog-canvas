@@ -1,37 +1,20 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { execSync } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createHash } from "node:crypto";
-let nativeRunnerOptions,
+import {
+  nativeRunnerOptions,
   expectedNativeEnvironments,
   assertNativeCapabilities,
   collectNativeRunEvidence,
+} from "./lib/native-example-runner.mjs";
+import {
   runNativeExamples,
   prepareNativeExampleEvidence,
-  parseProject,
-  createSimulationEnvironmentMetadata;
-beforeAll(async () => {
-  // These tests exercise standalone Node scripts, whose imports intentionally
-  // consume built packages. A clean checkout must not depend on another test's build.
-  execSync(
-    "pnpm --filter @icm/simulation-service... --filter @icm/project-protocol... build",
-    { stdio: "pipe", timeout: 180000 },
-  );
-  ({
-    nativeRunnerOptions,
-    expectedNativeEnvironments,
-    assertNativeCapabilities,
-    collectNativeRunEvidence,
-  } = await import("./lib/native-example-runner.mjs"));
-  ({ runNativeExamples, prepareNativeExampleEvidence } =
-    await import("./run-native-simulation-examples.mjs"));
-  ({ parseProject } =
-    await import("../packages/project-protocol/dist/index.js"));
-  ({ createSimulationEnvironmentMetadata } =
-    await import("../packages/spice-run/dist/index.js"));
-}, 190000);
+} from "./run-native-simulation-examples.mjs";
+import { parseProject } from "../packages/project-protocol/dist/index.js";
+import { createSimulationEnvironmentMetadata } from "../packages/spice-run/dist/index.js";
 
 const sha = (text) => createHash("sha256").update(text).digest("hex");
 
@@ -257,7 +240,7 @@ describe("native candidate runner boundaries", () => {
 });
 
 // The fake MCP here proves download/receipt behavior only, not cloud execution.
-async function evidenceFixture({ corrupt, exportError, grouped = false } = {}) {
+async function evidenceFixture({ corrupt } = {}) {
   const root = await temporary(),
     directory = join(root, "run");
   const result = {
@@ -300,13 +283,7 @@ async function evidenceFixture({ corrupt, exportError, grouped = false } = {}) {
           ? "corrupt"
           : content.get(args.request.artifactId),
       );
-    else {
-      if (exportError) throw Error("export failed");
-      await writeFile(
-        args.outputPath,
-        grouped ? Buffer.from("504b0304", "hex") : "<svg/>",
-      );
-    }
+    else throw Error(`Unexpected tool: ${name}`);
     return { ok: true };
   });
   return {
@@ -322,25 +299,19 @@ describe("native run evidence collection", () => {
   it("uses complete artifacts despite bounded Read and preserves nested names", async () => {
     const f = await evidenceFixture(),
       r = await collectNativeRunEvidence(f);
-    expect(r.plots).toHaveLength(1);
+    expect(r.datasets).toEqual([
+      { analysisIndex: 0, analysis: "op", points: 1, signals: ["out"] },
+      { analysisIndex: 1, analysis: "ac", points: 2, signals: ["out"] },
+    ]);
     expect(await readFile(join(f.directory, "raw/shared.raw"), "utf8")).toBe(
       "native raw",
     );
     expect(
       await readFile(join(f.directory, "executed/shared.raw"), "utf8"),
     ).toBe("native input");
-    expect(f.tool).toHaveBeenCalledWith(
-      "export_file",
-      expect.objectContaining({
-        simulation: { runId: "run-test", analysisIndex: 1, format: "svg" },
-      }),
-    );
-  });
-  it("preserves grouped plot ZIP extension", async () => {
-    const f = await evidenceFixture({ grouped: true }),
-      r = await collectNativeRunEvidence(f);
-    expect(r.plots[0].name).toBe("plot-1.zip");
-    await expect(readFile(join(f.directory, "plot-1.svg"))).rejects.toThrow();
+    expect(
+      f.tool.mock.calls.every(([name]) => name === "simulation_files"),
+    ).toBe(true);
   });
   it.each([
     "../escape",
@@ -375,10 +346,10 @@ describe("native run evidence collection", () => {
       "retained log",
     );
   });
-  it.each(["run-error", "runtime-drift", "input-drift", "export-error"])(
+  it.each(["run-error", "runtime-drift", "input-drift"])(
     "%s is not a successful run",
     async (mode) => {
-      const f = await evidenceFixture({ exportError: mode === "export-error" });
+      const f = await evidenceFixture();
       if (mode === "run-error") f.run.error = { code: "ARTIFACT_CAPACITY" };
       if (mode === "runtime-drift")
         f.expectedEnvironment = { ...environment, fingerprint: "f".repeat(64) };

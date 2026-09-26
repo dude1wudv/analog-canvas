@@ -1,4 +1,5 @@
 export * from "./contract.js";
+export * from "./result-catalog.js";
 export * from "./files.js";
 export * from "./service.js";
 export * from "./hosted-executor.js";
@@ -11,6 +12,7 @@ export * from "./managed-run.js";
 export * from "./managed-run-registry.js";
 
 export * from "./executor.js";
+export * from "./execution-receipt.js";
 export * from "./prepare-source.js";
 export * from "./source-context.js";
 export * from "./profile-engine.js";

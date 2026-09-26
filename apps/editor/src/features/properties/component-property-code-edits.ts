@@ -1,14 +1,15 @@
+import { resolveAnnotationName } from "@icm/derived";
+import { subcircuitDescriptor } from "@icm/devices";
 import type { SchematicEdit } from "@icm/edit-engine";
-import { resolveAnnotationText } from "@icm/derived";
-import {
-  flattenRichText,
-  semanticTextDocument,
-  type SchematicDocument,
-} from "@icm/model";
+import { semanticTextDocument, type SchematicDocument } from "@icm/model";
 
 import { snapCoordinate } from "../../snap/engine";
 import type { ComponentPropertyCodeValue } from "./component-property-code";
 import { instanceLabelAnnotationFor } from "../instance-display/default-instance-display";
+import {
+  logicGateInputInfo,
+  logicGateSymbolId,
+} from "./logic-gate-input-count";
 import {
   NO_INTERNAL_MARK,
   symbolForInputPolarity,
@@ -18,6 +19,57 @@ import {
 } from "./component-visual-variants";
 
 type Instance = SchematicDocument["instances"][number];
+
+/** A cut wire can leave a lone, anonymous Net membership on its former pin. */
+function removableOrphanInput(
+  document: SchematicDocument,
+  instance: Instance,
+  pinName: string,
+): boolean {
+  const net = document.nets.find((candidate) =>
+    candidate.terminals.some(
+      (terminal) =>
+        terminal.instanceId === instance.id && terminal.pinName === pinName,
+    ),
+  );
+  if (
+    !net ||
+    net.terminals.length !== 1 ||
+    instance.importProvenance?.terminalMapping?.some(
+      (terminal) => terminal.pinName === pinName,
+    ) ||
+    document.noConnects.some(
+      (item) =>
+        item.endpoint.instanceId === instance.id &&
+        item.endpoint.pinName === pinName,
+    )
+  )
+    return false;
+  const netId = net.id;
+  return !(
+    document.routes.some((route) => route.netId === netId) ||
+    document.junctions.some((junction) => junction.netId === netId) ||
+    document.netlist?.terminals.some((terminal) => terminal.netId === netId) ||
+    document.annotations.some(
+      (annotation) =>
+        annotation.netId === netId ||
+        (annotation.binding?.kind === "net-name" &&
+          annotation.binding.netId === netId),
+    ) ||
+    document.connectivityEvidence.some(
+      (evidence) => evidence.netId === netId,
+    ) ||
+    document.layoutGroups.some((group) => group.objectIds.includes(netId)) ||
+    document.constraints.some((constraint) =>
+      constraint.objectIds.includes(netId),
+    ) ||
+    document.instances.some(
+      (candidate) => candidate.mosBulkBinding?.netId === netId,
+    ) ||
+    document.mosBulkDefaults?.nmosNetId === netId ||
+    document.mosBulkDefaults?.pmosNetId === netId
+  );
+}
 
 function sameStyle(
   left: Instance["styleOverride"] | null,
@@ -34,6 +86,20 @@ function sameStyle(
  * annotations are appended by the caller because they need the live Symbol
  * resolver and annotation policy.
  */
+/** Parameters compare by value, whatever order their keys were written in. */
+function sameParameters(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>,
+): boolean {
+  const keys = Object.keys(left);
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every(
+      (key) => JSON.stringify(left[key]) === JSON.stringify(right[key]),
+    )
+  );
+}
+
 export function planComponentPropertyCodeEdits(
   document: SchematicDocument,
   instance: Instance,
@@ -44,8 +110,7 @@ export function planComponentPropertyCodeEdits(
     const label = instanceLabelAnnotationFor(document, instance.id);
     if (
       label?.kind === "instance-label" &&
-      flattenRichText(resolveAnnotationText(document, label)).trim() !==
-        value.displayName
+      resolveAnnotationName(document, label).trim() !== value.displayName
     ) {
       if (label.binding?.kind === "instance-reference") {
         if (
@@ -123,12 +188,65 @@ export function planComponentPropertyCodeEdits(
     nextSymbolId =
       symbolForOutputsSwapped(nextSymbolId, value.appearance.outputsSwapped) ??
       nextSymbolId;
+  if (value.inputs !== undefined) {
+    const gate = logicGateInputInfo(instance.symbolId);
+    if (!gate)
+      throw new Error("inputs is available only for configurable logic gates");
+    nextSymbolId = logicGateSymbolId(gate.family, value.inputs);
+  }
+  const oldGate = logicGateInputInfo(instance.symbolId);
+  if (
+    value.inputs !== undefined &&
+    oldGate !== null &&
+    value.inputs < oldGate.count
+  ) {
+    for (const pinName of ["A", "B", "C", "D"].slice(
+      value.inputs,
+      oldGate.count,
+    )) {
+      if (!removableOrphanInput(document, instance, pinName)) continue;
+      edits.push({
+        kind: "disconnect_endpoint",
+        endpoint: { kind: "terminal", instanceId: instance.id, pinName },
+      });
+    }
+  }
   if (nextSymbolId !== instance.symbolId)
     edits.push({
       kind: "set_instance_symbol",
       instanceId: instance.id,
       symbolId: nextSymbolId,
     });
+  if (nextSymbolId !== instance.symbolId && value.inputs !== undefined) {
+    const oldTarget = subcircuitDescriptor(instance.symbolId)?.target;
+    const nextTarget = subcircuitDescriptor(nextSymbolId)?.target;
+    if (!oldTarget || !nextTarget)
+      throw new Error("Logic gate subcircuit interface is missing");
+    const binding = instance.netlist?.binding;
+    if (
+      binding &&
+      (binding.kind !== "unresolved-subcircuit" || binding.name !== oldTarget)
+    )
+      throw new Error(
+        "Restore the default logic gate target before changing input count",
+      );
+    const nextBinding = {
+      kind: "unresolved-subcircuit" as const,
+      name: nextTarget,
+    };
+    if (instance.netlist)
+      edits.push({
+        kind: "set_instance_binding",
+        instanceId: instance.id,
+        binding: nextBinding,
+      });
+    else
+      edits.push({
+        kind: "set_instance_netlist",
+        instanceId: instance.id,
+        netlist: { binding: nextBinding, parameters: {} },
+      });
+  }
 
   let nextSignalFlow = value.signalFlow;
   if (value.appearance.internalMark !== undefined) {
@@ -140,10 +258,20 @@ export function planComponentPropertyCodeEdits(
       delete nextSignalFlow.formula;
     else nextSignalFlow.formula = value.appearance.internalMark;
   }
+  // The body text keeps its look while its characters stay the same; new
+  // characters start from the Symbol's own look again.
+  const format = instance.signalFlowParameters?.formulaFormat;
+  if (nextSignalFlow) {
+    const plain = { ...nextSignalFlow };
+    delete plain.formulaFormat;
+    nextSignalFlow =
+      format && plain.formula === instance.signalFlowParameters?.formula
+        ? { ...plain, formulaFormat: format }
+        : plain;
+  }
   if (
     nextSignalFlow &&
-    JSON.stringify(nextSignalFlow) !==
-      JSON.stringify(instance.signalFlowParameters ?? {})
+    !sameParameters(nextSignalFlow, instance.signalFlowParameters ?? {})
   )
     edits.push({
       kind: "set_instance_signal_flow_parameters",

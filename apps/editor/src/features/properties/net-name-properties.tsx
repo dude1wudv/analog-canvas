@@ -45,7 +45,7 @@ export function NetNameProperties({
           <dd>
             {effectiveScope === "global" ? (
               <span className="net-scope-badge" data-scope="global">
-                Global
+                全局
               </span>
             ) : (
               "Local"

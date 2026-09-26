@@ -10,33 +10,38 @@ no compatibility shape.
 
 ## Coordinate domains
 
-Presentation rationale separates persisted grid coordinates from transient and derived
-geometry. Every persisted page Point in a Document is a finite integer multiple
-of that Document's `presentation.grid`: Instance placements, Junctions, Route
-bends, persisted VisualAnchor point fields, and drafting points/controls/
-centers. This is a complete-Document invariant, not merely an editor snap
-preference.
+Instance placements, Junctions and Route bends are finite integer multiples
+of the Document's `presentation.grid`. Annotation anchors and drafting
+points/controls/centers instead use 1-unit integer precision, allowing text and
+explanatory artwork to move independently of the electrical grid. These are
+validation boundaries, not merely editor snap preferences; see
+[Document validation](../../packages/model/src/schema/document.ts).
 
 Renderer bounds, rich-text layout, route-relative anchor resolution, curves,
 rotated corners, diagnostics, pointer/screen positions, and symbol-local
 artwork may use finite floats. They are read-only or transient coordinate
-domains and must never be persisted as a Document Point. Parametric scalars
-such as route-anchor `t` and normal offset are not page Points.
+domains and must be converted to the appropriate authored domain before
+persistence. Parametric scalars such as route-anchor `t` and normal offset are
+not page Points.
 
-Project parse accepts no legacy non-grid shape and performs no rounding or
-migration. Invalid coordinates are rejected with their data path.
+Normalized model validation does not round invalid coordinates. Portable-file
+compatibility belongs to the [file-format contract](project-file-format.md).
+Invalid authored coordinates are rejected with their data path.
 
 ## Electrical authority
 
 - `Instance` selects one exact canonical symbol and optional visual variant.
   `Instance.reference` is its sole authored Reference when the Instance has
-  one. The value is projected on canvas and is the exact ngspice card
-  designator: primitive/model MOS, resistor, and capacitor bindings use
-  `M/R/C`, while every internal or external subcircuit call uses `X`. Changing
-  invocation kind changes the Reference in the same undoable transaction. It
-  remains independent from stable `Instance.id` and typed master binding. A
-  Cell Pin instead projects `CellTerminal.name` and has no Instance Reference.
-- A Base Net owns physical terminal membership only. A terminal is
+  one. The value is projected on canvas and remains independent from stable
+  `Instance.id` and typed master binding. Process/model selection preserves
+  it. The [netlist exporter](netlist-export.md#persisted-data-model) derives legal
+  dialect-specific names without rewriting the authored Reference: a device
+  named `M1` may emit as `XM1` for a SPICE subcircuit call while Spectre retains
+  `M1`. A Cell Pin instead projects `CellTerminal.name` and has no Instance
+  Reference.
+- A Base Net indexes physical terminal membership in the normalized model.
+  [Portable connection facts](project-file-format.md#one-connection-source)
+  are authoritative at the file boundary. A terminal is
   `{instanceId, pinName}` and belongs to at most one Base Net.
 - `ConnectivityEvidence` records owner-addressed name claims, explicit SPICE
   globals, non-electrical source-name hints, and SPICE source identity for one
@@ -56,7 +61,9 @@ migration. Invalid coordinates are rejected with their data path.
   declaration's Port Name may differ from a visible internal Net Label; the
   Port name supplies interface identity without overwriting that Label.
 
-Canvas `port` and `port-filled` artwork has exactly one meaning: a Cell Pin.
+Canvas `port` and `port-filled` share one formal-terminal storage protocol but
+not one visible meaning: `port` is the hollow Cell Pin, while `port-filled` is
+the solid Bias Voltage Port.
 VDD Power also owns a Cell-Pin declaration by default and can be switched
 explicitly to a Global marker in Properties. A local Power Rail owns a formal
 terminal directly through its `power-label` annotation; it does not require a
@@ -119,6 +126,10 @@ instance-owned `instance-override` so target Cell policy cannot retarget the
 copied body.
 Imported/source-bound MOS instances with missing fourth-node evidence remain
 unresolved and follow the same missing-terminal export rule.
+When all imported MOS instances of one polarity in a Cell share the same B
+Net, import records that Net as the Cell default for later instances of that
+polarity. The source B memberships remain explicit; mixed B Nets set no
+default for that polarity.
 
 A visible `bulk-dashed` route is an explicit override. The override atomically
 removes the implicit cell-default binding before connecting B to the selected

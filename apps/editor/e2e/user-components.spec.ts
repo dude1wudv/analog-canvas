@@ -1,4 +1,8 @@
-import { parseSavedProject } from "./editor-fixtures";
+import {
+  awaitEditorReady,
+  clickCommand,
+  parseSavedProject,
+} from "./editor-fixtures";
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import { DatabaseSync } from "node:sqlite";
 import { createEmptyProject, type CircuitProject } from "@icm/model";
@@ -83,9 +87,13 @@ function library() {
 
 async function openEditor(page: Page) {
   await page.goto("/editor?new=1");
-  await expect(page.getByTestId("schematic-canvas")).toBeVisible();
+  await awaitEditorReady(page);
+  await expect(page.getByTestId("shapes-category-user-defined")).toHaveCount(0);
+}
+async function openUserComponents(page: Page) {
+  await clickCommand(page, "Edit", "User Components…");
   await expect(
-    page.getByRole("button", { name: "+ Create component", exact: true }),
+    page.getByRole("dialog", { name: "User Components", exact: true }),
   ).toBeVisible();
 }
 async function readProject(page: Page): Promise<CircuitProject> {
@@ -199,9 +207,14 @@ test("E edits one instance, publicly saves its definition, and leaves Q and peer
       project.documents[0]!.instances[1],
     );
     expect(changed.componentDefinitions).toHaveLength(2);
+    await openUserComponents(page);
     await expect(
       page.getByRole("button", { name: "Place Ring resistor", exact: true }),
     ).toBeVisible();
+    await page
+      .getByRole("dialog", { name: "User Components", exact: true })
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
     await page.getByTestId("hit-R1").click();
     await page.keyboard.press("ControlOrMeta+z");
     expect(
@@ -230,6 +243,9 @@ test("create, live preview, public sharing, standard insertion and administrator
   context,
   browser,
 }) => {
+  // Three isolated editor boots plus sharing, deletion and restoration can
+  // exceed a single-page journey's budget on the shared CI runner.
+  test.slow();
   const service = library();
   const second = await browser.newContext();
   const admin = await browser.newContext();
@@ -238,15 +254,9 @@ test("create, live preview, public sharing, standard insertion and administrator
   try {
     await service.connect(context, "alice");
     await openEditor(page);
-    const extended = await page
-      .getByTestId("shapes-category-extended-devices")
-      .boundingBox();
-    const shared = await page
-      .getByTestId("shapes-category-user-defined")
-      .boundingBox();
-    expect(shared!.y).toBeGreaterThan(extended!.y);
+    await openUserComponents(page);
     await page
-      .getByRole("button", { name: "+ Create component", exact: true })
+      .getByRole("button", { name: "Create Component…", exact: true })
       .click();
     await editDefinition(page, "Shared amplifier");
     await expect(
@@ -268,12 +278,14 @@ test("create, live preview, public sharing, standard insertion and administrator
     await service.connect(second, "bob");
     const receiver = await second.newPage();
     await openEditor(receiver);
+    await openUserComponents(receiver);
     await receiver
       .getByRole("button", { name: "Place Shared amplifier", exact: true })
       .click();
     await place(receiver);
     const received = await readProject(receiver);
     expect(received.componentDefinitions).toEqual(captured);
+    await openUserComponents(receiver);
     await receiver
       .getByRole("button", {
         name: "Edit Shared amplifier definition",
@@ -295,6 +307,7 @@ test("create, live preview, public sharing, standard insertion and administrator
     await service.connect(admin, "admin");
     const administrator = await admin.newPage();
     await openEditor(administrator);
+    await openUserComponents(administrator);
     await administrator
       .getByRole("button", {
         name: "Edit Shared amplifier definition",
@@ -307,9 +320,11 @@ test("create, live preview, public sharing, standard insertion and administrator
     await expect(
       administrator.getByText("Promoted to an official component."),
     ).toBeVisible();
-    administrator.once("dialog", (dialog) => dialog.accept());
     await administrator
       .getByRole("button", { name: "Delete component", exact: true })
+      .click();
+    await administrator
+      .getByRole("button", { name: "Really delete", exact: true })
       .click();
     await expect(
       administrator.getByText("Removed from the library."),
@@ -318,6 +333,7 @@ test("create, live preview, public sharing, standard insertion and administrator
       .getByRole("button", { name: "Close component editor" })
       .click();
     await receiver.reload();
+    await openUserComponents(receiver);
     await expect(
       receiver.getByRole("button", {
         name: "Place Shared amplifier",
@@ -325,9 +341,13 @@ test("create, live preview, public sharing, standard insertion and administrator
       }),
     ).toHaveCount(0);
     expect((await readProject(page)).componentDefinitions).toEqual(captured);
+    await openUserComponents(administrator);
     await administrator
-      .getByRole("checkbox", { name: "Deleted", exact: true })
-      .check();
+      .getByRole("button", {
+        name: "Review deleted components",
+        exact: true,
+      })
+      .click();
     await administrator
       .getByRole("button", {
         name: "Edit Shared amplifier definition",
@@ -356,8 +376,9 @@ test("anonymous creation cannot save privately, and invalid code leaves the circ
   try {
     await service.connect(context, null);
     await openEditor(page);
+    await openUserComponents(page);
     await page
-      .getByRole("button", { name: "+ Create component", exact: true })
+      .getByRole("button", { name: "Create Component…", exact: true })
       .click();
     await expect(
       page.getByRole("button", { name: "Save & place", exact: true }),
@@ -371,8 +392,15 @@ test("anonymous creation cannot save privately, and invalid code leaves the circ
     });
     await code.fill("{");
     await expect(page.getByRole("alert")).toBeVisible();
-    page.once("dialog", (dialog) => dialog.accept());
     await page.getByRole("button", { name: "Close component editor" }).click();
+    await page
+      .getByRole("button", { name: "Keep editing", exact: true })
+      .click();
+    await expect(code).toContainText("{");
+    await page.getByRole("button", { name: "Close component editor" }).click();
+    await page
+      .getByRole("button", { name: "Discard changes", exact: true })
+      .click();
     expect((await readProject(page)).documents[0]!.instances).toHaveLength(0);
   } finally {
     service.close();

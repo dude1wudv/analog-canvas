@@ -1,3 +1,15 @@
+import { parseProject, serializeProject } from "@icm/project-protocol";
+import {
+  createProjectWorkspaceStore,
+  journalProjectWorkspace,
+  workspaceWindowId,
+  type ProjectWorkspace,
+} from "../document/project-workspace";
+import { resolveAnnotationName } from "@icm/derived";
+import {
+  branchGalleryVersion,
+  loadGalleryVersionProject,
+} from "../components/gallery-version-project";
 import { InstanceCodePanel } from "../features/properties/instance-code-panel";
 import { NetlistCodePanel } from "../features/netlist-export/netlist-code-panel";
 import { NetlistProfileCode } from "../features/netlist-export/netlist-profile-code";
@@ -25,7 +37,6 @@ import type { SharedComponent } from "../features/user-components/component-libr
 import { publishedDefinition } from "../features/user-components/component-library-contract";
 import {
   newComponentDefinition,
-  planComponentDefinitionEdit,
   sharedComponentInsertRequest,
 } from "../features/user-components/component-definition-edit";
 
@@ -43,7 +54,7 @@ interface ComponentEditorSession {
   entry?: SharedComponent;
   target?: { projectSessionId: string; documentId: string; instance: Instance };
 }
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties } from "react";
 import "../styles/editor-entry.css";
 import type {
   AgentHostSemanticIntentRequest,
@@ -51,9 +62,9 @@ import type {
 } from "@icm/agent-adapter";
 import {
   planProjectCellImport,
-  planBindCellParameter,
   planSetDeviceModelTarget,
   planSetVddConnectionMode,
+  planRenameCellTerminal,
   planAngledWireRepairs,
   gateRoutingOperationPlan,
   type ProjectStructureEdit,
@@ -73,13 +84,12 @@ import {
   symbolCarriesReference,
   symbolSupportsValueAnnotation,
   resolveMosBulkConnection,
+  supplyDefaultMosBulkNet,
   resolveDocumentStyleProfile,
   summarizeProjectCells,
-  resolveRouteAttachment,
-  resolveAnnotationText,
 } from "@icm/derived";
 import type { HierarchyFrame } from "@icm/derived";
-import { createEmptyProject, flattenRichText } from "@icm/model";
+import { createEmptyProject, createId } from "@icm/model";
 import {
   resolveReviewedExternalBinding,
   reviewedExternalModelSuggestions,
@@ -87,11 +97,8 @@ import {
 import type {
   CircuitProject,
   DerivedPoint,
-  DraftingObject,
   GridRect,
-  LayoutGroup,
   Point,
-  Rect,
   Rotation,
   SchematicDocument,
 } from "@icm/model";
@@ -100,7 +107,18 @@ import { renderCrashRequested, sceneCrashRequested } from "./crash-test-hooks";
 import { buildSceneSafely } from "./scene-safety";
 import { externalSubcircuitSymbolId, hierarchicalSymbolId } from "@icm/symbols";
 import { clipboardPreviewDocument } from "../features/clipboard/clipboard";
-import { prepareProjectCopy } from "../features/clipboard/project-copy";
+import {
+  prepareProjectCopy,
+  applyProjectCopyPlacement,
+  captureProjectCopy,
+  planProjectCopyPlacement,
+} from "../features/clipboard/project-copy";
+import type {
+  AgentProjectResourceRequest,
+  AgentProjectResourceResponse,
+} from "@icm/agent-adapter";
+import { clipboardPlacementAnchor } from "../features/clipboard/clipboard";
+import { useCircuitClipboard } from "../features/clipboard/use-circuit-clipboard";
 import {
   copyPlacementAnchors,
   snapPendingCopyPlacement,
@@ -115,21 +133,12 @@ import {
   createCameraRuntime,
   type CameraRuntime,
 } from "../canvas/camera-runtime";
-import {
-  startCanvasDragSession,
-  type CanvasDragSession,
-} from "../canvas/canvas-drag-session";
-import { startCanvasDragVisual } from "../canvas/canvas-drag-visual";
+import type { CanvasDragSession } from "../canvas/canvas-drag-session";
 import { instanceVisibleHitBox } from "../canvas/instance-geometry";
-import {
-  loadReleaseChannel,
-  projectStoreCopy,
-  type ReleaseChannel,
-} from "../document/release-channel";
+import { CLOUD_PROJECT_COPY } from "../document/cloud-project-copy";
 import { resolveSimulationTransport } from "../features/simulation/deployment-transport";
 import { createCanvasHitController } from "../canvas/canvas-hit-controller";
-import { CellInterfaceConfirmationDialog } from "../features/hierarchy/cell-interface-confirmation";
-import { CellParameterDialog } from "../features/hierarchy/cell-parameter-dialog";
+import { LazyCellInterfaceConfirmationDialog as CellInterfaceConfirmationDialog } from "./lazy-editor-dialogs";
 import type { CellInterfaceConfirmation } from "../features/hierarchy/project-structure-commands";
 import { applyConfirmedCellInterfaceEdit } from "../features/hierarchy/project-structure-commands";
 import { screenScaleHitRadius } from "../canvas/canvas-hit-resolver";
@@ -157,7 +166,7 @@ import {
   type SpiceImportReport,
 } from "../features/editor-shell/editor-file-commands";
 import { EditorStatusbar } from "../features/editor-shell/editor-statusbar";
-import { documentSettingsCodeValue } from "../features/editor-shell/document-settings-code";
+import { browserExportDelivery } from "../hosts/browser-export-delivery";
 import { normalizedStyleOverrides } from "../features/editor-shell/style-knobs";
 import {
   deriveSimulationProbeOptions,
@@ -167,13 +176,7 @@ import {
   sameSimulationOccurrence,
   terminalCurrentDirectionPartners,
 } from "../features/simulation/terminal-current-pick";
-import { TimingSimulationPanel } from "../features/simulation/timing-simulation-panel";
-import { TIMING_UI_ENABLED } from "../features/simulation/timing-ui";
 import { PUBLIC_SIMULATION_UI_ENABLED } from "../features/simulation/public-simulation-ui";
-import {
-  waveformDraftingObjects,
-  type TimingWaveformLayout,
-} from "../features/simulation/timing-waveform";
 import { useCellSymbolLayout } from "../features/hierarchy/use-cell-symbol-layout";
 import { selectedBlockSymbolTarget } from "../features/hierarchy/block-symbol-layout-target";
 import {
@@ -209,11 +212,7 @@ import {
   type EditorProjectPanelMode,
 } from "./editor-project-dock";
 import { EditorPropertiesDock } from "./editor-properties-dock";
-import { ProjectCodePanel } from "../features/project-code/project-code-panel";
-import {
-  formatProjectCode,
-  planProjectCodeCommit,
-} from "../features/project-code/project-code";
+import { LazyProjectCodePanel as ProjectCodePanel } from "./lazy-editor-dialogs";
 import { LazySpiceSimulationSurface } from "./lazy-editor-dialogs";
 import { recoverSourceDrafts } from "../features/simulation/source-draft-cache";
 import { useProjectCheck } from "./use-project-check";
@@ -227,8 +226,15 @@ import {
   quickPlaceRequest,
   ShapesPanel,
 } from "../features/editor-shell/shapes-panel";
-import { ExamplesPanel } from "../features/editor-shell/examples-panel";
-import { createGalleryExampleCommands } from "../features/editor-shell/gallery-example-commands";
+const ExamplesPanel = lazy(() =>
+  import("../features/editor-shell/examples-panel").then((module) => ({
+    default: module.ExamplesPanel,
+  })),
+);
+import {
+  type GalleryEntryContext,
+  createGalleryExampleCommands,
+} from "../features/editor-shell/gallery-example-commands";
 import { createEditorNavigationController } from "../features/hierarchy/editor-navigation-controller";
 import { createProjectStructureCommands } from "../features/hierarchy/project-structure-commands";
 import { loadCloudProjectForCellImport } from "../features/hierarchy/cloud-cell-import";
@@ -236,30 +242,32 @@ import type { PublishGalleryDraft } from "../features/editor-shell/publish-galle
 import {
   publishProjectToGallery,
   updateGalleryEntry,
+  canUpdateGalleryPublication,
+  loadGalleryPublicationContext,
 } from "../features/editor-shell/gallery-publish";
 import {
   announceGalleryChange,
+  localhostExamplesEnabled,
   primeGalleryPreview,
   subscribeGalleryRefresh,
 } from "../gallery-client";
+import { projectWithTopologyRoot } from "../features/editor-shell/gallery-topology-project";
+import { GalleryTopologyTaskNotice } from "../features/editor-shell/gallery-topology-task-notice";
 import { fetchSessionUser, type SessionUser } from "../components/account";
 import {
   evaluateSubmissionGates,
   type SubmissionGateReport,
 } from "@icm/derived";
 import {
-  createLibraryExampleProject,
-  libraryProjectExamples,
-} from "../examples/library-examples";
-import { useDocumentController } from "../document/document-controller";
+  EditorDocumentController,
+  useDocumentController,
+} from "../document/document-controller";
 import { useProjectFileLifecycle } from "../document/use-project-file-lifecycle";
+import { useProjectTabs } from "../document/use-project-tabs";
+import { ProjectTabs } from "../features/editor-shell/project-tabs";
+import type { ReplaceProjectOptions } from "../document/use-project-file-lifecycle";
 import { useUnsavedWorkGuard } from "../document/use-unsaved-work-guard";
 import { authoredObjectCount } from "../document/project-content";
-import { translateDraftingObject } from "../features/drafting/drafting-manipulation";
-import {
-  draftingGroupScaleRange,
-  scaleDraftingGroup,
-} from "../features/drafting/drafting-group-scale";
 import { createDraftingCommands } from "../features/drafting/drafting-commands";
 import {
   createDraftingCreateController,
@@ -284,8 +292,13 @@ import { BrowserSimulationSession } from "../features/simulation/browser-simulat
 import { ProjectRunHistory } from "../features/simulation/project-run-history";
 import { createAgentSemanticIntentHandler } from "../agent/agent-semantic-intent-handler";
 import { PUBLIC_AGENT_UI_ENABLED } from "../agent/public-agent-ui";
-import { useAgentSession } from "../agent/use-agent-session";
+import {
+  useEditorAgentSession,
+  WorkspaceAgentProvider,
+} from "../agent/workspace-agent";
+import type { UseAgentSessionOptions } from "../agent/use-agent-session";
 import { peekAgentSessionRecovery } from "../agent/session-recovery";
+export { WorkspaceAgentProvider } from "../agent/workspace-agent";
 import type { AgentFileCandidateSummary } from "@icm/agent-adapter";
 import { referencedDocumentId } from "../document/editor-session";
 import { useInteractionState } from "../interaction/interaction-state";
@@ -295,19 +308,26 @@ import type {
 } from "../interaction/interaction-state";
 import { resolveTextEditingTarget } from "../features/text-editing/text-editing";
 import { planMosBulkDefaultUpdate } from "../features/component-insert/mos-bulk-defaults";
-import { logicalNetChoices } from "../features/logical-net-choices";
+import {
+  logicalNetChoiceForNet,
+  logicalNetChoices,
+} from "../features/logical-net-choices";
 import {
   CLOUD_PROJECT_LIMIT,
   deleteCloudProject,
   listCloudProjects,
+  saveCloudProject,
   type CloudProjectSummary,
 } from "../features/editor-shell/cloud-projects";
+import { projectChangeToken } from "../document/project-session-lifecycle";
+import { captureProjectSaveSnapshot } from "../document/project-save-coordinator";
 import {
   defaultRazaviSymbolVariantId,
   materializeRazaviProjectBulkConnections,
   razaviHiddenBulkRisk,
 } from "../presentation/razavi-presentation";
 import { useRecoveryCoordinator } from "../document/recovery-coordinator";
+import { createProjectSnapshotSerializer } from "../document/project-snapshot-serializer";
 import { useSelectionController } from "../features/selection/selection-controller";
 import { SelectionFilterPopover } from "../features/selection/selection-filter-popover";
 import {
@@ -351,29 +371,28 @@ import { EDGE_ALIGNMENT_MODES } from "../features/selection/align-selection";
 import type { VisualSelectionKind } from "../features/selection/visual-selection";
 import { planSelectionMove } from "../features/selection/selection-move-plan";
 import {
-  annotationAnchor,
   annotationHitBox,
-  closestNetConductorPoint,
   instanceValueAnnotation,
   isRoutedMarker,
   netLabelPlacementTargetAtPoint,
 } from "../features/wiring/route-interaction-geometry";
+import {
+  labelsOwnedBy,
+  resolveLabelTethers,
+} from "../features/wiring/label-tether";
 import type { NetLabelPlacementTarget } from "../features/wiring/route-interaction-geometry";
 import { useWireCanvasController } from "../features/wiring/use-wire-canvas-controller";
 import {
   EMPTY_WIRE_DRAFT_PREVIEW,
   resolveWireDraftPreview,
 } from "../features/wiring/wire-draft-preview";
-import type { ScreenFlip } from "../interaction/shortcut-orientation";
+import type {
+  PlacementOrientationOperation,
+  ScreenFlip,
+} from "../interaction/shortcut-orientation";
 import { buildSceneSnapTargetIndex } from "../snap/candidates";
 import { snapCoordinate } from "../snap/engine";
 import type { SnapGuideLine } from "../snap/engine";
-
-interface PendingWaveformPlacement {
-  groupId: string;
-  objects: DraftingObject[];
-  traceCount: number;
-}
 
 const DEFAULT_VIEWBOX: GridRect = { x: 0, y: 0, width: 960, height: 640 };
 const RECENT_COMPONENTS_STORAGE_KEY = "icm.recent-components.v1";
@@ -429,32 +448,101 @@ export interface AppProps {
   publicAgentUiEnabled?: boolean;
   /** Override the deployment's analog Simulation UI capability in tests. */
   publicSimulationUiEnabled?: boolean;
-  /** Test/staging seam; production Cloudflare builds keep timing tools hidden. */
-  timingUiEnabled?: boolean;
   /** `/g/<id>` deep link: load this gallery entry after boot. */
   initialGalleryEntryId?: string | null;
 }
 
-export function App({
+let workspaceStore: ReturnType<typeof createProjectWorkspaceStore> | undefined;
+function browserWorkspaceStore() {
+  return (workspaceStore ??= createProjectWorkspaceStore());
+}
+
+export function App(props: AppProps) {
+  const [boot, setBoot] = useState<{
+    workspace: ProjectWorkspace | null;
+    error?: string;
+  } | null>(() =>
+    typeof window === "undefined" || props.project ? { workspace: null } : null,
+  );
+  useEffect(() => {
+    if (boot) return;
+    let mounted = true;
+    void Promise.resolve()
+      .then(() =>
+        browserWorkspaceStore().read(
+          workspaceWindowId(),
+          window.location.pathname + window.location.search,
+        ),
+      )
+      .then((workspace) => {
+        if (mounted) setBoot({ workspace });
+      })
+      .catch(() => {
+        if (mounted)
+          setBoot({
+            workspace: null,
+            error:
+              "Project tab storage is unavailable. Existing copies are retained; export your work before leaving.",
+          });
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+  if (!boot) return <div role="status">Restoring project tabs…</div>;
+  return (
+    <WorkspaceAgentProvider>
+      <WorkspaceEditor
+        {...props}
+        restoredWorkspace={boot.workspace}
+        workspaceError={boot.error ?? null}
+      />
+    </WorkspaceAgentProvider>
+  );
+}
+
+function propertiesMosBulkDefaultNetId(
+  document: SchematicDocument,
+  kind: "nmos" | "pmos",
+  value: string,
+): string | null {
+  const selectedId =
+    value === (kind === "nmos" ? "VSS" : "VDD")
+      ? supplyDefaultMosBulkNet(document, kind)?.id
+      : value;
+  return (
+    logicalNetChoiceForNet(logicalNetChoices(document), selectedId)?.netId ??
+    null
+  );
+}
+
+function WorkspaceEditor({
   project: initialProject,
   visitStats,
   publicAgentUiEnabled = PUBLIC_AGENT_UI_ENABLED,
   publicSimulationUiEnabled = PUBLIC_SIMULATION_UI_ENABLED,
-  timingUiEnabled = TIMING_UI_ENABLED,
   initialGalleryEntryId = null,
-}: AppProps) {
+  restoredWorkspace,
+  workspaceError,
+}: AppProps & {
+  restoredWorkspace: ProjectWorkspace | null;
+  workspaceError: string | null;
+}) {
+  const [restoringWorkspace, setRestoringWorkspace] = useState(
+    restoredWorkspace !== null,
+  );
   const [preparedInitialProject] = useState(
     () =>
       materializeRazaviProjectBulkConnections(
-        initialProject ?? createEmptyProject("project-main", "New Circuit"),
+        initialProject ??
+          createEmptyProject(createId("project"), "New Circuit"),
       ).project,
   );
-  const [status, setStatus] = useState("Ready");
+  const [status, setStatus] = useState(workspaceError ?? "Ready");
   const [componentEditor, setComponentEditor] =
     useState<ComponentEditorSession | null>(null);
   const [componentLibraryRefresh, setComponentLibraryRefresh] = useState(0);
-  const helpButtonRef = useRef<HTMLButtonElement>(null);
-  const helpCloseRef = useRef<HTMLButtonElement>(null);
+  const [userComponentsOpen, setUserComponentsOpen] = useState(false);
   const libraryResizeOriginRef = useRef<{
     pointerX: number;
     width: number;
@@ -525,8 +613,6 @@ export function App({
     leftPanelMode,
     selectionOpen,
     setSelectionOpen,
-    helpOpen,
-    setHelpOpen,
     searchOpen,
     setSearchOpen,
     searchQuery,
@@ -537,17 +623,17 @@ export function App({
     setAgentDetailsOpen,
     agentStatusDismissed,
     setAgentStatusDismissed,
-    closeHelp,
     closeSearch,
     toggleExamplesPanel: toggleExamplesPanelFromShell,
     toggleLibraryPanel,
   } = useEditorPanels({
     initialCompact: compactLayoutMatches(COMPACT_LAYOUT_MEDIA_QUERY),
     compactMediaQuery: COMPACT_LAYOUT_MEDIA_QUERY,
+    forceInitialLibraryOpen:
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("new") === "1",
     libraryStorageKey: LIBRARY_PANEL_STORAGE_KEY,
     libraryWidthStorageKey: LIBRARY_WIDTH_STORAGE_KEY,
-    helpButtonRef,
-    helpCloseRef,
   });
   const visibleLibraryPanelOpen = compactLayout
     ? compactLibraryPanelOpen
@@ -567,7 +653,12 @@ export function App({
   // Feature name whose on-demand chunk vanished under a redeploy; the banner
   // offers the refresh that restores the current circuit.
   const [chunkLoadFailure, setChunkLoadFailure] = useState<string | null>(null);
+  const [snapshotSerializer] = useState(() =>
+    createProjectSnapshotSerializer(),
+  );
   const {
+    captureWorkingSession: captureRecoverySession,
+    resumeWorkingSession: resumeRecoverySession,
     state: recoveryState,
     sessions: recoverySessions,
     ready: recoveryReady,
@@ -580,14 +671,17 @@ export function App({
     discover: discoverRecovery,
     readSessionProject: readRecoveryProject,
     deleteSession: deleteRecoverySession,
-  } = useRecoveryCoordinator(setStatus);
+  } = useRecoveryCoordinator(setStatus, {
+    serializeProject: snapshotSerializer.serialize,
+  });
   const [agentStartupRecovery] = useState(() => {
-    if (typeof window === "undefined") return null;
+    if (typeof window === "undefined" || restoredWorkspace) return null;
     const search = new URLSearchParams(window.location.search);
     if (
       initialGalleryEntryId !== null ||
       search.has("example") ||
       search.has("project") ||
+      search.has("history") ||
       search.get("new") === "1"
     )
       return null;
@@ -605,6 +699,7 @@ export function App({
     commitProjectStructure,
     dispatchProjectTransaction,
     transact: transactDocument,
+    activateSession: activateDocumentSession,
     controller: editorDocumentController,
     projectSessionId,
     synchronizeExternalCommit,
@@ -617,6 +712,10 @@ export function App({
     canvasDragSessionRef.current?.cancel();
     stageRecovery(project, { cloudBinding });
   });
+  const galleryTopologyProject = useMemo(
+    () => projectWithTopologyRoot(project, document.id),
+    [document.id, project],
+  );
   const definitionProjectRef = useRef({ project, projectSessionId });
   definitionProjectRef.current = { project, projectSessionId };
   const projectConnectivityIndex = useMemo(
@@ -680,23 +779,9 @@ export function App({
   }
   const cameraRuntime = cameraRuntimeRef.current;
   useEffect(() => () => cameraRuntime.dispose(), [cameraRuntime]);
+  const [shortcutHintsVisible, setShortcutHintsVisible] = useState(false);
   const [gridDotsVisible, setGridDotsVisible] = useState(true);
-  // Which channel serves this build (Deployment rationale). Asked once; anything but a
-  // clear "preview" is production, so the public site never wears its badge.
-  const [releaseChannel, setReleaseChannel] =
-    useState<ReleaseChannel>("production");
-  useEffect(() => {
-    let cancelled = false;
-    void loadReleaseChannel().then((channel) => {
-      if (!cancelled) setReleaseChannel(channel);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  const projectStore = projectStoreCopy(releaseChannel);
   const simulationTransport = resolveSimulationTransport(
-    releaseChannel,
     import.meta.env.VITE_ICM_SIMULATION_TRANSPORT,
   );
   // Annotations and drafting place on their own pitch; the Document grid
@@ -778,6 +863,13 @@ export function App({
     documentId: string;
     instanceId: string;
   } | null>(null);
+  // The canvas and the Netlist light the same parts. A part picked on the
+  // canvas takes over from the one the netlist cursor named; an emptied
+  // selection, as when the netlist cursor opens another Cell, keeps it.
+  const canvasSelectionKey = visualSelection.instanceIds.join("\u0000");
+  useEffect(() => {
+    if (canvasSelectionKey) setNetlistFocusedInstance(null);
+  }, [canvasSelectionKey]);
   useEffect(() => {
     // Explicit inspector actions (Q, double-click, Issues, import review)
     // take precedence over the Netlist panel opened at startup.
@@ -823,17 +915,16 @@ export function App({
     if (mutationAtStart !== cloudListMutationRef.current) return;
     setCloudProjects(outcome.projects);
   }, []);
-  const [galleryEntryContext, setGalleryEntryContext] = useState<{
-    id: string;
-    name: string;
-    /** The opened Project's id: the context is only valid while that
-     * exact Project is still the active one. */
-    projectId: string;
-    ownerUserId: string | null;
-    author: string;
-    description: string;
-    tags: readonly string[];
-  } | null>(null);
+  const [galleryEntryContext, setGalleryEntryContext] =
+    useState<GalleryEntryContext | null>(null);
+  const [publicationLinkLoading, setPublicationLinkLoading] = useState(false);
+  const [publicationLinkError, setPublicationLinkError] = useState<
+    string | null
+  >(null);
+  const [publicationLinkNotice, setPublicationLinkNotice] = useState<
+    string | null
+  >(null);
+  const [publicationLinkRetry, setPublicationLinkRetry] = useState(0);
   // The moment any OTHER Project replaces the opened gallery entry (new
   // circuit, bundled example, import, …), the update offer must vanish —
   // otherwise a later publish silently overwrites the stale entry.
@@ -888,8 +979,30 @@ export function App({
   }, [publishGalleryOpen]);
   const [agentFileCandidate, setAgentFileCandidate] =
     useState<AgentFileCandidateSummary | null>(null);
+  // Execution and artifacts belong to their originating controller, not the
+  // currently selected tab. Re-selecting a tab restores the same service.
+  const agentProjectResources = useRef(
+    new Map<
+      EditorDocumentController,
+      Map<
+        string,
+        {
+          files: BrowserAgentFileHost;
+          history: ProjectRunHistory;
+          simulation: BrowserAgentSimulationHost;
+        }
+      >
+    >(),
+  );
+  let resources = agentProjectResources.current.get(editorDocumentController);
+  if (!resources) {
+    resources = new Map();
+    agentProjectResources.current.set(editorDocumentController, resources);
+  }
+  const resourceKey = `${projectSessionId}:${simulationTransport}`;
   const browserAgentFileHost = useMemo(
     () =>
+      resources.get(resourceKey)?.files ??
       new BrowserAgentFileHost({
         transport: simulationTransport,
         getProjectSessionId: () => editorDocumentController.projectSessionId,
@@ -900,21 +1013,38 @@ export function App({
           ) ?? null,
         getResolver: () => editorDocumentController.resolver,
         onApprovalRequested: setAgentFileCandidate,
+        getActiveDocumentId: () => editorDocumentController.document.id,
+        commitProjectStructure: (next, active) => {
+          editorDocumentController.commitProjectStructure(next, active);
+          synchronizeExternalCommit();
+          void flushRecovery();
+        },
+        openProjectInNewTab: (candidate, background) =>
+          openProjectInTabRef.current(
+            candidate,
+            DEFAULT_VIEWBOX,
+            {
+              source: "opened-file",
+            },
+            background,
+          ),
         dispatchProjectTransaction: (request) =>
           browserAgentHost.dispatchProjectTransaction(request),
       }),
-    [editorDocumentController, projectSessionId, simulationTransport],
+    [editorDocumentController, resourceKey, simulationTransport],
   );
   const projectRunHistory = useMemo(
-    () => new ProjectRunHistory(editorDocumentController.project.id),
-    [editorDocumentController, projectSessionId],
+    () =>
+      resources.get(resourceKey)?.history ??
+      new ProjectRunHistory(editorDocumentController.project.id),
+    [editorDocumentController, resourceKey],
   );
   useEffect(() => {
     projectRunHistory.activate();
-    return () => projectRunHistory.dispose();
   }, [projectRunHistory]);
   const browserAgentSimulationHost = useMemo(
     () =>
+      resources.get(resourceKey)?.simulation ??
       new BrowserAgentSimulationHost({
         runHistory: projectRunHistory,
         owner: "agent",
@@ -927,15 +1057,45 @@ export function App({
       browserAgentFileHost.simulationFiles,
       projectRunHistory,
       editorDocumentController,
-      projectSessionId,
+      resourceKey,
       simulationTransport,
     ],
   );
+  resources.set(resourceKey, {
+    files: browserAgentFileHost,
+    history: projectRunHistory,
+    simulation: browserAgentSimulationHost,
+  });
+  useEffect(
+    () => () => {
+      for (const group of agentProjectResources.current.values())
+        for (const resource of group.values()) resource.history.dispose();
+    },
+    [],
+  );
+  const agentWorkspaceRef = useRef<
+    (
+      request: Extract<AgentProjectResourceRequest, { operation: "workspace" }>,
+      targetWorkspaceId?: string,
+    ) => Promise<AgentProjectResourceResponse>
+  >(async () => {
+    throw new Error("Workspace is initializing");
+  });
   const browserAgentProjectHost = useMemo(
     () =>
       new BrowserAgentProjectHost({
+        workspace: (request) => agentWorkspaceRef.current(request),
         getProjectSessionId: () => editorDocumentController.projectSessionId,
         getProject: () => editorDocumentController.project,
+        getActiveDocumentId: () => editorDocumentController.document.id,
+        commitProjectStructure: (nextProject, activeDocumentId) => {
+          editorDocumentController.commitProjectStructure(
+            nextProject,
+            activeDocumentId,
+          );
+          synchronizeExternalCommit();
+          void flushRecovery();
+        },
         dispatchProjectTransaction: (request) =>
           browserAgentHost.dispatchProjectTransaction(request),
       }),
@@ -1004,6 +1164,18 @@ export function App({
     void humanSimulationSession?.clear();
     setAnalogSimulationState("closed");
   };
+  const [codeDraftDirty, setCodeDraftDirty] = useState(false);
+  const noteCodeDraftDirty = useCallback((dirty: boolean) => {
+    setCodeDraftDirty(dirty);
+  }, []);
+  const openProjectInTabRef = useRef<
+    (
+      project: CircuitProject,
+      view: GridRect,
+      options: ReplaceProjectOptions,
+      background?: boolean,
+    ) => Promise<boolean>
+  >(async () => false);
   const captureAuthoredProject = async () => {
     if (
       simulationSourceBuffer.current &&
@@ -1017,7 +1189,10 @@ export function App({
     return editorDocumentController.project;
   };
   const {
+    captureFileSession,
+    restoreFileSession,
     cloudBinding,
+    noteGalleryPublication,
     savedProjectBaseline,
     replaceGuard,
     replaceGuardSaving,
@@ -1029,8 +1204,9 @@ export function App({
     startupRestoreReady,
     setRecoveryDialogOpen,
     isDirtyWork,
+    hasUnsavedChanges,
     hasUnsafeWork,
-    noteProjectSnapshotSafe,
+    noteProjectPublished,
     replaceActiveProject,
     saveProjectToCloud,
     isSaveInFlight,
@@ -1048,11 +1224,19 @@ export function App({
     restoreRecoverySession,
     downloadRecoveryBackup,
     deleteRecoverySessionFromDialog,
-    refreshApp,
     openProjectFile,
     openCloudProjectById,
   } = useProjectFileLifecycle({
+    openProjectInTab: (project, view, options, background) =>
+      openProjectInTabRef.current(project, view, options, background),
     restoreWorkingSession: agentStartupRecovery !== null,
+    externalWorkspaceRestored: restoredWorkspace !== null,
+    galleryEntryId: canUpdateGalleryPublication(
+      galleryEntryContext,
+      publishSession,
+    )
+      ? galleryEntryContext!.id
+      : undefined,
     hasPendingEdits: () => simulationSourceBuffer.current?.dirty === true,
     beforeSnapshot: captureAuthoredProject,
     onRecoverBuffers: recoverSourceDrafts,
@@ -1061,8 +1245,12 @@ export function App({
     viewBox,
     defaultViewBox: DEFAULT_VIEWBOX,
     setStatus,
-    projectStoreCopy: projectStore,
     onCloudProjectSaved: (saved) => {
+      if (
+        galleryEntryContext &&
+        saved.galleryEntryId !== galleryEntryContext.id
+      )
+        setGalleryEntryContext(null);
       cloudListMutationRef.current += 1;
       setCloudProjects((current) => [
         saved,
@@ -1102,9 +1290,80 @@ export function App({
       return nextDocument;
     },
   });
-  const allowNextBrowserUnload = useUnsavedWorkGuard(hasUnsafeWork());
+  useEffect(() => {
+    let cancelled = false;
+    setPublicationLinkError(null);
+    setPublicationLinkNotice(null);
+    if (!cloudBinding || galleryEntryContext) {
+      setPublicationLinkLoading(false);
+      return;
+    }
+    setPublicationLinkLoading(true);
+    void (async () => {
+      try {
+        // Read current metadata even for recovery: another tab may have changed the source.
+        const listed = await listCloudProjects();
+        const saved =
+          listed.status === "listed"
+            ? listed.projects.find((item) => item.id === cloudBinding.id)
+            : null;
+        if (!saved)
+          throw new Error(
+            "Could not load the saved Project’s publication link. Retry before publishing.",
+          );
+        const entryId = saved.galleryEntryId ?? null;
+        const context = entryId
+          ? await loadGalleryPublicationContext(entryId, project.id)
+          : null;
+        if (cancelled) return;
+        noteGalleryPublication(entryId);
+        if (context) {
+          setGalleryEntryContext(context);
+        } else if (entryId) {
+          setPublicationLinkNotice(
+            "The original Gallery entry is unavailable. Publishing creates a new entry; the Shelf draft is preserved.",
+          );
+        }
+      } catch (error) {
+        if (!cancelled)
+          setPublicationLinkError(
+            error instanceof Error
+              ? error.message
+              : "Could not load the publication link.",
+          );
+      } finally {
+        if (!cancelled) setPublicationLinkLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    cloudBinding?.id,
+    projectSessionId,
+    galleryEntryContext,
+    publicationLinkRetry,
+  ]);
+
+  const linkExistingPublication = async (input: string): Promise<void> => {
+    const match = input
+      .trim()
+      .match(/^(?:https?:\/\/[^/]+)?\/g\/([^/?#]+)(?:[?#].*)?$/u);
+    const id = match?.[1] ?? input.trim();
+    if (!/^[a-zA-Z0-9-]+$/u.test(id))
+      throw new Error("Paste a Gallery link or entry id.");
+    const sessionId = editorDocumentController.projectSessionId;
+    const context = await loadGalleryPublicationContext(id, project.id);
+    if (!context || !canUpdateGalleryPublication(context, publishSession))
+      throw new Error("Choose a Gallery entry you own or may edit.");
+    if (sessionId !== editorDocumentController.projectSessionId)
+      throw new Error("The active Project changed. Reopen Publish.");
+    setGalleryEntryContext(context);
+  };
+
   const startupCloudRestoreAttemptedRef = useRef(false);
   const hasExplicitBootTarget =
+    restoredWorkspace !== null ||
     initialGalleryEntryId !== null ||
     (typeof window !== "undefined" &&
       (() => {
@@ -1112,6 +1371,7 @@ export function App({
         return (
           search.has("example") ||
           search.has("project") ||
+          search.has("history") ||
           search.get("new") === "1"
         );
       })());
@@ -1137,8 +1397,25 @@ export function App({
     publishSession,
     startupCloudProjectId,
   ]);
-  const agentSession = useAgentSession({
-    recover: !hasExplicitBootTarget,
+  const agentTargetRef = useRef<
+    NonNullable<UseAgentSessionOptions["resolveWorkspace"]>
+  >(() => null);
+  const backgroundAgentHosts = useRef(
+    new Map<
+      EditorDocumentController,
+      {
+        sessionId: string;
+        host: BrowserAgentHost;
+        fileHost: BrowserAgentFileHost;
+        simulationHost: BrowserAgentSimulationHost;
+        projectHost: BrowserAgentProjectHost;
+      }
+    >(),
+  );
+  const agentSession = useEditorAgentSession({
+    // A restored workspace is already the requested circuit. Resume its
+    // matching Agent only after the active Project and working copy are installed.
+    recover: true,
     beforeConnect: async () => {
       const snapshot = await captureAuthoredProject();
       if (snapshot) {
@@ -1151,6 +1428,7 @@ export function App({
     },
     enabled:
       publicAgentUiEnabled &&
+      !restoringWorkspace &&
       (startupRestoreReady ||
         recoveryWorkingCopyId !== agentStartupRecovery?.projectSessionId),
     project,
@@ -1159,6 +1437,7 @@ export function App({
     fileHost: browserAgentFileHost,
     simulationHost: browserAgentSimulationHost,
     projectHost: browserAgentProjectHost,
+    resolveWorkspace: (workspaceId) => agentTargetRef.current(workspaceId),
   });
   useEffect(() => {
     if (!publicAgentUiEnabled) return;
@@ -1251,14 +1530,6 @@ export function App({
     request: CellInterfaceConfirmation;
     snapshot: typeof project;
   } | null>(null);
-  const [parameterBinding, setParameterBinding] = useState<{
-    snapshot: CircuitProject;
-    cell: SchematicDocument;
-    instanceId: string;
-    field: string;
-    value: string;
-    anchor: HTMLElement;
-  } | null>(null);
   const { commitStructure, transact, transactConnectivity } =
     createEditorTransactionCommands({
       project,
@@ -1285,7 +1556,6 @@ export function App({
     setCellSymbolBodySize,
     setCellSymbolPortPlacement,
     editCellTerminalAnnotation,
-    formatCellTerminalAnnotations,
     removeCellTerminalSelection,
     renameProject,
   } = createProjectStructureCommands({
@@ -1335,7 +1605,7 @@ export function App({
    * A verb key pressed with nothing selected arms that verb: the next
    * object pointed at is the one acted on (Cadence-style verb-first).
    * Rotate and Delete stay armed for repeated clicks; Copy and Move hand
-   * over to their own placement/move interactions on the first target.
+   * over to their placement interaction on the first target.
    */
   const [armedVerb, setArmedVerb] = useState<
     "rotate" | "copy" | "move" | "move-detached" | "delete" | null
@@ -1352,7 +1622,6 @@ export function App({
     useState<HighlightedNetOrigin | null>(null);
   const [codeNetPreview, setCodeNetPreview] =
     useState<HighlightedNetOrigin | null>(null);
-  const [simulationWindowOpen, setSimulationWindowOpen] = useState(false);
   const [simulationPickMode, setSimulationPickModeState] = useState<
     "net" | "terminal" | null
   >(null);
@@ -1362,9 +1631,6 @@ export function App({
   const [simulationHoverNetId, setSimulationHoverNetId] = useState<
     string | null
   >(null);
-  const [simulationSavedNetIds, setSimulationSavedNetIds] = useState<
-    Set<string>
-  >(() => new Set());
   const [analogPickedNet, setAnalogPickedNet] = useState<{
     sequence: number;
     documentId: string;
@@ -1387,10 +1653,6 @@ export function App({
       partnerPinNames: readonly string[];
       occurrence?: readonly string[];
     } | null>(null);
-  const [pendingWaveformPlacement, setPendingWaveformPlacement] =
-    useState<PendingWaveformPlacement | null>(null);
-  const [waveformPlacementPoint, setWaveformPlacementPoint] =
-    useState<Point | null>(null);
   useEffect(() => {
     // Net-pick is a hierarchy traversal mode: keep it armed while the author
     // enters a DUT Cell, so an internal Net can be picked with its occurrence
@@ -1398,9 +1660,6 @@ export function App({
     if (!analogSimulationOpen) setSimulationPickModeState(null);
     setSimulationTerminalPickStart(null);
     setSimulationHoverNetId(null);
-    setSimulationSavedNetIds(new Set());
-    setPendingWaveformPlacement(null);
-    setWaveformPlacementPoint(null);
   }, [document.id]);
   useEffect(() => {
     setSimulationPickModeState(null);
@@ -1419,6 +1678,10 @@ export function App({
    * so it seeds its preview from here instead of waiting for the next move.
    */
   const lastCanvasPointRef = useRef<Point | null>(null);
+  const carriedCopyRef = useRef<{
+    clipboard: SchematicClipboard;
+    orientation: readonly PlacementOrientationOperation[];
+  } | null>(null);
 
   /** Show a placement ghost under the cursor without waiting for a move. */
   function seedComponentPreviewFromPointer(
@@ -1444,6 +1707,7 @@ export function App({
   }
   const suppressInstanceClick = useRef(false);
   const projectInputRef = useRef<HTMLInputElement>(null);
+  const tabProjectInputRef = useRef<HTMLInputElement>(null);
   const selectionShelfRef = useRef<HTMLButtonElement>(null);
   const documentViewBoxes = useRef(new Map<string, GridRect>());
   const [projectedMovePreviewDocument, setProjectedMovePreviewDocument] =
@@ -1463,29 +1727,8 @@ export function App({
         },
       };
     }
-    if (pendingWaveformPlacement && waveformPlacementPoint) {
-      const previewObjects = pendingWaveformPlacement.objects.map((object) =>
-        translateDraftingObject(
-          object,
-          waveformPlacementPoint,
-          document.presentation.grid,
-        ),
-      );
-      rendered = {
-        ...rendered,
-        drafting: {
-          objects: [...(rendered.drafting?.objects ?? []), ...previewObjects],
-        },
-      };
-    }
     return rendered;
-  }, [
-    document,
-    draftingHandlePreview,
-    pendingWaveformPlacement,
-    projectedMovePreviewDocument,
-    waveformPlacementPoint,
-  ]);
+  }, [document, draftingHandlePreview, projectedMovePreviewDocument]);
   const lastGoodSceneRef = useRef<ReturnType<typeof buildSvgScene> | null>(
     null,
   );
@@ -1673,15 +1916,6 @@ export function App({
   const selectedAnnotationOwnerInstanceId = selectedAnnotation
     ? annotationOwningInstanceId(selectedAnnotation)
     : undefined;
-  useEffect(() => {
-    if (
-      parameterBinding &&
-      (!selectionOpen ||
-        selectedInstance?.id !== parameterBinding.instanceId ||
-        document.id !== parameterBinding.cell.id)
-    )
-      setParameterBinding(null);
-  }, [selectionOpen, selectedInstance?.id, document.id, parameterBinding]);
   const selectedComponentSourceCode = useMemo(
     () =>
       selectedInstance
@@ -1731,22 +1965,6 @@ export function App({
     bulkDrawInstanceId,
   });
   const netChoices = useMemo(() => logicalNetChoices(document), [document]);
-  useEffect(() => {
-    setSimulationSavedNetIds((current) => {
-      const canonical = new Set<string>();
-      for (const netId of current) {
-        const group = logicalNets.byBaseNetId.get(netId);
-        if (group) canonical.add(group.baseNetIds[0]!);
-      }
-      if (
-        canonical.size === current.size &&
-        [...canonical].every((netId) => current.has(netId))
-      ) {
-        return current;
-      }
-      return canonical;
-    });
-  }, [logicalNets]);
   const selectedNetNameAnnotation =
     selectedAnnotation?.binding?.kind === "net-name" &&
     (selectedAnnotation.kind === "net-label" ||
@@ -1971,31 +2189,21 @@ export function App({
       ),
     [simulationCurrentTargetsInView],
   );
-  const toggleSimulationSavedNet = (netId: string): void => {
+  const pickAnalogSimulationNet = (netId: string): void => {
     const baseNetId = canonicalSimulationNetId(netId);
     if (!baseNetId) {
       setStatus(`Could not resolve Net ${netId}`);
       return;
     }
     const group = logicalNets.byBaseNetId.get(baseNetId);
-    if (analogSimulationOpen) {
-      const occurrence = activeSimulationPickOccurrence();
-      setAnalogPickedNet((current) => ({
-        sequence: (current?.sequence ?? 0) + 1,
-        documentId: document.id,
-        netId: baseNetId,
-        ...(occurrence === undefined ? {} : { occurrence }),
-      }));
-      setStatus(`Added voltage Output ${group?.name ?? baseNetId}`);
-      return;
-    }
-    setSimulationSavedNetIds((current) => {
-      const next = new Set(current);
-      if (next.has(baseNetId)) next.delete(baseNetId);
-      else next.add(baseNetId);
-      return next;
-    });
-    setStatus(`Toggled saved Net ${group?.name ?? baseNetId}`);
+    const occurrence = activeSimulationPickOccurrence();
+    setAnalogPickedNet((current) => ({
+      sequence: (current?.sequence ?? 0) + 1,
+      documentId: document.id,
+      netId: baseNetId,
+      ...(occurrence === undefined ? {} : { occurrence }),
+    }));
+    setStatus(`Added voltage Output ${group?.name ?? baseNetId}`);
   };
   const pickSimulationTerminal = (endpoint: WireSource): void => {
     if (endpoint.endpoint.kind !== "terminal" || !analogSimulationOpen) return;
@@ -2174,6 +2382,7 @@ export function App({
     commitNetLabelEditing,
     commitPendingNetLabelDraft,
     commitTextEditing,
+    escapeTextEditing,
     clearTextEditing,
     deleteTextEditing,
     netLabelPlacement,
@@ -2276,9 +2485,7 @@ export function App({
     : undefined;
   const selectedDisplayName =
     selectedInstanceLabel?.kind === "instance-label"
-      ? flattenRichText(
-          resolveAnnotationText(document, selectedInstanceLabel),
-        ).trim() || null
+      ? resolveAnnotationName(document, selectedInstanceLabel).trim() || null
       : null;
   const selectedInstanceValue = selectedInstance
     ? instanceValueAnnotation(document, selectedInstance.id)
@@ -2338,51 +2545,35 @@ export function App({
     for (const routeId of closure.boundaryRoutes) ids.add(routeId);
     return ids;
   }, [document, visualSelection]);
-  const netLabelTether = useMemo(() => {
-    const annotation = document.annotations.find(
-      (candidate) => candidate.id === selectedAnnotationId,
-    );
-    if (!annotation || annotation.kind !== "net-label") return null;
-    const anchor = annotation.anchor;
-    const record =
-      anchor.kind === "route"
-        ? routeGeometryRecords.find(
-            (candidate) => candidate.route.id === anchor.routeId,
-          )
-        : undefined;
-    const attachment =
-      record && anchor.kind === "route"
-        ? resolveRouteAttachment(record.geometry, anchor)
-        : null;
-    const label = annotationAnchor(
+  // Each selected label, or the labels of a lone selected part, draws a line
+  // to what it belongs to, so a label that ends up near another part still
+  // reads as its own.
+  const labelTethers = useMemo(
+    () =>
+      resolveLabelTethers(
+        { document, resolver, styleProfile, routeGeometryRecords, logicalNets },
+        visualSelection.annotationIds.length > 0
+          ? visualSelection.annotationIds
+          : visualSelection.instanceIds.length === 1
+            ? labelsOwnedBy(document, visualSelection.instanceIds[0]!)
+            : [],
+      ),
+    [
       document,
       resolver,
-      annotation,
-      routeGeometryRecords,
       styleProfile,
-    );
-    const conductor =
-      attachment?.conductorPoint ??
-      (annotation.netId
-        ? closestNetConductorPoint(
-            routeGeometryRecords,
-            annotation.netId,
-            label,
-          )
-        : null);
-    if (!conductor) return null;
-    return {
-      label,
-      conductor,
-      netName: annotation.netId ?? record?.route.netId ?? null,
-    };
-  }, [
-    document,
-    selectedAnnotationId,
-    routeGeometryRecords,
-    resolver,
-    styleProfile,
-  ]);
+      routeGeometryRecords,
+      logicalNets,
+      visualSelection,
+    ],
+  );
+  const labelOwnerIds = useMemo(
+    () =>
+      labelTethers.flatMap((tether) =>
+        tether.kind === "part" && tether.ownerId ? [tether.ownerId] : [],
+      ),
+    [labelTethers],
+  );
 
   const {
     sourceForTarget,
@@ -2588,7 +2779,7 @@ export function App({
       verb === "rotate"
         ? "Rotate: click a part to turn it, Escape to stop"
         : verb === "copy"
-          ? "Copy: click a part to pick up a copy · Esc cancels"
+          ? "Copy: click a part to pick up its copy · Esc cancels"
           : verb === "move"
             ? "Move: click a part to pick it up · Esc cancels"
             : verb === "move-detached"
@@ -2605,8 +2796,8 @@ export function App({
   /**
    * Apply the armed verb to one part. Returns false when nothing was armed.
    * Rotate and Delete remain armed for the next click; Copy and Move disarm
-   * because their own interactions (copy placement, command move) take over
-   * and own Esc from here.
+   * because their placement interaction takes over
+   * and owns Esc from here.
    */
   function consumeArmedVerbOnInstance(instanceId: string): boolean {
     if (armedVerb === null) return false;
@@ -2614,6 +2805,18 @@ export function App({
       (candidate) => candidate.id === instanceId,
     );
     if (!instance?.placement) return false;
+    if (armedVerb === "copy") {
+      setArmedVerb(null);
+      selectOnly("instance", [instanceId]);
+      suppressCommitClickRef.current = true;
+      // The pointer-down target is authoritative; React selection state has
+      // not updated yet, and this same click must not also place the copy.
+      void circuitClipboard.copySelection(true, {
+        ...EMPTY_VISUAL_SELECTION,
+        instanceIds: [instanceId],
+      });
+      return true;
+    }
     if (armedVerb === "rotate") {
       const next = (instance.placement.rotation + 90) % 360;
       const applied = transact([
@@ -2628,13 +2831,6 @@ export function App({
           `Rotated ${instanceId} to ${next}° — click another, Escape to stop`,
         );
       }
-      return true;
-    }
-    if (armedVerb === "copy") {
-      setArmedVerb(null);
-      selectOnly("instance", [instanceId]);
-      suppressCommitClickRef.current = true;
-      beginCopyPlacementFromSelection([instanceId]);
       return true;
     }
     if (armedVerb === "move" || armedVerb === "move-detached") {
@@ -2680,7 +2876,6 @@ export function App({
       setStatus,
     });
   const {
-    beginCopyPlacement: beginCopyPlacementFromSelection,
     beginKeyboardSelectionMove: beginKeyboardSelectionMoveFromSelection,
     beginMove: beginMoveFromSelection,
     beginVisualSelectionMove: beginVisualSelectionMoveFromSelection,
@@ -2711,12 +2906,9 @@ export function App({
     selectedEndpointNetId,
     getInteractionState: getCurrentInteractionState,
     transact,
-    transactCopy: (edits) => {
-      const committed = commitStructure("copy-placement", [...edits]);
-      return {
-        ok: committed,
-        revision: committed ? document.revision + 1 : document.revision,
-      };
+    transactCopy: (plan) => {
+      const committed = commitProjectStructure(applyProjectCopyPlacement(plan));
+      return { ok: true, revision: committed.revision };
     },
     commitCellTerminalSelection: removeCellTerminalSelection,
     setStatus,
@@ -2852,11 +3044,6 @@ export function App({
     ? null
     : committedSceneState.scene.viewBox;
   const zoomPercent = Math.round((DEFAULT_VIEWBOX.width / viewBox.width) * 100);
-  const canvasIsEmpty =
-    document.instances.every((instance) => instance.placement === null) &&
-    document.routes.length === 0 &&
-    document.annotations.length === 0 &&
-    (document.drafting?.objects.length ?? 0) === 0;
   const {
     insertConstructionVertex,
     insertArrowWaypoint,
@@ -3062,7 +3249,6 @@ export function App({
         (pendingSymbolId && pendingComponentPlacement) ||
         vddRailMode ||
         copyPlacement !== null ||
-        pendingWaveformPlacement !== null ||
         netLabelPlacement?.phase === "placing",
       ),
       tool,
@@ -3109,7 +3295,7 @@ export function App({
                 ? document.junctions.find((junction) => junction.id === id)
                     ?.netId
                 : undefined;
-        if (netId) toggleSimulationSavedNet(netId);
+        if (netId) pickAnalogSimulationNet(netId);
       },
       consumeArmedVerb: (kind, id) => {
         if (kind === "instance") return consumeArmedVerbOnInstance(id);
@@ -3203,12 +3389,6 @@ export function App({
       setVddRailPreviewPoint,
       copyPlacementPending: copyPlacement !== null,
       setCopyPreviewPoint,
-      waveformPlacementPending: pendingWaveformPlacement !== null,
-      setWaveformPreviewPoint: (point) =>
-        setWaveformPlacementPoint({
-          x: snapCoordinate(point.x, document.presentation.grid),
-          y: snapCoordinate(point.y, document.presentation.grid),
-        }),
     },
     drafting: {
       tool,
@@ -3350,6 +3530,7 @@ export function App({
 
   function openProperties(): void {
     setProjectPanel(null);
+    setDocumentSettingsOpen(false);
     setImportReviewOpen(false);
     setSelectionOpen(true);
     // Focus the header, not the first field: Q stays a pure toggle and
@@ -3366,8 +3547,10 @@ export function App({
   function showProjectPanel(mode: EditorProjectPanelMode): void {
     exitCellSymbolLayout();
     if (projectPanel === null) {
-      propertiesOpenBeforeProjectPanelRef.current = selectionOpen;
+      propertiesOpenBeforeProjectPanelRef.current =
+        selectionOpen && !documentSettingsOpen;
     }
+    setDocumentSettingsOpen(false);
     setProjectPanel(mode);
     setSelectionOpen(false);
     setImportReviewOpen(false);
@@ -3385,6 +3568,42 @@ export function App({
       return;
     }
     showProjectPanel(mode);
+  }
+
+  const circuitClipboard = useCircuitClipboard({
+    project,
+    document,
+    selection: visualSelection,
+    enabled:
+      !componentEditor &&
+      !userComponentsOpen &&
+      !interfaceConfirmation &&
+      !versionHistoryOpen,
+    setStatus,
+    beginPaste: (clipboard) => beginClipboardPlacement(clipboard),
+  });
+
+  /**
+   * Put a copied fragment in the pointer's hand on this canvas. A copy carried
+   * in from another project tab keeps the turns and flips it already had.
+   */
+  function beginClipboardPlacement(
+    clipboard: SchematicClipboard,
+    orientation?: readonly PlacementOrientationOperation[],
+  ): void {
+    if (getCurrentInteractionState().kind !== "idle") {
+      setStatus("Finish or cancel the active tool before pasting");
+      return;
+    }
+    prepareProjectCopy(project, document, clipboard);
+    const anchor = clipboardPlacementAnchor(clipboard);
+    if (!anchor) throw new Error("Copied objects have no placeable origin");
+    cancelAllTransientInteraction();
+    beginCopyPlacementInteraction(clipboard, anchor, orientation);
+    seedCopyPreviewFromPointer();
+    setStatus(
+      `Paste ${clipboard.instances.length} components · click to place · Esc cancels`,
+    );
   }
 
   function selectAllObjects(): void {
@@ -3431,11 +3650,11 @@ export function App({
   useEffect(() => {
     if (bootTargetHandled.current) return;
     bootTargetHandled.current = true;
-    // "Refresh app" reloads the same URL on purpose: the pending restore owns
+    // A safe recovery refresh reloads the same URL: the pending restore owns
     // this boot. Re-running the URL's boot target here would fork the
     // working-copy identity and orphan the snapshot the restore is about to
     // read.
-    if (restoreAfterRefresh) return;
+    if (restoreAfterRefresh || restoredWorkspace) return;
     const exampleId = new URLSearchParams(window.location.search).get(
       "example",
     );
@@ -3449,6 +3668,29 @@ export function App({
       void openGalleryEntryById(initialGalleryEntryId, false);
       return;
     }
+    const historySearch = new URLSearchParams(window.location.search);
+    const historyEntryId = historySearch.get("history");
+    if (historyEntryId) {
+      const versionId = historySearch.get("version");
+      const versionNo = Number(historySearch.get("versionNo"));
+      if (!versionId || !Number.isInteger(versionNo) || versionNo < 1) {
+        setStatus("Invalid historical branch link");
+        return;
+      }
+      setStatus("Opening historical version as a new branch…");
+      void loadGalleryVersionProject(historyEntryId, versionId)
+        .then(async (snapshot) => {
+          await openProjectInTabRef.current(
+            branchGalleryVersion(snapshot, versionNo),
+            DEFAULT_VIEWBOX,
+            { source: "opened-file", persistenceState: "dirty" },
+          );
+        })
+        .catch((error: unknown) =>
+          setStatus(error instanceof Error ? error.message : String(error)),
+        );
+      return;
+    }
     if (requestsNewProject) {
       replaceActiveProject(preparedInitialProject, DEFAULT_VIEWBOX);
       setStatus("Created a new Project");
@@ -3460,22 +3702,31 @@ export function App({
       return;
     }
     if (exampleId) {
-      const exampleProject = createLibraryExampleProject(exampleId);
-      const example = libraryProjectExamples.find(
-        (candidate) => candidate.id === exampleId,
-      );
-      if (exampleProject && example) {
-        replaceActiveProject(
-          prepareNetlistExample(
-            exampleProject,
-            netlistPreferences.preferences.profiles[
-              netlistPreferences.selected
-            ],
-          ),
-          DEFAULT_VIEWBOX,
-        );
-        setStatus(`Opened example: ${example.name}`);
+      if (!localhostExamplesEnabled()) {
+        setStatus("Built-in examples are available only on localhost");
+        return;
       }
+      void import("../examples/library-examples")
+        .then(({ createLibraryExampleProject, libraryProjectExamples }) => {
+          const exampleProject = createLibraryExampleProject(exampleId);
+          const example = libraryProjectExamples.find(
+            (candidate) => candidate.id === exampleId,
+          );
+          if (!exampleProject || !example) return;
+          replaceActiveProject(
+            prepareNetlistExample(
+              exampleProject,
+              netlistPreferences.preferences.profiles[
+                netlistPreferences.selected
+              ],
+            ),
+            DEFAULT_VIEWBOX,
+          );
+          setStatus(`Opened example: ${example.name}`);
+        })
+        .catch(() => {
+          setStatus("Built-in example could not load");
+        });
     }
   }, [initialGalleryEntryId, restoreAfterRefresh]);
 
@@ -3604,7 +3855,10 @@ export function App({
     }
   }
 
-  function componentEditPlan(definition: ComponentDefinition) {
+  function componentEditPlan(
+    definition: ComponentDefinition,
+    planComponentDefinitionEdit: typeof import("../features/user-components/component-definition-plan").planComponentDefinitionEdit,
+  ) {
     const target = componentEditor?.target;
     const live = definitionProjectRef.current;
     if (!target || live.projectSessionId !== target.projectSessionId)
@@ -3690,9 +3944,11 @@ export function App({
               ? arrowPreset.family === "outline"
                 ? "Outline arrow: click to place, or drag to size (Esc cancels)"
                 : "Arrow: click the start point"
-              : nextTool === "construction-line"
-                ? "Construction line: click the start point"
-                : "Pointer ready",
+              : nextTool === "polyline"
+                ? "Polyline: click vertices; double-click or Enter to finish"
+                : nextTool === "construction-line"
+                  ? "Construction line: click the start point"
+                  : "Pointer ready",
     );
   }
 
@@ -3908,10 +4164,9 @@ export function App({
       hasMirrorableSelection,
       canTransformMove: canTransformCommandMove(),
       hasInspectableSelection,
-      propertiesOpen: selectionOpen,
+      propertiesOpen: selectionOpen && !documentSettingsOpen,
       canUndo,
       canRedo,
-      helpOpen,
       canvasDragActive: canvasDragSessionRef.current !== null,
       hasClearableDraftingSelection:
         selectedDrafting?.kind === "arrow" ||
@@ -3922,7 +4177,6 @@ export function App({
       hasArmedVerb: armedVerb !== null,
     }),
     operations: {
-      closeHelp,
       cancelCanvasDrag: () => {
         canvasDragSessionRef.current?.cancel();
         setStatus("Cancelled canvas drag");
@@ -3972,11 +4226,15 @@ export function App({
         armVerb("delete");
       },
       beginCopy: () => {
-        if (hasVisualSelection(visualSelection)) {
-          beginCopyPlacementFromSelection();
+        if (getCurrentInteractionState().kind === "copy-placement") {
+          setStatus("Copy placement is already active · Esc cancels");
           return;
         }
-        armVerb("copy");
+        if (!hasVisualSelection(visualSelection)) {
+          armVerb("copy");
+          return;
+        }
+        void circuitClipboard.copySelection(true);
       },
       copyVisualSelection: visualClipboard.copy,
       openSelectionFilter: () => {
@@ -4028,12 +4286,12 @@ export function App({
       project,
       document,
       resolver,
+      exportDelivery: browserExportDelivery,
       defaultViewBox: DEFAULT_VIEWBOX,
       // Asked at export time, which is one of the moments an
       // electrical verdict belongs to.
       electricalWarningsPresent: () =>
         requestElectricalDiagnostics().length > 0,
-      netlistPortCase: netlistPreferences.portCase,
       netlistRootDocumentId,
       netlistConfigurationError: netlistPreferences.error,
       guardDirtyReplacement,
@@ -4077,7 +4335,9 @@ export function App({
         target instanceof Element ? target : target.parentElement;
       if (
         textEditing &&
-        !targetElement?.closest('[data-testid="canvas-text-editor"]')
+        !targetElement?.closest(
+          '[data-testid="canvas-text-editor"], [data-canvas-text-editor-part]',
+        )
       ) {
         // Leaving the canvas text editor commits the session; emptying the
         // text still deletes the annotation, matching the Apply button.
@@ -4106,27 +4366,38 @@ export function App({
         dismissOnOutsidePointerDown,
         true,
       );
-  }, [textEditing]);
+  }, [textEditing, document]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
+      if (versionHistoryOpen) return;
+      if (
+        event.target instanceof Element &&
+        (event.target.closest(".gallery-topology-comparison") ||
+          (event.target.closest(".project-menu") &&
+            ["Escape", "ArrowUp", "ArrowDown", "Home", "End"].includes(
+              event.key,
+            )) ||
+          (event.target.closest(".project-tabs") &&
+            ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)))
+      )
+        return;
       if (componentEditor) return;
+      if (userComponentsOpen) {
+        if (event.key === "Escape") setUserComponentsOpen(false);
+        return;
+      }
       // The source workbench owns its keyboard scope, including portalled menus.
       if (
         event.target instanceof Element &&
         event.target.closest(
-          ".simulation-code-workspace, [data-workspace-interaction]",
+          ".simulation-code-workspace, [data-workspace-interaction], .inline-confirm",
         )
       )
         return;
       // The interface confirmation owns keys even though this router captures
       // at window level before the modal's React handlers.
       if (interfaceConfirmation) return;
-      if (
-        event.target instanceof Element &&
-        event.target.closest(".cell-parameter-popover")
-      )
-        return;
       // File flyout arrows navigate the focused menu, never pan the canvas.
       if (
         event.target instanceof Element &&
@@ -4143,13 +4414,6 @@ export function App({
       if (event.key === "Escape" && simulationPickActive) {
         event.preventDefault();
         setSimulationPickMode(null);
-        return;
-      }
-      if (event.key === "Escape" && pendingWaveformPlacement) {
-        event.preventDefault();
-        setPendingWaveformPlacement(null);
-        setWaveformPlacementPoint(null);
-        setStatus("Waveform placement cancelled");
         return;
       }
       if (event.key === "Escape" && searchOpen) {
@@ -4176,10 +4440,8 @@ export function App({
       }
       if (event.key === "Escape" && textEditing) {
         event.preventDefault();
-        // Escape commits the session; emptying the text still deletes the
-        // annotation, matching the Apply button. Explicit cancellation stays
-        // available through the editor's Cancel action.
-        commitTextEditing();
+        // Valid drafts commit; invalid drafts must still let the user leave.
+        escapeTextEditing();
         return;
       }
       if (
@@ -4216,6 +4478,7 @@ export function App({
         wireReadyToFinish: Boolean(wireSource && wirePreviewPoint),
         draftingReadyToFinish:
           (tool === "arrow" ||
+            tool === "polyline" ||
             tool === "construction-line" ||
             tool === "rectangle" ||
             tool === "circle") &&
@@ -4223,7 +4486,7 @@ export function App({
         hasRemovableWireWaypoint: Boolean(
           wireSource && wireDraftSteps.length > 0,
         ),
-        propertiesOpen: selectionOpen,
+        propertiesOpen: selectionOpen && !documentSettingsOpen,
         hasHierarchyEnterSelection,
         hasDefinitionSelection: Boolean(
           selectedInstance &&
@@ -4248,6 +4511,9 @@ export function App({
           return;
         case "block-browser-bookmark":
           setStatus("Browser bookmark shortcut blocked while editing");
+          return;
+        case "paste-selection":
+          void circuitClipboard.pasteSelection();
           return;
         case "save":
           void saveProjectToCloud();
@@ -4290,6 +4556,15 @@ export function App({
           return;
         case "toggle-net-highlight":
           toggleHighlightedNet();
+          return;
+        case "toggle-panel":
+          if (shortcut.panel === "gallery") {
+            toggleExamplesPanel();
+          } else if (shortcut.panel === "library") {
+            toggleLibraryPanel();
+          } else if (shortcut.panel === "netlist") {
+            toggleProjectPanel("netlist");
+          }
           return;
         case "enter-hierarchy":
           enterSelectedHierarchy();
@@ -4338,139 +4613,6 @@ export function App({
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   });
-
-  const beginWaveformPlacement = (layout: TimingWaveformLayout): void => {
-    const objects = waveformDraftingObjects(
-      layout,
-      { x: 0, y: 0 },
-      (prefix) => {
-        uniqueSuffixCounter.current += 1;
-        return `${prefix}-${uniqueSuffixCounter.current}`;
-      },
-    );
-    uniqueSuffixCounter.current += 1;
-    const groupId = `waveform-group-${uniqueSuffixCounter.current}`;
-    setSimulationPickMode(null);
-    setPendingWaveformPlacement({
-      groupId,
-      objects,
-      traceCount: layout.rows.length,
-    });
-    const pointer = lastCanvasPointRef.current;
-    setWaveformPlacementPoint(
-      pointer
-        ? {
-            x: snapCoordinate(pointer.x, document.presentation.grid),
-            y: snapCoordinate(pointer.y, document.presentation.grid),
-          }
-        : null,
-    );
-    setStatus("Place waveform: move over the canvas and click · Esc cancels");
-  };
-
-  const commitWaveformPlacement = (point: Point): void => {
-    if (!pendingWaveformPlacement) return;
-    const snapped = {
-      x: snapCoordinate(point.x, document.presentation.grid),
-      y: snapCoordinate(point.y, document.presentation.grid),
-    };
-    const objects = pendingWaveformPlacement.objects.map((object) =>
-      translateDraftingObject(object, snapped, document.presentation.grid),
-    );
-    const placed = transact([
-      ...objects.map((object) => ({
-        kind: "upsert_drafting_object" as const,
-        object,
-      })),
-      {
-        kind: "set_layout_group" as const,
-        group: {
-          id: pendingWaveformPlacement.groupId,
-          kind: "custom" as const,
-          objectIds: objects.map((object) => object.id),
-          locked: false,
-        },
-      },
-    ]);
-    if (!placed.ok) return;
-    selectOnly(
-      "drafting",
-      objects.map((object) => object.id),
-    );
-    setPendingWaveformPlacement(null);
-    setWaveformPlacementPoint(null);
-    setStatus(
-      `Placed a grouped timing snapshot with ${pendingWaveformPlacement.traceCount} trace${pendingWaveformPlacement.traceCount === 1 ? "" : "s"}`,
-    );
-  };
-
-  const beginWaveformGroupScale = (
-    event: ReactPointerEvent<SVGElement>,
-    group: LayoutGroup,
-    bounds: Rect,
-  ): void => {
-    if (event.button !== 0 || group.locked) return;
-    event.preventDefault();
-    event.stopPropagation();
-    canvasDragSessionRef.current?.cancel();
-    const target = event.currentTarget;
-    const svg = target.ownerSVGElement!;
-    const pivot = { x: bounds.x, y: bounds.y };
-    const originalRadius = Math.max(1, Math.hypot(bounds.width, bounds.height));
-    const scaleRange = draftingGroupScaleRange(document, group.objectIds);
-    if (!scaleRange) {
-      setStatus("This waveform group cannot scale");
-      return;
-    }
-    const factorAt = (client: Point): number => {
-      const point = pointFromClient(client.x, client.y, svg, false);
-      return Math.min(
-        scaleRange.max,
-        Math.max(
-          scaleRange.min,
-          Math.hypot(point.x - pivot.x, point.y - pivot.y) / originalRadius,
-        ),
-      );
-    };
-    const visual = startCanvasDragVisual(svg, group.objectIds);
-    canvasDragSessionRef.current = startCanvasDragSession({
-      target,
-      pointerId: event.pointerId,
-      startClient: { x: event.clientX, y: event.clientY },
-      thresholdPx: DRAG_START_DISTANCE_PX,
-      onPreview: (client) => visual.scale(pivot, factorAt(client)),
-      onFinish: ({ client, dragged }) => {
-        canvasDragSessionRef.current = null;
-        visual.restore();
-        if (!dragged) return;
-        const factor = factorAt(client);
-        const objects = scaleDraftingGroup(
-          document,
-          group.objectIds,
-          pivot,
-          factor,
-        );
-        if (!objects) {
-          setStatus("This waveform group contains an object that cannot scale");
-          return;
-        }
-        if (
-          transact(
-            objects.map((object) => ({
-              kind: "upsert_drafting_object" as const,
-              object,
-            })),
-          ).ok
-        ) {
-          setStatus(`Scaled waveform to ${Math.round(factor * 100)}%`);
-        }
-      },
-      onCancel: () => {
-        canvasDragSessionRef.current = null;
-        visual.restore();
-      },
-    });
-  };
 
   const canvasEventHandlers = createEditorCanvasEventHandlers({
     model: { tool, document, resolver, selectionPolicy },
@@ -4551,19 +4693,16 @@ export function App({
       pendingSymbolId,
       pendingComponentPlacement: Boolean(pendingComponentPlacement),
       vddRailMode,
-      waveformPlacementActive: pendingWaveformPlacement !== null,
       snapPlacementPoint: (point, svg) =>
         resolvePendingPlacementPoint(point, svg).point,
       commitCopyPlacement: commitCopyPlacementFromSelection,
       commitPendingPlacement: commitPendingPlacementAtFromHook,
-      commitWaveformPlacement,
       clearComponentPreview: () => setComponentPreviewPoint(null),
       clearVddRailPreview: () => setVddRailPreviewPoint(null),
       clearCopyPreview: () => {
         setCopyPreviewPoint(null);
         paintSnapGuides([]);
       },
-      clearWaveformPreview: () => setWaveformPlacementPoint(null),
     },
     gesture: {
       begin: beginCanvasGesture,
@@ -4625,6 +4764,656 @@ export function App({
     },
   });
 
+  function captureTabSession() {
+    return {
+      controller: editorDocumentController,
+      file: captureFileSession(),
+      recovery: captureRecoverySession(),
+      view: cameraRuntime.current(),
+      cellViews: new Map(documentViewBoxes.current),
+      stack: documentStack,
+      selection: visualSelection,
+      panel: projectPanel,
+      properties: selectionOpen,
+      publication: galleryEntryContext,
+      publishDraft,
+      netlistEntry,
+      dirty: isDirtyWork(),
+      unsafe: hasUnsafeWork() || codeDraftDirty,
+      fit: false,
+    };
+  }
+  type TabSession = ReturnType<typeof captureTabSession>;
+  function restoreTabSession(session: TabSession) {
+    resetInteractionState();
+    // The outgoing tab still owns its artifacts and expiring workspaces.
+    // Selection changes hide its UI, not its file service.
+    setAgentFileCandidate(null);
+    setImportReport(null);
+    setImportReviewOpen(false);
+    setProjectNameDraft(null);
+    setCanvasContextMenu(null);
+    setNetlistFocusedInstance(null);
+    setHighlightedNetOrigin(null);
+    setCodeNetPreview(null);
+    setAnalogSimulationState("closed");
+    setNetlistPreflightOpen(false);
+    activateDocumentSession(session.controller);
+    restoreFileSession(session.file);
+    resumeRecoverySession(session.recovery);
+    documentViewBoxes.current = new Map(session.cellViews);
+    setDocumentStack(session.stack);
+    setViewBox(session.view, session.controller.document.presentation.grid);
+    autoFitProjectRef.current = session.controller.projectSessionId;
+    pendingAutoFitRef.current = session.fit;
+    replaceSelection(session.selection);
+    setSelectionOpen(session.properties);
+    setProjectPanel(session.panel);
+    setGalleryEntryContext(session.publication);
+    setPublishDraft(session.publishDraft);
+    setNetlistEntry(session.netlistEntry);
+    setStatus(`Switched to ${session.controller.project.name}`);
+    setRestoringWorkspace(false);
+    stageRecovery(session.controller.project, {
+      cloudBinding: session.file.cloudBinding,
+      unsavedAtSnapshot: session.dirty,
+    });
+  }
+  function createTabSession(
+    nextProject = createEmptyProject(
+      createId("project"),
+      "New Circuit",
+      createId("document"),
+    ),
+    nextView = DEFAULT_VIEWBOX,
+    options: ReplaceProjectOptions = {},
+  ): TabSession {
+    const prepared =
+      materializeRazaviProjectBulkConnections(nextProject).project;
+    const controller = new EditorDocumentController(prepared);
+    // Identity is allocated without changing the outgoing recovery coordinator.
+    return {
+      ...captureTabSession(),
+      controller,
+      file: {
+        persistenceState: options.persistenceState ?? "unbound",
+        cloudBinding: options.cloudBinding ?? null,
+        savedBaseline: options.savedBaseline ?? null,
+        safeSnapshotToken: null,
+      },
+      recovery: {
+        workingCopyId: createId("working-copy"),
+        source: options.source ?? "new",
+        ...(options.formalFileHint
+          ? { formalFileHint: options.formalFileHint }
+          : {}),
+      },
+      view: nextView,
+      cellViews: new Map(),
+      stack: [],
+      selection: {
+        instanceIds: [],
+        routeIds: [],
+        annotationIds: [],
+        draftingIds: [],
+        junctionIds: [],
+      },
+      panel: "netlist",
+      properties: false,
+      publication: null,
+      publishDraft: null,
+      netlistEntry: null,
+      dirty: options.persistenceState === "dirty",
+      unsafe: options.persistenceState === "dirty",
+      fit: true,
+    };
+  }
+  type PortableTab = Omit<TabSession, "controller" | "cellViews"> & {
+    projectText: string;
+    activeDocumentId: string;
+    cellViews: [string, GridRect][];
+  };
+  const [restoredTabs] = useState(() => {
+    if (!restoredWorkspace) return { value: null, error: null };
+    try {
+      const tabs = restoredWorkspace.tabs.map((tab) => {
+        const saved = tab.session as PortableTab;
+        const controller = new EditorDocumentController(
+          parseProject(saved.projectText),
+        );
+        if (!controller.openDocument(saved.activeDocumentId))
+          throw new Error("Missing active Cell");
+        if (
+          !saved.file ||
+          !saved.recovery ||
+          !saved.view ||
+          !Array.isArray(saved.stack) ||
+          !saved.selection
+        )
+          throw new Error("Incomplete tab session");
+        if (saved.file.savedBaseline)
+          saved.file.savedBaseline.project = parseProject(
+            serializeProject(saved.file.savedBaseline.project),
+          );
+        const session: TabSession = {
+          ...saved,
+          // Cloud publication metadata may change while the page is closed.
+          // Keep the local draft, but resolve its current link before publishing.
+          publication: saved.file.cloudBinding ? null : saved.publication,
+          controller,
+          cellViews: new Map(saved.cellViews),
+          fit: false,
+          netlistEntry: saved.netlistEntry
+            ? { ...saved.netlistEntry, sessionId: controller.projectSessionId }
+            : null,
+          file: {
+            ...saved.file,
+            persistenceState:
+              saved.file.persistenceState === "saving"
+                ? "dirty"
+                : saved.file.persistenceState,
+          },
+        };
+        return { id: tab.id, session };
+      });
+      return {
+        value: { activeId: restoredWorkspace.activeId, tabs },
+        error: null,
+      };
+    } catch {
+      return {
+        value: null,
+        error:
+          "Saved tabs could not be restored. Their original snapshots are retained; export new work before leaving.",
+      };
+    }
+  });
+  const workspaceLastText = useRef("");
+  const workspaceLastRecord = useRef<ProjectWorkspace | null>(null);
+  const workspaceSaveQueue = useRef(Promise.resolve());
+  const workspaceFailure = useRef(false);
+  function persistTabs(
+    workspace: {
+      activeId: string;
+      tabs: { id: string; session: TabSession }[];
+    },
+    final: boolean,
+  ) {
+    if (
+      workspaceError ||
+      restoredTabs.error ||
+      typeof window === "undefined" ||
+      initialProject
+    )
+      return;
+    try {
+      snapshotSerializer.retain(
+        workspace.tabs.map(({ session }) => session.controller.project),
+      );
+      const tabs = workspace.tabs.map(({ id, session }) => {
+        const { controller, cellViews, ...rest } = session;
+        const portable: PortableTab = {
+          ...rest,
+          cellViews: [...cellViews],
+          projectText: snapshotSerializer.serialize(controller.project),
+          activeDocumentId: controller.document.id,
+        };
+        return { id, session: portable };
+      });
+      const text = JSON.stringify({ activeId: workspace.activeId, tabs });
+      if (text !== workspaceLastText.current) {
+        const record: ProjectWorkspace = {
+          version: 1,
+          windowId: workspaceWindowId(),
+          url: window.location.pathname + window.location.search,
+          savedAt: Date.now(),
+          activeId: workspace.activeId,
+          tabs,
+        };
+        workspaceLastText.current = text;
+        workspaceLastRecord.current = record;
+        workspaceSaveQueue.current = workspaceSaveQueue.current
+          .then(() => browserWorkspaceStore().write(record))
+          .catch(() => {
+            workspaceLastText.current = "";
+            if (!workspaceFailure.current) {
+              workspaceFailure.current = true;
+              setStatus(
+                "Project tabs could not be saved in this browser. Export your work before leaving; earlier copies are retained.",
+              );
+            }
+          });
+      }
+      if (final && workspaceLastRecord.current)
+        journalProjectWorkspace(workspaceLastRecord.current);
+    } catch {
+      if (!workspaceFailure.current) {
+        workspaceFailure.current = true;
+        setStatus(
+          "The latest tab snapshot could not be saved. Export your work before leaving.",
+        );
+      }
+    }
+  }
+  useEffect(() => {
+    if (restoredTabs.error) {
+      setStatus(restoredTabs.error);
+      setRestoringWorkspace(false);
+    }
+  }, [restoredTabs.error]);
+  const projectTabs = useProjectTabs<TabSession>({
+    initial: restoredTabs.value,
+    persist: persistTabs,
+    capture: captureTabSession,
+    restore: restoreTabSession,
+    describe: (session) => ({
+      name: session.controller.project.name,
+      // A tab whose exact bytes the Gallery holds loses nothing on close.
+      dirty:
+        (session.dirty &&
+          session.file.publishedSnapshotToken !==
+            projectChangeToken(session.controller.project)) ||
+        session.unsafe,
+      unsafe: session.unsafe,
+      cloudId: session.file.cloudBinding?.id ?? null,
+    }),
+    prepare: async () => {
+      if (
+        isSaveInFlight() ||
+        replaceGuard ||
+        recoveryDialogOpen ||
+        publishGalleryOpen ||
+        componentEditor ||
+        documentSettingsOpen ||
+        versionHistoryOpen ||
+        projectNameDraft !== null ||
+        textEditing ||
+        codeDraftDirty
+      ) {
+        setStatus(
+          "Finish or cancel the current edit or dialog before switching project tabs. No work was discarded.",
+        );
+        return false;
+      }
+      const snapshot = await captureAuthoredProject();
+      if (!snapshot) return false;
+      // A copy in hand (C, or a paste not yet placed) follows the pointer
+      // into the tab that opens next, as if the tabs were one canvas.
+      const interaction = getCurrentInteractionState();
+      carriedCopyRef.current =
+        interaction.kind === "copy-placement"
+          ? {
+              clipboard: interaction.copy.clipboard,
+              orientation: interaction.copy.orientationOperations,
+            }
+          : null;
+      cancelAllTransientInteraction();
+      stageRecovery(snapshot, {
+        cloudBinding,
+        unsavedAtSnapshot: isDirtyWork(),
+      });
+      await flushRecovery();
+      return true;
+    },
+    onError: (message) => setStatus(message),
+  });
+  useEffect(() => {
+    // Runs once the next tab's Project is the one rendered, so the copy is
+    // prepared against, and placed into, that Project.
+    const carried = carriedCopyRef.current;
+    carriedCopyRef.current = null;
+    if (!carried) return;
+    try {
+      beginClipboardPlacement(carried.clipboard, carried.orientation);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }, [projectTabs.activeId]);
+  openProjectInTabRef.current = (next, view, options, background) =>
+    background
+      ? Promise.resolve(
+          projectTabs.openBackground(
+            () => createTabSession(next, view, options),
+            options.cloudBinding?.id,
+          ),
+        )
+      : projectTabs.open(
+          () => createTabSession(next, view, options),
+          options.cloudBinding?.id,
+        );
+  agentWorkspaceRef.current = async (envelope, targetWorkspaceId) => {
+    const request = envelope.request;
+    const { copyWorkspaceCell, listWorkspaceProjects, workspaceResponses } =
+      await import("../agent/workspace-copy");
+    const { fail, success } = workspaceResponses(envelope.requestId);
+    try {
+      const entries = projectTabs.entries();
+      if (request.action === "list")
+        return success({
+          action: "list",
+          activeWorkspaceId: projectTabs.activeId,
+          projects: listWorkspaceProjects(entries),
+        });
+      if (request.action === "activate") {
+        if (!entries.some((e) => e.id === request.workspaceId))
+          return fail("WORKSPACE_NOT_FOUND", "Workspace is no longer open");
+        const applied = await projectTabs.select(request.workspaceId);
+        return applied
+          ? success({ action: "activate", applied })
+          : fail(
+              "WORKSPACE_BUSY",
+              "Finish the current edit before switching Projects",
+            );
+      }
+      if (request.action === "open") {
+        const result = await openCloudProjectById(
+          request.cloudProjectId,
+          true,
+          request.background === true,
+        );
+        return result.applied
+          ? success({
+              action: "open",
+              applied: true,
+              workspaceId: projectTabs
+                .entries()
+                .find(
+                  (item) =>
+                    item.session.file.cloudBinding?.id ===
+                    request.cloudProjectId,
+                )?.id,
+            })
+          : fail(
+              "CLOUD_OPEN_FAILED",
+              result.message ?? "Cloud Project was not opened",
+            );
+      }
+      if (request.action === "save") {
+        if (targetWorkspaceId && targetWorkspaceId !== projectTabs.activeId) {
+          const target = entries.find((item) => item.id === targetWorkspaceId);
+          if (!target)
+            return fail(
+              "WORKSPACE_NOT_FOUND",
+              "Working copy is no longer open",
+            );
+          const controller = target.session.controller;
+          const snapshot = captureProjectSaveSnapshot(
+            controller.project,
+            controller.projectSessionId,
+            () => {
+              const live = projectTabs
+                .entries()
+                .find(
+                  (item) =>
+                    item.id === targetWorkspaceId &&
+                    item.session.controller === controller,
+                );
+              return live
+                ? {
+                    id: controller.projectSessionId,
+                    project: controller.project,
+                  }
+                : null;
+            },
+          );
+          const candidate = snapshot.project;
+          target.session.file.persistenceState = "saving";
+          projectTabs.changed();
+          const outcome = await saveCloudProject(
+            candidate,
+            request.asNew ? null : target.session.file.cloudBinding,
+          );
+          const liveTarget = projectTabs
+            .entries()
+            .find(
+              (item) =>
+                item.id === targetWorkspaceId &&
+                item.session.controller === controller,
+            );
+          if (!liveTarget)
+            return fail(
+              "WORKSPACE_NOT_FOUND",
+              "Working copy closed while Cloud save was in flight; check the Cloud Project shelf",
+            );
+          if (outcome.status === "saved") {
+            const stillCurrent =
+              snapshot.matchesCurrentProject() &&
+              (targetWorkspaceId !== projectTabs.activeId ||
+                (!codeDraftDirty &&
+                  simulationSourceBuffer.current?.dirty !== true));
+            liveTarget.session.file.cloudBinding = {
+              id: outcome.project.id,
+              revision: outcome.project.revision,
+              galleryEntryId: outcome.project.galleryEntryId ?? null,
+            };
+            liveTarget.session.file.savedBaseline = {
+              project: candidate,
+              viewBox: { ...liveTarget.session.view },
+            };
+            liveTarget.session.file.persistenceState = stillCurrent
+              ? "clean"
+              : "dirty";
+            liveTarget.session.dirty = !stillCurrent;
+            liveTarget.session.unsafe = !stillCurrent;
+            if (targetWorkspaceId === projectTabs.activeId) {
+              restoreFileSession(liveTarget.session.file);
+              stageRecovery(controller.project, {
+                cloudBinding: liveTarget.session.file.cloudBinding,
+                unsavedAtSnapshot: !stillCurrent,
+              });
+              void flushRecovery();
+            }
+            cloudListMutationRef.current += 1;
+            setCloudProjects((current) => [
+              outcome.project,
+              ...current.filter((item) => item.id !== outcome.project.id),
+            ]);
+            projectTabs.changed();
+            const { id, name, revision, updatedAt, schemaVersion } =
+              outcome.project;
+            return success({
+              action: "save",
+              project: { id, name, revision, updatedAt, schemaVersion },
+            });
+          }
+          liveTarget.session.file.persistenceState =
+            outcome.status === "conflict"
+              ? "conflict"
+              : outcome.status === "unreachable"
+                ? "offline"
+                : "failed";
+          if (targetWorkspaceId === projectTabs.activeId)
+            restoreFileSession(liveTarget.session.file);
+          projectTabs.changed();
+          return fail(
+            `CLOUD_SAVE_${outcome.status.toUpperCase().replaceAll("-", "_")}`,
+            outcome.status === "conflict"
+              ? `Cloud revision ${outcome.project.revision} conflicts with this working copy; nothing overwritten`
+              : "message" in outcome
+                ? outcome.message
+                : `Cloud save ${outcome.status}; local work retained`,
+          );
+        }
+        const outcome = await saveProjectToCloud(
+          undefined,
+          request.asNew === true,
+        );
+        if (outcome.status !== "saved")
+          return fail(
+            `CLOUD_SAVE_${outcome.status.toUpperCase().replaceAll("-", "_")}`,
+            outcome.status === "conflict"
+              ? `Cloud revision ${outcome.project.revision} conflicts with this working copy; nothing overwritten`
+              : "message" in outcome
+                ? outcome.message
+                : `Cloud save ${outcome.status}; local work retained`,
+          );
+        const { id, name, revision, updatedAt, schemaVersion } =
+          outcome.project;
+        return success({
+          action: "save",
+          project: { id, name, revision, updatedAt, schemaVersion },
+        });
+      }
+      const source = entries.find((e) => e.id === request.sourceWorkspaceId)
+        ?.session.controller;
+      const target = entries.find((e) => e.id === request.targetWorkspaceId);
+      if (!target)
+        return fail("WORKSPACE_NOT_FOUND", "Target Project is no longer open");
+      const copied = copyWorkspaceCell(
+        request,
+        source,
+        target.session.controller,
+        {
+          captureProjectCopy,
+          planProjectCopyPlacement,
+          applyProjectCopyPlacement,
+        },
+      );
+      if ("error" in copied)
+        return fail(copied.error.code, copied.error.message);
+      if (target.id === projectTabs.activeId) {
+        synchronizeExternalCommit();
+        void flushRecovery();
+      } else {
+        target.session.dirty = true;
+        target.session.unsafe = true;
+        target.session.file.persistenceState = "dirty";
+      }
+      projectTabs.changed();
+      return success(copied.result);
+    } catch (error) {
+      return fail(
+        "WORKSPACE_OPERATION_FAILED",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  };
+  agentTargetRef.current = (workspaceId) => {
+    const entry = projectTabs.entries().find((item) => item.id === workspaceId);
+    if (!entry) return null;
+    if (workspaceId === projectTabs.activeId)
+      return {
+        host: browserAgentHost,
+        fileHost: browserAgentFileHost,
+        simulationHost: browserAgentSimulationHost,
+        projectHost: browserAgentProjectHost,
+      };
+    const controller = entry.session.controller;
+    const available = () =>
+      projectTabs
+        .entries()
+        .some(
+          (item) =>
+            item.id === workspaceId && item.session.controller === controller,
+        );
+    const cached = backgroundAgentHosts.current.get(controller);
+    if (cached?.sessionId === controller.projectSessionId) return cached;
+    const committed = () => {
+      const current = projectTabs
+        .entries()
+        .find(
+          (item) =>
+            item.id === workspaceId && item.session.controller === controller,
+        );
+      if (!current) return;
+      if (workspaceId === projectTabs.activeId) {
+        synchronizeExternalCommit();
+        void flushRecovery();
+      } else {
+        current.session.dirty = true;
+        current.session.unsafe = true;
+        current.session.file.persistenceState = "dirty";
+      }
+      projectTabs.changed();
+    };
+    const host = new BrowserAgentHost(
+      controller,
+      committed,
+      undefined,
+      available,
+    );
+    const existing = agentProjectResources.current
+      .get(controller)
+      ?.get(`${controller.projectSessionId}:${simulationTransport}`);
+    const fileHost =
+      existing?.files ??
+      new BrowserAgentFileHost({
+        transport: simulationTransport,
+        getProjectSessionId: () =>
+          available() ? controller.projectSessionId : "closed",
+        getProject: () => controller.project,
+        getDocument: (id) =>
+          controller.project.documents.find((item) => item.id === id) ?? null,
+        getResolver: () => controller.resolver,
+        onApprovalRequested: setAgentFileCandidate,
+        getActiveDocumentId: () => controller.document.id,
+        commitProjectStructure: (next, active) => {
+          controller.commitProjectStructure(next, active);
+          committed();
+        },
+        openProjectInNewTab: (candidate, background) =>
+          openProjectInTabRef.current(
+            candidate,
+            DEFAULT_VIEWBOX,
+            {
+              source: "opened-file",
+            },
+            background,
+          ),
+        dispatchProjectTransaction: (request) =>
+          host.dispatchProjectTransaction(request),
+      });
+    const history =
+      existing?.history ?? new ProjectRunHistory(controller.project.id);
+    history.activate();
+    const simulationHost =
+      existing?.simulation ??
+      new BrowserAgentSimulationHost({
+        runHistory: history,
+        owner: "agent",
+        files: fileHost.simulationFiles,
+        getProjectSessionId: () =>
+          available() ? controller.projectSessionId : "closed",
+        getProject: () => controller.project,
+        transport: simulationTransport,
+      });
+    const projectHost = new BrowserAgentProjectHost({
+      workspace: (request) => agentWorkspaceRef.current(request, workspaceId),
+      getProjectSessionId: () =>
+        available() ? controller.projectSessionId : "closed",
+      getProject: () => controller.project,
+      getActiveDocumentId: () => controller.document.id,
+      commitProjectStructure: (next, activeDocumentId) => {
+        controller.commitProjectStructure(next, activeDocumentId);
+        committed();
+      },
+      dispatchProjectTransaction: (request) =>
+        host.dispatchProjectTransaction(request),
+    });
+    const target = {
+      sessionId: controller.projectSessionId,
+      host,
+      fileHost,
+      simulationHost,
+      projectHost,
+    };
+    backgroundAgentHosts.current.set(controller, target);
+    if (!existing) {
+      let group = agentProjectResources.current.get(controller);
+      if (!group) {
+        group = new Map();
+        agentProjectResources.current.set(controller, group);
+      }
+      group.set(`${controller.projectSessionId}:${simulationTransport}`, {
+        files: fileHost,
+        history,
+        simulation: simulationHost,
+      });
+    }
+    return target;
+  };
+  const allowNextBrowserUnload = useUnsavedWorkGuard(projectTabs.hasUnsafeTabs);
+
   const openAgentConnection = () => {
     setAgentPanelOpen(true);
     if (
@@ -4641,91 +5430,91 @@ export function App({
 
   return (
     <main className="app-shell">
-      {parameterBinding &&
-      selectionOpen &&
-      selectedInstance?.id === parameterBinding.instanceId &&
-      document.id === parameterBinding.cell.id ? (
-        <CellParameterDialog
-          anchor={parameterBinding.anchor}
-          cell={parameterBinding.cell}
-          field={parameterBinding.field}
-          value={parameterBinding.value}
-          onCancel={() => setParameterBinding(null)}
-          onApply={(name, defaultValue) => {
-            if (project !== parameterBinding.snapshot)
-              return {
-                ok: false,
-                message:
-                  "Project changed. Close this dialog and select the field again.",
-              };
-            try {
-              const edits = planBindCellParameter(
-                project,
-                parameterBinding.cell.id,
-                parameterBinding.instanceId,
-                parameterBinding.field,
-                name,
-                defaultValue,
-              );
-              const ok = commitStructure("bind-cell-parameter", edits);
-              if (ok) {
-                setParameterBinding(null);
-                setStatus(`Using Cell parameter ${name}`);
-              }
-              return {
-                ok,
-                ...(!ok
-                  ? {
-                      message: "Could not bind the Cell parameter; see status.",
-                    }
-                  : {}),
-              };
-            } catch (error) {
-              return {
-                ok: false,
-                message:
+      <GalleryTopologyTaskNotice
+        hidden={publishGalleryOpen}
+        onOpen={() => setPublishGalleryOpen(true)}
+      />
+      {interfaceConfirmation ? (
+        <Suspense fallback={null}>
+          <CellInterfaceConfirmationDialog
+            request={interfaceConfirmation.request}
+            onCancel={() => setInterfaceConfirmation(null)}
+            onConfirm={() => {
+              setInterfaceConfirmation(null);
+              try {
+                applyConfirmedCellInterfaceEdit(
+                  interfaceConfirmation.request,
+                  interfaceConfirmation.snapshot,
+                  project,
+                );
+              } catch (error) {
+                setStatus(
                   error instanceof Error
                     ? error.message
-                    : "Could not bind Cell parameter",
-              };
-            }
-          }}
-        />
-      ) : null}
-      {interfaceConfirmation ? (
-        <CellInterfaceConfirmationDialog
-          request={interfaceConfirmation.request}
-          onCancel={() => setInterfaceConfirmation(null)}
-          onConfirm={() => {
-            setInterfaceConfirmation(null);
-            try {
-              applyConfirmedCellInterfaceEdit(
-                interfaceConfirmation.request,
-                interfaceConfirmation.snapshot,
-                project,
-              );
-            } catch (error) {
-              setStatus(
-                error instanceof Error
-                  ? error.message
-                  : "Could not update Cell interface",
-              );
-            }
-          }}
-        />
+                    : "Could not update Cell interface",
+                );
+              }
+            }}
+          />
+        </Suspense>
       ) : null}
       {renderCrashRequested() ? <RenderCrashProbe /> : null}
       <EditorAppChrome
+        projectChoices={{
+          tabs: projectTabs.tabs,
+          activeId: projectTabs.activeId,
+          busy: projectTabs.busy,
+          onSelect: (id) => {
+            void projectTabs.select(id);
+          },
+        }}
+        projectTabs={
+          <>
+            <ProjectTabs
+              tabs={projectTabs.tabs}
+              activeId={projectTabs.activeId}
+              busy={projectTabs.busy}
+              onSelect={(id) => {
+                void projectTabs.select(id);
+              }}
+              onClose={(id) => {
+                void projectTabs.close(id, () => createTabSession());
+              }}
+              onNew={() => {
+                void projectTabs.open(() => createTabSession());
+              }}
+              onOpenFile={() => tabProjectInputRef.current?.click()}
+              cloudProjects={cloudProjects}
+              onRefreshShelf={() => {
+                void reloadCloudProjects();
+              }}
+              onOpenShelf={(id) => {
+                void openCloudProjectById(id, true);
+              }}
+            />
+            <input
+              ref={tabProjectInputRef}
+              hidden
+              type="file"
+              accept=".json,.icproj.json"
+              data-testid="tab-project-file"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = "";
+                if (file) void openProjectFile(file, { inTab: true });
+              }}
+            />
+          </>
+        }
         {...(publicSimulationUiEnabled
           ? { simulationAction: openAnalogSimulation }
           : {})}
         simulationState={analogSimulationState}
-        releaseChannel={releaseChannel}
         projectName={project.name}
         galleryEntryMetadata={galleryEntryContext}
         projectSchemaVersion={project.schemaVersion}
         projectNameDraft={projectNameDraft}
-        hasUnsavedWork={isDirtyWork()}
+        hasUnsavedWork={hasUnsavedChanges()}
         documentName={document.name}
         onProjectNameDraftChange={setProjectNameDraft}
         onProjectNameCommit={commitProjectName}
@@ -4744,8 +5533,6 @@ export function App({
           });
         }}
         fileCommands={{
-          projectStoreLabel: projectStore.plural,
-          projectStoreItemLabel: projectStore.singular,
           cloudProjects,
           activeCloudProjectId: cloudBinding?.id ?? null,
           canRevert: savedProjectBaseline !== null && isDirtyWork(),
@@ -4754,6 +5541,10 @@ export function App({
               session.latest?.unsavedAtSnapshot === true ||
               (session.latest !== null && session.latest.review !== "valid"),
           ),
+          checkAndSave: {
+            enabled: !saveBusy && !projectCheck.busy,
+            execute: () => void projectCheck.checkAndSave(),
+          },
           projectInputRef,
           onNewProject: createNewProject,
           onSave: () => void saveProjectToCloud(),
@@ -4761,28 +5552,20 @@ export function App({
           onOpenCloudProject: (summary) =>
             void openCloudProjectById(summary.id),
           onDeleteCloudProject: (summary) => {
-            if (
-              !window.confirm(
-                `Delete ${projectStore.singular} "${summary.name}"?`,
-              )
-            ) {
-              return;
-            }
-            void deleteCloudProject(summary.id).then((outcome) => {
+            return deleteCloudProject(summary.id).then((outcome) => {
               if (outcome.status === "deleted") {
                 cloudListMutationRef.current += 1;
                 setCloudProjects(outcome.projects);
-                setStatus(`Deleted ${projectStore.singular} ${summary.name}`);
+                setStatus(
+                  `Deleted ${CLOUD_PROJECT_COPY.singular} ${summary.name}`,
+                );
                 return;
               }
               setStatus(
-                `Could not delete ${projectStore.singular} (${outcome.message})`,
+                `Could not delete ${CLOUD_PROJECT_COPY.singular} (${outcome.message})`,
               );
+              throw new Error(outcome.message);
             });
-          },
-          onRefresh: () => {
-            allowNextBrowserUnload();
-            refreshApp();
           },
           onImportProject: (file) => void openProjectFile(file),
           onImportSpice: (files, namingProfile) =>
@@ -4795,7 +5578,13 @@ export function App({
         }}
         searchOpen={searchOpen}
         selectionFilterOpen={selectionFilterOpen}
+        cellManagerOpen={cellManagerOpen}
         onManageCells={() => setCellManagerOpen(true)}
+        userComponentsOpen={userComponentsOpen}
+        onOpenUserComponents={() => {
+          cancelAllTransientInteraction();
+          setUserComponentsOpen(true);
+        }}
         onInsertComponent={() =>
           editorCommands.execute({
             id: "insert.start",
@@ -4810,14 +5599,6 @@ export function App({
           editorCommands.execute({ id: "selection.filter.open" })
         }
         onOpenSearch={() => editorCommands.execute({ id: "search.open" })}
-        undo={{
-          enabled: editorCommands.state({ id: "history.undo" }).enabled,
-          execute: () => editorCommands.execute({ id: "history.undo" }),
-        }}
-        redo={{
-          enabled: editorCommands.state({ id: "history.redo" }).enabled,
-          execute: () => editorCommands.execute({ id: "history.redo" }),
-        }}
         deleteSelection={{
           enabled:
             hasVisualSelection(visualSelection) || selectedEndpoint !== null,
@@ -4880,10 +5661,6 @@ export function App({
         }
         instanceCodeOpen={projectPanel === "instances"}
         netlistPreflightOpen={netlistPreflightOpen}
-        checkAndSave={{
-          enabled: !saveBusy && !projectCheck.busy,
-          execute: () => void projectCheck.checkAndSave(),
-        }}
         onOpenInstanceCode={() => {
           toggleProjectPanel("instances");
         }}
@@ -4905,20 +5682,7 @@ export function App({
             : null
         }
         publishGalleryOpen={publishGalleryOpen}
-        onPublishGallery={() => {
-          // The preview reads the gallery and never writes it (Deployment rationale);
-          // saying so here beats a sign-in dialog with nowhere to sign in.
-          if (releaseChannel === "preview") {
-            setStatus(
-              "Preview builds cannot publish to the gallery; publish from the production site.",
-            );
-            return;
-          }
-          setPublishGalleryOpen(true);
-        }}
-        helpButtonRef={helpButtonRef}
-        helpOpen={helpOpen}
-        onOpenHelp={() => setHelpOpen(true)}
+        onPublishGallery={() => setPublishGalleryOpen(true)}
         drawingToolbar={{
           leftPanelMode,
           libraryPanelOpen: visibleLibraryPanelOpen,
@@ -4957,19 +5721,6 @@ export function App({
             setProjectPanel(null);
             setSelectionOpen(true);
           },
-          ...(timingUiEnabled
-            ? {
-                simulation: {
-                  open: simulationWindowOpen,
-                  onToggle: () => {
-                    setSimulationWindowOpen((open) => {
-                      if (open) setSimulationPickMode(null);
-                      return !open;
-                    });
-                  },
-                },
-              }
-            : {}),
         }}
         hierarchyToolbar={{
           documents: project.documents,
@@ -5007,9 +5758,6 @@ export function App({
         }}
       />
       <EditorDialogLayer
-        help={
-          helpOpen ? { closeButtonRef: helpCloseRef, onClose: closeHelp } : null
-        }
         chunkLoadFailure={
           chunkLoadFailure === null
             ? null
@@ -5150,7 +5898,6 @@ export function App({
                   }
                 },
                 onJumpToCaller: jumpToCaller,
-                onFormatPortLabels: formatCellTerminalAnnotations,
                 onSetPortDirection: (documentId, portId, direction) =>
                   updateCellPortDirection(portId, direction, documentId),
                 onMovePort: (documentId, portId, delta) =>
@@ -5242,7 +5989,6 @@ export function App({
                 open: netlistPreflightOpen,
                 project,
                 format: netlistPreferences.format,
-                portCase: netlistPreferences.portCase,
                 rootDocumentId: netlistRootDocumentId,
                 // The dialog only renders while open, so this IS the
                 // explicit check the author asked for.
@@ -5263,25 +6009,32 @@ export function App({
                 defaultName: galleryEntryContext?.name ?? project.name,
                 session: publishSession,
                 gateReport: publishGates,
-                updateTarget:
-                  galleryEntryContext &&
-                  publishSession &&
-                  (publishSession.isAdmin ||
-                    publishSession.role === "moderator" ||
-                    (galleryEntryContext.ownerUserId !== null &&
-                      publishSession.id === galleryEntryContext.ownerUserId))
-                    ? {
-                        id: galleryEntryContext.id,
-                        name: galleryEntryContext.name,
-                      }
-                    : null,
+                topologyProject: galleryTopologyProject,
+                publicationLinkLoading,
+                publicationLinkError,
+                publicationLinkNotice,
+                onRetryPublicationLink: () =>
+                  setPublicationLinkRetry((value) => value + 1),
+                ...(cloudBinding
+                  ? { onLinkExisting: linkExistingPublication }
+                  : {}),
+                updateTarget: canUpdateGalleryPublication(
+                  galleryEntryContext,
+                  publishSession,
+                )
+                  ? {
+                      id: galleryEntryContext!.id,
+                      name: galleryEntryContext!.name,
+                    }
+                  : null,
                 updateDefaults: galleryEntryContext
                   ? {
                       description: galleryEntryContext.description,
                       tags: galleryEntryContext.tags,
                     }
                   : null,
-                publish: (fields) => publishProjectToGallery(project, fields),
+                publish: (fields) =>
+                  publishProjectToGallery(project, fields, fetch, cloudBinding),
                 ...(galleryEntryContext
                   ? {
                       publishUpdate: (fields) =>
@@ -5289,6 +6042,8 @@ export function App({
                           galleryEntryContext.id,
                           project,
                           fields,
+                          fetch,
+                          cloudBinding,
                         ),
                     }
                   : {}),
@@ -5300,9 +6055,18 @@ export function App({
                   updated,
                   previewRevision,
                 }) => {
-                  // The gallery now holds these exact bytes: leaving or
-                  // refreshing loses nothing until the next edit.
-                  noteProjectSnapshotSafe();
+                  if (
+                    editorDocumentController.projectSessionId !==
+                    projectSessionId
+                  ) {
+                    announceGalleryChange({ entryId: id });
+                    return;
+                  }
+                  // The gallery now holds these exact bytes: leaving,
+                  // refreshing or closing the tab loses nothing until the
+                  // next edit.
+                  noteProjectPublished();
+                  noteGalleryPublication(id);
                   // Publishing establishes the same update-in-place binding
                   // as opening an existing Gallery entry. Keep it attached to
                   // this Project only; replacing the Project clears it above.
@@ -5357,6 +6121,18 @@ export function App({
             ? {
                 entryId: galleryEntryContext.id,
                 entryName: galleryEntryContext.name,
+                onBranch: async (snapshot) => {
+                  setVersionHistoryOpen(false);
+                  // Let the dialog close before the normal tab-switch guard runs.
+                  await new Promise<void>((resolve) =>
+                    requestAnimationFrame(() => resolve()),
+                  );
+                  return openProjectInTabRef.current(
+                    snapshot,
+                    DEFAULT_VIEWBOX,
+                    { source: "opened-file", persistenceState: "dirty" },
+                  );
+                },
                 onRestored: ({ previewRevision }) => {
                   void primeGalleryPreview(
                     galleryEntryContext.id,
@@ -5377,6 +6153,7 @@ export function App({
             ? {
                 open: agentPanelOpen,
                 status: agentSession.status,
+                pendingOperation: agentSession.pendingOperation,
                 claimCode: agentSession.claimCode,
                 claimExpiresAt: agentSession.claimExpiresAt,
                 scopes: agentSession.scopes,
@@ -5507,41 +6284,20 @@ export function App({
           <ShapesPanel
             styleProfileId={document.presentation.styleProfileId}
             open={visibleLibraryPanelOpen}
-            userComponents={
-              <Suspense fallback={null}>
-                <UserComponentsLibrary
-                  refresh={componentLibraryRefresh}
-                  onCreate={() => {
-                    cancelAllTransientInteraction();
-                    setComponentEditor({
-                      key: crypto.randomUUID(),
-                      mode: "new",
-                      definition: newComponentDefinition(),
-                    });
-                  }}
-                  onEdit={(entry) => {
-                    cancelAllTransientInteraction();
-                    setComponentEditor({
-                      key: crypto.randomUUID(),
-                      mode: "library",
-                      definition: entry.definition,
-                      entry,
-                    });
-                  }}
-                  onInsert={insertSharedComponent}
-                />
-              </Suspense>
-            }
             onStartInsert={(launch) =>
               editorCommands.execute({ id: "insert.start", launch })
             }
           />
         ) : (
-          <ExamplesPanel
-            open={visibleLibraryPanelOpen}
-            onOpenGalleryExample={(id) => void insertGalleryEntryById(id)}
-            onOpenExample={openLibraryExample}
-          />
+          <Suspense
+            fallback={<aside className="shapes-panel" aria-label="画廊" />}
+          >
+            <ExamplesPanel
+              open={visibleLibraryPanelOpen}
+              onOpenGalleryExample={(id) => void insertGalleryEntryById(id)}
+              onOpenExample={openLibraryExample}
+            />
+          </Suspense>
         )}
         {visibleLibraryPanelOpen ? (
           <div
@@ -5773,6 +6529,7 @@ export function App({
                   />
                 ) : projectPanel === "netlist" ? (
                   <NetlistCodePanel
+                    onDirtyChange={noteCodeDraftDirty}
                     key={projectSessionId}
                     onApply={(edits) =>
                       commitStructure("edit-netlist-code", edits)
@@ -5782,6 +6539,16 @@ export function App({
                         selectDocumentFromHierarchy(instance.documentId);
                       setNetlistFocusedInstance(instance);
                     }}
+                    selection={{
+                      documentId: document.id,
+                      instanceIds: visualSelection.instanceIds,
+                    }}
+                    onNavigateDiagnostic={(diagnostic) =>
+                      navigateToNetlistDiagnostic(diagnostic, {
+                        from: "Netlist",
+                        keepPanel: true,
+                      })
+                    }
                     project={project}
                     format={netlistPreferences.format}
                     rootDocumentId={netlistRootDocumentId}
@@ -5793,9 +6560,7 @@ export function App({
                       )
                     }
                     namingProfile={netlistNamingProfile}
-                    portCase={netlistPreferences.portCase}
                     onFormatChange={netlistPreferences.selectFormat}
-                    onPortCaseChange={netlistPreferences.selectPortCase}
                     profiles={netlistPreferences.preferences.profiles}
                     selectedProcess={netlistPreferences.selected}
                     onProcessChange={netlistPreferences.selectProfile}
@@ -5811,6 +6576,7 @@ export function App({
                   />
                 ) : projectPanel === "instances" ? (
                   <InstanceCodePanel
+                    onDirtyChange={noteCodeDraftDirty}
                     key={projectSessionId}
                     project={project}
                     onApply={(edits) => {
@@ -5827,8 +6593,18 @@ export function App({
                   />
                 ) : (
                   <ProjectCodePanel
+                    key={projectSessionId}
+                    onDirtyChange={noteCodeDraftDirty}
                     project={project}
-                    onApply={(source, baseline) => {
+                    selection={{
+                      documentId: document.id,
+                      instanceIds: visualSelection.instanceIds,
+                    }}
+                    onApply={(
+                      source,
+                      baseline,
+                      { formatProjectCode, planProjectCodeCommit },
+                    ) => {
                       if (formatProjectCode(project) !== baseline) {
                         return {
                           ok: false,
@@ -5913,13 +6689,7 @@ export function App({
                         drawAngle: drawAngleMode,
                         scrollBehavior: wheelBehavior,
                       },
-                      onApply: (value) => {
-                        const current = documentSettingsCodeValue(document, {
-                          showGrid: gridDotsVisible,
-                          annotationGrid,
-                          drawAngle: drawAngleMode,
-                          scrollBehavior: wheelBehavior,
-                        });
+                      onApply: (value, current, applyLabelSubscriptCase) => {
                         const edits: SchematicEdit[] = [];
                         if (
                           JSON.stringify(value.appearance) !==
@@ -5935,31 +6705,69 @@ export function App({
                           });
                         }
                         if (
-                          value.bulkDefaults.nmosNet !==
-                          current.bulkDefaults.nmosNet
+                          value.bulkDefaults.nmos !== current.bulkDefaults.nmos
                         )
                           edits.push(
                             ...planMosBulkDefaultUpdate(
                               document,
                               "nmos",
-                              value.bulkDefaults.nmosNet,
+                              propertiesMosBulkDefaultNetId(
+                                document,
+                                "nmos",
+                                value.bulkDefaults.nmos,
+                              ),
                             ),
                           );
                         if (
-                          value.bulkDefaults.pmosNet !==
-                          current.bulkDefaults.pmosNet
+                          value.bulkDefaults.pmos !== current.bulkDefaults.pmos
                         )
                           edits.push(
                             ...planMosBulkDefaultUpdate(
                               document,
                               "pmos",
-                              value.bulkDefaults.pmosNet,
+                              propertiesMosBulkDefaultNetId(
+                                document,
+                                "pmos",
+                                value.bulkDefaults.pmos,
+                              ),
                             ),
                           );
-                        if (edits.length > 0 && !transact(edits).ok) {
+                        if (
+                          JSON.stringify(value.labels) !==
+                          JSON.stringify(current.labels)
+                        ) {
+                          try {
+                            commitProjectStructure(
+                              applyLabelSubscriptCase(
+                                project,
+                                document.id,
+                                value.labels.subscript_case,
+                                resolver,
+                                edits,
+                                value.labels.subscript_italic,
+                                {
+                                  underscoreSubscript:
+                                    value.labels.underscore_subscript,
+                                  subscriptAfterFirst:
+                                    value.labels.subscript_after_first,
+                                  firstLetterItalic:
+                                    value.labels.first_letter_italic,
+                                },
+                              ),
+                              document.id,
+                            );
+                          } catch (error) {
+                            const message =
+                              error instanceof Error
+                                ? error.message
+                                : "Could not rename labels";
+                            setStatus(message);
+                            return { ok: false as const, message };
+                          }
+                        } else if (edits.length > 0 && !transact(edits).ok) {
                           return {
                             ok: false as const,
-                            message: "Style code was rejected",
+                            message: "Properties code was rejected",
                           };
                         }
                         if (value.canvas.showGrid !== gridDotsVisible)
@@ -5970,7 +6778,7 @@ export function App({
                           setDrawAngleMode(value.canvas.drawAngle);
                         if (value.canvas.scrollBehavior !== wheelBehavior)
                           setWheelBehavior(value.canvas.scrollBehavior);
-                        setStatus("Updated Style code");
+                        setStatus("Updated Properties code");
                         return { ok: true as const };
                       },
                     }
@@ -6099,32 +6907,19 @@ export function App({
                   ? {
                       code: {
                         instance: selectedInstance,
-                        ...(document.netlist
-                          ? {
-                              onUseCellParameter: (
-                                field: string,
-                                value: string,
-                                anchor: HTMLElement,
-                              ) =>
-                                setParameterBinding({
-                                  snapshot: project,
-                                  cell: document,
-                                  instanceId: selectedInstance.id,
-                                  field,
-                                  value,
-                                  anchor,
-                                }),
-                            }
-                          : {}),
-                        displayName: selectedDisplayName,
-                        itemName: selectedInstanceLabel
-                          ? flattenRichText(
-                              resolveAnnotationText(
+                        // A Cell Pin's authored interface name is independent
+                        // of its optional canvas annotation and opaque ID.
+                        displayName:
+                          selectedFormalTerminal?.name ?? selectedDisplayName,
+                        itemName:
+                          selectedFormalTerminal?.name ??
+                          (selectedInstanceLabel
+                            ? resolveAnnotationName(
                                 document,
                                 selectedInstanceLabel,
-                              ),
-                            )
-                          : (selectedInstance.reference ?? selectedInstance.id),
+                              )
+                            : (selectedInstance.reference ??
+                              selectedInstance.id)),
                         defaultForeground: styleProfile.foreground,
                         revision: document.revision,
                         referenceVisible:
@@ -6154,11 +6949,25 @@ export function App({
                             : null,
                         onApply: (value: ComponentPropertyCodeValue) => {
                           try {
+                            // Formal Pin names own a Cell interface, never a display alias.
+                            const { displayName, ...nonNameValues } = value;
+                            const terminalEdits =
+                              selectedFormalTerminal &&
+                              displayName !== undefined &&
+                              displayName !== selectedFormalTerminal.name
+                                ? planRenameCellTerminal(
+                                    project,
+                                    document.id,
+                                    selectedFormalTerminal.id,
+                                    displayName,
+                                    { mergeExistingPort: true },
+                                  )
+                                : [];
                             const edits: SchematicEdit[] =
                               planComponentPropertyCodeEdits(
                                 document,
                                 selectedInstance,
-                                value,
+                                selectedFormalTerminal ? nonNameValues : value,
                               );
                             if (
                               !selectedInstance.placement &&
@@ -6325,6 +7134,7 @@ export function App({
                                   )
                                 : [];
                             const structureEdits = [
+                              ...terminalEdits,
                               ...targetEdits,
                               ...connectionEdits,
                             ];
@@ -6680,7 +7490,8 @@ export function App({
               }
               agent={
                 publicAgentUiEnabled &&
-                agentSession.status !== "idle" &&
+                (agentSession.status !== "idle" ||
+                  agentSession.error !== null) &&
                 !agentStatusDismissed
                   ? {
                       status: agentSession.status,
@@ -6693,6 +7504,7 @@ export function App({
                       onResume: agentSession.resume,
                       onReconnect: agentSession.reconnect,
                       onNewConnection: agentSession.newConnection,
+                      pendingOperation: agentSession.pendingOperation,
                       onRevoke: agentSession.revoke,
                       expanded: agentDetailsOpen,
                       onToggleDetails: () =>
@@ -6708,11 +7520,7 @@ export function App({
           }
         />
         <EditorCanvasSurface
-          empty={canvasIsEmpty}
-          showQuickStart={
-            !analogSimulationOpen &&
-            !pendingComponentPlacement?.editAfterPlacement
-          }
+          shortcutHintsVisible={shortcutHintsVisible}
           cameraRuntime={cameraRuntime}
           onWheel={handleWheel}
           onPinch={zoomAtClientPoint}
@@ -6722,8 +7530,8 @@ export function App({
             pendingSymbolId || vddRailMode || copyPlacement
               ? "component-mode"
               : "",
-            pendingWaveformPlacement ? "waveform-placement-active" : "",
             tool === "arrow" ||
+            tool === "polyline" ||
             tool === "construction-line" ||
             tool === "rectangle" ||
             tool === "circle"
@@ -6757,6 +7565,7 @@ export function App({
                   ]
                 : selectedIds,
             wouldMoveIds,
+            labelOwnerIds,
           }}
           cellSymbolLayout={
             selectedCellSymbolLayout
@@ -6796,7 +7605,7 @@ export function App({
             markers: diagnosticMarkers,
             onSelectMarker: jumpToProjectDiagnostic,
           }}
-          netLabelTether={netLabelTether}
+          labelTethers={labelTethers}
           copyPreviewInnerHtml={copyPreviewInnerHtml}
           copyPreviewTransform={copyPreviewTransform}
           inputPlanes={{
@@ -6911,10 +7720,7 @@ export function App({
                   instance.symbolVariantId,
                 )?.definition.formulaPresentation;
                 if (presentation) {
-                  beginInstanceFormulaEditing(
-                    instance,
-                    presentation.defaultFormula,
-                  );
+                  beginInstanceFormulaEditing(instance, presentation);
                   return;
                 }
                 inspectInstance(instance.id);
@@ -6929,7 +7735,7 @@ export function App({
                     const route = document.routes.find(
                       (candidate) => candidate.id === routeId,
                     );
-                    if (route) toggleSimulationSavedNet(route.netId);
+                    if (route) pickAnalogSimulationNet(route.netId);
                   }
                   return;
                 }
@@ -7035,7 +7841,7 @@ export function App({
               onJunctionSelect: (candidate) => {
                 if (simulationPickActive) {
                   if (simulationPickNetsActive && candidate.netId)
-                    toggleSimulationSavedNet(candidate.netId);
+                    pickAnalogSimulationNet(candidate.netId);
                   return;
                 }
                 if (
@@ -7057,7 +7863,7 @@ export function App({
                   if (simulationPickTerminalsActive)
                     pickSimulationTerminal(candidate);
                   else if (candidate.netId)
-                    toggleSimulationSavedNet(candidate.netId);
+                    pickAnalogSimulationNet(candidate.netId);
                   return;
                 }
                 // Middle press over an endpoint cycles the wire corner just
@@ -7131,26 +7937,9 @@ export function App({
               selectionPolicy.allowsDrafting(selectedDrafting, "handle")
                 ? selectedDraftingId
                 : null,
-            selectedDraftingIds:
-              selectionPolicy.retainSelection(visualSelection).draftingIds,
             onHandlePointerDown: (event, object, handle) => {
               if (!selectionPolicy.allowsDrafting(object, "handle")) return;
               beginDraftingHandleDrag(event, object, handle);
-            },
-            onGroupScalePointerDown: (event, group, bounds) => {
-              if (
-                !group.objectIds.every((id) => {
-                  const object = document.drafting?.objects.find(
-                    (candidate) => candidate.id === id,
-                  );
-                  return (
-                    object !== undefined &&
-                    selectionPolicy.allowsDrafting(object, "handle")
-                  );
-                })
-              )
-                return;
-              beginWaveformGroupScale(event, group, bounds);
             },
             onDeleteVertex: deleteConstructionVertex,
           }}
@@ -7170,6 +7959,7 @@ export function App({
             textEditingLocked,
             onTextUpdate: updateTextEditing,
             onTextCommit: commitTextEditing,
+            onTextEscape: escapeTextEditing,
             onTextCancel: () => {
               clearTextEditing();
               setStatus("Cancelled text changes");
@@ -7212,7 +8002,7 @@ export function App({
                   editorCommands.execute({ id: "properties.open" }),
               },
               {
-                label: "Duplicate (C)",
+                label: "Copy (C)",
                 enabled:
                   hasVisualSelection(visualSelection) &&
                   editorCommands.state({ id: "selection.copy" }).enabled,
@@ -7260,24 +8050,6 @@ export function App({
           />
         ) : null}
       </div>
-      {timingUiEnabled ? (
-        <TimingSimulationPanel
-          key={document.id}
-          document={document}
-          open={simulationWindowOpen}
-          savedNetIds={simulationSavedNetIds}
-          pickNetsActive={simulationPickNetsActive}
-          onOpenChange={(open) => {
-            setSimulationWindowOpen(open);
-            if (!open) setSimulationPickMode(null);
-          }}
-          onPickNetsChange={setSimulationNetPickMode}
-          onToggleSavedNet={toggleSimulationSavedNet}
-          onSetSavedNets={(netIds) => setSimulationSavedNetIds(new Set(netIds))}
-          onStatus={setStatus}
-          onPlaceOnCanvas={beginWaveformPlacement}
-        />
-      ) : null}
       {componentEditor ? (
         <Suspense fallback={null}>
           <ComponentDefinitionEditor
@@ -7285,17 +8057,18 @@ export function App({
             definition={componentEditor.definition}
             mode={componentEditor.mode}
             {...(componentEditor.entry ? { entry: componentEditor.entry } : {})}
-            validateApply={(definition) => {
+            validateApply={(definition, planner) => {
               if (!componentEditor.target) return null;
               const plan = componentEditPlan(
                 publishedDefinition(definition, componentEditor.key, 1),
+                planner,
               );
               return plan.ok ? null : plan.message;
             }}
-            onSaved={(entry) => {
+            onSaved={(entry, planner) => {
               setComponentLibraryRefresh((value) => value + 1);
               if (componentEditor.target) {
-                const plan = componentEditPlan(entry.definition);
+                const plan = componentEditPlan(entry.definition, planner);
                 if (!plan.ok) return plan.message;
                 try {
                   commitProjectStructure(plan.project, plan.activeDocumentId);
@@ -7316,6 +8089,31 @@ export function App({
           />
         </Suspense>
       ) : null}
+      <Suspense fallback={null}>
+        <UserComponentsLibrary
+          open={userComponentsOpen}
+          refresh={componentLibraryRefresh}
+          onClose={() => setUserComponentsOpen(false)}
+          onCreate={() => {
+            cancelAllTransientInteraction();
+            setComponentEditor({
+              key: crypto.randomUUID(),
+              mode: "new",
+              definition: newComponentDefinition(),
+            });
+          }}
+          onEdit={(entry) => {
+            cancelAllTransientInteraction();
+            setComponentEditor({
+              key: crypto.randomUUID(),
+              mode: "library",
+              definition: entry.definition,
+              entry,
+            });
+          }}
+          onInsert={insertSharedComponent}
+        />
+      </Suspense>
       <SelectionFilterPopover
         open={selectionFilterOpen}
         filter={selectionFilter}
@@ -7333,6 +8131,10 @@ export function App({
         wireCornerOrder={wireCornerOrder}
         recoveryLabel={isDirtyWork() ? recoveryStateLabel(recoveryState) : null}
         zoomPercent={zoomPercent}
+        shortcutHintsVisible={shortcutHintsVisible}
+        onToggleShortcutHints={() =>
+          setShortcutHintsVisible((visible) => !visible)
+        }
         gridVisible={gridDotsVisible}
         onToggleGrid={() => {
           setGridDotsVisible(!gridDotsVisible);

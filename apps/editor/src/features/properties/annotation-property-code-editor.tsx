@@ -99,7 +99,7 @@ export function AnnotationPropertyCodeEditor<T>({
           {(!parsed.ok || rejected) && (
             <button
               type="button"
-              aria-label="Discard draft"
+              aria-label="丢弃草稿"
               onClick={() => {
                 setDraft(baseline);
                 setMessage(null);
@@ -112,7 +112,7 @@ export function AnnotationPropertyCodeEditor<T>({
           <button
             type="button"
             className="component-property-copy"
-            aria-label="Copy JSON"
+            aria-label="复制 JSON"
             onClick={async () => {
               try {
                 await navigator.clipboard.writeText(draft);
@@ -140,7 +140,7 @@ export function AnnotationPropertyCodeEditor<T>({
       <Suspense
         fallback={
           <textarea
-            aria-label="Loading Canvas property code"
+            aria-label="正在加载画布属性代码"
             value={draft}
             readOnly
             rows={15}

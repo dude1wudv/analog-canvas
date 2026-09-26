@@ -1,4 +1,4 @@
-import { deriveStableId, flattenRichText, foldNetName } from "@icm/model";
+import { deriveStableId, foldNetName } from "@icm/model";
 import type {
   CircuitProject,
   Net,
@@ -22,7 +22,7 @@ import {
   type HierarchyFrame,
 } from "./object-locator.js";
 import type { ResolvedNetLabelBinding } from "./net-label.js";
-import { resolveAnnotationText } from "./annotation-text.js";
+import { resolveAnnotationName } from "./annotation-text.js";
 import {
   resolveDocumentLogicalNets,
   type ResolvedDocumentLogicalNets,
@@ -61,6 +61,8 @@ export interface NetConnectivityRecord {
 }
 
 export interface DocumentConnectivityIndex extends DocumentDerivedContext {
+  /** Also includes guides to extant but electrically unbound terminals. */
+  routingGuidance: readonly RoutingGuide[];
   /** Physical membership: endpoint key -> Base Net id. */
   endpointToBaseNetId: ReadonlyMap<string, string>;
   /** One canonical record per resolved Logical Net. */
@@ -147,7 +149,7 @@ function normalizeRoutingGuidance(line: RoutingGuide): RoutingGuide {
   return {
     id: deriveStableId(
       "routing-guidance",
-      line.netId,
+      line.sourceNetId ?? line.netId,
       endpointKey(from),
       endpointKey(to),
     ),
@@ -180,15 +182,16 @@ function buildDocumentIndex(
 
   const connectivityContext = deriveNetConnectivityContext(document, resolver);
   const routingGuidanceByNet = new Map<string, RoutingGuide[]>();
-  for (const line of deriveImportedRoutingGuidance(
+  const routingGuidance = deriveImportedRoutingGuidance(
     document,
     resolver,
     connectivityContext,
-  )) {
-    const normalized = normalizeRoutingGuidance(line);
+  ).map(normalizeRoutingGuidance);
+  for (const line of routingGuidance) {
     for (const netId of new Set([line.fromNetId, line.toNetId])) {
+      if (netId === null) continue;
       const lines = routingGuidanceByNet.get(netId) ?? [];
-      lines.push(normalized);
+      lines.push(line);
       routingGuidanceByNet.set(netId, lines);
     }
   }
@@ -237,6 +240,7 @@ function buildDocumentIndex(
 
   const index: DocumentConnectivityIndex = {
     ...connectivityContext,
+    routingGuidance,
     endpointToBaseNetId,
     logicalNets,
     logicalNetByBaseNetId,
@@ -347,8 +351,10 @@ function deriveLabelVirtualEdges(
     const annotation = document.annotations.find(
       (candidate) => candidate.id === binding.annotationId,
     )!;
-    const label = flattenRichText(
-      resolveAnnotationText(document, annotation, logicalNets),
+    const label = resolveAnnotationName(
+      document,
+      annotation,
+      logicalNets,
     ).trim();
     if (label.length === 0) continue;
     const group = groups.get(label) ?? {
@@ -366,8 +372,10 @@ function deriveLabelVirtualEdges(
       (candidate) => candidate.annotationId === annotation.id,
     );
     if (!binding) continue;
-    const label = flattenRichText(
-      resolveAnnotationText(document, annotation, logicalNets),
+    const label = resolveAnnotationName(
+      document,
+      annotation,
+      logicalNets,
     ).trim();
     if (label.length === 0) continue;
     const group = groups.get(label) ?? {

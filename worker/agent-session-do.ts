@@ -12,6 +12,10 @@ import {
   AgentSessionScopeSchema,
   AgentSessionStatusResponseSchema,
   invalidAgentRequestResponse,
+  isReadOnlyCircuitRequest,
+  isReadOnlyFileRequest,
+  isReadOnlySimulationRequest,
+  isReadOnlyProjectRequest,
   parseAgentCircuitRequest,
   parseAgentFileResourceRequest,
   parseAgentSimulationResourceRequest,
@@ -51,9 +55,27 @@ import {
   type PendingForward,
   type WebSocketPairConstructor,
 } from "./agent-session-runtime";
+import { AgentArtifacts } from "./agent-artifacts";
+
+// requestId is session-wide; identical payloads in different Project bindings
+// must never replay an earlier Project's cached result.
+function scopedRequestHash(
+  raw: string,
+  contextRevision: string | null | undefined,
+  workspaceId?: string | null,
+): Promise<string> {
+  return sha256Text(
+    JSON.stringify([
+      workspaceId ?? null,
+      workspaceId ? null : contextRevision,
+      raw,
+    ]),
+  );
+}
 
 /** Cloudflare Durable Object owning one temporary Agent session. */
 export class AgentSessionDO {
+  private readonly artifacts: AgentArtifacts;
   /** Reason-only tombstone: no bearer, connector, editor proof or Project data. */
   private replacedUntil = 0;
   private machine: AgentSessionMachine | null = null;
@@ -70,6 +92,10 @@ export class AgentSessionDO {
     private readonly state: DurableStateLike,
     private readonly env: AgentSessionEnv,
   ) {
+    this.artifacts = new AgentArtifacts(
+      state.storage,
+      env.SIMULATION_ARTIFACTS,
+    );
     this.ready = this.initialize();
     this.state.blockConcurrencyWhile?.(() => this.ready);
   }
@@ -96,6 +122,46 @@ export class AgentSessionDO {
         allowedOrigin,
       );
     }
+    if (url.pathname.startsWith("/artifacts/")) {
+      const now = Date.now();
+      if (request.method === "PUT") {
+        if (!machine.authorizeEditor(editorSecret(request)))
+          return jsonResponse({ error: "Unauthorized" }, 401, allowedOrigin);
+        if (machine.statusAt(now) !== "active")
+          return jsonResponse(
+            { error: "Session is not active" },
+            403,
+            allowedOrigin,
+          );
+      } else {
+        const auth = machine.authorize(bearerToken(request), now);
+        if (!auth.ok)
+          return jsonResponse(
+            errorBody(auth.code, errorMessage(auth.code)),
+            transportStatus(auth.code),
+            allowedOrigin,
+          );
+        if (!machine.assertScope(auth.session.scopes, "simulation.run").ok)
+          return jsonResponse(
+            errorBody(
+              "TOKEN_SCOPE_INSUFFICIENT",
+              errorMessage("TOKEN_SCOPE_INSUFFICIENT"),
+            ),
+            403,
+            allowedOrigin,
+          );
+      }
+      const response = await this.artifacts.handle(
+        request,
+        machine.sessionId,
+        url.pathname.slice("/artifacts/".length),
+      );
+      if (response.ok) {
+        machine.recordActivity(now);
+        await this.persist();
+      }
+      return response;
+    }
     if (request.method === "POST" && url.pathname === "/claim") {
       return this.claim(request, machine, allowedOrigin);
     }
@@ -107,7 +173,21 @@ export class AgentSessionDO {
     }
     if (request.method === "GET" && url.pathname === "/status") {
       const now = Date.now();
-      const auth = machine.authorizeStatus(bearerToken(request), now);
+      // Same status resource, two existing authorities. Neither probe renews
+      // the lease; the browser must not revoke from a stale local deadline.
+      const editorAuthorized = machine.authorizeEditor(editorSecret(request));
+      const status = machine.statusAt(now);
+      const auth = editorAuthorized
+        ? status === "expired" || status === "revoked"
+          ? {
+              ok: false as const,
+              code:
+                status === "expired"
+                  ? ("SESSION_EXPIRED" as const)
+                  : ("SESSION_REVOKED" as const),
+            }
+          : { ok: true as const }
+        : machine.authorizeStatus(bearerToken(request), now);
       if (!auth.ok)
         return jsonResponse(
           errorBody(auth.code, errorMessage(auth.code)),
@@ -119,6 +199,9 @@ export class AgentSessionDO {
           ok: true,
           sessionId: machine.sessionId,
           projectId: machine.projectId,
+          ...(machine.contextRevision
+            ? { contextRevision: machine.contextRevision }
+            : {}),
           documentIds: machine.documentIds,
           authorization: machine.statusAt(now),
           editor: (this.state.getWebSockets?.(EDITOR_SOCKET_TAG) ?? []).some(
@@ -133,8 +216,63 @@ export class AgentSessionDO {
         allowedOrigin,
       );
     }
+    if (
+      request.method === "POST" &&
+      ["/circuit", "/files", "/simulation", "/projects"].includes(
+        url.pathname,
+      ) &&
+      machine.contextRevision
+    ) {
+      const auth = machine.authorize(bearerToken(request), Date.now());
+      if (!auth.ok)
+        return jsonResponse(
+          errorBody(auth.code, errorMessage(auth.code)),
+          transportStatus(auth.code),
+          allowedOrigin,
+        );
+      const input = (await request
+        .clone()
+        .json()
+        .catch(() => null)) as { operation?: string } | null;
+      const discovery =
+        url.pathname === "/circuit" &&
+        ["snapshot", "capabilities"].includes(input?.operation ?? "");
+      const workspaceId = request.headers.get("x-agent-workspace");
+      if (workspaceId && (workspaceId.length > 256 || !workspaceId.trim()))
+        return jsonResponse(
+          errorBody("PROJECT_CONTEXT_STALE", "Invalid workspace target"),
+          409,
+          allowedOrigin,
+        );
+      if (machine.documentIds.length === 0 && !workspaceId)
+        return jsonResponse(
+          errorBody("NO_ACTIVE_PROJECT", errorMessage("NO_ACTIVE_PROJECT")),
+          409,
+          allowedOrigin,
+        );
+      if (
+        !discovery &&
+        !workspaceId &&
+        request.headers.get("x-agent-context") !== machine.contextRevision
+      )
+        return jsonResponse(
+          {
+            ok: false,
+            error: {
+              code: "PROJECT_CONTEXT_STALE",
+              message:
+                "The browser context changed. Read current context before submitting a new request.",
+            },
+          },
+          409,
+          allowedOrigin,
+        );
+    }
     if (request.method === "POST" && url.pathname === "/circuit") {
-      return this.circuit(request, machine, allowedOrigin);
+      const context = machine.contextRevision;
+      const response = await this.circuit(request, machine, allowedOrigin);
+      if (context) response.headers.set("x-agent-context", context);
+      return response;
     }
     if (request.method === "POST" && url.pathname === "/files") {
       return this.files(request, machine, allowedOrigin);
@@ -161,6 +299,7 @@ export class AgentSessionDO {
     await this.ready;
     const machine = await this.loadMachine();
     if (!machine) return;
+    if (socket.readyState !== WebSocket.OPEN) return;
     const status = machine.statusAt(Date.now());
     if (status === "expired" || status === "revoked") return;
     const text =
@@ -191,6 +330,32 @@ export class AgentSessionDO {
       control.data.kind === "heartbeat"
     ) {
       if (
+        control.data.contextRevision &&
+        control.data.projectId &&
+        control.data.documentIds
+      ) {
+        const contextChanged =
+          machine.contextRevision !== control.data.contextRevision ||
+          machine.projectId !== control.data.projectId;
+        const rosterChanged =
+          machine.documentIds.length !== control.data.documentIds.length ||
+          control.data.documentIds.some(
+            (id) => !machine.documentIds.includes(id),
+          );
+        if (contextChanged || rosterChanged) {
+          machine.bindContext(
+            control.data.contextRevision,
+            control.data.projectId,
+            control.data.documentIds,
+          );
+          // Passive reconnect/refresh must not renew the idle lease. A structural
+          // change within an already-bound Project remains real user activity.
+          if (!contextChanged && rosterChanged)
+            machine.recordActivity(Date.now());
+          await this.persist();
+        }
+      }
+      if (
         control.data.projectId &&
         control.data.documentIds &&
         machine.updateEditorDocuments(
@@ -207,6 +372,9 @@ export class AgentSessionDO {
           sessionId: machine.sessionId,
           kind: "heartbeat-ack",
           nonce: control.data.nonce,
+          ...(machine.contextRevision
+            ? { contextRevision: machine.contextRevision }
+            : {}),
         }),
       );
       return;
@@ -222,7 +390,7 @@ export class AgentSessionDO {
       envelope.kind === "project-response"
     ) {
       const pending = this.pendingForwards.get(envelope.requestId);
-      if (!pending) return;
+      if (!pending || pending.socket !== socket) return;
       const response =
         envelope.kind === "circuit-response"
           ? AgentCircuitResponseSchema.safeParse(envelope.payload)
@@ -265,6 +433,13 @@ export class AgentSessionDO {
     // browser stays CLOSING and never reaches its reconnect handler.
     if (socket && socket.readyState !== WebSocket.CLOSED) socket.close();
     await this.ready;
+    for (const [requestId, pending] of this.pendingForwards) {
+      if (socket && pending.socket !== socket) continue;
+      clearTimeout(pending.timeout);
+      pending.reject(new Error("EDITOR_DISCONNECTED"));
+      this.machine?.failRequest(requestId, false);
+      this.pendingForwards.delete(requestId);
+    }
     const replacement = (
       this.state.getWebSockets?.(EDITOR_SOCKET_TAG) ?? []
     ).some(
@@ -276,16 +451,10 @@ export class AgentSessionDO {
       type: "editor.offline",
       sessionId: this.machine?.sessionId ?? "unknown",
     });
-    for (const [requestId, pending] of this.pendingForwards) {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error("EDITOR_DISCONNECTED"));
-      this.machine?.failRequest(requestId, false);
-    }
-    this.pendingForwards.clear();
     const status = this.machine?.statusAt(Date.now());
     if (this.replacedUntil > Date.now()) return;
     if (status === "revoked" || status === "expired") {
-      await this.state.storage.deleteAll?.();
+      await this.clearStoredSession();
     } else {
       await this.persist();
     }
@@ -297,7 +466,7 @@ export class AgentSessionDO {
       if (Date.now() < this.replacedUntil) {
         await this.state.storage.setAlarm?.(this.replacedUntil);
       } else {
-        await this.state.storage.deleteAll?.();
+        await this.clearStoredSession();
         this.replacedUntil = 0;
         this.machine = null;
       }
@@ -337,7 +506,7 @@ export class AgentSessionDO {
     for (const subscriber of [...this.eventSubscribers.keys()]) {
       this.removeEventSubscriber(subscriber, true);
     }
-    await this.state.storage.deleteAll?.();
+    await this.clearStoredSession();
     this.machine = null;
   }
 
@@ -432,7 +601,13 @@ export class AgentSessionDO {
     this.emit({ type: "session.ready", sessionId: machine.sessionId });
     this.notifyEditor({ type: "session.ready", sessionId: machine.sessionId });
     return jsonResponse(
-      { ...result, sessionId: machine.sessionId },
+      {
+        ...result,
+        sessionId: machine.sessionId,
+        ...(machine.contextRevision
+          ? { contextRevision: machine.contextRevision }
+          : {}),
+      },
       200,
       allowedOrigin,
     );
@@ -473,6 +648,9 @@ export class AgentSessionDO {
         connectorExpiresAt: result.claim.connectorExpiresAt,
         scopes: [...result.claim.scopes],
         projectId: machine.projectId,
+        ...(machine.contextRevision
+          ? { contextRevision: machine.contextRevision }
+          : {}),
         documentIds: machine.documentIds,
       },
       200,
@@ -564,6 +742,7 @@ export class AgentSessionDO {
     machine: AgentSessionMachine,
     allowedOrigin: string | null,
   ): Promise<Response> {
+    const observedContext = machine.contextRevision;
     const raw = await request.text();
     const size = machine.checkSize(new TextEncoder().encode(raw).byteLength);
     if (!size.ok) {
@@ -608,7 +787,10 @@ export class AgentSessionDO {
         allowedOrigin,
       );
     }
-    if ("documentId" in circuitRequest) {
+    if (
+      !request.headers.has("x-agent-workspace") &&
+      "documentId" in circuitRequest
+    ) {
       const requestDocumentId = circuitRequest.documentId;
       if (requestDocumentId !== undefined) {
         const document = machine.assertDocument(
@@ -627,11 +809,17 @@ export class AgentSessionDO {
         }
       }
     }
-    const payloadHash = await sha256Text(raw);
+    const payloadHash = await scopedRequestHash(
+      raw,
+      observedContext,
+      request.headers.get("x-agent-workspace"),
+    );
+    const readOnly = isReadOnlyCircuitRequest(circuitRequest);
     const begin = machine.beginRequest(
       circuitRequest.requestId,
       Date.now(),
       payloadHash,
+      readOnly ? "read" : "write",
     );
     if (begin.kind === "cached")
       return jsonResponse(begin.result, 200, allowedOrigin);
@@ -644,14 +832,25 @@ export class AgentSessionDO {
     }
     if (circuitRequest.operation !== "capabilities")
       machine.recordActivity(Date.now());
-    await this.persist();
+    if (!readOnly) await this.persist();
     this.emit({
       type: "operation.started",
       sessionId: machine.sessionId,
       requestId: circuitRequest.requestId,
     });
     try {
-      const result = await this.forwardToEditor(machine, circuitRequest);
+      const discovery =
+        circuitRequest.operation === "snapshot" ||
+        circuitRequest.operation === "capabilities";
+      const result = await this.forwardToEditor(
+        machine,
+        circuitRequest,
+        "circuit-request",
+        discovery
+          ? observedContext
+          : (request.headers.get("x-agent-context") ?? undefined),
+        request.headers.get("x-agent-workspace") ?? undefined,
+      );
       machine.completeRequest(circuitRequest.requestId, result, Date.now());
       if (circuitRequest.operation !== "capabilities")
         machine.recordActivity(Date.now());
@@ -745,6 +944,7 @@ export class AgentSessionDO {
       );
     }
     if (
+      !request.headers.has("x-agent-workspace") &&
       fileRequest.operation === "download" &&
       fileRequest.documentId !== undefined
     ) {
@@ -762,10 +962,16 @@ export class AgentSessionDO {
           allowedOrigin,
         );
     }
+    const readOnly = isReadOnlyFileRequest(fileRequest);
     const begin = machine.beginRequest(
       fileRequest.requestId,
       Date.now(),
-      await sha256Text(raw),
+      await scopedRequestHash(
+        raw,
+        request.headers.get("x-agent-context") ?? machine.contextRevision,
+        request.headers.get("x-agent-workspace"),
+      ),
+      readOnly ? "read" : "write",
     );
     if (begin.kind === "cached")
       return jsonResponse(begin.result, 200, allowedOrigin);
@@ -776,7 +982,7 @@ export class AgentSessionDO {
         allowedOrigin,
       );
     machine.recordActivity(Date.now());
-    await this.persist();
+    if (!readOnly) await this.persist();
     this.emit({
       type: "operation.started",
       sessionId: machine.sessionId,
@@ -787,6 +993,8 @@ export class AgentSessionDO {
         machine,
         fileRequest,
         "file-request",
+        request.headers.get("x-agent-context") ?? undefined,
+        request.headers.get("x-agent-workspace") ?? undefined,
       );
       // Export blobs are explicitly one-shot: the DO retains only an unavailable
       // idempotency marker, never their bytes. Candidate summaries are safe to cache.
@@ -894,10 +1102,16 @@ export class AgentSessionDO {
         allowedOrigin,
       );
     }
+    const readOnly = isReadOnlySimulationRequest(simulationRequest);
     const begin = machine.beginRequest(
       simulationRequest.requestId,
       Date.now(),
-      await sha256Text(raw),
+      await scopedRequestHash(
+        raw,
+        request.headers.get("x-agent-context") ?? machine.contextRevision,
+        request.headers.get("x-agent-workspace"),
+      ),
+      readOnly ? "read" : "write",
     );
     if (begin.kind === "cached")
       return jsonResponse(begin.result, 200, allowedOrigin);
@@ -912,7 +1126,7 @@ export class AgentSessionDO {
       simulationRequest.operation !== "authoring-help"
     )
       machine.recordActivity(Date.now());
-    await this.persist();
+    if (!readOnly) await this.persist();
     this.emit({
       type: "operation.started",
       sessionId: machine.sessionId,
@@ -923,6 +1137,8 @@ export class AgentSessionDO {
         machine,
         simulationRequest,
         "simulation-request",
+        request.headers.get("x-agent-context") ?? undefined,
+        request.headers.get("x-agent-workspace") ?? undefined,
       );
       machine.completeRequest(simulationRequest.requestId, result, Date.now());
       if (
@@ -1024,10 +1240,16 @@ export class AgentSessionDO {
         allowedOrigin,
       );
     }
+    const readOnly = isReadOnlyProjectRequest(projectRequest);
     const begin = machine.beginRequest(
       projectRequest.requestId,
       Date.now(),
-      await sha256Text(raw),
+      await scopedRequestHash(
+        raw,
+        request.headers.get("x-agent-context") ?? machine.contextRevision,
+        request.headers.get("x-agent-workspace"),
+      ),
+      readOnly ? "read" : "write",
     );
     if (begin.kind === "cached") {
       return jsonResponse(begin.result, 200, allowedOrigin);
@@ -1040,7 +1262,7 @@ export class AgentSessionDO {
       );
     }
     machine.recordActivity(Date.now());
-    await this.persist();
+    if (!readOnly) await this.persist();
     this.emit({
       type: "operation.started",
       sessionId: machine.sessionId,
@@ -1051,6 +1273,8 @@ export class AgentSessionDO {
         machine,
         projectRequest,
         "project-request",
+        request.headers.get("x-agent-context") ?? undefined,
+        request.headers.get("x-agent-workspace") ?? undefined,
       );
       machine.completeRequest(projectRequest.requestId, result, Date.now());
       machine.recordActivity(Date.now());
@@ -1158,7 +1382,7 @@ export class AgentSessionDO {
         allowedOrigin,
       );
     if (body.action === "revoke" || body.action === "replace-project") {
-      await this.state.storage.deleteAll?.();
+      await this.clearStoredSession();
       if (body.action === "replace-project") {
         this.replacedUntil = Date.now() + 30 * 60_000;
         await this.state.storage.put(
@@ -1209,7 +1433,7 @@ export class AgentSessionDO {
       type: "session.revoked",
       sessionId: machine.sessionId,
     });
-    await this.state.storage.deleteAll?.();
+    await this.clearStoredSession();
     return new Response(null, {
       status: 204,
       headers: relayHeaders(allowedOrigin),
@@ -1228,6 +1452,8 @@ export class AgentSessionDO {
       | "file-request"
       | "simulation-request"
       | "project-request" = "circuit-request",
+    contextRevision?: string,
+    workspaceId?: string,
   ): Promise<unknown> {
     const sockets = this.state.getWebSockets?.(EDITOR_SOCKET_TAG) ?? [];
     const socket = sockets.find(
@@ -1245,7 +1471,12 @@ export class AgentSessionDO {
           ? SIMULATION_FORWARD_TIMEOUT_MS
           : FORWARD_TIMEOUT_MS,
       );
-      this.pendingForwards.set(requestId, { resolve, reject, timeout });
+      this.pendingForwards.set(requestId, {
+        resolve,
+        reject,
+        timeout,
+        socket,
+      });
     });
     socket.send(
       JSON.stringify({
@@ -1255,6 +1486,8 @@ export class AgentSessionDO {
         requestId,
         sentAt: new Date().toISOString(),
         kind,
+        ...(contextRevision ? { contextRevision } : {}),
+        ...(workspaceId ? { workspaceId } : {}),
         payload,
       }),
     );
@@ -1339,7 +1572,7 @@ export class AgentSessionDO {
     if (!this.machine) return;
     const status = this.machine.statusAt(Date.now());
     if (status === "revoked" || status === "expired") {
-      await this.state.storage.deleteAll?.();
+      await this.clearStoredSession();
       return;
     }
     await this.state.storage.put(SESSION_STATE_KEY, this.machine.serialize());
@@ -1356,5 +1589,10 @@ export class AgentSessionDO {
       this.emit(event);
       this.notifyEditor(event);
     }
+  }
+
+  private async clearStoredSession(): Promise<void> {
+    await this.artifacts.clear();
+    await this.state.storage.deleteAll?.();
   }
 }

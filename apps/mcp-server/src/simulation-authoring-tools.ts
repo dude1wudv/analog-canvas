@@ -1,5 +1,6 @@
 import { agentToolHelp } from "./guidance.generated.js";
 import { z } from "zod";
+import { inputContract } from "./input-contract.js";
 import {
   createSimulationFolder,
   readSimulationExperimentConfig,
@@ -11,8 +12,9 @@ import {
   type ProjectSimulationFolder,
   type SimulationExperimentConfig,
 } from "@icm/model";
-import type { McpToolDefinition } from "./protocol.js";
-import type { ToolSessionState } from "./tools.js";
+import type { ContractTool } from "./tool-contracts.js";
+import type { OperationSession as ToolSessionState } from "./operation-session.js";
+import type { CachedSnapshot } from "@icm/agent-client";
 
 const Id = z.string().min(1).max(256);
 const Name = z.string().trim().min(1).max(128);
@@ -20,7 +22,10 @@ const NativeName = Id.regex(
   /^\S+$/u,
   "Use an exact native identifier without whitespace",
 );
-const common = { documentId: Id.optional() };
+const common = {
+  documentId: Id.optional(),
+  refresh: z.boolean().optional(),
+};
 const FolderArgs = z.discriminatedUnion("action", [
   z.strictObject({
     action: z.literal("list"),
@@ -37,7 +42,16 @@ const FolderArgs = z.discriminatedUnion("action", [
     profileId: Id,
     template: z.enum(["op", "ac", "tran"]).optional(),
     dut: z
-      .strictObject({ name: NativeName, ports: z.array(NativeName) })
+      .strictObject({
+        name: NativeName.describe(
+          "Exact exported subcircuit name, not the instance name XDUT. For .subckt dut IN OUT, use name:'dut'; the template creates XDUT IN OUT dut.",
+        ),
+        ports: z
+          .array(NativeName)
+          .describe(
+            "Port names in the exported subcircuit's exact order; the template uses these as testbench node names. Do not reorder power pins. Read the generated circuit interface when unknown.",
+          ),
+      })
       .optional(),
   }),
   z.strictObject({
@@ -109,7 +123,7 @@ const DeviceArgs = z.discriminatedUnion("action", [
   }),
 ]);
 interface Entry {
-  definition: McpToolDefinition;
+  definition: ContractTool;
   handle(args: unknown, session: ToolSessionState): Promise<unknown>;
 }
 const failure = (code: string, message: string) => ({
@@ -127,7 +141,7 @@ function tool<T extends z.ZodType>(
       name,
       description,
       inputSchema: {
-        ...z.toJSONSchema(schema, { target: "draft-2020-12", reused: "ref" }),
+        ...inputContract(schema),
         type: "object",
       },
     },
@@ -155,8 +169,9 @@ async function read(
   session: ToolSessionState,
   folderId: string,
   documentId?: string,
+  refresh = false,
 ) {
-  const snapshot = await session.client.snapshot(documentId, { refresh: true });
+  const snapshot = await session.client.snapshot(documentId, { refresh });
   const folder = snapshot.snapshot.project.simulationFolders.find(
     (item) => item.id === folderId,
   );
@@ -190,6 +205,7 @@ async function read(
     folder,
     config: parsed.config,
     revision: snapshot.snapshot.project.structureRevision,
+    snapshot,
   };
 }
 async function save(
@@ -197,12 +213,14 @@ async function save(
   folder: ProjectSimulationFolder,
   revision: number,
   documentId?: string,
+  snapshot?: CachedSnapshot,
 ) {
   return session.client.advancedTransact(
     { structureEdits: [{ kind: "upsert_simulation_folder", folder }] },
     {
       ...(documentId ? { documentId } : {}),
       expectedStructureRevision: revision,
+      ...(snapshot ? { snapshot } : {}),
     },
   );
 }
@@ -224,28 +242,26 @@ export const simulationAuthoringTools: readonly Entry[] = [
     agentToolHelp["simulation_folder"],
     FolderArgs,
     async (parsed, session) => {
-      const snapshot = await session.client.snapshot(parsed.documentId, {
-        refresh: true,
-      });
-      const project = snapshot.snapshot.project;
-      if (parsed.action === "list")
+      if (parsed.action === "list") {
+        const directory = await session.client.simulationFolderDirectory(
+          parsed.documentId,
+          { refresh: parsed.refresh ?? false },
+        );
         return {
           ok: true,
-          folders: project.simulationFolders
-            .filter(
-              (folder) =>
-                !parsed.rootDocumentId ||
-                folder.input.circuitBindings.some(
-                  (b) => b.documentId === parsed.rootDocumentId,
-                ),
-            )
-            .map((folder) => ({
-              id: folder.id,
-              name: folder.name,
-              entry: folder.input.entry,
-              circuitBindings: folder.input.circuitBindings,
-            })),
+          folders: directory.folders.filter(
+            (folder) =>
+              !parsed.rootDocumentId ||
+              folder.circuitBindings.some(
+                (binding) => binding.documentId === parsed.rootDocumentId,
+              ),
+          ),
         };
+      }
+      const snapshot = await session.client.snapshot(parsed.documentId, {
+        refresh: parsed.refresh ?? false,
+      });
+      const project = snapshot.snapshot.project;
       const current = project.simulationFolders.find(
         (folder) => folder.id === parsed.folderId,
       );
@@ -268,6 +284,7 @@ export const simulationAuthoringTools: readonly Entry[] = [
           {
             ...(parsed.documentId ? { documentId: parsed.documentId } : {}),
             expectedStructureRevision: project.structureRevision,
+            snapshot,
           },
         );
       let next: ProjectSimulationFolder;
@@ -277,10 +294,34 @@ export const simulationAuthoringTools: readonly Entry[] = [
             "SIMULATION_DUT_CELL_REQUIRED",
             "A DUT template needs rootDocumentId; omit dut for text-only input.",
           );
+        const discovery = await session.client.simulationMetadataResource(
+          {
+            apiVersion: "3.0",
+            requestId: crypto.randomUUID(),
+            operation: "capabilities",
+            detail: "summary",
+          },
+          { refresh: parsed.refresh },
+        );
+        if (!discovery.ok) return discovery;
+        if (!("capabilities" in discovery))
+          return failure(
+            "SIMULATION_PROFILE_UNAVAILABLE",
+            "Expected simulation Profile discovery",
+          );
+        const profile = discovery.capabilities.profiles.find(
+          (item) => item.id === parsed.profileId,
+        );
+        if (!profile?.engine)
+          return failure(
+            "SIMULATION_PROFILE_UNAVAILABLE",
+            "The selected Profile must advertise its engine before creating a template. Existing source remains editable.",
+          );
         next = createSimulationFolder({
           id: parsed.folderId ?? crypto.randomUUID(),
           name: parsed.name,
           profileId: parsed.profileId,
+          engine: profile.engine,
           ...(parsed.dut ? { dut: parsed.dut } : {}),
           ...(parsed.template ? { template: parsed.template } : {}),
           ...(parsed.rootDocumentId
@@ -310,11 +351,39 @@ export const simulationAuthoringTools: readonly Entry[] = [
         next,
         project.structureRevision,
         parsed.documentId,
+        snapshot,
       );
       return result.ok
         ? {
             ...result,
             folder: { id: next.id, name: next.name, entry: next.input.entry },
+            source: {
+              owner: { kind: "project-folder", folderId: next.id },
+              ...(result.projectStructure
+                ? { revision: result.projectStructure.toRevision }
+                : !result.applied
+                  ? { revision: project.structureRevision }
+                  : {}),
+              entry: next.input.entry,
+              configPath: next.input.configPath,
+              files: [
+                ...next.input.files.map((file) => ({
+                  path: file.path,
+                  kind: "authored",
+                  editing: "text",
+                })),
+                ...next.input.circuitBindings.map((binding) => ({
+                  path: binding.path,
+                  kind: "generated",
+                  editing: "mapped-parameters",
+                })),
+                ...next.input.dependencies.map((dependency) => ({
+                  path: dependency.mountPath,
+                  kind: "dependency",
+                  editing: "read-only",
+                })),
+              ],
+            },
           }
         : result;
     },
@@ -324,7 +393,12 @@ export const simulationAuthoringTools: readonly Entry[] = [
     agentToolHelp["simulation_output"],
     OutputArgs,
     async (parsed, session) => {
-      const result = await read(session, parsed.folderId, parsed.documentId);
+      const result = await read(
+        session,
+        parsed.folderId,
+        parsed.documentId,
+        parsed.refresh,
+      );
       if (!result.ok) return result.result;
       const { config } = result;
       if (parsed.action === "list")
@@ -350,6 +424,7 @@ export const simulationAuthoringTools: readonly Entry[] = [
         configFolder(result.folder, config),
         result.revision,
         parsed.documentId,
+        result.snapshot,
       );
     },
   ),
@@ -358,7 +433,12 @@ export const simulationAuthoringTools: readonly Entry[] = [
     agentToolHelp["simulation_measurement"],
     MeasurementArgs,
     async (parsed, session) => {
-      const result = await read(session, parsed.folderId, parsed.documentId);
+      const result = await read(
+        session,
+        parsed.folderId,
+        parsed.documentId,
+        parsed.refresh,
+      );
       if (!result.ok) return result.result;
       const { config } = result;
       if (parsed.action === "list")
@@ -385,6 +465,7 @@ export const simulationAuthoringTools: readonly Entry[] = [
         configFolder(result.folder, config),
         result.revision,
         parsed.documentId,
+        result.snapshot,
       );
     },
   ),
@@ -393,7 +474,12 @@ export const simulationAuthoringTools: readonly Entry[] = [
     agentToolHelp["simulation_device_operating_point"],
     DeviceArgs,
     async (parsed, session) => {
-      const result = await read(session, parsed.folderId, parsed.documentId);
+      const result = await read(
+        session,
+        parsed.folderId,
+        parsed.documentId,
+        parsed.refresh,
+      );
       if (!result.ok) return result.result;
       const { config } = result;
       if (parsed.action === "list")
@@ -427,6 +513,7 @@ export const simulationAuthoringTools: readonly Entry[] = [
         configFolder(result.folder, config),
         result.revision,
         parsed.documentId,
+        result.snapshot,
       );
     },
   ),

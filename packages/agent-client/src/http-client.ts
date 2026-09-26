@@ -25,15 +25,33 @@ interface ResponseIssue {
   code: string;
   path: PropertyKey[];
   errors?: ResponseIssue[][];
+  values?: unknown[];
 }
 
 /** Describe schema locations/codes only, never response values or unknown keys. */
 function responseIssueSummary(issues: readonly ResponseIssue[]): string {
-  const leaves = (items: readonly ResponseIssue[]): ResponseIssue[] =>
+  const leaves = (
+    items: readonly ResponseIssue[],
+    prefix: PropertyKey[] = [],
+  ): ResponseIssue[] =>
     items.flatMap((issue) => {
-      if (!issue.errors?.length) return [issue];
-      const branches = issue.errors.map(leaves);
-      return branches.sort((a, b) => a.length - b.length)[0] ?? [issue];
+      const path = [...prefix, ...issue.path];
+      if (!issue.errors?.length) return [{ ...issue, path }];
+      const branches = issue.errors.map((branch) => leaves(branch, path));
+      // A short, unrelated union branch (e.g. capabilities for a Snapshot)
+      // must not hide the actual invalid field in the matching branch.
+      const mismatches = (branch: ResponseIssue[]) =>
+        branch.filter(
+          (item) =>
+            item.code === "invalid_value" &&
+            item.values?.length === 1 &&
+            ["operation", "kind", "ok"].includes(String(item.path.at(-1))),
+        ).length;
+      return (
+        branches.sort(
+          (a, b) => mismatches(a) - mismatches(b) || a.length - b.length,
+        )[0] ?? [issue]
+      );
     });
   return leaves(issues)
     .slice(0, 3)
@@ -53,6 +71,7 @@ function responseIssueSummary(issues: readonly ResponseIssue[]): string {
 export const REQUEST_TIMEOUT_MS = 35_000;
 
 export interface ClaimSuccess {
+  contextRevision?: string | undefined;
   sessionId: string;
   /** Secret bearer. Stays inside the Helper; never returned to a model. */
   agentToken: string;
@@ -113,6 +132,47 @@ export class AgentHttpClient {
 
   get baseUrl(): string {
     return this.baseUrlValue;
+  }
+
+  /** Authorized byte stream; never send a bearer to a returned external URL. */
+  async downloadArtifact(
+    sessionId: string,
+    agentToken: string,
+    path: string,
+    offset = 0,
+    digest?: string,
+  ): Promise<Response> {
+    const prefix = `/api/agent/sessions/${encodeURIComponent(sessionId)}/artifacts/`;
+    if (
+      !path.startsWith(prefix) ||
+      !/^[a-zA-Z0-9_-]{1,128}$/u.test(path.slice(prefix.length))
+    )
+      throw invalidResponseFailure(
+        "Artifact download is outside the authorized session",
+      );
+    const response = await this.send(
+      path,
+      {
+        method: "GET",
+        redirect: "error",
+        headers: {
+          authorization: `Bearer ${agentToken}`,
+          ...(offset
+            ? {
+                range: `bytes=${offset}-`,
+                ...(digest ? { "if-range": `"${digest}"` } : {}),
+              }
+            : {}),
+        },
+      },
+      120_000,
+    );
+    if (!response.ok)
+      throw this.transportError(
+        response.status,
+        await response.json().catch(() => null),
+      );
+    return response;
   }
 
   /**
@@ -176,6 +236,9 @@ export class AgentHttpClient {
         `Circuit response failed schema validation: ${responseIssueSummary(parsed.error.issues)}. Check the server MCP manifest and reload a compatible adapter. Do not repeat a mutation blindly: it may already have committed. The connector remains valid unless the server revokes it.`,
       );
     }
+    if (parsed.data.ok && request.operation === "snapshot")
+      this.contextRevision =
+        response.headers.get("x-agent-context") ?? this.contextRevision;
     return parsed.data;
   }
 
@@ -259,7 +322,9 @@ export class AgentHttpClient {
     if (!response.ok) throw this.transportError(response.status, body);
     const parsed = AgentProjectResourceResponseSchema.safeParse(body);
     if (!parsed.success) {
-      throw invalidResponseFailure("Project response failed schema validation");
+      throw invalidResponseFailure(
+        `Project response failed schema validation: ${responseIssueSummary(parsed.error.issues)}`,
+      );
     }
     return parsed.data;
   }
@@ -292,6 +357,7 @@ export class AgentHttpClient {
     const parsed = AgentSessionStatusResponseSchema.safeParse(body);
     if (!parsed.success)
       throw invalidResponseFailure("Session status failed schema validation");
+    this.contextRevision = parsed.data.contextRevision;
     return parsed.data;
   }
 
@@ -300,6 +366,22 @@ export class AgentHttpClient {
     init: RequestInit,
     timeoutMs = this.timeoutMs,
   ): Promise<Response> {
+    if (
+      this.contextRevision &&
+      /\/(circuit|files|simulation|projects)$/.test(path)
+    ) {
+      const headers = new Headers(init.headers);
+      headers.set("x-agent-context", this.contextRevision);
+      init = { ...init, headers };
+    }
+    if (
+      this.workspaceId &&
+      /\/(circuit|files|simulation|projects)$/.test(path)
+    ) {
+      const headers = new Headers(init.headers);
+      headers.set("x-agent-workspace", this.workspaceId);
+      init = { ...init, headers };
+    }
     for (let attempt = 0; ; attempt += 1) {
       let response: Response;
       try {
@@ -312,8 +394,9 @@ export class AgentHttpClient {
           error instanceof Error ? error.message : "Network request failed",
         );
       }
-      if (response.status !== 429 || attempt >= this.rateLimitRetryAttempts)
+      if (response.status !== 429 || attempt >= this.rateLimitRetryAttempts) {
         return response;
+      }
       const retryAfter = response.headers.get("retry-after");
       const seconds = retryAfter === null ? NaN : Number(retryAfter);
       const requestedDelay = Number.isFinite(seconds)
@@ -362,6 +445,11 @@ export class AgentHttpClient {
         `${source} response is missing required fields`,
       );
     }
+    this.contextRevision = parsed.data.contextRevision;
     return parsed.data;
   }
+
+  contextRevision: string | undefined;
+  /** Optional explicit browser working copy; unset keeps active-tab semantics. */
+  workspaceId: string | undefined;
 }

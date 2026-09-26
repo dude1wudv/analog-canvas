@@ -282,20 +282,33 @@ test("adds formatted drafting text and undo/redo restores it", async ({
   expect(editorBounds.x + editorBounds.width).toBeLessThanOrEqual(
     canvasBounds.x + canvasBounds.width + 1,
   );
-  expect(editorBounds.width).toBeCloseTo(332, 0);
-  const [boldTop, decreaseTop, increaseTop, applyTop, cancelTop, deleteTop] =
-    await Promise.all([
-      controlTop(page.getByRole("button", { name: "Bold" })),
-      controlTop(page.getByRole("button", { name: "Decrease text size" })),
-      controlTop(page.getByRole("button", { name: "Increase text size" })),
-      controlTop(page.getByRole("button", { name: "Apply text changes" })),
-      controlTop(page.getByRole("button", { name: "Cancel text changes" })),
-      controlTop(page.getByRole("button", { name: "Delete text" })),
-    ]);
+  expect(editorBounds.width).toBeCloseTo(344, 0);
+  const [
+    boldTop,
+    decreaseTop,
+    increaseTop,
+    applyTop,
+    cancelTop,
+    deleteTop,
+    alignLeftTop,
+    alignRightTop,
+  ] = await Promise.all([
+    controlTop(page.getByRole("button", { name: "Bold" })),
+    controlTop(page.getByRole("button", { name: "Decrease text size" })),
+    controlTop(page.getByRole("button", { name: "Increase text size" })),
+    controlTop(page.getByRole("button", { name: "Apply text changes" })),
+    controlTop(page.getByRole("button", { name: "Cancel text changes" })),
+    controlTop(page.getByRole("button", { name: "Delete text" })),
+    controlTop(page.getByRole("button", { name: "Align left" })),
+    controlTop(page.getByRole("button", { name: "Align right" })),
+  ]);
   expect(Math.abs(increaseTop - decreaseTop)).toBeLessThan(1);
-  expect(increaseTop).toBeGreaterThan(boldTop);
+  expect(Math.abs(increaseTop - boldTop)).toBeLessThan(1);
   expect(Math.abs(cancelTop - applyTop)).toBeLessThan(1);
   expect(Math.abs(deleteTop - applyTop)).toBeLessThan(1);
+  // Alignment shares the commit row, which keeps the two rows balanced.
+  expect(Math.abs(alignLeftTop - applyTop)).toBeLessThan(1);
+  expect(Math.abs(alignRightTop - applyTop)).toBeLessThan(1);
   expect(applyTop).toBeGreaterThan(increaseTop);
 
   const fullViewport = page.viewportSize();
@@ -307,17 +320,20 @@ test("adds formatted drafting text and undo/redo restores it", async ({
         .boundingBox()
         .then((bounds) => bounds?.width),
     )
-    .toBeCloseTo(332, 0);
+    .toBeCloseTo(344, 0);
   // Chromium may report one intermediate foreignObject layout immediately
-  // after the viewport changes. Assert both toolbar rows after that layout
-  // settles rather than sampling a transient frame.
+  // after the viewport changes. Assert the formatting row after layout settles.
   await expect
     .poll(async () => {
-      const [decreaseTop, increaseTop] = await Promise.all([
+      const [boldTop, decreaseTop, increaseTop] = await Promise.all([
+        controlTop(page.getByRole("button", { name: "Bold" })),
         controlTop(page.getByRole("button", { name: "Decrease text size" })),
         controlTop(page.getByRole("button", { name: "Increase text size" })),
       ]);
-      return Math.abs(increaseTop - decreaseTop);
+      return Math.max(
+        Math.abs(increaseTop - decreaseTop),
+        Math.abs(increaseTop - boldTop),
+      );
     })
     .toBeLessThan(1);
   const narrowSizeTop = await controlTop(
@@ -415,6 +431,63 @@ test("adds formatted drafting text and undo/redo restores it", async ({
   await expect(page.locator('[data-layer="drafting"] text')).toHaveCount(1);
   await page.keyboard.press("Control+y");
   await expect(page.getByTestId("revision")).toHaveText("6");
+});
+
+test("opens the text editor beside a docked panel instead of under it", async ({
+  page,
+}) => {
+  // Half a laptop screen: the collapsed Properties rail floats over the
+  // canvas's right edge, which the editor must treat as covered.
+  await page.setViewportSize({ width: 720, height: 720 });
+  await page.goto("/editor");
+  await awaitEditorReady(page);
+  const netlist = page.getByRole("button", {
+    name: "Netlist",
+    exact: true,
+    pressed: true,
+  });
+  if (await netlist.isVisible()) await netlist.click();
+  const canvas = page.getByTestId("schematic-canvas");
+  const rail = page.getByRole("complementary", { name: "Properties" });
+  await expect(rail).toBeVisible();
+  const [canvasBounds, railBounds] = await Promise.all([
+    canvas.boundingBox(),
+    rail.boundingBox(),
+  ]);
+  if (!canvasBounds || !railBounds) throw new Error("Layout is not measurable");
+  expect(railBounds.x).toBeGreaterThan(canvasBounds.x + 400);
+
+  // Text placed just left of the rail would open its 344 px editor across it.
+  await placeText(page, {
+    x: railBounds.x - canvasBounds.x - 40,
+    y: 320,
+  });
+  const editor = page.getByTestId("canvas-text-editor");
+  await expect
+    .poll(async () => {
+      const [editorBounds, docks] = await Promise.all([
+        editor.boundingBox(),
+        page.locator("[data-canvas-overlay]").evaluateAll((elements) =>
+          elements
+            .filter(
+              (element) => getComputedStyle(element).visibility !== "hidden",
+            )
+            .map((element) => element.getBoundingClientRect())
+            .filter((rect) => rect.width > 0 && rect.height > 0)
+            .map((rect) => ({ left: rect.left, right: rect.right })),
+        ),
+      ]);
+      if (!editorBounds) return "unmeasured";
+      const right = editorBounds.x + editorBounds.width;
+      return docks.every(
+        (dock) => right <= dock.left + 1 || editorBounds.x >= dock.right - 1,
+      )
+        ? "clear"
+        : `editor ${Math.round(editorBounds.x)}–${Math.round(right)} overlaps ${JSON.stringify(docks)}`;
+    })
+    .toBe("clear");
+  const editorBounds = await editor.boundingBox();
+  expect(editorBounds!.x).toBeGreaterThanOrEqual(canvasBounds.x);
 });
 
 test("drafting text owns an independent color override with Auto inheritance", async ({
@@ -614,6 +687,7 @@ test("authors one validated formula through the canonical text editor", async ({
     '[data-kind="draft-text"] [data-role="formula"]',
   );
   await expect(formula).toBeVisible();
+  await expect(formula).toHaveAttribute("data-formula-typography", "sans-v2");
   await expect(formula.locator("path").first()).toBeVisible();
   await expect(page.locator("foreignObject", { has: formula })).toHaveCount(0);
 
@@ -700,7 +774,7 @@ for (const zoomedOut of [false, true]) {
         .toBe(true);
       await expect(canvas).toHaveAttribute("viewBox", viewBox!);
       const bounds = (await frame.boundingBox())!;
-      expect(bounds.width).toBeCloseTo(332, 0);
+      expect(bounds.width).toBeCloseTo(344, 0);
     };
     const apply = async (expectedLatex: string) => {
       await dialog.getByRole("button", { name: "Insert", exact: true }).click();
@@ -834,7 +908,6 @@ test("T previews text at the pointer without creating it and Escape cancels", as
   expect(expected.x % 10 !== 0 || expected.y % 10 !== 0).toBe(true);
 
   await page.keyboard.press("t");
-  await expect(page.getByTestId("canvas-empty-state")).toHaveCount(0);
   const preview = page.getByTestId("text-placement-preview");
   await expect(preview).toBeVisible();
   await expect(preview).toHaveText("Design note");
@@ -864,7 +937,6 @@ test("T previews text at the pointer without creating it and Escape cancels", as
   await expect(page.locator('[data-kind="draft-text"]')).toHaveCount(0);
   await expect(page.getByTestId("revision")).toHaveText("0");
   await expect(page.getByTestId("draw-tool-undo")).toBeDisabled();
-  await expect(page.getByTestId("canvas-empty-state")).toBeVisible();
 
   // The toolbar uses the same cancellable placement, then lets a new tool take over.
   await clickDrawTool(page, "text");
@@ -994,12 +1066,12 @@ test("places Text at its preview after zoom and pan, then edits and undoes it", 
   expect(svg).toContain("Custom text");
   expect(svg).not.toContain(`rotate(90 ${expected.x} ${expected.y})`);
   expect(svg).not.toContain("text-placement-preview");
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expect(texts).toHaveText("Design note");
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expect(texts).toHaveCount(0);
-  await clickCommand(page, "Edit", "Redo");
-  await clickCommand(page, "Edit", "Redo");
+  await page.getByTestId("draw-tool-redo").click();
+  await page.getByTestId("draw-tool-redo").click();
   await expect(texts).toHaveText("Custom text");
 });
 
@@ -1029,7 +1101,7 @@ test("previews copied text upright and commits its pose atomically", async ({
     origin.y + origin.height / 2,
   );
   await page.keyboard.press("c");
-  await expect(page.getByTestId("status")).toContainText("Place copy");
+  await expect(page.getByTestId("status")).toContainText("click to place");
 
   const box = (await canvas.boundingBox())!;
   const ghost = page.getByTestId("copy-placement-preview");
@@ -1124,6 +1196,54 @@ test("text floating editor closes on Escape or an outside pointer", async ({
     .getByTestId("schematic-canvas")
     .click({ position: { x: 300, y: 100 } });
   await expect(page.getByTestId("canvas-text-editor")).toHaveCount(0);
+});
+
+test("types Greek letters by LaTeX name and from the symbol menu", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await placeText(page);
+  const editable = page.getByRole("textbox", { name: "Canvas text editor" });
+  await editable.click();
+  await page.keyboard.press("ControlOrMeta+A");
+  // A LaTeX name then Space spells the letter, lowercase or capital, and the
+  // Space is spent on it; an unknown name stays as typed.
+  await page.keyboard.type("\\phi");
+  await page.keyboard.press("Space");
+  await page.keyboard.type("1 \\Omega");
+  await page.keyboard.press("Space");
+  await page.keyboard.type("\\foo");
+  await page.keyboard.press("Space");
+  const typed = () =>
+    editable.evaluate((element) =>
+      (element.textContent ?? "").replace(/\u00a0/gu, " "),
+    );
+  await expect.poll(typed).toBe("φ1 Ω\\foo ");
+
+  // The menu floats over the page but belongs to the editor: picking from it
+  // keeps the text open, and the menu opens below the text being typed.
+  await page.getByLabel("Insert circuit symbol").click();
+  const menu = page.getByRole("menu", { name: "Circuit symbols" });
+  const [menuBounds, editorBounds] = await Promise.all([
+    menu.boundingBox(),
+    editable.boundingBox(),
+  ]);
+  if (!menuBounds || !editorBounds)
+    throw new Error("Symbol menu geometry is not measurable");
+  expect(menuBounds.y).toBeGreaterThanOrEqual(
+    editorBounds.y + editorBounds.height,
+  );
+  // Σ and σ differ only in case, which role names otherwise ignore.
+  await menu.getByRole("menuitem", { name: "Insert Σ", exact: true }).click();
+  await menu.getByRole("menuitem", { name: "Insert ψ", exact: true }).click();
+  await expect(page.getByTestId("canvas-text-editor")).toBeVisible();
+  await expect.poll(typed).toBe("φ1 Ω\\foo Σψ");
+
+  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await expect(menu).toHaveCount(0);
+  await expect(page.locator('[data-kind="draft-text"]').first()).toHaveText(
+    /^φ1\sΩ\\foo\sΣψ$/u,
+  );
 });
 
 test("exports a newly created construction line through the File menu", async ({
@@ -1637,15 +1757,29 @@ test("the Library Circle creates a selectable shape with one radial handle and n
   await revealPropertiesShelf(page);
   await awaitEditorReady(page);
   await clickDrawTool(page, "circle");
-  await clickCreate(page, { x: 260, y: 260 }, { x: 340, y: 260 });
+  // Author a known 80-unit radius in SVG coordinates, independent of tab-bar
+  // height, viewport fitting and platform-specific browser chrome.
+  const points = await page
+    .getByTestId("schematic-canvas")
+    .evaluate((element) => {
+      const matrix = (element as SVGSVGElement).getScreenCTM()!;
+      return [new DOMPoint(260, 260), new DOMPoint(340, 260)].map((point) => {
+        const screen = point.matrixTransform(matrix);
+        return { x: screen.x, y: screen.y };
+      });
+    });
+  await page.mouse.click(points[0]!.x, points[0]!.y);
+  await page.mouse.move(points[1]!.x, points[1]!.y);
+  await page.mouse.click(points[1]!.x, points[1]!.y);
+  await page.keyboard.press("Enter");
   await expect(page.getByTestId("revision")).toHaveText("1");
 
   const circle = page.locator('[data-kind="draft-circle"]');
   await expect(circle).toHaveCount(1);
   await expect(circle).toHaveAttribute("fill", "none");
-  // The default 5-unit annotation pitch resolves this gesture half a grid
-  // finer than the old device-grid rounding did.
-  await expect(circle).toHaveAttribute("r", "85");
+  await expect(circle).toHaveAttribute("cx", "260");
+  await expect(circle).toHaveAttribute("cy", "260");
+  await expect(circle).toHaveAttribute("r", "80");
 
   const hit = page.getByTestId(/^drafting-hit-circle-/);
   await expect(hit).toHaveCSS("pointer-events", "stroke");
@@ -2374,9 +2508,9 @@ test("converts a selected slash fraction and mixes multiple fractions in one not
   await expect(
     note.locator('[data-role="fraction-numerator"] text').first(),
   ).toHaveCSS("font-weight", "400");
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expect(note).toHaveText("Design note");
-  await clickCommand(page, "Edit", "Redo");
+  await page.getByTestId("draw-tool-redo").click();
   await expect(note.locator('[data-role="fraction-bar"]')).toHaveCount(2);
 });
 
@@ -3116,3 +3250,182 @@ for (const shape of ["line", "outline"] as const) {
     });
   });
 }
+
+async function polylinePoints(page: Page): Promise<number[][]> {
+  const points = await page
+    .getByTestId(/^drafting-hit-arrow-/)
+    .getAttribute("points");
+  return points!
+    .trim()
+    .split(/\s+/)
+    .map((pair) => pair.split(",").map(Number));
+}
+
+async function selectPolyline(page: Page): Promise<void> {
+  const point = await page
+    .getByTestId(/^drafting-hit-arrow-/)
+    .evaluate((element) => {
+      const line = element as SVGPolylineElement;
+      const a = line.points.getItem(0),
+        b = line.points.getItem(1);
+      const p = new DOMPoint(
+        a.x + (b.x - a.x) * 0.25,
+        a.y + (b.y - a.y) * 0.25,
+      ).matrixTransform(line.getScreenCTM()!);
+      return { x: p.x, y: p.y };
+    });
+  await page.mouse.click(point.x, point.y);
+}
+
+async function drawPolyline(page: Page, close: boolean): Promise<void> {
+  await page.getByTestId("annotation-menu").locator("summary").click();
+  await page.getByTestId("annotation-shortcut-annotation-polyline").click();
+  const box = (await page.getByTestId("schematic-canvas").boundingBox())!;
+  const points = [
+    { x: 190, y: 180 },
+    { x: 190, y: 340 },
+    { x: 330, y: 340 },
+  ];
+  for (const point of points) {
+    await page.mouse.move(box.x + point.x, box.y + point.y);
+    await page.mouse.click(box.x + point.x, box.y + point.y);
+  }
+  if (close) {
+    await page.mouse.move(box.x + points[0]!.x, box.y + points[0]!.y);
+    await page.mouse.click(box.x + points[0]!.x, box.y + points[0]!.y);
+  } else await page.keyboard.press("Enter");
+  await expect(page.getByTestId(/^drafting-hit-arrow-/)).toHaveCount(1);
+  await expect(page.getByTestId("drafting-create-preview")).toHaveCount(0);
+}
+
+test("Polyline annotation draws a right angle, edits vertices, stretches and preserves both endpoint styles", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await awaitEditorReady(page);
+  await drawPolyline(page, false);
+  const original = await polylinePoints(page);
+  expect(original).toHaveLength(3);
+  expect(original[0]![0]).toBe(original[1]![0]);
+  expect(original[1]![1]).toBe(original[2]![1]);
+  await expect(page.locator('[data-kind="draft-arrow"] > polygon')).toHaveCount(
+    0,
+  );
+  await selectPolyline(page);
+  const hit = page.getByTestId(/^drafting-hit-arrow-/);
+  await expect(hit).toHaveCSS("fill", "none");
+  const interiorHit = await hit.evaluate((element) => {
+    const line = element as SVGPolylineElement;
+    const points = [...line.points];
+    const point = new DOMPoint(
+      points.reduce((sum, p) => sum + p.x, 0) / points.length,
+      points.reduce((sum, p) => sum + p.y, 0) / points.length,
+    ).matrixTransform(line.getScreenCTM()!);
+    return document
+      .elementsFromPoint(point.x, point.y)
+      .some(
+        (node) =>
+          node.getAttribute("data-canvas-hit-id") ===
+          line.getAttribute("data-canvas-hit-id"),
+      );
+  });
+  expect(interiorHit).toBe(false);
+  await expect(page.getByTestId(/^draft-handle-path-corner-/)).toHaveCount(4);
+  await dragLocator(page.getByTestId(/^draft-handle-waypoint-0-/), {
+    x: -35,
+    y: 20,
+  });
+  const bent = await polylinePoints(page);
+  expect(bent[0]).toEqual(original[0]);
+  expect(bent[2]).toEqual(original[2]);
+  expect(bent[1]).not.toEqual(original[1]);
+  await dragLocator(page.getByTestId(/^draft-handle-path-corner-2-/), {
+    x: 55,
+    y: 25,
+  });
+  const stretched = await polylinePoints(page);
+  expect(stretched[2]).not.toEqual(bent[2]);
+  await page.keyboard.press("Control+z");
+  expect(await polylinePoints(page)).toEqual(bent);
+  await page.keyboard.press("Control+Shift+z");
+  expect(await polylinePoints(page)).toEqual(stretched);
+
+  await page.keyboard.press("q");
+  await editComponentPropertyCode(page, (code) => {
+    code.appearance.startStyle = "dot";
+    code.appearance.endStyle = "large-arrow";
+    code.appearance.strokeScale = 2;
+  });
+  await expect(page.locator('[data-kind="draft-arrow"] > circle')).toHaveCount(
+    1,
+  );
+  await expect(page.locator('[data-kind="draft-arrow"] > polygon')).toHaveCount(
+    1,
+  );
+  const exported = await downloadBytes(page, "File", "Export Project File…");
+  const project = parseSavedProject(exported.toString("utf8"));
+  expect(project.documents[0].instances).toEqual([]);
+  expect(project.documents[0].nets).toEqual([]);
+  expect(project.documents[0].drafting.objects[0].styleOverride).toMatchObject({
+    arrowStart: "dot",
+    arrowEnd: "large-arrow",
+  });
+  await page.locator('input[type="file"]').first().setInputFiles({
+    name: "polyline.icproj.json",
+    mimeType: "application/json",
+    buffer: exported,
+  });
+  await expect.poll(() => polylinePoints(page)).toEqual(stretched);
+  const svg = (await downloadBytes(page, "File", "Export SVG")).toString(
+    "utf8",
+  );
+  expect(svg).toContain('data-kind="draft-arrow"');
+  const artwork = await page.evaluate((source) => {
+    const root = new DOMParser().parseFromString(source, "image/svg+xml");
+    const path = root.querySelector('[data-kind="draft-arrow"]')!;
+    const dot = path.querySelector("circle")!;
+    return {
+      heads: path.querySelectorAll("polygon").length,
+      dot: [Number(dot.getAttribute("cx")), Number(dot.getAttribute("cy"))],
+    };
+  }, svg);
+  expect(artwork).toEqual({ heads: 1, dot: stretched[0] });
+});
+
+test("Polyline polygon keeps a movable seam, can reopen through code, and cancels unfinished drawing", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await awaitEditorReady(page);
+  await drawPolyline(page, true);
+  const closed = await polylinePoints(page);
+  expect(closed).toHaveLength(4);
+  expect(closed[0]).toEqual(closed.at(-1));
+  await selectPolyline(page);
+  await expect(page.getByTestId(/^draft-handle-to-/)).toHaveCount(0);
+  await dragLocator(page.getByTestId(/^draft-handle-from-/), {
+    x: -30,
+    y: -20,
+  });
+  const moved = await polylinePoints(page);
+  expect(moved[0]).toEqual(moved.at(-1));
+  expect(moved[0]).not.toEqual(closed[0]);
+  await page.keyboard.press("q");
+  await editComponentPropertyCode(page, (code) => {
+    code.geometry.closed = false;
+  });
+  expect(await polylinePoints(page)).toEqual(moved.slice(0, -1));
+  await page.getByTestId("schematic-canvas").focus();
+  await page.keyboard.press("Escape");
+  // The Library and toolbar use the same new drawing tool.
+  const toggle = page.getByTestId("library-toggle");
+  if ((await toggle.getAttribute("aria-expanded")) !== "true")
+    await toggle.click();
+  await page.getByTestId("shapes-chip-annotation-polyline").click();
+  const canvas = page.getByTestId("schematic-canvas");
+  await canvas.click({ position: { x: 150, y: 200 } });
+  await expect(page.getByTestId("drafting-create-preview")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("drafting-create-preview")).toHaveCount(0);
+  await expect(page.getByTestId(/^drafting-hit-arrow-/)).toHaveCount(1);
+});

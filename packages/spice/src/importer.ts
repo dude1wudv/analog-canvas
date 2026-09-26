@@ -4,6 +4,7 @@ import {
   deriveStableId,
 } from "@icm/model";
 import {
+  deviceDescriptor,
   reviewedExternalBindingForTerminalCount,
   sky130MicrometresToProjectLength,
 } from "@icm/devices";
@@ -30,12 +31,15 @@ import type { SpiceDiagnostic } from "./diagnostics.js";
 import type { CircuitCellIR, CircuitIR, CircuitInstanceIR } from "./ir.js";
 import type { SourceBundle, SpiceSourceInput } from "./source-types.js";
 import { compileSpiceSources } from "./compiler.js";
+import { decodeSourceContent, normalizeSourcePath } from "./source.js";
 
 export interface SpiceImportResult extends SpiceCompileResult {
   project: CircuitProject | null;
 }
 
 export interface SpiceImportOptions {
+  /** Input before frontend conversion; never used as mutable connectivity. */
+  originalSources?: readonly SpiceSourceInput[];
   symbolMappings?: readonly PdkSymbolMappingOverride[];
   namingProfile?: "native" | "cadence-bang";
 }
@@ -428,6 +432,38 @@ function snapUpToGrid(value: number, grid: number): number {
   return Math.ceil(value / grid) * grid;
 }
 
+/** A common imported fourth node becomes the Cell's default for later MOSes. */
+function importedMosBulkDefaults(
+  instances: readonly Instance[],
+  nets: readonly Net[],
+): SchematicDocument["mosBulkDefaults"] {
+  const defaults: NonNullable<SchematicDocument["mosBulkDefaults"]> = {};
+  for (const kind of ["nmos", "pmos"] as const) {
+    const mosInstances = instances.filter(
+      (instance) => deviceDescriptor(instance.symbolId)?.mosBulkClass === kind,
+    );
+    if (mosInstances.length === 0) continue;
+    const bulkNetIds = mosInstances.map((instance) =>
+      nets
+        .filter((net) =>
+          net.terminals.some(
+            (terminal) =>
+              terminal.instanceId === instance.id && terminal.pinName === "B",
+          ),
+        )
+        .map((net) => net.id),
+    );
+    const netId = bulkNetIds[0]?.[0];
+    if (
+      netId &&
+      bulkNetIds.every((ids) => ids.length === 1 && ids[0] === netId)
+    ) {
+      defaults[kind === "nmos" ? "nmosNetId" : "pmosNetId"] = netId;
+    }
+  }
+  return defaults.nmosNetId || defaults.pmosNetId ? defaults : undefined;
+}
+
 function importDocument(
   cell: CircuitCellIR,
   diagnostics: SpiceDiagnostic[],
@@ -509,12 +545,38 @@ function importDocument(
       interfaceInstanceIds: [interfaceInstanceId],
     };
   });
+  const mosBulkDefaults = importedMosBulkDefaults(instances, nets);
   return {
     id: documentId,
     name: cell.name,
     revision: 0,
     sourceBinding: { cellName: cell.name, sourceRef: cell.sourceRef },
     sourceStatus: "in-sync",
+    importReference: {
+      files: [],
+      nets: nets.map((net, index) => {
+        const source = cell.nets[index]!;
+        const name = importedNetName(source.name, source.scope, namingProfile);
+        return {
+          id: source.id,
+          name: name.name,
+          scope: name.scope,
+          terminals: net.terminals.map((terminal) => {
+            const mapping = importedInstanceById
+              .get(terminal.instanceId)
+              ?.importProvenance?.terminalMapping?.find(
+                (entry) => entry.pinName === terminal.pinName,
+              );
+            return mapping
+              ? {
+                  instanceId: terminal.instanceId,
+                  sourcePosition: mapping.sourcePosition,
+                }
+              : { instanceId: terminal.instanceId, pinName: terminal.pinName };
+          }),
+        };
+      }),
+    },
     netlist: {
       name: cell.name,
       terminals: formalTerminals,
@@ -525,6 +587,7 @@ function importDocument(
     },
     instances: withShelfPlacements(instances, DOCUMENT_GRID),
     nets,
+    ...(mosBulkDefaults ? { mosBulkDefaults } : {}),
     connectivityEvidence: cell.nets.flatMap((net) => {
       const importedName = importedNetName(net.name, net.scope, namingProfile);
       return [
@@ -755,6 +818,11 @@ export function importCircuitIR(
   );
   const { documents, externalSubcircuitDefinitions } =
     bindImportedChildDocuments(importedDocuments);
+  for (const document of documents) {
+    document.importReference!.files = bundle.files.map((file) => ({
+      fileId: file.id,
+    }));
+  }
   const topCell = ir.topCells[0] ?? ir.cells[0]?.name;
   const topDocument = documents.find(
     (document) =>
@@ -774,11 +842,25 @@ export function importCircuitIR(
       entry: bundle.entryPath,
       dialect: ir.dialect,
       sourcePolicy: "copy",
-      files: bundle.files.map((file) => ({
-        id: file.id,
-        path: file.path,
-        hash: file.hash,
-      })),
+      files: bundle.files.map((file) => {
+        const original = options.originalSources?.find(
+          (input) => normalizeSourcePath(input.path) === file.path,
+        );
+        const originalContent = original
+          ? decodeSourceContent(original.bytes)
+          : undefined;
+        return {
+          id: file.id,
+          path: file.path,
+          hash: file.hash,
+          content: { text: file.text, encoding: file.encoding },
+          ...(originalContent &&
+          (originalContent.text !== file.text ||
+            originalContent.encoding !== file.encoding)
+            ? { originalContent }
+            : {}),
+        };
+      }),
     },
     symbolLibrary: {
       id: "razavi-symbols",

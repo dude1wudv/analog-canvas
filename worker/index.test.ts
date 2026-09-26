@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 describe("assets binding wiring", () => {
@@ -20,17 +20,13 @@ describe("assets binding wiring", () => {
     return JSON.parse(stripped) as ReturnType<typeof wranglerConfig>;
   }
 
-  it("schedules the netlist mark pass on the production Worker", () => {
+  it("schedules the netlist mark pass on Production", () => {
     // Stored Gallery marks answer the rule that produced them. Without a
     // tick, a deployed rule change would leave every one of them stale
-    // until somebody remembered to press a button.
+    // until somebody remembered to press a button. The retired Preview Worker
+    // deliberately has no cron; its no-trigger contract lives beside its
+    // dormant Wrangler configuration.
     expect(wranglerConfig().triggers?.crons ?? []).not.toHaveLength(0);
-  });
-
-  it("does not carry the retired Preview Wrangler configuration", () => {
-    expect(existsSync(resolve(process.cwd(), "wrangler.preview.jsonc"))).toBe(
-      false,
-    );
   });
 
   it("routes asset requests through the Worker, with a binding to fetch", () => {
@@ -49,8 +45,19 @@ describe("assets binding wiring", () => {
     expect(assets.binding).toBe("ASSETS");
     expect(assets.run_worker_first).toContain("/assets/*");
     expect(assets.run_worker_first).toContain("/api/*");
-    // Client routes still get the shell from Cloudflare; the Worker only
-    // separates "a hashed file that is gone" from "a route with no file".
+    expect(assets.run_worker_first).toEqual(
+      expect.arrayContaining([
+        "/",
+        "/g/*",
+        "/robots.txt",
+        "/sitemap.xml",
+        "/llms.txt",
+      ]),
+    );
+    // The Gallery paths need the Worker to enrich the shell or return their
+    // direct document. Other client routes still get the shell from
+    // Cloudflare; the Worker also separates "a hashed file that is gone"
+    // from "a route with no file".
     expect(assets.not_found_handling).toBe("single-page-application");
   });
 });

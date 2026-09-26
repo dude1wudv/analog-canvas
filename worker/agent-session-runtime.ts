@@ -19,6 +19,7 @@ import {
   type AgentTransportErrorResponse,
 } from "@icm/agent-adapter";
 import { agentOperatingKit } from "@icm/agent-adapter/kit";
+import type { AgentArtifactBucket } from "./agent-artifacts";
 
 export const SESSION_STATE_KEY = "agent-session-v1";
 export const EDITOR_SOCKET_TAG = "editor";
@@ -65,6 +66,7 @@ export type DurableStateLike = {
 
 export type AgentSessionEnv = {
   AGENT_ALLOWED_ORIGIN?: string;
+  SIMULATION_ARTIFACTS?: AgentArtifactBucket;
 };
 
 export type WebSocketPairShape = { 0: WebSocket; 1: WebSocket };
@@ -74,12 +76,14 @@ export type PendingForward = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
+  socket: WebSocket;
 };
 
 export function relayHeaders(allowedOrigin: string | null): Headers {
   const headers = new Headers({
     "cache-control": "no-store",
     "content-type": "application/json; charset=utf-8",
+    "access-control-expose-headers": "x-agent-context",
   });
   if (allowedOrigin !== null) {
     headers.set("access-control-allow-origin", allowedOrigin);
@@ -155,10 +159,13 @@ export async function routeAgentSessionRequest(
   }
   if (request.method === "OPTIONS") {
     const headers = relayHeaders(allowedOrigin);
-    headers.set("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
+    headers.set(
+      "access-control-allow-methods",
+      "GET, HEAD, PUT, POST, DELETE, OPTIONS",
+    );
     headers.set(
       "access-control-allow-headers",
-      "authorization, content-type, x-editor-secret",
+      "authorization, content-type, x-editor-secret, x-artifact-ref, x-agent-context, x-agent-workspace, range, if-range",
     );
     return new Response(null, { status: 204, headers });
   }
@@ -302,7 +309,7 @@ export async function routeAgentSessionRequest(
   }
 
   const match =
-    /^\/api\/agent\/sessions\/([^/]+)(?:\/(circuit|files|simulation|projects|events|editor|control|status))?$/u.exec(
+    /^\/api\/agent\/sessions\/([^/]+)(?:\/(circuit|files|simulation|projects|events|editor|control|status|artifacts\/[a-zA-Z0-9_-]{1,128}))?$/u.exec(
       url.pathname,
     );
   if (!match) return jsonResponse({ error: "Not found" }, 404, allowedOrigin);
@@ -310,8 +317,14 @@ export async function routeAgentSessionRequest(
   const internalPath = resource ? `/${resource}` : "/session";
   const headers = new Headers(request.headers);
   headers.delete("host");
-  const init: RequestInit = { method: request.method, headers };
-  if (request.method !== "GET" && request.method !== "HEAD") {
+  const init: RequestInit & { duplex?: "half" } = {
+    method: request.method,
+    headers,
+  };
+  if (resource?.startsWith("artifacts/") && request.method === "PUT") {
+    init.body = request.body;
+    init.duplex = "half";
+  } else if (request.method !== "GET" && request.method !== "HEAD") {
     const body = await readBoundedText(
       request,
       DEFAULT_AGENT_SESSION_LIMITS.maxRequestBytes,
@@ -424,6 +437,13 @@ export function fileOperationScopes(
               : []),
           ]
         : ["simulation.run"];
+    case "import-cell":
+      return [
+        "project.import",
+        "circuit.edit.geometry",
+        "circuit.edit.connectivity",
+        "circuit.edit.presentation",
+      ];
     case "download":
       return [
         request.artifact === "project" ? "project.download" : "visual.download",
@@ -432,6 +452,7 @@ export function fileOperationScopes(
     case "inspect":
     case "discard":
     case "request-approval":
+    case "open":
       return ["project.import"];
   }
 }
@@ -450,12 +471,17 @@ export function simulationOperationScopes(
     case "authoring-help":
       return [];
     case "prepare":
+    case "run":
     case "start":
     case "read":
+    case "catalog":
     case "cancel":
     case "prepare-batch":
     case "start-batch":
     case "read-batch":
+    case "history":
+    case "history-usage":
+    case "history-delete":
     case "cancel-batch":
     case "prepare-sweep":
     case "export":
@@ -464,9 +490,38 @@ export function simulationOperationScopes(
 }
 
 export function projectOperationScopes(
-  _request: AgentProjectResourceRequest,
+  request: AgentProjectResourceRequest,
 ): AgentSessionScope[] {
-  return ["project.import"];
+  switch (request.operation) {
+    case "workspace":
+      return request.request.action === "list"
+        ? ["circuit.snapshot"]
+        : [
+            "project.import",
+            "circuit.edit.connectivity",
+            "circuit.edit.geometry",
+            "circuit.edit.presentation",
+          ];
+    case "list-gallery":
+    case "read-gallery-entry":
+    case "read-gallery-entries":
+      return ["circuit.snapshot"];
+    case "read-project-code":
+    case "read-netlist":
+      return ["project.download"];
+    case "replace-project-code":
+      return [
+        "circuit.edit.geometry",
+        "circuit.edit.connectivity",
+        "circuit.edit.presentation",
+      ];
+    case "replace-netlist":
+      return ["circuit.edit.connectivity", "circuit.edit.presentation"];
+    case "list-projects":
+    case "list-cells":
+    case "import-cell":
+      return ["project.import"];
+  }
 }
 
 export async function sha256Text(value: string): Promise<string> {

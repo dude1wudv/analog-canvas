@@ -4,7 +4,10 @@ Status: `accepted`
 
 Primary owners: `packages/model`, `packages/edit-engine`, `packages/derived`
 
-`Net.terminals` records Base-Net physical membership. Logical connectivity is
+In the normalized runtime model, `Net.terminals` indexes Base-Net physical
+membership. Portable source stores
+[connection facts](project-file-format.md#one-connection-source), not a second
+editable membership list. Logical connectivity is
 resolved from that membership, owner-addressed naming, scope, and interfaces. A terminal is an Instance pin; both
 `port` and `port-filled` participate through their ordinary pin `P`. Routes use
 the same terminal endpoint for those Instances and every other component.
@@ -56,7 +59,8 @@ Wire authoring submits endpoint identities and a path. It no longer needs to
 assign terminal membership or merge Base Nets before that path can be drawn.
 `set_route_path` and `route_orthogonal` validate geometry while staging; their
 `netId` is an identity hint, not an electrical connection. Committed Routes
-still carry the resolved Base-Net ID for existing readers and file formats.
+still carry the resolved Base-Net ID for runtime readers; portable serialization
+uses the connection-source contract instead.
 
 After the transaction's geometry and endpoint-follow edits are complete, the
 Edit Engine builds one transient connection graph from the surviving Routes
@@ -79,8 +83,9 @@ membership. `cut_connection` deliberately releases that Net's unrouted intent;
 Agent `connect_endpoints`/`merge_nets` remain logical authoring operations.
 Labels, power markers and Cell interfaces retain their separate logical role.
 
-This is an edit-commit boundary, not a passive read repair or a new persisted
-format. It does not remove legacy membership fields or rewrite Gallery files.
+This is an edit-commit boundary, not a passive read repair. File representation
+and compatibility belong to the Project protocol; an edit does not bulk-rewrite
+stored Gallery files.
 Undo restores the whole committed document, including the derived membership.
 
 ## Authoring rules
@@ -89,7 +94,9 @@ Undo restores the whole committed document, including the derived membership.
   joins real Net membership through one atomic Edit Engine transaction.
 - Every terminal resolves through one `EndpointConnection`. Exact artwork
   contact and outward escape are derived presentation geometry; the Wire
-  compiler persists only grid landings and ordinary grid bends. An offset
+  compiler persists only electrical-lattice landings and bends. The ordinary
+  placement and free-draw snap remains on the Document's coarser grid; dense
+  authored pins may land on its common 2-unit subgrid. An offset
   MOS B anchor therefore uses the same Route transaction as every other pin;
   `bulk-dashed` changes only presentation.
 - Exact visible endpoint coincidence is a zero-length physical contact. When a
@@ -190,10 +197,15 @@ Undo restores the whole committed document, including the derived membership.
   Release strictly validates and commits that same plan against its source
   revision. Rejection or cancellation restores the original preview. A successful
   move and its contacts form one undo operation.
-- `C` clones the selected internal electrical subgraph. Ordinary boundary
-  Routes and terminal membership are not copied, so copied boundary pins are
-  open. A selected Cell Pin, supply marker, or Net-label owner retains its own
-  naming evidence and rejoins a Logical Net only through `name + scope`.
+- `C`, and `Ctrl/Cmd+C` followed by `V` or `Ctrl/Cmd+V`, are one copy: both
+  clone the selected internal electrical subgraph and place it the same way,
+  in this tab or another one. Ordinary boundary Routes and terminal membership
+  are not copied, so copied boundary pins are open. A selected Cell Pin,
+  supply marker, or Net-label owner retains its own naming evidence and
+  rejoins a Logical Net only through `name + scope`; a name owned by an
+  unselected label, Pin or marker, a Bulk override or a No Connect never
+  travels, so the copy lands as if newly inserted. A whole Cell leaves nothing
+  outside it: its Net names, No Connects and testbench travel with it.
   Imported `net-name-hint` and `spice-source` provenance may travel with a
   copied Base Net but never rejoins it by source spelling or source identity.
   Implicit MOS bulk binding remains the explicit Cell-policy exception.
@@ -239,7 +251,12 @@ Starting a `bulk-dashed` route from B treats a configured default membership as
 unowned; committing clears the binding before connecting the explicit Net.
 Deleting the explicit route may reconcile only an explicitly configured cell
 default. Source-bound/imported MOS instances keep their fourth-node evidence;
-when absent, the same missing-terminal rule applies. `supply-default` is a resolution status derived on
+when absent, the same missing-terminal rule applies. If ordinary route editing
+splits an imported B-only fragment from the configured default, the edit
+restores B to that default only when both Base Nets retain the same source Net
+evidence and the fragment has no authored Route, Junction, name claim, or Cell
+terminal. The imported B remains explicit source membership, not a new policy
+binding. `supply-default` is a resolution status derived on
 read, not authored state: nothing writes a new `supply-default` binding, and
 persisted ones from an earlier release stay readable compatibility data —
 which is why a body carrying one is never read as residue. Cross-Document composition materializes an effective source
@@ -344,19 +361,25 @@ result/navigation behavior; checks do not veto Save.
 
 ## Imported routing guidance
 
-SPICE import creates electrical membership before drawing and persists one
-`spice-source` provenance record per imported Base Net. Source provenance is
-not an electrical equivalence rule. When a cut partitions that Base Net, every
-surviving component retains the same source identity while remaining a
-separate electrical Base Net. `deriveRoutingGuidance` is a pure,
-device-neutral minimum-spanning tree over current visible components grouped
-by source identity: it does not read MOS/Bulk semantics, labels, or editor
-state. Symbol pin visibility, implicit terminals, and named-global-Net
-exemptions are adapter policy before this calculation.
+SPICE import creates electrical membership before drawing, archives the input,
+and freezes the original terminal groups in `importReference`. Mutable
+`spice-source` provenance remains lineage only. Merge/split can copy that lineage
+but cannot change reference membership. `deriveRoutingGuidance` remains a pure
+minimum-spanning tree; its adapter now supplies only each frozen group's mapped
+endpoints, never all terminals of their current Base Nets.
+
+Electrical comparison and drawing coverage are independent. Routes, contacts and
+current authoritative name owners can express a connection; unrouted membership
+alone cannot hide every guide immediately after import. Same-name Ports/Labels
+need no extra wire. Different child Ports may share one parent Net without losing
+their interface identities or changing another occurrence. Reference comparison
+is explicitly Cell-definition scoped, not a flattened occurrence verifier.
+Open/short/missing/unplaced reference findings are non-blocking routing observations
+in Issues. Source provenance never exempts a current singleton from ERC.
 
 A guide is transient presentation, never a Route, Junction, or electrical
 contact. A guide click starts the ordinary Wire interaction. Label, geometry,
-or transform edits cannot dismiss guidance; the current graph simply yields a
+or transform edits cannot rewrite reference membership; the current graph yields a
 new result. `remove_route_geometry` retains Net membership and therefore
 re-exposes unresolved imported components. A normal connection cut splits all
 physical components, including imported and global Base Nets; only the primary
@@ -364,10 +387,15 @@ component retains an unowned imported name projection, while owner-addressed
 markers follow their surviving component and source provenance is copied to
 every component. The editor may show
 focused, all, or hidden imported guides; each guide carries the actual Base
-Net at both endpoints, so clicking it uses the ordinary Wire merge path. Net
+Net at both endpoints (null for unbound terminals), so clicking it rechecks current
+ownership and uses the ordinary Wire path. Net
 highlight suppresses guides incident to the highlighted Net. Unplaced
 endpoints remain in the Placement Tray and do not receive invented page
 coordinates.
+
+Legacy imports without a frozen reference display an unavailable observation,
+not speculative flightlines. Hiding guidance does not change connectivity or
+export. Cut's existing whole-Net release of old unrouted intent remains unchanged.
 
 ## Net naming and lifecycle
 
@@ -382,6 +410,16 @@ Equal-folded local and global claims on an already-connected group derive an
 effective global scope without rewriting either owner. Disconnected
 local/global claims remain separate; different-name scope combinations and
 incompatible power claims remain explicit errors.
+
+A Net Label attached to a formal Cell Pin must have that Pin's name (case is
+insensitive). A different label name is a Logical-Net name conflict, including
+when its name would bridge to another Base Net. New edits that introduce the
+conflict reject atomically; existing imported conflicts remain visible in ERC
+and block formal netlist export. A cut partitions Base Nets and retargets each
+owner to its surviving component, then re-derives Logical Nets: same-name
+Pins/Labels on opposite sides remain electrically joined by name, while an
+unnamed detached side does not. Different formal Pin names on one physical Net
+retain their separate interface identities.
 
 The strict `connect_endpoints` primitive does not implicitly merge two Base
 Nets. The authoring planner explicitly emits `merge_nets` first. If their
@@ -415,8 +453,12 @@ provide local-name isolation across Documents.
 - Multiple same-name Ports, supply markers and power rails are legal. `VDD`,
   `AVDD`, and `DVDD` are distinct names; `powerDomain: vdd` is a role, not a
   singleton object or reserved Net ID.
-- MOS bulk defaults are explicit Cell policy and do not imply a globally
-  unique VDD. Deleting the last marker or owner cannot leave a ghost Net that
+- MOS bulk defaults are Cell policy and do not imply a globally unique VDD.
+  SPICE import sets each polarity's Cell default when every imported MOS of
+  that polarity has its B terminal on the same Net, regardless of the Net's
+  name. Later MOSes in that Cell use that same default. A polarity with mixed
+  B Nets gets no inferred default; imported B membership stays intact.
+  Deleting the last marker or owner cannot leave a ghost Net that
   blocks later reuse of the same visible name or designator.
 
 ## Derived read models

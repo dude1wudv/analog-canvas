@@ -5,10 +5,13 @@ import {
   isMosBulkRoute,
   isMosBulkTerminal,
   isVisibleEndpoint,
+  mosBulkKind,
   pointOnSegment,
+  resolveDocumentLogicalNets,
   resolveEndpointConnection,
   resolveRouteGeometry,
   segmentLength,
+  supplyDefaultMosBulkNet,
   type EndpointConnection,
   type EndpointRoutingGeometry,
 } from "@icm/derived";
@@ -37,6 +40,7 @@ import type {
 } from "@icm/model";
 import {
   createRoutePath,
+  electricalConnectionGrid,
   routeBends,
   routeEnd,
   routeEndpoints,
@@ -53,6 +57,7 @@ import { routeHasExternalOwner } from "./direct-contact-route-normalization.js";
 import { rebuildRoutePath } from "./route-leg-mutation.js";
 import { planPowerRailPinContacts } from "./power-rail-contact-planner.js";
 import type { ExpectedElectricalEffect } from "./routing-operation-plan.js";
+import { resolveWireIntentTarget } from "./wire-intent-target.js";
 
 export interface WireEndpointGeometry {
   connection: EndpointRoutingGeometry;
@@ -272,6 +277,13 @@ export function proposeEndpointsRouteAttachment(
 }
 
 export type WireIntentAnchor =
+  | {
+      kind: "wire-at";
+      point: Point;
+      net?: string | undefined;
+      member?: { instanceId: string; pinName: string } | undefined;
+    }
+  | { kind: "net"; net: string }
   | { kind: "endpoint"; endpoint: RouteEndpoint }
   | {
       kind: "route-segment";
@@ -1399,6 +1411,45 @@ export function proposeVisualRouteDeletion(
         .map((endpoint) => endpoint.instanceId),
     ),
   ].sort((a, b) => a.localeCompare(b, "en"));
+  const logicalNets = disconnectedBulkInstances.length
+    ? resolveDocumentLogicalNets(document)
+    : null;
+  const supplyRestoreEndpoint = new Map<string, RouteEndpoint>();
+  for (const instanceId of disconnectedBulkInstances) {
+    const instance = document.instances.find((item) => item.id === instanceId);
+    const kind = instance && mosBulkKind(instance);
+    if (!kind || !logicalNets) continue;
+    const configuredId =
+      kind === "nmos"
+        ? document.mosBulkDefaults?.nmosNetId
+        : document.mosBulkDefaults?.pmosNetId;
+    if (configuredId) continue; // The Cell-default reconciler owns this case.
+    const supply = supplyDefaultMosBulkNet(document, kind, logicalNets);
+    if (!supply) continue;
+    const supplyNetIds = new Set(
+      logicalNets.byBaseNetId.get(supply.id)?.baseNetIds ?? [supply.id],
+    );
+    const peer = document.nets
+      .filter((net) => supplyNetIds.has(net.id))
+      .flatMap((net) => net.terminals)
+      .find(
+        (terminal) =>
+          !instanceIdsScheduledForDeletion.has(terminal.instanceId) &&
+          !isMosBulkTerminal(document, { kind: "terminal", ...terminal }),
+      );
+    if (peer) {
+      supplyRestoreEndpoint.set(instanceId, { kind: "terminal", ...peer });
+      continue;
+    }
+    const junction = document.junctions.find(
+      (item) => supplyNetIds.has(item.netId) && !junctionsToRemove.has(item.id),
+    );
+    if (junction)
+      supplyRestoreEndpoint.set(instanceId, {
+        kind: "junction",
+        junctionId: junction.id,
+      });
+  }
   return {
     routeIds: sortedRouteIds,
     junctionIds: sortedJunctionIds,
@@ -1420,13 +1471,21 @@ export function proposeVisualRouteDeletion(
         kind: "remove_junction",
         junctionId,
       })),
-      ...disconnectedBulkInstances.flatMap((instanceId): SchematicEdit[] => [
-        {
-          kind: "disconnect_endpoint",
-          endpoint: { kind: "terminal", instanceId, pinName: "B" },
-        },
-        { kind: "reconcile_mos_bulk", instanceIds: [instanceId] },
-      ]),
+      ...disconnectedBulkInstances.flatMap((instanceId): SchematicEdit[] => {
+        const bulk: RouteEndpoint = {
+          kind: "terminal",
+          instanceId,
+          pinName: "B",
+        };
+        const supply = supplyRestoreEndpoint.get(instanceId);
+        return [
+          { kind: "disconnect_endpoint", endpoint: bulk },
+          ...(supply
+            ? [{ kind: "connect_endpoints" as const, from: bulk, to: supply }]
+            : []),
+          { kind: "reconcile_mos_bulk", instanceIds: [instanceId] },
+        ];
+      }),
     ],
   };
 }
@@ -1965,6 +2024,7 @@ export function createRouteWireAnchor(
         firstRouteId: string;
         secondRouteId: string;
       },
+  resolver?: SymbolResolver,
 ): WireSource {
   const ids =
     typeof suffixOrIds === "number"
@@ -1975,9 +2035,26 @@ export function createRouteWireAnchor(
         }
       : suffixOrIds;
   const junctionId = ids.junctionId;
+  // Preserve a fine-grid tap only when the conductor itself has a fine-grid
+  // endpoint. A normal conductor tapped at x=196 must still land at x=200.
+  const fineGrid = electricalConnectionGrid(grid);
+  const segment = resolver
+    ? resolveRouteGeometry(document, resolver, route)?.segments[segmentIndex]
+    : undefined;
+  const segmentUsesFineGrid =
+    segment &&
+    [segment.from, segment.to].some(
+      (end) => end.x % grid !== 0 || end.y % grid !== 0,
+    );
+  const tapIsFine =
+    segmentUsesFineGrid &&
+    (point.x % grid !== 0 || point.y % grid !== 0) &&
+    point.x % fineGrid === 0 &&
+    point.y % fineGrid === 0;
+  const pitch = tapIsFine ? fineGrid : grid;
   const splitPoint = {
-    x: Math.round(point.x / grid) * grid,
-    y: Math.round(point.y / grid) * grid,
+    x: Math.round(point.x / pitch) * pitch,
+    y: Math.round(point.y / pitch) * pitch,
   };
   return {
     endpoint: { kind: "junction", junctionId },
@@ -2059,6 +2136,22 @@ export function proposeWireIntent(
   resolver: SymbolResolver,
   intent: WireIntent,
 ): WireCommitProposal | string {
+  if (
+    [intent.from, intent.to].some(
+      (anchor) => anchor.kind === "wire-at" || anchor.kind === "net",
+    )
+  ) {
+    const from = resolveWireIntentTarget(
+      document,
+      resolver,
+      intent.from,
+      intent.to,
+    );
+    if (typeof from === "string") return from;
+    const to = resolveWireIntentTarget(document, resolver, intent.to, from);
+    if (typeof to === "string") return to;
+    return proposeWireIntent(document, resolver, { ...intent, from, to });
+  }
   const routeFor = (
     anchor: Extract<WireIntentAnchor, { kind: "route-segment" }>,
   ) => document.routes.find((route) => route.id === anchor.routeId);
@@ -2077,6 +2170,7 @@ export function proposeWireIntent(
     anchor: WireIntentAnchor,
     side: "from" | "to",
   ): WireSource | string => {
+    if (anchor.kind === "net") return "Unresolved Net target";
     if (anchor.kind === "endpoint") {
       return endpointWireSource(document, resolver, anchor.endpoint);
     }
@@ -2099,6 +2193,7 @@ export function proposeWireIntent(
           firstRouteId: `${route.id}-a-${intent.id}-${side}`,
           secondRouteId: `${route.id}-b-${intent.id}-${side}`,
         },
+        resolver,
       );
     }
     const netId = existingNetId ?? newNetId;

@@ -1,10 +1,20 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
+import {
+  deriveImportedRoutingGuidance,
+  mosBulkShouldBeVisible,
+} from "@icm/derived";
 import { createEmptyDocument } from "@icm/model";
+import { importSpiceSources } from "@icm/spice";
+import { builtInSymbols, InMemorySymbolResolver } from "@icm/symbols";
 
 import {
   defaultDocumentSettingsCode,
   documentSettingsCodeValue,
+  mosBulkDefaultNetIdFromCode,
   parseDocumentSettingsCode,
   serializeDocumentSettingsCode,
   type CanvasPreferenceCodeValue,
@@ -31,7 +41,14 @@ function editableValue(): DocumentSettingsCodeValue {
       annotationStrokeScale: 1,
       junctionRadiusScale: 1,
     },
-    bulkDefaults: { nmosNet: null, pmosNet: null },
+    bulkDefaults: { nmos: "VSS", pmos: "VDD" },
+    labels: {
+      first_letter_italic: true,
+      subscript_after_first: false,
+      subscript_case: "preserve",
+      subscript_italic: false,
+      underscore_subscript: true,
+    },
     canvas: { ...canvas },
   };
 }
@@ -60,12 +77,152 @@ describe("document Style code", () => {
     );
   });
 
+  it("shows VSS and VDD while resolving them to the Cell's real supply Nets", () => {
+    const document = createEmptyDocument("document-main", "Main");
+    document.nets.push(
+      { id: "net-vss", terminals: [] },
+      { id: "net-vdd", terminals: [] },
+    );
+    document.connectivityEvidence.push(
+      {
+        id: "vss-claim",
+        kind: "name-claim",
+        netId: "net-vss",
+        owner: { kind: "power-marker", objectId: "GND1" },
+        name: "0",
+        scope: "global",
+        powerDomain: "ground",
+      },
+      {
+        id: "vdd-claim",
+        kind: "name-claim",
+        netId: "net-vdd",
+        owner: { kind: "power-marker", objectId: "VDD1" },
+        name: "VDD",
+        scope: "global",
+        powerDomain: "vdd",
+      },
+    );
+
+    expect(documentSettingsCodeValue(document, canvas).bulkDefaults).toEqual({
+      nmos: "VSS",
+      pmos: "VDD",
+    });
+    expect(mosBulkDefaultNetIdFromCode(document, "nmos", "VSS")).toBe(
+      "net-vss",
+    );
+    expect(mosBulkDefaultNetIdFromCode(document, "pmos", "VDD")).toBe(
+      "net-vdd",
+    );
+  });
+
+  it("normalizes label field order without inventing a label edit", () => {
+    const document = createEmptyDocument("document-main", "Main");
+    const baseline = documentSettingsCodeValue(document, canvas);
+    const reordered = {
+      ...baseline,
+      labels: Object.fromEntries(Object.entries(baseline.labels).reverse()),
+    };
+    const parsed = parseDocumentSettingsCode(
+      JSON.stringify(reordered),
+      document,
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(serializeDocumentSettingsCode(parsed.value)).toBe(
+      serializeDocumentSettingsCode(baseline),
+    );
+  });
+
+  it("resolves the displayed VSS/VDD defaults to unique imported Cell Ports", () => {
+    const document = createEmptyDocument("ota", "OTA");
+    document.instances.push(
+      { id: "PORT_VSS", symbolId: "port", placement: null },
+      { id: "PORT_VDD", symbolId: "port", placement: null },
+    );
+    document.nets.push(
+      {
+        id: "net-vss",
+        terminals: [{ instanceId: "PORT_VSS", pinName: "P" }],
+      },
+      {
+        id: "net-vdd",
+        terminals: [{ instanceId: "PORT_VDD", pinName: "P" }],
+      },
+    );
+    document.netlist = {
+      name: "ota",
+      formalParameters: [],
+      terminals: [
+        {
+          id: "vss",
+          name: "vss",
+          netId: "net-vss",
+          direction: "passive",
+          interfaceInstanceIds: ["PORT_VSS"],
+        },
+        {
+          id: "vdd",
+          name: "VDD",
+          netId: "net-vdd",
+          direction: "passive",
+          interfaceInstanceIds: ["PORT_VDD"],
+        },
+      ],
+    };
+
+    expect(documentSettingsCodeValue(document, canvas).bulkDefaults).toEqual({
+      nmos: "VSS",
+      pmos: "VDD",
+    });
+    expect(mosBulkDefaultNetIdFromCode(document, "nmos", "VSS")).toBe(
+      "net-vss",
+    );
+    expect(mosBulkDefaultNetIdFromCode(document, "pmos", "VDD")).toBe(
+      "net-vdd",
+    );
+  });
+
+  it("recognizes the repository OTA's imported formal supplies as implicit MOS body defaults", async () => {
+    const path = "netlists/sky130-ota-5t-gain40-pm60-noise50uv-pvt/circuit.spi";
+    const input = readFileSync(resolve(process.cwd(), path));
+    const imported = await importSpiceSources([{ path, bytes: input }], path);
+    expect(imported.successful, JSON.stringify(imported.diagnostics)).toBe(
+      true,
+    );
+    const document = imported.project?.documents.find(
+      (candidate) => candidate.netlist?.name === "ota_5t",
+    );
+    expect(document).toBeDefined();
+    if (!document) return;
+    expect(mosBulkDefaultNetIdFromCode(document, "nmos", "VSS")).toBeDefined();
+    expect(mosBulkDefaultNetIdFromCode(document, "pmos", "VDD")).toBeDefined();
+    const mosInstances = document.instances.filter((instance) =>
+      instance.reference?.startsWith("XM"),
+    );
+    expect(mosInstances).toHaveLength(6);
+    for (const instance of mosInstances)
+      expect(mosBulkShouldBeVisible(document, instance)).toBe(false);
+    const guides = deriveImportedRoutingGuidance(
+      document,
+      new InMemorySymbolResolver(builtInSymbols),
+    );
+    expect(
+      guides.filter((guide) =>
+        [guide.from, guide.to].some(
+          (endpoint) =>
+            endpoint.kind === "terminal" && endpoint.pinName === "B",
+        ),
+      ),
+    ).toEqual([]);
+  });
+
   it("accepts supported values and a Net id present in the Cell", () => {
     const document = createEmptyDocument("document-main", "Main");
     document.nets.push({ id: "net-ground", terminals: [] });
     const value = editableValue();
     value.appearance.fontScale = 1.5;
-    value.bulkDefaults.nmosNet = "net-ground";
+    value.bulkDefaults.nmos = "net-ground";
     value.canvas = {
       showGrid: false,
       annotationGrid: 1,
@@ -84,6 +241,12 @@ describe("document Style code", () => {
     ["canvas.annotationGrid", 2, "must be 1, 5, or 10"],
     ["canvas.drawAngle", "diagonal", 'must be "free", "45", or "orthogonal"'],
     ["canvas.scrollBehavior", "smooth", 'must be "auto", "zoom", or "pan"'],
+    ["labels.subscript_case", "titlecase", "preserve"],
+    ["labels.subscript_italic", "false", "must be true or false"],
+    ["labels.subscript_italic", 0, "must be true or false"],
+    ["labels.underscore_subscript", "true", "must be true or false"],
+    ["labels.subscript_after_first", 1, "must be true or false"],
+    ["labels.first_letter_italic", null, "must be true or false"],
   ])("rejects an unsupported %s value", (path, invalid, message) => {
     const document = createEmptyDocument("document-main", "Main");
     const value = editableValue() as unknown as Record<string, any>;
@@ -103,18 +266,17 @@ describe("document Style code", () => {
       parseDocumentSettingsCode(JSON.stringify(unknown), document),
     ).toEqual({
       ok: false,
-      message: "style.extra is not supported",
+      message: "properties.extra is not supported",
     });
 
     const missingNet = editableValue();
-    missingNet.bulkDefaults.pmosNet = "net-missing";
+    missingNet.bulkDefaults.pmos = "net-missing";
     const parsed = parseDocumentSettingsCode(
       JSON.stringify(missingNet),
       document,
     );
     expect(parsed.ok).toBe(false);
-    if (!parsed.ok)
-      expect(parsed.message).toContain("does not name a Net in this Cell");
+    if (!parsed.ok) expect(parsed.message).toContain("VDD or name a Net");
   });
 
   it("resets appearance while preserving bulk and canvas choices", () => {
@@ -133,7 +295,7 @@ describe("document Style code", () => {
       JSON.parse(defaultDocumentSettingsCode(document, changedCanvas)),
     ).toEqual({
       ...editableValue(),
-      bulkDefaults: { nmosNet: "net-ground", pmosNet: null },
+      bulkDefaults: { nmos: "net-ground", pmos: "VDD" },
       canvas: changedCanvas,
     });
   });
@@ -144,30 +306,100 @@ describe("document Style code", () => {
     const source = serializeDocumentSettingsCode(editableValue());
     const spans = documentSettingsCodeSpans(source, document);
 
-    expect(spans).toHaveLength(11);
+    expect(spans).toHaveLength(16);
     expect(
       spans.find((span) => span.field.path === "appearance.fontScale")?.field
         .options,
-    ).toContainEqual({ value: 1, label: "Default · 1×" });
+    ).toContainEqual(
+      expect.objectContaining({
+        value: 1,
+        label: "Default · 1×",
+        preview: { kind: "scale", target: "font", factor: 1 },
+      }),
+    );
     expect(
-      spans.find((span) => span.field.path === "bulkDefaults.nmosNet")?.field
+      spans.find((span) => span.field.path === "bulkDefaults.nmos")?.field,
+    ).toMatchObject({
+      label: "NMOS",
+      help: "NMOS bulk defaults to VSS",
+    });
+    expect(
+      spans.find((span) => span.field.path === "bulkDefaults.nmos")?.field
         .options,
     ).toEqual([
-      { value: null, label: "None" },
-      { value: "net-ground", label: "net-ground" },
+      {
+        value: "VSS",
+        label: "VSS",
+        preview: { kind: "bulk", device: "NMOS", rail: "VSS" },
+      },
+      {
+        value: "net-ground",
+        label: "net-ground",
+        preview: { kind: "bulk", device: "NMOS", rail: "VSS" },
+      },
     ]);
+    expect(
+      spans.find((span) => span.field.path === "bulkDefaults.pmos")?.field,
+    ).toMatchObject({
+      label: "PMOS",
+      help: "PMOS bulk defaults to VDD",
+    });
+    expect(
+      spans.find((span) => span.field.path === "labels.subscript_case")?.field
+        .options,
+    ).toEqual([
+      expect.objectContaining({
+        value: "preserve",
+        label: "Preserve typed case",
+        preview: expect.objectContaining({ kind: "label", suffix: "inP" }),
+      }),
+      expect.objectContaining({
+        value: "uppercase",
+        label: "Make suffix uppercase",
+        preview: expect.objectContaining({ kind: "label", suffix: "INP" }),
+      }),
+      expect.objectContaining({
+        value: "lowercase",
+        label: "Make suffix lowercase",
+        preview: expect.objectContaining({ kind: "label", suffix: "inp" }),
+      }),
+    ]);
+    expect(
+      spans.every((span) =>
+        span.field.options?.every((option) => option.preview !== undefined),
+      ),
+    ).toBe(true);
+    expect(
+      spans
+        .filter((span) => span.field.path.startsWith("labels."))
+        .map((span) => span.field.path),
+    ).toEqual([
+      "labels.first_letter_italic",
+      "labels.subscript_after_first",
+      "labels.subscript_case",
+      "labels.subscript_italic",
+      "labels.underscore_subscript",
+    ]);
+    expect(
+      spans
+        .filter((span) => span.field.path.startsWith("labels."))
+        .every((span) => span.field.description === ""),
+    ).toBe(true);
 
     const changed = applyChanges(
       source,
       documentSettingsCodeChanges(source, document, {
         "appearance.fontScale": 1.5,
-        "bulkDefaults.nmosNet": "net-ground",
+        "bulkDefaults.nmos": "net-ground",
+        "labels.subscript_case": "lowercase",
+        "labels.subscript_italic": false,
         "canvas.showGrid": false,
       }),
     );
     expect(JSON.parse(changed)).toMatchObject({
       appearance: { fontScale: 1.5 },
-      bulkDefaults: { nmosNet: "net-ground" },
+      bulkDefaults: { nmos: "net-ground" },
+      labels: { subscript_case: "lowercase", subscript_italic: false },
       canvas: { showGrid: false },
     });
   });
@@ -182,7 +414,7 @@ describe("document Style code", () => {
     ).toEqual([]);
     expect(
       documentSettingsCodeChanges(source, document, {
-        "bulkDefaults.nmosNet": "missing-net",
+        "bulkDefaults.nmos": "missing-net",
       }),
     ).toEqual([]);
     expect(

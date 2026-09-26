@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
-import { deferFocus } from "../../interaction/deferred-focus";
-import type { MutableRefObject } from "react";
 
 export const LIBRARY_WIDTH_MIN = 180;
-export const LIBRARY_WIDTH_MAX = 520;
+// Leave room for an expanded Gallery: one tag column and at least three cards.
+export const LIBRARY_WIDTH_MAX = 960;
 export const LIBRARY_WIDTH_DEFAULT = 248;
 
 export function clampLibraryWidth(width: number): number {
@@ -17,15 +16,15 @@ export function clampLibraryWidth(width: number): number {
 export interface UseEditorPanelsOptions {
   initialCompact: boolean;
   compactMediaQuery: string;
+  forceInitialLibraryOpen?: boolean;
   libraryStorageKey: string;
   libraryWidthStorageKey: string;
-  helpButtonRef: MutableRefObject<HTMLButtonElement | null>;
-  helpCloseRef: MutableRefObject<HTMLButtonElement | null>;
 }
 
 /** Flat owner of responsive shell-panel state and Library persistence. */
 export function useEditorPanels(options: UseEditorPanelsOptions) {
   const [libraryPanelOpen, setLibraryPanelOpen] = useState(() => {
+    if (options.forceInitialLibraryOpen) return true;
     if (typeof window === "undefined") return true;
     try {
       return window.localStorage.getItem(options.libraryStorageKey) !== "false";
@@ -52,7 +51,6 @@ export function useEditorPanels(options: UseEditorPanelsOptions) {
     "library",
   );
   const [selectionOpen, setSelectionOpen] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [agentPanelOpen, setAgentPanelOpen] = useState(false);
@@ -75,10 +73,6 @@ export function useEditorPanels(options: UseEditorPanelsOptions) {
     mediaQuery.addEventListener("change", updateCompactLayout);
     return () => mediaQuery.removeEventListener("change", updateCompactLayout);
   }, [options.compactMediaQuery]);
-
-  useEffect(() => {
-    if (helpOpen) options.helpCloseRef.current?.focus();
-  }, [helpOpen]);
 
   const persistLibraryOpen = (open: boolean): void => {
     try {
@@ -150,11 +144,6 @@ export function useEditorPanels(options: UseEditorPanelsOptions) {
     });
   };
 
-  const closeHelp = (): void => {
-    setHelpOpen(false);
-    deferFocus(() => options.helpButtonRef.current);
-  };
-
   const closeSearch = (): void => {
     setSearchOpen(false);
     setSearchQuery("");
@@ -164,11 +153,9 @@ export function useEditorPanels(options: UseEditorPanelsOptions) {
     agentDetailsOpen,
     agentPanelOpen,
     agentStatusDismissed,
-    closeHelp,
     closeSearch,
     compactLayout,
     compactLibraryPanelOpen,
-    helpOpen,
     leftPanelMode,
     libraryPanelOpen,
     libraryWidth,
@@ -180,7 +167,6 @@ export function useEditorPanels(options: UseEditorPanelsOptions) {
     setAgentStatusDismissed,
     setCompactLayout,
     setCompactLibraryPanelOpen,
-    setHelpOpen,
     setLeftPanelMode,
     setLibraryPanelOpen,
     setLibraryWidth,

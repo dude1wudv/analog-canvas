@@ -1,4 +1,4 @@
-/** Schema 60: editable geometry and explicit connections are the source. */
+/** Schema 63: immutable import reference and archived input content. */
 import { createProjectSymbolResolver } from "@icm/symbols";
 import type { CircuitProject } from "@icm/model";
 import { ProjectFormatError } from "./diagnostics.js";
@@ -15,7 +15,7 @@ import {
   materializeSourceConnectivity,
   type SourceConnectivity,
 } from "./source-connectivity.js";
-export const CURRENT_PROJECT_FILE_VERSION = 60;
+export const CURRENT_PROJECT_FILE_VERSION = 63;
 type Value = Record<string, any>;
 
 export function encodeProjectFile(project: CircuitProject): Value {
@@ -56,7 +56,10 @@ export function decodeProjectFile(raw: Value): Value {
         junction.netId = "pending-network";
       }
     }
-    const decoded = decodeOwned(owned) as unknown as CircuitProject;
+    const decoded = decodeOwned(owned, {
+      allowParameterShowValue: raw.schemaVersion >= 61,
+      allowFormulaFormat: raw.schemaVersion >= 62,
+    }) as unknown as CircuitProject;
     const resolver = createProjectSymbolResolver(decoded, []);
     decoded.documents.forEach((document, index) =>
       materializeSourceConnectivity(document, sources[index]!, resolver),

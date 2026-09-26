@@ -15,7 +15,7 @@ import { sha256 } from "@icm/simulation-service/files";
 import { readSimulationArtifact } from "./simulation-artifact-files";
 
 export const SIMULATION_ARCHIVE_VERSION = 1 as const;
-export const MAX_SIMULATION_ARCHIVE_BYTES = 32 * 1024 * 1024;
+export const MAX_SIMULATION_ARCHIVE_BYTES = 512 * 1024 * 1024;
 
 export interface SimulationArchivePresentation {
   readonly origin?: "agent" | "human";
@@ -28,11 +28,15 @@ export interface SimulationArchivePresentation {
 
 interface ArchivedArtifact {
   readonly originalId: string;
+  readonly fileId?: string | undefined;
   readonly name: string;
   readonly mediaType: string;
   readonly byteLength: number;
   readonly sha256: string;
   readonly text: string;
+  readonly role?: ArtifactRef["role"];
+  readonly sourcePath?: string | undefined;
+  readonly analysisIndex?: number | undefined;
 }
 
 type ArchivedPrepared = Omit<Prepared, "artifacts"> & {
@@ -51,6 +55,8 @@ export interface SimulationRunArchiveV1 {
   readonly id: string;
   readonly projectId: string;
   readonly createdAt: string;
+  /** Missing on legacy archives: conservatively treated as saved. */
+  readonly retention?: "cache" | "saved";
   readonly presentation: SimulationArchivePresentation;
   readonly prepared: ArchivedPrepared;
   readonly run: ArchivedRun;
@@ -67,6 +73,8 @@ export interface SimulationRunArchiveSummary {
   readonly folderName: string;
   readonly analysisLabel: string;
   readonly createdAt: string;
+  readonly runId?: string;
+  readonly retention?: "cache" | "saved";
   readonly byteLength: number;
   readonly environment: Prepared["environment"];
 }
@@ -112,7 +120,7 @@ export async function captureSimulationRunArchive(
     if (byteLength > MAX_SIMULATION_ARCHIVE_BYTES)
       return archiveProblem(
         "SIMULATION_ARCHIVE_TOO_LARGE",
-        "This run exceeds the 32 MiB local archive limit; export its ZIP instead",
+        "This run exceeds the 512 MiB local archive limit; export its ZIP instead",
       );
     artifacts.push({ ...artifact, originalId: artifact.id, text });
   }
@@ -169,7 +177,19 @@ function parseJsonArtifact<T>(
   name: string,
   parse: (value: unknown) => T,
 ): T | undefined {
-  const artifact = artifacts.find((candidate) => candidate.name === name);
+  const role =
+    name === "result.json"
+      ? "result"
+      : name === "specs.json"
+        ? "specs"
+        : undefined;
+  const artifact =
+    artifacts.find(
+      (candidate) => candidate.name === name && candidate.role === role,
+    ) ??
+    artifacts.find(
+      (candidate) => candidate.name === name && candidate.role === undefined,
+    );
   if (!artifact) return undefined;
   try {
     return parse(JSON.parse(artifact.text));
@@ -182,6 +202,21 @@ export async function restoreSimulationRunArchive(
   files: SimulationFiles,
   archive: SimulationRunArchiveV1,
 ): Promise<ArchiveResult<{ prepared: Prepared; run: Run }>> {
+  const available = new Set(
+    archive.artifacts.map((artifact) => artifact.originalId),
+  );
+  if (
+    archive.prepared.artifactIds.some((id) => !available.has(id)) ||
+    archive.run.catalog?.datasets.some((dataset) =>
+      dataset.representations.some(
+        (representation) => !available.has(representation.artifactId),
+      ),
+    )
+  )
+    return archiveProblem(
+      "SIMULATION_ARCHIVE_REFERENCE_MISSING",
+      "The archive directory references missing evidence; no files were restored",
+    );
   const refs = new Map<string, ArtifactRef>();
   for (const artifact of archive.artifacts) {
     if ((await sha256(artifact.text)) !== artifact.sha256)
@@ -192,9 +227,31 @@ export async function restoreSimulationRunArchive(
     try {
       refs.set(
         artifact.originalId,
-        await files.put(artifact.name, artifact.mediaType, artifact.text),
+        await files.put(artifact.name, artifact.mediaType, artifact.text, {
+          fileId: artifact.fileId ?? artifact.originalId,
+          ...(artifact.role ? { role: artifact.role } : {}),
+          ...(artifact.sourcePath !== undefined
+            ? { sourcePath: artifact.sourcePath }
+            : {}),
+          ...(artifact.analysisIndex !== undefined
+            ? { analysisIndex: artifact.analysisIndex }
+            : {}),
+        }),
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.message === "ARTIFACT_ID_CONFLICT")
+        return archiveProblem(
+          "SIMULATION_ARCHIVE_ID_CONFLICT",
+          "An existing immutable file has the same identity but different content or metadata",
+        );
+      if (
+        error instanceof Error &&
+        error.message === "ARTIFACT_STORAGE_UNAVAILABLE"
+      )
+        return archiveProblem(
+          "SIMULATION_ARCHIVE_STORAGE_UNAVAILABLE",
+          "The browser could not store restored evidence",
+        );
       return archiveProblem(
         "SIMULATION_ARCHIVE_RESTORE_CAPACITY",
         "The archived result is too large for the current Simulation session",
@@ -239,6 +296,23 @@ export async function restoreSimulationRunArchive(
         }),
         run: RunSchema.parse({
           ...structuredClone(archive.run),
+          ...(archive.run.catalog
+            ? {
+                catalog: {
+                  ...structuredClone(archive.run.catalog),
+                  files: runArtifacts,
+                  datasets: archive.run.catalog.datasets.map((dataset) => ({
+                    ...dataset,
+                    representations: dataset.representations.map(
+                      (representation) => ({
+                        ...representation,
+                        artifactId: refs.get(representation.artifactId)!.id,
+                      }),
+                    ),
+                  })),
+                },
+              }
+            : {}),
           artifacts: runArtifacts,
           inputStatus: "unavailable",
           ...(result ? { result } : {}),
@@ -264,6 +338,8 @@ export function summarizeSimulationRunArchive(
     folderName: archive.presentation.folderName,
     analysisLabel: archive.presentation.analysisLabel,
     createdAt: archive.createdAt,
+    runId: archive.run.id,
+    retention: archive.retention ?? "saved",
     byteLength: archive.byteLength,
     environment: archive.prepared.environment,
     state: archive.run.state,

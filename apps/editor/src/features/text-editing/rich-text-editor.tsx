@@ -1,17 +1,15 @@
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
-import {
-  flattenRichText,
-  normalizeRichText,
-  soleRichTextMathRun,
-} from "@icm/model";
+import { flattenRichText, soleRichTextMathRun } from "@icm/model";
 import {
   ANALOG_CANVAS_MATH_PROFILE_ID,
   prepareFormula,
@@ -19,6 +17,18 @@ import {
 import type { RichTextDocument, RichTextRun } from "@icm/model";
 
 import { boundFormulaPresentation } from "./bound-formula";
+import {
+  GREEK_LOWERCASE,
+  GREEK_UPPERCASE,
+  greekCommandBefore,
+} from "./greek-letters";
+import {
+  editableDocument,
+  isElement,
+  normalizeEditableMarkup,
+  readChildren,
+  toEditableHtml,
+} from "./editable-dom";
 import { fractionFromSelection } from "./fraction-selection";
 
 export interface RichTextEditorProps {
@@ -54,100 +64,12 @@ export interface RichTextEditorProps {
   onLayoutHeightChange?(height: number): void;
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-function toEditableHtml(document: RichTextDocument, disabled = false): string {
-  const isScriptRun = (
-    run: RichTextRun,
-  ): run is Extract<RichTextRun, { kind: "span" }> & {
-    style: "subscript" | "superscript";
-  } =>
-    run.kind === "span" &&
-    (run.style === "subscript" || run.style === "superscript");
-
-  const renderRuns = (runs: RichTextRun[]): string => {
-    let output = "";
-    for (let index = 0; index < runs.length; index += 1) {
-      const run = runs[index]!;
-      const next = runs[index + 1];
-      if (
-        next &&
-        isScriptRun(run) &&
-        isScriptRun(next) &&
-        run.style !== next.style
-      ) {
-        output += `<span data-rich-text-script-stack>${render(run)}${render(next)}</span>`;
-        index += 1;
-        continue;
-      }
-      output += render(run);
-    }
-    return output;
-  };
-
-  const render = (run: RichTextRun): string => {
-    switch (run.kind) {
-      case "text":
-        return escapeHtml(run.value);
-      case "line-break":
-        return "<br>";
-      case "math":
-        return `<span data-rich-text-math data-display="${run.display}" data-latex="${escapeHtml(run.latex)}" contenteditable="false">${escapeHtml(run.latex)}</span>`;
-      case "fraction":
-        return `<span data-rich-text-fraction contenteditable="false"><span data-fraction-part="numerator" contenteditable="${!disabled}" aria-label="Numerator">${renderRuns(run.numerator.runs)}</span><span data-fraction-part="denominator" contenteditable="${!disabled}" aria-label="Denominator">${renderRuns(run.denominator.runs)}</span></span>`;
-      case "span": {
-        const children = renderRuns(run.children);
-        if (run.style === "overbar") {
-          return `<span data-rich-text-style="overbar">${children}</span>`;
-        }
-        if (run.style === "lowercase" || run.style === "uppercase") {
-          return `<span data-rich-text-style="${run.style}">${children}</span>`;
-        }
-        const tag =
-          run.style === "italic"
-            ? "em"
-            : run.style === "bold"
-              ? "strong"
-              : run.style === "subscript"
-                ? "sub"
-                : "sup";
-        return `<${tag}>${children}</${tag}>`;
-      }
-    }
-  };
-  return renderRuns(document.runs);
-}
-
-function isElement(node: Node): node is HTMLElement {
-  return node.nodeType === Node.ELEMENT_NODE;
-}
-
 function enclosingOverbar(node: Node): HTMLElement | null {
   const element = isElement(node) ? node : node.parentElement;
   const overbar = element?.closest<HTMLElement>(
     '[data-rich-text-style="overbar"]',
   );
   return overbar ?? null;
-}
-
-function elementBold(element: Element, inherited: boolean): boolean {
-  const weight = (element as HTMLElement).style?.fontWeight;
-  if (weight === "normal" || weight === "400") return false;
-  if (weight === "bold" || Number(weight) >= 600) return true;
-  return /^(strong|b)$/i.test(element.tagName) || inherited;
-}
-
-function elementItalic(element: Element, inherited: boolean): boolean {
-  const style = (element as HTMLElement).style?.fontStyle;
-  if (style === "normal") return false;
-  if (style === "italic" || style === "oblique") return true;
-  return /^(em|i)$/i.test(element.tagName) || inherited;
 }
 
 function selectionBold(range: Range): boolean {
@@ -159,6 +81,19 @@ function selectionBold(range: Range): boolean {
 function selectionItalic(range: Range): boolean {
   const node = range.commonAncestorContainer;
   const element = isElement(node) ? node : node.parentElement;
+  return !!element && getComputedStyle(element).fontStyle !== "normal";
+}
+
+/** Whether the first text a selection covers is drawn italic. */
+function selectionStartItalic(range: Range): boolean {
+  let node: Node | null =
+    range.startContainer.nodeType === Node.TEXT_NODE
+      ? range.startContainer
+      : (range.startContainer.childNodes[range.startOffset] ??
+        range.startContainer);
+  while (node && node.nodeType !== Node.TEXT_NODE && node.firstChild)
+    node = node.firstChild;
+  const element = node && (isElement(node) ? node : node.parentElement);
   return !!element && getComputedStyle(element).fontStyle !== "normal";
 }
 
@@ -174,6 +109,100 @@ function allTextBold(runs: RichTextRun[], bold = false): boolean {
       );
     return true;
   });
+}
+
+function withoutItalic(runs: RichTextRun[]): RichTextRun[] {
+  return runs.flatMap((run): RichTextRun[] => {
+    if (run.kind === "span") {
+      const children = withoutItalic(run.children);
+      return run.style === "italic" ? children : [{ ...run, children }];
+    }
+    if (run.kind === "fraction")
+      return [
+        {
+          ...run,
+          numerator: { runs: withoutItalic(run.numerator.runs) },
+          denominator: { runs: withoutItalic(run.denominator.runs) },
+        },
+      ];
+    return [run];
+  });
+}
+
+/** The subscript or superscript a node sits in, if any. */
+function enclosingScript(node: Node): HTMLElement | null {
+  const element = isElement(node) ? node : node.parentElement;
+  return element?.closest<HTMLElement>("sub, sup") ?? null;
+}
+
+const STYLE_BUTTONS = [
+  "bold",
+  "italic",
+  "subscript",
+  "superscript",
+  "overbar",
+] as const;
+type ActiveStyles = Readonly<Record<(typeof STYLE_BUTTONS)[number], boolean>>;
+const NO_ACTIVE_STYLES: ActiveStyles = {
+  bold: false,
+  italic: false,
+  subscript: false,
+  superscript: false,
+  overbar: false,
+};
+
+/**
+ * The elements whose look a selection reports. A range reports every
+ * character it covers. A caret reports the character before it, which is what
+ * typing there continues, or the first character when it sits at the start.
+ */
+function selectedTextElements(range: Range, root: HTMLElement): HTMLElement[] {
+  const texts: Text[] = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode())
+    if ((node as Text).data.length) texts.push(node as Text);
+  const elements = (nodes: Text[]) =>
+    nodes.flatMap((text) => (text.parentElement ? [text.parentElement] : []));
+  if (!range.collapsed)
+    return elements(
+      texts.filter(
+        (text) =>
+          range.intersectsNode(text) &&
+          !(text === range.endContainer && range.endOffset === 0) &&
+          !(
+            text === range.startContainer &&
+            range.startOffset >= text.data.length
+          ),
+      ),
+    );
+  const before = texts.filter((text) => range.comparePoint(text, 0) < 0);
+  const text = before[before.length - 1] ?? texts[0];
+  return text ? elements([text]) : [root];
+}
+
+/** Which formatting buttons show pressed for a selection inside `root`. */
+function activeStylesAt(range: Range, root: HTMLElement): ActiveStyles {
+  const elements = selectedTextElements(range, root);
+  if (!elements.length) return NO_ACTIVE_STYLES;
+  const every = (test: (element: HTMLElement) => boolean) =>
+    elements.every(test);
+  const inside = (element: HTMLElement, selector: string) => {
+    const found = element.closest(selector);
+    return !!found && root.contains(found);
+  };
+  return {
+    bold: every(
+      (element) => Number(getComputedStyle(element).fontWeight) >= 600,
+    ),
+    italic: every(
+      (element) => getComputedStyle(element).fontStyle !== "normal",
+    ),
+    subscript: every((element) => inside(element, "sub")),
+    superscript: every((element) => inside(element, "sup")),
+    overbar: every((element) =>
+      inside(element, '[data-rich-text-style="overbar"]'),
+    ),
+  };
 }
 
 function withoutBold(runs: RichTextRun[]): RichTextRun[] {
@@ -192,173 +221,6 @@ function withoutBold(runs: RichTextRun[]): RichTextRun[] {
       ];
     return [run];
   });
-}
-
-function readChildren(
-  element: Element,
-  inheritedBold = false,
-  inheritedItalic = false,
-): RichTextRun[] {
-  const runs: RichTextRun[] = [];
-  const bold = elementBold(element, inheritedBold);
-  const italic = elementItalic(element, inheritedItalic);
-  for (const child of element.childNodes)
-    runs.push(...readNode(child, bold, italic));
-  return runs;
-}
-
-function readNode(node: Node, bold = false, italic = false): RichTextRun[] {
-  if (node.nodeType === Node.TEXT_NODE) {
-    if (!node.textContent) return [];
-    // The editable wraps as `pre-wrap`, so a newline inside a text node is a
-    // line the author can see — whether the browser put it there for a
-    // line-break command or it arrived in pasted text. Rich text carries
-    // breaks as their own run, and SVG text has no newline of its own, so a
-    // literal one left in a value would silently flatten the line.
-    const wrap = (value: string): RichTextRun => {
-      let text: RichTextRun = { kind: "text", value };
-      if (bold) text = { kind: "span", style: "bold", children: [text] };
-      if (italic) text = { kind: "span", style: "italic", children: [text] };
-      return text;
-    };
-    const segments = node.textContent.split("\n");
-    return segments.flatMap((segment, index) => [
-      ...(index === 0 ? [] : [{ kind: "line-break" as const }]),
-      ...(segment ? [wrap(segment)] : []),
-    ]);
-  }
-  if (!isElement(node)) return [];
-  const tag = node.tagName.toLowerCase();
-  if (tag === "br") return [{ kind: "line-break" }];
-  if (node.hasAttribute("data-rich-text-math")) {
-    const latex = node.getAttribute("data-latex")?.trim();
-    if (!latex) return [];
-    return [
-      {
-        kind: "math",
-        latex,
-        display:
-          node.getAttribute("data-display") === "block" ? "block" : "inline",
-      },
-    ];
-  }
-  if (node.hasAttribute("data-rich-text-fraction")) {
-    const numerator = node.querySelector(
-      ':scope > [data-fraction-part="numerator"]',
-    );
-    const denominator = node.querySelector(
-      ':scope > [data-fraction-part="denominator"]',
-    );
-    if (!numerator || !denominator) return [];
-    const part = (element: Element): RichTextDocument => {
-      const runs = readChildren(
-        element,
-        elementBold(node, bold),
-        elementItalic(node, italic),
-      );
-      return normalizeRichText({
-        runs: runs.length ? runs : [{ kind: "text", value: " " }],
-      });
-    };
-    return [
-      {
-        kind: "fraction",
-        numerator: part(numerator),
-        denominator: part(denominator),
-      },
-    ];
-  }
-  const children = readChildren(node, bold, italic);
-  if (children.length === 0 && tag !== "div" && tag !== "p") return [];
-  if (tag === "strong" || tag === "b") {
-    return children;
-  }
-  if (tag === "em" || tag === "i") {
-    return children;
-  }
-  if (tag === "sub") {
-    return [{ kind: "span", style: "subscript", children }];
-  }
-  if (tag === "sup") {
-    return [{ kind: "span", style: "superscript", children }];
-  }
-  if (node.getAttribute("data-rich-text-style") === "overbar") {
-    return [{ kind: "span", style: "overbar", children }];
-  }
-  if (node.getAttribute("data-rich-text-style") === "lowercase") {
-    return [{ kind: "span", style: "lowercase", children }];
-  }
-  if (node.getAttribute("data-rich-text-style") === "uppercase") {
-    return [{ kind: "span", style: "uppercase", children }];
-  }
-  if (tag === "div" || tag === "p") {
-    return [...children, { kind: "line-break" }];
-  }
-  return children;
-}
-
-function isScriptElement(node: Node): node is HTMLElement {
-  return (
-    isElement(node) &&
-    (node.tagName.toLowerCase() === "sub" ||
-      node.tagName.toLowerCase() === "sup")
-  );
-}
-
-/** Keep the browser's editable DOM aligned with the canonical script layout. */
-function normalizeEditableMarkup(editable: HTMLElement): void {
-  const formattingElements = [
-    ...editable.querySelectorAll<HTMLElement>(
-      "sub, sup, strong, em, b, i, span",
-    ),
-  ].reverse();
-  formattingElements.forEach((element) => {
-    if (
-      element.hasAttribute("data-rich-text-fraction") ||
-      element.hasAttribute("data-fraction-part")
-    )
-      return;
-    if (!element.textContent && !element.querySelector("br")) element.remove();
-  });
-
-  const containers: HTMLElement[] = [
-    editable,
-    ...editable.querySelectorAll<HTMLElement>("*"),
-  ];
-  for (const container of containers) {
-    if (container.hasAttribute("data-rich-text-script-stack")) continue;
-    const children = [...container.childNodes];
-    for (let index = 0; index < children.length - 1; index += 1) {
-      const first = children[index]!;
-      const second = children[index + 1]!;
-      if (
-        !isScriptElement(first) ||
-        !isScriptElement(second) ||
-        first.tagName === second.tagName
-      ) {
-        continue;
-      }
-      const stack = globalThis.document.createElement("span");
-      stack.setAttribute("data-rich-text-script-stack", "");
-      container.insertBefore(stack, first);
-      stack.append(first, second);
-      index += 1;
-    }
-  }
-}
-
-function editableDocument(
-  element: HTMLElement,
-  defaultBold = false,
-  defaultItalic = false,
-): RichTextDocument {
-  const document: RichTextDocument = {
-    runs: readChildren(element, defaultBold, defaultItalic),
-  };
-  if (document.runs.length === 0) {
-    return { runs: [{ kind: "text", value: " " }] };
-  }
-  return normalizeRichText(document);
 }
 
 interface FormulaMathfieldHandle {
@@ -491,27 +353,28 @@ const FORMULA_KEYCAPS = [
   { label: "∞", title: "无穷大", latex: "\\infty" },
 ] as const;
 
-const FORMULA_MORE_GROUPS = [
+/** "Phi" for Φ and "Phi lowercase" for φ, as screen readers announce them. */
+function greekLetterTitle(name: string, glyph: string): string {
+  const title = name[0]!.toUpperCase() + name.slice(1);
+  return glyph === glyph.toLowerCase() &&
+    GREEK_UPPERCASE.some(([capital]) => capital === title)
+    ? `${title} lowercase`
+    : title;
+}
+
+/** Circuit symbols offered beside the Greek letters. */
+const CIRCUIT_SYMBOLS = ["±", "≈", "≤", "≥", "∞", "°", "·", "→"] as const;
+
+const FORMULA_MORE_GROUPS: readonly {
+  title: string;
+  items: readonly (readonly [label: string, title: string, latex: string])[];
+}[] = [
   {
-    title: "希腊字母",
-    items: [
-      ["α", "Alpha", "\\alpha"],
-      ["β", "Beta", "\\beta"],
-      ["γ", "Gamma", "\\gamma"],
-      ["δ", "Delta lowercase", "\\delta"],
-      ["ε", "Epsilon", "\\epsilon"],
-      ["θ", "Theta", "\\theta"],
-      ["λ", "Lambda", "\\lambda"],
-      ["μ", "Mu", "\\mu"],
-      ["π", "Pi", "\\pi"],
-      ["ρ", "Rho", "\\rho"],
-      ["σ", "Sigma lowercase", "\\sigma"],
-      ["τ", "Tau", "\\tau"],
-      ["φ", "Phi", "\\phi"],
-      ["ω", "Omega lowercase", "\\omega"],
-      ["Δ", "Delta", "\\Delta"],
-      ["Ω", "Omega", "\\Omega"],
-    ],
+    title: "Greek",
+    items: [...GREEK_LOWERCASE, ...GREEK_UPPERCASE].map(
+      ([name, glyph]) =>
+        [glyph, greekLetterTitle(name, glyph), `\\${name}`] as const,
+    ),
   },
   {
     title: "Relations & operators",
@@ -551,7 +414,7 @@ const FORMULA_MORE_GROUPS = [
       ["⟨x⟩", "Angle brackets", "\\left\\langle#0\\right\\rangle"],
     ],
   },
-] as const;
+];
 
 export function RichTextEditor({
   targetKey,
@@ -594,6 +457,35 @@ export function RichTextEditor({
     existingFormula?.display ?? "inline",
   );
   const [formulaError, setFormulaError] = useState<string | null>(null);
+  const [activeStyles, setActiveStyles] =
+    useState<ActiveStyles>(NO_ACTIVE_STYLES);
+
+  // The formatting buttons show what the selection already has, so italic
+  // text lights Italic and a subscript lights Subscript. Clicking a button
+  // keeps the text's selection; a selection elsewhere keeps the last report.
+  const refreshActiveStyles = useCallback((): void => {
+    const editable = editableRef.current;
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (
+      !editable ||
+      !range ||
+      !editable.contains(range.commonAncestorContainer)
+    )
+      return;
+    const next = activeStylesAt(range, editable);
+    setActiveStyles((current) =>
+      STYLE_BUTTONS.every((name) => current[name] === next[name])
+        ? current
+        : next,
+    );
+  }, []);
+
+  useEffect(() => {
+    document.addEventListener("selectionchange", refreshActiveStyles);
+    return () =>
+      document.removeEventListener("selectionchange", refreshActiveStyles);
+  }, [refreshActiveStyles]);
 
   useEffect(() => {
     if (!formulaOpen) return;
@@ -626,8 +518,9 @@ export function RichTextEditor({
     if (editableRef.current) {
       editableRef.current.innerHTML = toEditableHtml(content, disabled);
       editableRef.current.focus();
+      refreshActiveStyles();
     }
-  }, [sourceOnly, targetKey, disabled]);
+  }, [sourceOnly, targetKey, disabled, refreshActiveStyles]);
 
   const sync = (): void => {
     if (editableRef.current)
@@ -683,9 +576,13 @@ export function RichTextEditor({
     return inserted;
   };
 
-  const command = (
-    name: "bold" | "italic" | "subscript" | "superscript" | "overbar",
-  ) => {
+  const command = (name: (typeof STYLE_BUTTONS)[number]): void => {
+    applyCommand(name);
+    // A style change that keeps the same selection fires no selectionchange.
+    refreshActiveStyles();
+  };
+
+  const applyCommand = (name: (typeof STYLE_BUTTONS)[number]): void => {
     if (disabled || !editableRef.current) return;
     editableRef.current.focus();
     restoreSelection();
@@ -770,6 +667,41 @@ export function RichTextEditor({
       next.selectNodeContents(wrapper);
       selection?.removeAllRanges();
       selection?.addRange(next);
+    } else if (
+      name === "italic" &&
+      range &&
+      !range.collapsed &&
+      selectionStartItalic(range) &&
+      !enclosingScript(range.commonAncestorContainer)
+    ) {
+      // Scripts are upright, so italic text with its subscript is only partly
+      // italic, which native editing toggles differently on each platform
+      // (macOS by the start of the selection, others by all of it). Remove
+      // italic from a selection that starts italic directly, the same way
+      // everywhere. Every run carries its own weight and slant, so the
+      // insertion, which may land outside the selection's own wrapper,
+      // cancels whatever it would inherit.
+      const selected = document.createElement("div");
+      selected.append(range.cloneContents());
+      const current = editableDocument(
+        selected,
+        selectionBold(range),
+        selectionItalic(range),
+      );
+      const inserted = insertEditableContent({
+        runs: withoutItalic(current.runs),
+      });
+      if (inserted) {
+        inserted.style.fontStyle = "normal";
+        inserted.style.fontWeight = "normal";
+        const nextRange = document.createRange();
+        nextRange.selectNodeContents(inserted);
+        selection?.removeAllRanges();
+        selection?.addRange(nextRange);
+      }
+      rememberSelection();
+      sync();
+      return;
     } else {
       document.execCommand(name);
     }
@@ -895,6 +827,85 @@ export function RichTextEditor({
     return true;
   };
 
+  // The symbol menu floats over the page rather than inside the canvas
+  // editor: the editor's foreignObject is sized to its own controls, so a
+  // menu hanging below them would be clipped.
+  const [symbolMenuOpen, setSymbolMenuOpen] = useState(false);
+  const symbolButtonRef = useRef<HTMLButtonElement | null>(null);
+  const symbolMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    const menu = symbolMenuRef.current;
+    const button = symbolButtonRef.current;
+    const shell = shellRef.current;
+    if (!symbolMenuOpen || !menu || !button || !shell) return;
+    // Right-aligned with the Ω button within the editor's own width, and
+    // below the whole editor so the text being typed stays in view; above it
+    // when the window has no room below.
+    const anchor = button.getBoundingClientRect();
+    const frame = shell.getBoundingClientRect();
+    const size = menu.getBoundingClientRect();
+    const right = Math.min(anchor.right, frame.right);
+    menu.style.left = `${Math.max(frame.left, right - size.width)}px`;
+    const below = frame.bottom + 4;
+    const above = frame.top - size.height - 4;
+    menu.style.top = `${
+      below + size.height <= window.innerHeight - 8 || above < 8 ? below : above
+    }px`;
+  }, [symbolMenuOpen]);
+
+  useEffect(() => {
+    if (!symbolMenuOpen) return;
+    const close = (): void => setSymbolMenuOpen(false);
+    const closeOutside = (event: PointerEvent): void => {
+      const target = event.target as Node | null;
+      if (
+        target &&
+        (symbolMenuRef.current?.contains(target) ||
+          symbolButtonRef.current?.contains(target))
+      )
+        return;
+      close();
+    };
+    document.addEventListener("pointerdown", closeOutside, true);
+    // Zooming or panning moves the editor away from a fixed menu.
+    window.addEventListener("wheel", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside, true);
+      window.removeEventListener("wheel", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [symbolMenuOpen]);
+
+  // `\phi` then Space spells φ, the way LaTeX names it. Anything else before
+  // the caret leaves Space to type an ordinary space.
+  const replaceGreekCommand = (): boolean => {
+    const selection = window.getSelection();
+    if (disabled || !selection?.isCollapsed || selection.rangeCount === 0)
+      return false;
+    const caret = selection.getRangeAt(0);
+    const node = caret.startContainer;
+    if (
+      node.nodeType !== Node.TEXT_NODE ||
+      !editableRef.current?.contains(node)
+    )
+      return false;
+    const command = greekCommandBefore(
+      (node.textContent ?? "").slice(0, caret.startOffset),
+    );
+    if (!command) return false;
+    const spelled = document.createRange();
+    spelled.setStart(node, caret.startOffset - command.length);
+    spelled.setEnd(node, caret.startOffset);
+    selection.removeAllRanges();
+    selection.addRange(spelled);
+    document.execCommand("insertText", false, command.glyph);
+    rememberSelection();
+    sync();
+    return true;
+  };
+
   const insertSymbol = (symbol: string): void => {
     if (disabled || !editableRef.current) return;
     editableRef.current.focus();
@@ -973,6 +984,7 @@ export function RichTextEditor({
             <button
               type="button"
               aria-label="粗体"
+              aria-pressed={activeStyles.bold}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => command("bold")}
@@ -982,6 +994,7 @@ export function RichTextEditor({
             <button
               type="button"
               aria-label="斜体"
+              aria-pressed={activeStyles.italic}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => command("italic")}
@@ -991,6 +1004,7 @@ export function RichTextEditor({
             <button
               type="button"
               aria-label="下标"
+              aria-pressed={activeStyles.subscript}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => command("subscript")}
@@ -1000,6 +1014,7 @@ export function RichTextEditor({
             <button
               type="button"
               aria-label="上标"
+              aria-pressed={activeStyles.superscript}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => command("superscript")}
@@ -1009,6 +1024,7 @@ export function RichTextEditor({
             <button
               type="button"
               aria-label="上划线"
+              aria-pressed={activeStyles.overbar}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => command("overbar")}
@@ -1035,82 +1051,75 @@ export function RichTextEditor({
             <span className="rich-text-toolbar-separator" />
           </>
         ) : null}
-        {!compact
-          ? (
-              [
-                ["start", "Align left"],
-                ["middle", "Align center"],
-                ["end", "Align right"],
-              ] as const
-            ).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                aria-label={label}
-                aria-pressed={alignment === value}
-                disabled={disabled}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => onAlignmentChange(value)}
-              >
-                <svg
-                  className="rich-text-align-icon"
-                  viewBox="0 0 16 16"
-                  aria-hidden="true"
-                >
-                  <path
-                    d={
-                      value === "start"
-                        ? "M1 3h14M1 6h9M1 9h14M1 12h7"
-                        : value === "middle"
-                          ? "M1 3h14M3.5 6h9M1 9h14M4.5 12h7"
-                          : "M1 3h14M6 6h9M1 9h14M8 12h7"
-                    }
-                  />
-                </svg>
-              </button>
-            ))
-          : null}
         {!sourceOnly && !compact ? (
           <>
-            <details className="rich-text-symbol-menu">
-              <summary aria-label="插入电路符号">Ω</summary>
-              <div role="menu" aria-label="电路符号">
-                {[
-                  "α",
-                  "β",
-                  "γ",
-                  "δ",
-                  "θ",
-                  "λ",
-                  "μ",
-                  "π",
-                  "φ",
-                  "ω",
-                  "Δ",
-                  "Ω",
-                  "±",
-                  "≈",
-                  "≤",
-                  "≥",
-                  "∞",
-                  "°",
-                  "·",
-                  "→",
-                ].map((symbol) => (
-                  <button
-                    key={symbol}
-                    type="button"
-                    role="menuitem"
-                    aria-label={`Insert ${symbol}`}
-                    disabled={disabled}
+            <button
+              ref={symbolButtonRef}
+              className="rich-text-symbol-button"
+              type="button"
+              aria-label="插入电路符号"
+              aria-haspopup="menu"
+              aria-expanded={symbolMenuOpen}
+              title="Greek letters and symbols · or type \phi then Space"
+              disabled={disabled}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => setSymbolMenuOpen((open) => !open)}
+            >
+              Ω
+            </button>
+            {symbolMenuOpen
+              ? createPortal(
+                  <div
+                    ref={symbolMenuRef}
+                    className="rich-text-symbol-menu"
+                    // Part of the canvas text editor: clicking it is not
+                    // leaving the text, which would commit and close it.
+                    data-canvas-text-editor-part=""
+                    role="menu"
+                    aria-label="电路符号"
                     onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => insertSymbol(symbol)}
                   >
-                    {symbol}
-                  </button>
-                ))}
-              </div>
-            </details>
+                    {(
+                      [
+                        ["Lowercase Greek letters", GREEK_LOWERCASE],
+                        ["Capital Greek letters", GREEK_UPPERCASE],
+                        [
+                          "Symbols",
+                          CIRCUIT_SYMBOLS.map(
+                            (symbol) => [null, symbol] as const,
+                          ),
+                        ],
+                      ] as const
+                    ).map(([group, symbols]) => (
+                      <div
+                        key={group}
+                        role="group"
+                        aria-label={group}
+                        className="rich-text-symbol-grid"
+                      >
+                        {symbols.map(([name, symbol]) => (
+                          <button
+                            key={symbol}
+                            type="button"
+                            role="menuitem"
+                            aria-label={`Insert ${symbol}`}
+                            title={name ? `${symbol}  \\${name}` : symbol}
+                            disabled={disabled}
+                            onClick={() => insertSymbol(symbol)}
+                          >
+                            {symbol}
+                          </button>
+                        ))}
+                      </div>
+                    ))}
+                    <p className="rich-text-symbol-hint">
+                      Type <kbd>\phi</kbd> then Space for φ, <kbd>\Phi</kbd> for
+                      Φ
+                    </p>
+                  </div>,
+                  document.body,
+                )
+              : null}
             <button
               className="rich-text-latex-button"
               type="button"
@@ -1187,6 +1196,44 @@ export function RichTextEditor({
             {deleteLabel}
           </button>
         ) : null}
+        {!compact ? (
+          <span className="rich-text-toolbar-separator" aria-hidden="true" />
+        ) : null}
+        {!compact
+          ? (
+              [
+                ["start", "Align left"],
+                ["middle", "Align center"],
+                ["end", "Align right"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-label={label}
+                aria-pressed={alignment === value}
+                disabled={disabled}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => onAlignmentChange(value)}
+              >
+                <svg
+                  className="rich-text-align-icon"
+                  viewBox="0 0 16 16"
+                  aria-hidden="true"
+                >
+                  <path
+                    d={
+                      value === "start"
+                        ? "M1 3h14M1 6h9M1 9h14M1 12h7"
+                        : value === "middle"
+                          ? "M1 3h14M3.5 6h9M1 9h14M4.5 12h7"
+                          : "M1 3h14M6 6h9M1 9h14M8 12h7"
+                    }
+                  />
+                </svg>
+              </button>
+            ))
+          : null}
         {onDisplayAliasChange ? (
           <label className="rich-text-display-alias">
             <input
@@ -1356,7 +1403,9 @@ export function RichTextEditor({
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === "Escape") {
               event.preventDefault();
-              onCommit();
+              event.stopPropagation();
+              if (event.key === "Escape") (onEscape ?? onCommit)();
+              else onCommit();
             }
           }}
         />
@@ -1388,10 +1437,20 @@ export function RichTextEditor({
           onKeyUp={rememberSelection}
           onPointerUp={rememberSelection}
           onKeyDown={(event) => {
-            if (event.key === "Tab" && moveThroughFraction(event.shiftKey)) {
+            if (
+              event.key === " " &&
+              !event.nativeEvent.isComposing &&
+              replaceGreekCommand()
+            ) {
+              event.preventDefault();
+            } else if (
+              event.key === "Tab" &&
+              moveThroughFraction(event.shiftKey)
+            ) {
               event.preventDefault();
             } else if (event.key === "Escape") {
               event.preventDefault();
+              event.stopPropagation();
               (onEscape ?? onCommit)();
             } else if (event.key === "Enter" && event.shiftKey && multiline) {
               // Enter finishes the text everywhere; a deliberate modifier is

@@ -4,7 +4,7 @@ Analog Canvas treats every Project Document as one reusable schematic Cell.
 The top Cell is the saved default entry; other Cells may be instantiated any number of
 times or kept unreferenced while they are being authored.
 
-In **Manage Cells…**, select a Cell and choose **Set as Top**, or drag it onto the first, **Top** row to change
+Open **Hierarchy**, select a Cell and choose **Set as Top**, or drag it onto the first, **Top** row to change
 the saved default entry. The drop preview says **Set as Top**. Dragging among
 other rows only changes the saved list order; dropping at the bottom moves a Cell
 to the end. Both order and Top changes are undone together. This does not change the circuit, its callers, the
@@ -18,7 +18,8 @@ its definition; edit the detail heading to rename it (Enter or blur commits,
 Escape cancels). **Delete** is beside the selected Cell's heading. Alt+Up/Down also reorder a focused row;
 Alt+Up into the first row makes that Cell Top.
 
-Use **Manage Cells…** in **Edit** or the hierarchy row to manage the Project's definitions in one place. It shows each
+Use the persistent **Hierarchy** entry beside **Project**, or **Manage Cells…**
+in the hierarchy toolbar, to manage the active Project's definitions in one place. It shows each
 Cell's projected Port and caller counts, opens or renames a definition, and lists
 each caller with **Jump to caller**. Equal Port names occupy one row, matching
 the generated Symbol; a marker count preserves visibility into repeated canvas
@@ -53,21 +54,23 @@ An exact reviewed PDK interface is read-only in Manager: its target, ordered
 terminals and parameter declarations belong to the reviewed mapping. Set device
 parameter values on instances instead. Neither a generic declaration nor a
 reviewed mapping alone proves that a particular simulation has its model sources.
-Port names do not infer subscripts from spelling. Local Cell symbols inherit
-the representative Port annotation's explicit RichText formatting, including
-subscripts; generic External pin names remain whole by default. This does not
-change electrical names or the typography of device references such as M1.
+Local Cell symbols inherit the representative Port annotation's explicit
+RichText formatting. The current drawing's label settings can apply underscore,
+first-letter, case and slant conventions to visible pins as well as labels;
+see [label names and typography](getting-started.md#label-names-and-typography).
+Rendering pin names never changes a component's electrical pin identity or
+external model interface. Complement output bars are retained.
 
 Use **New Cell** in the Cell Manager to create a module. **Place Cell** in the
-hierarchy row, or **Edit → Place Cell from this Project…**, opens the Insert
+hierarchy toolbar, or **Edit → Place Cell from this Project…**, opens the Insert
 dialog as a searchable, Cells-only **Place Hierarchical Cell** picker. Select a
 definition, then place its ordinary hierarchical Instance on the canvas using
 the same grid preview, `R` rotation, mirror shortcuts, and `Esc` cancellation
 as a library component. The commit keeps the `Xn` reference as internal
 netlist identity and shows only the Cell name at the normal instance-label
 position. **Enter Cell** opens the child of a selected hierarchical Instance.
-**Shift+E** follows the actual parent Instance path; **Top** returns to the root.
-Opening a Cell from the selector or Manager's definition list always opens the
+**Shift+E** follows the actual parent Instance path; **Top** returns directly to
+the root. Opening a Cell from Manager's definition list always opens the
 definition without caller context, even when it has only one caller. **Shift+E** is
 disabled in that context. Enter an instance or use the hierarchy tree to carry
 a concrete path; **Shift+E** then returns to and selects the original caller.
@@ -93,18 +96,22 @@ the source and destination to use the same exact Symbol Library lock and
 reports incompatible external interfaces without changing either Project.
 
 The default top Cell is still a reusable structural subcircuit; it can be placed
-in another Cell when this does not create a recursive hierarchy. **Port** and
-**Filled Port** are hollow and filled artwork for the same **Cell Pin** concept.
-A Cell Pin defines one independently authored interface declaration. Use Net
-Label instead when you only need to name an internal Net.
+in another Cell when this does not create a recursive hierarchy. The hollow
+**Cell Pin** is the ordinary interface Pin. The solid **Bias Voltage Port** is
+the marker for a bias-voltage entry, typically named `VB1`, `VB2`, and so on.
+Both define independently authored interface declarations. Use Net Label
+instead when you only need to name an internal Net.
 
 To define a real Cell port:
 
-1. Press `P`, or place **Cell Pin** / **Cell Pin (filled)** from the Library.
+1. Press `P`, or place **Cell Pin** / **Bias Voltage Port** from the Library.
 2. Click an exact existing electrical contact to attach to its Net, or click
    empty grid space to create a new local Net.
-3. Double-click its default annotation to edit the interface name; use normal
-   **Properties** only for direction.
+3. Double-click its default annotation, or select the Pin and edit **Name** in
+   **Properties**, to change its formal Cell Pin name. Properties keeps this
+   name editable even if the canvas annotation is absent. The Pin's Instance ID
+   is an internal identifier, not its interface name; naming its Net separately
+   does not rename the Cell Pin.
 
 Formal-Pin placement commits the ordinary `port`/`port-filled` Instance, its
 pin-`P` connection, and the stable formal Cell terminal as one revision. Inputs
@@ -114,8 +121,8 @@ adapt without a separate interface editor.
 
 Each visible marker remains an ordinary Instance for selection, move, wiring,
 copy, and deletion. Copying a Cell Pin creates a new formal terminal with an
-independent stable identity and a freshly allocated interface name, with its
-direction preserved. Copy follows ordinary insertion: destination contacts
+independent stable identity while retaining the source's formal name and
+direction. Copy follows ordinary insertion: destination contacts
 determine connectivity; off-selection source connectivity is not inherited.
 Only explicitly selected wires travel with the copy. Markers keep independent
 canvas identities, but names have electrical meaning: equal case-insensitive
@@ -128,6 +135,14 @@ first Pin fixes that Port's order and spelling. Grouping does not rewrite the
 canvas objects, but the logical connection is real, including during export.
 Different Port names on the same internal Net remain separate interface pins.
 Moving a symbol pin to another side changes geometry, not the netlist port order.
+If a wire touches a Cell Pin, any ordinary Net Label on that logical Net must
+use the Pin's formal name (case-insensitively). A different Label name is
+rejected as a name conflict so it cannot silently connect the Pin to remote
+wires carrying that Label. Cutting a wire separates physical Base Nets, but
+same-name Pins or Labels on the resulting sides still denote one electrical
+Logical Net. Drawing an explicit connection from the Pin to a differently
+named labeled wire retires that wire's Label as part of the join; the Pin's
+formal name remains.
 
 Renaming that annotation changes only the selected Pin. Parent Instances are
 updated only if the before/after grouped interface actually changes. Deleting
@@ -152,7 +167,8 @@ Deleting a hierarchical Instance with the normal Delete command never deletes
 its reusable child Cell.
 
 Rectangles are drafting geometry only. Create reusable Cells through
-**Manage Cells…** and place them with **Place Cell**; **Enter Cell** never
+**Hierarchy** and place them with **Place Cell** in the hierarchy toolbar;
+**Enter Cell** never
 converts drawing objects.
 
 Select a Cell Instance in a parent and open **Properties** to adjust that
@@ -172,7 +188,8 @@ an occurrence path.
 The generated Symbol is ready for the first placement without a separate review
 or apply step. Customize it from a placed parent Instance when needed. An
 unreferenced top Cell is reusable too: create another ordinary Cell, then use
-**Place Cell** to place the original top there. The Project top does not change.
+**Place Cell** to place the original top there. The
+Project top does not change.
 A valid zero-port interface is allowed; an absent formal interface must be
 authored first.
 
@@ -181,15 +198,14 @@ Their typed editing operations remain available to explicit programmatic workflo
 
 ## Cell parameters
 
-In a device's Property JSON, use the **ƒ** button beside an electrical value
-to open a compact **Hierarchical para** popover beside that field. Choose an
-existing parameter or create one with a default and Apply. Escape or an outside
-click dismisses the popover; changing selection or closing Properties also closes
-it. Creating
-`Rbase` from a resistor value of `1k` declares `Rbase=1k` and changes that
-resistor's value to `{Rbase}` in one undoable operation. Other devices can use
-the same parameter, including expressions such as `{2*Rbase}`. Point lists and
-derived digital-clock controls are not scalar parameter slots.
+Edit electrical values directly in a device's Property JSON. Numeric text such
+as `180um` or `80nm` and expressions such as `{Rbase}` or `{2*Rbase}` remain
+exactly as authored, without per-value buttons or redundant unit comments.
+For a new Cell parameter, declare its name and default in the Cell's Project
+Code first, then reference it in the device value. For example, declare
+`Rbase=1k` and set a resistor's value to `{Rbase}`. Existing declarations remain
+available to all devices in that Cell. Point lists and derived digital-clock
+controls are not scalar parameter slots.
 
 Manager lists declared parameter names and defaults. Hover a name to see internal
 reference and caller override counts; these counts are not another setting. Edit a name

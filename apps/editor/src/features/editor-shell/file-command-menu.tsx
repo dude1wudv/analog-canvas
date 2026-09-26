@@ -1,4 +1,14 @@
-import { useRef, useState, type ReactNode, type RefObject } from "react";
+import {
+  lazy,
+  Suspense,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
+
 import { ImageSpiceDialog } from "../image-spice/image-spice-dialog";
 import { AiSettingsDialog } from "../image-spice/ai-settings-dialog";
 import type { AiConfiguration } from "../image-spice/ai-configuration";
@@ -7,21 +17,24 @@ import {
   CLOUD_PROJECT_LIMIT,
   type CloudProjectSummary,
 } from "./cloud-projects";
+const InlineConfirm = lazy(() =>
+  import("../../components/inline-confirm").then((module) => ({
+    default: module.InlineConfirm,
+  })),
+);
 
 export interface FileCommandMenuProps {
-  projectStoreLabel: "云项目" | "预览项目";
-  projectStoreItemLabel: "云项目" | "预览项目";
   cloudProjects: readonly CloudProjectSummary[];
   activeCloudProjectId: string | null;
   canRevert: boolean;
   hasRecoverySessions: boolean;
+  checkAndSave: { enabled: boolean; execute: () => void };
   projectInputRef: RefObject<HTMLInputElement | null>;
   onNewProject: () => void;
   onSave: () => void;
   onRefreshCloudProjects: () => void;
   onOpenCloudProject: (project: CloudProjectSummary) => void;
-  onDeleteCloudProject: (project: CloudProjectSummary) => void;
-  onRefresh: () => void;
+  onDeleteCloudProject: (project: CloudProjectSummary) => void | Promise<void>;
   onImportProject: (file: File | null) => void;
   onImportSpice: (
     files: FileList | null,
@@ -34,13 +47,15 @@ export interface FileCommandMenuProps {
   onOpenRecovery: () => void;
 }
 
-function ExportSubmenu({
+function CommandSubmenu({
+  id,
   title,
   open,
   onToggle,
   onClose,
   children,
 }: {
+  id: string;
   title: string;
   open: boolean;
   onToggle: () => void;
@@ -48,6 +63,13 @@ function ExportSubmenu({
   children: ReactNode;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
+  const options = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const menu = options.current?.closest<HTMLElement>(".file-command-popover");
+    if (!open || !menu || getComputedStyle(menu).overflowY !== "auto") return;
+    const bottom = options.current!.getBoundingClientRect().bottom;
+    menu.scrollTop += Math.max(0, bottom - menu.getBoundingClientRect().bottom);
+  }, [open]);
   return (
     <div
       className="export-submenu"
@@ -64,7 +86,7 @@ function ExportSubmenu({
         ref={trigger}
         type="button"
         aria-expanded={open}
-        aria-controls="export-drawing-options"
+        aria-controls={id}
         onClick={(event) => {
           event.stopPropagation();
           onToggle();
@@ -75,8 +97,8 @@ function ExportSubmenu({
             if (!open) onToggle();
             requestAnimationFrame(() =>
               trigger.current?.parentElement
-                ?.querySelector<HTMLButtonElement>(
-                  ".export-submenu-options button",
+                ?.querySelector<HTMLElement>(
+                  ".export-submenu-options button, .export-submenu-options .file-import",
                 )
                 ?.focus(),
             );
@@ -87,8 +109,9 @@ function ExportSubmenu({
         <span aria-hidden="true">›</span>
       </button>
       <div
+        ref={options}
         className="export-submenu-options"
-        id="export-drawing-options"
+        id={id}
         role="group"
         aria-label={title}
         hidden={!open}
@@ -100,19 +123,17 @@ function ExportSubmenu({
 }
 
 export function FileCommandMenu({
-  projectStoreLabel,
-  projectStoreItemLabel,
   cloudProjects,
   activeCloudProjectId,
   onOpenCloudProject,
   onDeleteCloudProject,
   canRevert,
   hasRecoverySessions,
+  checkAndSave,
   projectInputRef,
   onNewProject,
   onSave,
   onRefreshCloudProjects,
-  onRefresh,
   onImportProject,
   onImportSpice,
   onExportProject,
@@ -126,7 +147,33 @@ export function FileCommandMenu({
   const [aiConfigurations, setAiConfigurations] = useState<AiConfiguration[]>(
     [],
   );
-  const [drawingExportOpen, setDrawingExportOpen] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [openSubmenu, setOpenSubmenu] = useState<"import" | "export" | null>(
+    null,
+  );
+  const cloudProjectList = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!deletingId) return;
+    const list = cloudProjectList.current;
+    const decision = list?.querySelector<HTMLElement>(
+      ".inline-confirm[data-expanded]",
+    );
+    const row = decision?.closest<HTMLElement>(".cloud-project-command");
+    if (!list || !row) return;
+    const listBounds = list.getBoundingClientRect();
+    const rowBounds = row.getBoundingClientRect();
+    if (rowBounds.bottom > listBounds.bottom)
+      list.scrollTop += rowBounds.bottom - listBounds.bottom;
+    else if (rowBounds.top < listBounds.top)
+      list.scrollTop += rowBounds.top - listBounds.top;
+  }, [deletingId]);
+  const activateFileLabel = (
+    event: ReactKeyboardEvent<HTMLLabelElement>,
+  ): void => {
+    if (event.key !== "进入" && event.key !== " ") return;
+    event.preventDefault();
+    event.currentTarget.querySelector("input")?.click();
+  };
   return (
     <>
       {imageSpiceOpen && (
@@ -153,11 +200,14 @@ export function FileCommandMenu({
         name="editor-command-menu"
         onToggle={(event) => {
           if (event.currentTarget.open) onRefreshCloudProjects();
-          else setDrawingExportOpen(false);
+          else setOpenSubmenu(null);
         }}
       >
         <summary>文件</summary>
-        <div className="command-popover">
+        <div
+          className="command-popover file-command-popover"
+          data-inline-confirm-menu
+        >
           <button
             type="button"
             onClick={(event) => {
@@ -167,73 +217,6 @@ export function FileCommandMenu({
           >
             AI 接口设置…
           </button>
-          <button type="button" onClick={onNewProject}>
-            新建项目
-          </button>
-          <button
-            type="button"
-            data-testid="save-cloud-project"
-            onClick={onSave}
-          >
-            保存
-          </button>
-          <span className="command-group-label">
-            {projectStoreLabel} ({cloudProjects.length}/{CLOUD_PROJECT_LIMIT})
-          </span>
-          {cloudProjects.map((project) => (
-            <div className="cloud-project-command" key={project.id}>
-              <button
-                type="button"
-                className="cloud-project-open"
-                data-testid={`cloud-project-${project.id}`}
-                title={`打开修订版本 ${project.revision}`}
-                disabled={project.id === activeCloudProjectId}
-                onClick={() => onOpenCloudProject(project)}
-              >
-                <span className="cloud-project-name">{project.name}</span>
-                <time
-                  className="cloud-project-time"
-                  dateTime={project.updatedAt}
-                >
-                  {new Date(project.updatedAt).toLocaleString(undefined, {
-                    dateStyle: "short",
-                    timeStyle: "short",
-                  })}
-                </time>
-              </button>
-              <button
-                type="button"
-                aria-label={`删除${projectStoreItemLabel} ${project.name}`}
-                title={`删除此${projectStoreItemLabel}`}
-                disabled={project.id === activeCloudProjectId}
-                onClick={() => onDeleteCloudProject(project)}
-              >
-                删除
-              </button>
-            </div>
-          ))}
-          <label className="file-import">
-            导入项目文件…
-            <input
-              ref={projectInputRef}
-              data-testid="project-file"
-              type="file"
-              accept=".json,.icproj.json,application/json"
-              onChange={(event) =>
-                onImportProject(event.currentTarget.files?.[0] ?? null)
-              }
-            />
-          </label>
-          <label className="file-import">
-            Import SPICE / SCS…
-            <input
-              data-testid="spice-files"
-              type="file"
-              accept=".spi,.cir,.sp,.scs,.inc,.lib"
-              multiple
-              onChange={(event) => onImportSpice(event.currentTarget.files)}
-            />
-          </label>
           <button
             type="button"
             onClick={(event) => {
@@ -243,56 +226,189 @@ export function FileCommandMenu({
           >
             从电路图识别 SPICE…
           </button>
-          <label className="file-import">
-            导入 Cadence SPICE（`!` 全局网络）…
-            <input
-              data-testid="cadence-spice-files"
-              type="file"
-              accept=".spi,.cir,.sp,.scs,.inc,.lib"
-              multiple
-              onChange={(event) =>
-                onImportSpice(event.currentTarget.files, "cadence-bang")
-              }
-            />
-          </label>
-          <button type="button" onClick={onExportProject}>
-            导出项目文件…
+          <button type="button" onClick={onNewProject}>
+            新建项目
           </button>
+          <button
+            type="button"
+            data-testid="save-cloud-project"
+            onClick={onSave}
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            data-testid="check-and-save"
+            disabled={!checkAndSave.enabled}
+            onClick={checkAndSave.execute}
+            title="Check ERC and visual issues, and save this Cloud Project"
+          >
+            Check and Save
+          </button>
+          <span className="command-group-label" id="file-cloud-projects-label">
+            Cloud Projects ({cloudProjects.length}/{CLOUD_PROJECT_LIMIT})
+          </span>
+          <div
+            ref={cloudProjectList}
+            className="cloud-project-list"
+            role="region"
+            aria-labelledby="file-cloud-projects-label"
+            tabIndex={cloudProjects.length ? 0 : undefined}
+            data-testid="file-cloud-project-list"
+          >
+            {cloudProjects.map((project) => (
+              <div className="cloud-project-command" key={project.id}>
+                <button
+                  type="button"
+                  className="cloud-project-open"
+                  data-testid={`cloud-project-${project.id}`}
+                  title={`Open revision ${project.revision}`}
+                  disabled={project.id === activeCloudProjectId}
+                  onClick={() => onOpenCloudProject(project)}
+                >
+                  <span className="cloud-project-name">{project.name}</span>
+                  <time
+                    className="cloud-project-time"
+                    dateTime={project.updatedAt}
+                  >
+                    {new Date(project.updatedAt).toLocaleString(undefined, {
+                      dateStyle: "short",
+                      timeStyle: "short",
+                    })}
+                  </time>
+                </button>
+                <Suspense fallback={<button disabled>删除</button>}>
+                  <InlineConfirm
+                    aria-label={`Delete Cloud Project ${project.name}`}
+                    title="Delete this Cloud Project"
+                    disabled={project.id === activeCloudProjectId}
+                    open={deletingId === project.id}
+                    onOpenChange={(open) => {
+                      if (open) setOpenSubmenu(null);
+                      setDeletingId((current) =>
+                        open
+                          ? project.id
+                          : current === project.id
+                            ? null
+                            : current,
+                      );
+                    }}
+                    onConfirm={() => onDeleteCloudProject(project)}
+                  >
+                    删除
+                  </InlineConfirm>
+                </Suspense>
+              </div>
+            ))}
+          </div>
           <div>
-            <ExportSubmenu
-              title="Export drawing"
-              open={drawingExportOpen}
-              onToggle={() => setDrawingExportOpen(!drawingExportOpen)}
-              onClose={() => setDrawingExportOpen(false)}
+            <CommandSubmenu
+              id="file-import-options"
+              title="Import"
+              open={openSubmenu === "import"}
+              onToggle={() => {
+                setDeletingId(null);
+                setOpenSubmenu((current) =>
+                  current === "import" ? null : "import",
+                );
+              }}
+              onClose={() => setOpenSubmenu(null)}
             >
+              <label
+                className="file-import"
+                tabIndex={0}
+                onKeyDown={activateFileLabel}
+              >
+                Project File…
+                <input
+                  ref={projectInputRef}
+                  data-testid="project-file"
+                  type="file"
+                  accept=".json,.icproj.json,application/json"
+                  onChange={(event) =>
+                    onImportProject(event.currentTarget.files?.[0] ?? null)
+                  }
+                />
+              </label>
+              <label
+                className="file-import"
+                tabIndex={0}
+                onKeyDown={activateFileLabel}
+              >
+                SPICE / SCS…
+                <input
+                  data-testid="spice-files"
+                  type="file"
+                  accept=".spi,.cir,.sp,.scs,.inc,.lib"
+                  multiple
+                  onChange={(event) => onImportSpice(event.currentTarget.files)}
+                />
+              </label>
+              <label
+                className="file-import"
+                tabIndex={0}
+                onKeyDown={activateFileLabel}
+              >
+                Cadence SPICE (`!` globals)…
+                <input
+                  data-testid="cadence-spice-files"
+                  type="file"
+                  accept=".spi,.cir,.sp,.scs,.inc,.lib"
+                  multiple
+                  onChange={(event) =>
+                    onImportSpice(event.currentTarget.files, "cadence-bang")
+                  }
+                />
+              </label>
+            </CommandSubmenu>
+          </div>
+          <div>
+            <CommandSubmenu
+              id="file-export-options"
+              title="Export"
+              open={openSubmenu === "export"}
+              onToggle={() => {
+                setDeletingId(null);
+                setOpenSubmenu((current) =>
+                  current === "export" ? null : "export",
+                );
+              }}
+              onClose={() => setOpenSubmenu(null)}
+            >
+              <button
+                type="button"
+                aria-label="导出项目文件…"
+                onClick={onExportProject}
+              >
+                Project File…
+              </button>
               <button type="button" aria-label="导出 SVG" onClick={onExportSvg}>
-                SVG
+                Drawing as SVG
               </button>
               <button
                 type="button"
                 aria-label="导出 PNG"
                 onClick={() => onExportRaster("png")}
               >
-                PNG
+                Drawing as PNG
               </button>
               <button
                 type="button"
-                aria-label="导出 PDF"
+                aria-label="Export PDF"
                 onClick={() => onExportRaster("pdf")}
               >
-                PDF
+                Drawing as PDF
               </button>
-            </ExportSubmenu>
+            </CommandSubmenu>
           </div>
-          <button type="button" onClick={onRefresh}>
-            刷新应用
-          </button>
-          <button type="button" onClick={onRevert} disabled={!canRevert}>
-            恢复到上次保存
-          </button>
+          {canRevert ? (
+            <button type="button" onClick={onRevert}>
+              Revert to Last Saved
+            </button>
+          ) : null}
           {hasRecoverySessions ? (
             <button type="button" onClick={onOpenRecovery}>
-              恢复本地工作…
+              Recover Unsaved Work…
             </button>
           ) : null}
         </div>

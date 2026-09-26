@@ -9,6 +9,7 @@ import { SYMBOL_CONNECTION_GRID, SymbolDefinitionSchema } from "./schema.js";
 
 const PRODUCT_IDS = [
   "and-gate",
+  "battery",
   "buffer",
   "capacitor",
   "closed-switch",
@@ -40,7 +41,9 @@ const PRODUCT_IDS = [
   "nor-gate",
   "npn",
   "opamp",
+  "opamp-wide",
   "opamp-differential",
+  "opamp-differential-wide",
   "or-gate",
   "pmos",
   "pnp",

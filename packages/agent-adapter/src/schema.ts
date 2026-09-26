@@ -27,6 +27,8 @@ import {
   CellNetlistInterfaceSchema,
   MosBulkDefaultsSchema,
   ProjectSimulationFolderSchema,
+  SimulationCircuitBindingSchema,
+  SimulationInputPathSchema,
 } from "@icm/model";
 import { ObjectLocatorSchema, HierarchyFrameSchema } from "@icm/derived";
 import {
@@ -79,7 +81,9 @@ export const AgentFileResourceCapabilitySchema = z.strictObject({
       "inspect",
       "discard",
       "request-approval",
+      "open",
       "simulation-input",
+      "import-cell",
     ]),
   ),
   maxBytes: z.number().int().positive(),
@@ -107,19 +111,41 @@ export const AgentSimulationResourceCapabilitySchema = z.strictObject({
   maxTimeoutMs: z.number().int().positive(),
   synchronous: z.literal(false),
 });
-/** Signed-in Cloud Project Cell discovery and project-local import. */
+/** Gallery discovery plus active and Cloud Project code operations. */
 export const AgentProjectResourceCapabilitySchema = z.strictObject({
   path: z.literal("/api/agent/sessions/{sessionId}/projects"),
   operations: z.tuple([
     z.literal("list-projects"),
+    z.literal("workspace"),
     z.literal("list-cells"),
     z.literal("import-cell"),
+    z.literal("list-gallery"),
+    z.literal("read-gallery-entry"),
+    z.literal("read-gallery-entries"),
+    z.literal("read-project-code"),
+    z.literal("replace-project-code"),
+    z.literal("read-netlist"),
+    z.literal("replace-netlist"),
   ]),
   importMode: z.literal("project-local-copy"),
 });
 export const AgentSnapshotRequestSchema = RequestBaseSchema.extend({
   operation: z.literal("snapshot"),
   documentId: StableIdSchema,
+  /** Full remains the default; lightweight projections never contain source text. */
+  projection: z
+    .enum([
+      "full",
+      "bootstrap",
+      "geometry",
+      "pins",
+      "state",
+      "folder-directory",
+    ])
+    .optional(),
+  geometryIds: z.array(StableIdSchema).min(1).max(64).optional(),
+  instanceIds: z.array(StableIdSchema).min(1).max(64).optional(),
+  diagnosticDetail: z.enum(["counts", "items"]).optional(),
   includeSourceSpans: z.boolean().optional(),
   traceNet: z
     .strictObject({
@@ -128,7 +154,28 @@ export const AgentSnapshotRequestSchema = RequestBaseSchema.extend({
     })
     .optional(),
 });
+export const AgentWireAtAnchorSchema = z
+  .strictObject({
+    kind: z.literal("wire-at"),
+    point: PointSchema,
+    net: z.string().min(1).optional(),
+    member: z
+      .strictObject({
+        instanceId: StableIdSchema,
+        pinName: z.string().min(1),
+      })
+      .optional(),
+  })
+  .describe(
+    "Resolve a tap on the current draft, including earlier wires. Optional net or member restricts the intended Net; a tap joining a different crossing Net is rejected.",
+  );
 export const AgentWireIntentAnchorSchema = z.discriminatedUnion("kind", [
+  AgentWireAtAnchorSchema,
+  z
+    .strictObject({ kind: z.literal("net"), net: z.string().min(1) })
+    .describe(
+      "Net ID or name; choose its nearest route to the other endpoint on the current draft.",
+    ),
   z.strictObject({
     kind: z.literal("endpoint"),
     endpoint: RouteEndpointSchema,
@@ -192,16 +239,17 @@ export const AgentSemanticIntentSchema = z.discriminatedUnion("kind", [
  * intentionally narrower than the internal Edit Engine union where product
  * policy forbids a removed asset or style.
  */
+export const CELL_STRUCTURE_EDIT_KINDS = [
+  "add_cell_terminal",
+  "update_cell_terminal",
+  "remove_cell_terminal",
+  "reorder_cell_terminals",
+  "set_cell_formal_parameters",
+  "set_cell_symbol_presentation",
+] as const;
 export const AgentSchematicEditSchema = SchematicEditSchema.superRefine(
   (edit, context) => {
-    if (
-      edit.kind === "add_cell_terminal" ||
-      edit.kind === "update_cell_terminal" ||
-      edit.kind === "remove_cell_terminal" ||
-      edit.kind === "reorder_cell_terminals" ||
-      edit.kind === "set_cell_formal_parameters" ||
-      edit.kind === "set_cell_symbol_presentation"
-    ) {
+    if (CELL_STRUCTURE_EDIT_KINDS.some((kind) => edit.kind === kind)) {
       context.addIssue({
         code: "custom",
         message:
@@ -289,6 +337,7 @@ export const AgentTransactRequestSchema = RequestBaseSchema.extend({
   expectedRevision: z.number().int().nonnegative(),
   expectedStructureRevision: z.number().int().nonnegative().optional(),
   dryRun: z.boolean().optional(),
+  diagnosticDeltaDetail: z.enum(["full", "compact"]).optional(),
   ...TransactionPayloadShape,
 }).superRefine((request, context) => {
   oneTransactionForm(request, context);
@@ -528,7 +577,9 @@ export const AgentSnapshotDocumentSchema = z.strictObject({
   routes: z.array(AgentSnapshotRouteSchema),
   junctions: z.array(AgentSnapshotJunctionSchema),
   noConnects: z.array(AgentSnapshotNoConnectSchema),
-  annotations: z.array(AnnotationSchema),
+  annotations: z.array(
+    AnnotationSchema.safeExtend({ resolvedText: z.string().optional() }),
+  ),
   // ADR 0010 WP-R4: each drafting object carries its canonical shape plus the
   // derived resolved geometry (position(s)/bounds/diagnostics) computed from
   // the single resolveDraftingObjectGeometry entry.
@@ -564,6 +615,39 @@ export const AgentProjectIndexDocumentSchema = z.strictObject({
       targetDefinitionId: StableIdSchema.nullable().optional(),
     }),
   ),
+});
+
+export const AgentBootstrapSnapshotSchema = z.strictObject({
+  snapshotVersion: z.literal(AGENT_SNAPSHOT_VERSION),
+  byteLength: z.number().int().nonnegative(),
+  project: z.strictObject({
+    id: StableIdSchema,
+    name: z.string().min(1),
+    structureRevision: z.number().int().nonnegative(),
+    topDocumentId: StableIdSchema,
+    simulationFolderCount: z.number().int().nonnegative(),
+    documents: z.array(
+      z.strictObject({
+        id: StableIdSchema,
+        name: z.string().min(1),
+        revision: z.number().int().nonnegative(),
+        instanceCount: z.number().int().nonnegative(),
+        netCount: z.number().int().nonnegative(),
+      }),
+    ),
+  }),
+  document: z.strictObject({
+    id: StableIdSchema,
+    name: z.string().min(1),
+    revision: z.number().int().nonnegative(),
+    instanceCount: z.number().int().nonnegative(),
+    netCount: z.number().int().nonnegative(),
+    routeCount: z.number().int().nonnegative(),
+    junctionCount: z.number().int().nonnegative(),
+    annotationCount: z.number().int().nonnegative(),
+    noConnectCount: z.number().int().nonnegative(),
+    draftingObjectCount: z.number().int().nonnegative(),
+  }),
 });
 
 export const AgentSessionSnapshotSchema = z.strictObject({
@@ -662,6 +746,116 @@ export const AgentSnapshotResponseSchema = ResponseBaseSchema.extend({
   diagnostics: z.array(AgentDiagnosticSchema),
   trace: AgentNetTraceSchema.nullable().optional(),
 });
+export const AgentBootstrapSnapshotResponseSchema = ResponseBaseSchema.extend({
+  apiVersion: z.literal(AGENT_API_VERSION),
+  operation: z.literal("snapshot"),
+  ok: z.literal(true),
+  projection: z.literal("bootstrap"),
+  revision: z.number().int().nonnegative(),
+  context: AgentBootstrapSnapshotSchema,
+});
+
+export const AgentDocumentStateResponseSchema = ResponseBaseSchema.extend({
+  operation: z.literal("snapshot"),
+  ok: z.literal(true),
+  projection: z.literal("state"),
+  projectId: StableIdSchema,
+  structureRevision: z.number().int().nonnegative(),
+  documentId: StableIdSchema,
+  documentName: z.string().min(1),
+  revision: z.number().int().nonnegative(),
+  instanceCount: z.number().int().nonnegative(),
+  netCount: z.number().int().nonnegative(),
+  counts: z.strictObject({
+    errors: z.number().int().nonnegative(),
+    warnings: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  }),
+  diagnostics: z.array(AgentDiagnosticSchema).optional(),
+});
+
+export const AgentFolderDirectoryResponseSchema = ResponseBaseSchema.extend({
+  operation: z.literal("snapshot"),
+  ok: z.literal(true),
+  projection: z.literal("folder-directory"),
+  projectId: StableIdSchema,
+  structureRevision: z.number().int().nonnegative(),
+  documentId: StableIdSchema,
+  revision: z.number().int().nonnegative(),
+  folders: z
+    .array(
+      z.strictObject({
+        id: StableIdSchema,
+        name: z.string().trim().min(1).max(128),
+        entry: SimulationInputPathSchema,
+        circuitBindings: z.array(SimulationCircuitBindingSchema).max(1024),
+      }),
+    )
+    .max(64),
+});
+
+export const AgentGeometryObjectSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("instance"),
+    id: StableIdSchema,
+    placement: PlacementSchema.nullable(),
+  }),
+  z.strictObject({
+    kind: z.literal("route"),
+    id: StableIdSchema,
+    netId: StableIdSchema,
+    start: RouteEndpointSchema,
+    legs: z.array(RouteLegSchema),
+    presentation: RoutePresentationSchema.optional(),
+  }),
+  z.strictObject({
+    kind: z.literal("junction"),
+    id: StableIdSchema,
+    netId: StableIdSchema,
+    position: PointSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("annotation"),
+    id: StableIdSchema,
+    anchor: AnnotationSchema.shape.anchor,
+    rotation: AnnotationSchema.shape.rotation,
+    alignment: AnnotationSchema.shape.alignment,
+  }),
+  z.strictObject({
+    kind: z.literal("drafting"),
+    id: StableIdSchema,
+    object: DraftingObjectSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("no-connect"),
+    id: StableIdSchema,
+    object: NoConnectSchema,
+  }),
+]);
+export const AgentGeometrySnapshotResponseSchema = ResponseBaseSchema.extend({
+  operation: z.literal("snapshot"),
+  ok: z.literal(true),
+  projection: z.literal("geometry"),
+  projectId: StableIdSchema,
+  structureRevision: z.number().int().nonnegative(),
+  documentId: StableIdSchema,
+  revision: z.number().int().nonnegative(),
+  objects: z.array(AgentGeometryObjectSchema).max(64),
+  missingObjectIds: z.array(StableIdSchema).max(64),
+});
+
+export const AgentPinsSnapshotResponseSchema = ResponseBaseSchema.extend({
+  operation: z.literal("snapshot"),
+  ok: z.literal(true),
+  projection: z.literal("pins"),
+  projectId: StableIdSchema,
+  structureRevision: z.number().int().nonnegative(),
+  documentId: StableIdSchema,
+  revision: z.number().int().nonnegative(),
+  instances: z.array(AgentSnapshotInstanceSchema).max(64),
+  mosBulkDefaults: AgentSnapshotDocumentSchema.shape.mosBulkDefaults,
+  missingInstanceIds: z.array(StableIdSchema).max(64),
+});
 
 export const AgentSemanticIntentResultSchema = z.strictObject({
   kind: z.enum([
@@ -689,6 +883,7 @@ export const AgentTransactSuccessResponseSchema = ResponseBaseSchema.extend({
     .strictObject({
       added: z.array(AgentDiagnosticSchema),
       removed: z.array(AgentDiagnosticSchema),
+      removedIds: z.array(z.string()).optional(),
     })
     .optional(),
   resolvedRoutes: z
@@ -738,6 +933,11 @@ export const AgentErrorResponseSchema = ResponseBaseSchema.extend({
 
 export const AgentProductionCircuitResponseSchema = z.union([
   AgentCapabilitiesResponseSchema,
+  AgentBootstrapSnapshotResponseSchema,
+  AgentDocumentStateResponseSchema,
+  AgentFolderDirectoryResponseSchema,
+  AgentGeometrySnapshotResponseSchema,
+  AgentPinsSnapshotResponseSchema,
   AgentSnapshotResponseSchema,
   AgentTransactSuccessResponseSchema,
   AgentRenderResponseSchema,
@@ -775,6 +975,9 @@ export type AgentProductionCircuitResponse = z.infer<
 >;
 export type AgentDiagnostic = z.infer<typeof AgentDiagnosticSchema>;
 export type AgentDiff = z.infer<typeof AgentDiffSchema>;
+export type AgentBootstrapSnapshot = z.infer<
+  typeof AgentBootstrapSnapshotSchema
+>;
 export type AgentSessionSnapshot = z.infer<typeof AgentSessionSnapshotSchema>;
 export type AgentSnapshotDocument = z.infer<typeof AgentSnapshotDocumentSchema>;
 export type AgentFileResourceCapability = z.infer<

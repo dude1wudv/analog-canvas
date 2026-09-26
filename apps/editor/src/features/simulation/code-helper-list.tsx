@@ -114,6 +114,7 @@ export function CodeHelperList({
       <input
         autoFocus
         aria-label="搜索命令或用途"
+        autoComplete="off"
         placeholder="搜索命令或用途…"
         value={query}
         onChange={(event) => {

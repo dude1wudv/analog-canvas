@@ -31,7 +31,7 @@ export function CellInterfaceConfirmationDialog({
       <p>{request.message}</p>
       <footer className="editor-action-dialog-actions">
         <button type="button" autoFocus onClick={onCancel}>
-          Cancel
+          取消
         </button>
         <button type="button" onClick={onConfirm}>
           {request.confirmLabel}

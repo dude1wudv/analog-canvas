@@ -6,6 +6,7 @@ import {
   nativeWorkerEnv,
   nativeInput,
   nativeHealth,
+  nativeStreamingReply,
 } from "./simulation.test-fixture";
 
 import {
@@ -29,6 +30,364 @@ function startRequest() {
 }
 
 describe("managed simulation operations", () => {
+  it("dispatches idle work from its durable alarm without Queue or a live start request", async () => {
+    const h = harness("alarm");
+    try {
+      const execute = vi.fn(async (_url: string, init?: RequestInit) =>
+        nativeStreamingReply(JSON.parse(String(init?.body)), false),
+      );
+      h.env.VACASK = nativeWorkerEnv(execute).VACASK;
+      const response = await routeManagedSimulationRequest(
+        startRequest(),
+        h.env,
+        h.runtime,
+      );
+      const id = (await response!.json()).run.id;
+      expect(h.jobs).toHaveLength(0);
+      expect(await h.state.storage.getAlarm()).toBe(101);
+      // No client request stays open while the alarm owns execution.
+      await h.control.alarm();
+      const run = await (
+        await h.control.fetch(new Request(`https://control/runs/${id}`))
+      ).json();
+      expect(run.run.state).toBe("succeeded");
+      expect(execute).toHaveBeenCalledOnce();
+      const result = await routeManagedSimulationRequest(
+        new Request(`https://canvas.test/api/simulation/runs/${id}/result`),
+        h.env,
+        h.runtime,
+      );
+      for (const metric of ["inputReadMs", "upstreamMs", "resultCommitMs"]) {
+        expect(result!.headers.has(`x-analog-canvas-${metric}`)).toBe(true);
+        expect(
+          Number(result!.headers.get(`x-analog-canvas-${metric}`)),
+        ).toBeGreaterThanOrEqual(0);
+      }
+      const oldDelivery = {
+        body: { schemaVersion: 1 as const, runId: id },
+        ack: vi.fn(),
+        retry: vi.fn(),
+      };
+      await consumeSimulationJobs(
+        { messages: [oldDelivery] },
+        h.env,
+        h.runtime,
+      );
+      expect(oldDelivery.ack).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledOnce();
+    } finally {
+      h.close();
+    }
+  });
+  it("arbitrates the same global slot against a concurrent legacy delivery and then drains waiting work", async () => {
+    const h = harness("alarm");
+    try {
+      let release!: () => void;
+      const wait = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const execute = vi.fn(async (_url: string, init?: RequestInit) => {
+        await wait;
+        return nativeStreamingReply(JSON.parse(String(init?.body)), false);
+      });
+      h.env.VACASK = nativeWorkerEnv(execute).VACASK;
+      await routeManagedSimulationRequest(startRequest(), h.env, h.runtime);
+      const alarm = h.control.alarm();
+      await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
+      const other = {
+        ...h.runtime,
+        principalOf: async () => ({
+          ...(await h.runtime.principalOf())!,
+          id: "other-owner",
+        }),
+      };
+      const queued = await routeManagedSimulationRequest(
+        startRequest(),
+        h.env,
+        other,
+      );
+      const id = (await queued!.json()).run.id;
+      const racing = {
+        body: { schemaVersion: 1 as const, runId: id },
+        ack: vi.fn(),
+        retry: vi.fn(),
+      };
+      await consumeSimulationJobs({ messages: [racing] }, h.env, h.runtime);
+      expect(racing.retry).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledOnce();
+      release();
+      await alarm;
+      expect(execute).toHaveBeenCalledTimes(2);
+      const run = await (
+        await h.control.fetch(new Request(`https://control/runs/${id}`))
+      ).json();
+      expect(run.run.state).toBe("succeeded");
+    } finally {
+      h.close();
+    }
+  });
+  it("reuses completed admissions without sending another queue delivery", async () => {
+    const { env, jobs, runtime, close } = harness();
+    try {
+      await routeManagedSimulationRequest(startRequest(), env, runtime);
+      await consumeSimulationJobs(
+        { messages: [{ body: jobs[0]!, ack: vi.fn(), retry: vi.fn() }] },
+        env,
+        runtime,
+      );
+      const retry = await routeManagedSimulationRequest(
+        startRequest(),
+        env,
+        runtime,
+      );
+      expect(await retry!.json()).toMatchObject({
+        accepted: false,
+        run: { state: "succeeded" },
+      });
+      expect(jobs).toHaveLength(1);
+    } finally {
+      close();
+    }
+  });
+  it.each(["refused", "lost-response"])(
+    "recovers stored completion after %s without re-executing",
+    async (mode) => {
+      const { env, jobs, runtime, bucket, control, close } = harness();
+      const execute = vi.fn(async (_url: string, init?: RequestInit) =>
+        nativeStreamingReply(JSON.parse(String(init?.body)), false),
+      );
+      env.VACASK = nativeWorkerEnv(execute).VACASK;
+      try {
+        const accepted = await routeManagedSimulationRequest(
+          startRequest(),
+          env,
+          runtime,
+        );
+        const id = (await accepted!.json()).run.id;
+        const original = env.SIMULATION_CONTROL!.getByName;
+        let reject = true;
+        env.SIMULATION_CONTROL!.getByName = (name) => ({
+          fetch: async (input, init) => {
+            if (
+              init?.method === "POST" &&
+              JSON.parse(String(init.body)).kind === "completed" &&
+              reject
+            ) {
+              if (mode === "lost-response") {
+                await original(name).fetch(input, init);
+                throw new Error("response lost after commit");
+              }
+              return Response.json(
+                { error: "temporarily-unavailable" },
+                { status: 503 },
+              );
+            }
+            return original(name).fetch(input, init);
+          },
+        });
+        const first = { body: jobs[0]!, ack: vi.fn(), retry: vi.fn() };
+        await consumeSimulationJobs({ messages: [first] }, env, runtime);
+        expect(first.ack).not.toHaveBeenCalled();
+        expect(first.retry).toHaveBeenCalledOnce();
+        expect(
+          [...bucket.objects.keys()].some((key) =>
+            key.endsWith("response.json"),
+          ),
+        ).toBe(true);
+        reject = false;
+        const second = { body: jobs[0]!, ack: vi.fn(), retry: vi.fn() };
+        await consumeSimulationJobs({ messages: [second] }, env, runtime);
+        expect(second.ack).toHaveBeenCalledOnce();
+        expect(second.retry).not.toHaveBeenCalled();
+        expect(execute).toHaveBeenCalledOnce();
+        const run = await (
+          await control.fetch(new Request(`https://control/runs/${id}`))
+        ).json();
+        expect(run.run.state).toBe("succeeded");
+        expect(
+          run.run.artifacts.map((item: { name: string }) => item.name),
+        ).toEqual(["managed-input.json", "response.json"]);
+      } finally {
+        close();
+      }
+    },
+  );
+
+  it("returns a terminal expiration instead of asking the client to keep waiting", async () => {
+    const { env, jobs, runtime, control, close } = harness();
+    try {
+      const accepted = await routeManagedSimulationRequest(
+        startRequest(),
+        env,
+        runtime,
+      );
+      const id = (await accepted!.json()).run.id;
+      await consumeSimulationJobs(
+        { messages: [{ body: jobs[0]!, ack: vi.fn(), retry: vi.fn() }] },
+        env,
+        runtime,
+      );
+      await control.fetch(
+        new Request(`https://control/runs/${id}`, {
+          method: "POST",
+          body: JSON.stringify({ kind: "expired", at: 101 }),
+        }),
+      );
+      const result = await routeManagedSimulationRequest(
+        new Request(`https://canvas.test/api/simulation/runs/${id}/result`),
+        env,
+        runtime,
+      );
+      expect(result!.status).toBe(410);
+      expect(await result!.json()).toMatchObject({
+        error: "RESULT_EXPIRED",
+        state: "expired",
+        recovery: "not-retryable",
+      });
+    } finally {
+      close();
+    }
+  });
+
+  it("does not ACK an unreadable control record as though it were missing", async () => {
+    const { env, runtime, close } = harness();
+    try {
+      env.SIMULATION_CONTROL!.getByName = () => ({
+        fetch: async () =>
+          Response.json({ error: "unavailable" }, { status: 503 }),
+      });
+      const delivery = {
+        body: { schemaVersion: 1 as const, runId: "existing" },
+        ack: vi.fn(),
+        retry: vi.fn(),
+      };
+      await consumeSimulationJobs({ messages: [delivery] }, env, runtime);
+      expect(delivery.ack).not.toHaveBeenCalled();
+      expect(delivery.retry).toHaveBeenCalledOnce();
+    } finally {
+      close();
+    }
+  });
+
+  it.each([false, true])(
+    "stores receipt-bound executor streams and refuses corrupt evidence (%s)",
+    async (corrupt) => {
+      const { env, jobs, runtime, bucket, close } = harness();
+      const execute = vi.fn(async (_url: string, init?: RequestInit) =>
+        nativeStreamingReply(JSON.parse(String(init?.body)), corrupt),
+      );
+      env.VACASK = nativeWorkerEnv(execute).VACASK;
+      try {
+        const accepted = await routeManagedSimulationRequest(
+          startRequest(),
+          env,
+          runtime,
+        );
+        const id = (await accepted!.json()).run.id;
+        const put = vi.spyOn(bucket, "put");
+        const delivery = { body: jobs[0]!, ack: vi.fn(), retry: vi.fn() };
+        await consumeSimulationJobs({ messages: [delivery] }, env, runtime);
+        const responsePut = put.mock.calls.find(([key]) =>
+          key.endsWith("response.json"),
+        );
+        expect(responsePut?.[1]).toBeInstanceOf(ReadableStream);
+        expect(responsePut?.[2]?.sha256).toMatch(/^[a-f0-9]{64}$/u);
+        const read = await routeManagedSimulationRequest(
+          new Request(`https://canvas.test/api/simulation/runs/${id}`),
+          env,
+          runtime,
+        );
+        expect((await read!.json()).run.state).toBe(
+          corrupt ? "infrastructure-failed" : "succeeded",
+        );
+        expect(delivery.ack).toHaveBeenCalledOnce();
+        expect(delivery.retry).not.toHaveBeenCalled();
+        expect(execute).toHaveBeenCalledOnce();
+        expect(
+          [...bucket.objects.keys()].some((key) =>
+            key.endsWith("response.json"),
+          ),
+        ).toBe(!corrupt);
+      } finally {
+        close();
+      }
+    },
+  );
+  it("streams retained results without buffering and checks ownership before accessing bytes", async () => {
+    const { env, jobs, runtime, bucket, close } = harness();
+    try {
+      const accepted = await routeManagedSimulationRequest(
+        startRequest(),
+        env,
+        runtime,
+      );
+      const id = (await accepted!.json()).run.id;
+      await consumeSimulationJobs(
+        { messages: [{ body: jobs[0]!, ack: vi.fn(), retry: vi.fn() }] },
+        env,
+        runtime,
+      );
+      let emitted = 0;
+      const chunk = new Uint8Array(64 * 1024).fill(65);
+      const text = vi.fn(async () => {
+        throw new Error("must not buffer retained evidence");
+      });
+      const get = vi.spyOn(bucket, "get").mockImplementation(async () => ({
+        text,
+        body: new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (emitted === 256) controller.close();
+            else {
+              emitted++;
+              controller.enqueue(chunk);
+            }
+          },
+        }),
+      }));
+      const url = `https://canvas.test/api/simulation/runs/${id}/result`;
+      const denied = await routeManagedSimulationRequest(
+        new Request(url),
+        env,
+        {
+          ...runtime,
+          principalOf: async () => ({
+            ...(await runtime.principalOf()),
+            id: "other-owner",
+          }),
+        },
+      );
+      expect(denied!.status).toBe(404);
+      expect(get).not.toHaveBeenCalled();
+      const response = await routeManagedSimulationRequest(
+        new Request(url),
+        env,
+        runtime,
+      );
+      expect(emitted).toBeLessThanOrEqual(1);
+      expect(response!.headers.get("cache-control")).toBe("private, no-store");
+      expect(
+        Number(response!.headers.get("x-analog-canvas-run-started-at")),
+      ).toBeGreaterThan(0);
+      expect(
+        Number(response!.headers.get("x-analog-canvas-run-finished-at")),
+      ).toBeGreaterThanOrEqual(
+        Number(response!.headers.get("x-analog-canvas-run-started-at")),
+      );
+      const reader = response!.body!.getReader();
+      let bytes = 0;
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        bytes += next.value.byteLength;
+        expect(next.value[0]).toBe(65);
+      }
+      expect(bytes).toBe(16 * 1024 * 1024);
+      expect(text).not.toHaveBeenCalled();
+      expect(get).toHaveBeenCalledOnce();
+    } finally {
+      close();
+    }
+  });
   it("reports queued cancellation as terminal, not result-not-ready, without dispatching", async () => {
     const { env, jobs, runtime, close } = harness();
     const execute = vi.fn();
@@ -48,6 +407,15 @@ describe("managed simulation operations", () => {
       );
       expect(await pending!.json()).toMatchObject({
         error: "RESULT_NOT_READY",
+      });
+      const held = await routeManagedSimulationRequest(
+        new Request(`${url}/result?waitMs=5`),
+        env,
+        runtime,
+      );
+      expect(await held!.json()).toMatchObject({
+        error: "RESULT_NOT_READY",
+        waitedMs: expect.any(Number),
       });
       await routeManagedSimulationRequest(
         new Request(`${url}/cancel`, { method: "POST" }),
@@ -77,6 +445,8 @@ describe("managed simulation operations", () => {
     const { env, jobs, runtime, close } = harness();
     const deliveries: SimulationQueueMessage<(typeof jobs)[number]>[] = [];
     const executor = createManagedHostedExecutor({
+      // This fixture drives queue delivery from the legacy poll sleep hook.
+      resultWaitMs: 0,
       fetch: async (path, init) =>
         (await routeManagedSimulationRequest(
           new Request(new URL(String(path), "https://canvas.test"), init),

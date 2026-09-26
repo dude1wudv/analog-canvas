@@ -1,9 +1,16 @@
 import type { ResolvedRouteGeometry } from "@icm/derived";
-import { resolveNetLabelBinding } from "@icm/derived";
+import {
+  isNearVerticalSegment,
+  netLabelSideOffset,
+  resolveAnnotationName,
+  resolveNetLabelBinding,
+} from "@icm/derived";
 import { resolveReviewedExternalBinding } from "@icm/devices";
 import { planEnsureNamedNet, type SchematicEdit } from "@icm/edit-engine";
 import {
   deriveStableId,
+  renamedLabelFormat,
+  roleLabelFormat,
   snapGridPoint,
   type Annotation,
   type CircuitProject,
@@ -127,6 +134,23 @@ export function createPropertyEditPlanner({
       return null;
     }
     const targetNetId = namedNetPlan.netId;
+    // A rename that brings no new look keeps the label's own format, which
+    // follows the new name; it is never silently dropped. A new label takes
+    // its voltage-node look (V_in, V_BP) when its name has one.
+    const carriedFormat =
+      presentation?.formatOverride ??
+      (presentation !== undefined
+        ? undefined
+        : existingLabel?.formatOverride
+          ? renamedLabelFormat(
+              existingLabel,
+              resolveAnnotationName(document, existingLabel),
+              name,
+              document.presentation,
+            )
+          : existingLabel
+            ? undefined
+            : roleLabelFormat("voltage-node", name));
     const geometry = routeGeometryRecords.find(
       ({ route: candidate }) => candidate.id === route.id,
     )?.geometry;
@@ -140,14 +164,17 @@ export function createPropertyEditPlanner({
     );
     const from = geometry.centerline[segment]!;
     const to = geometry.centerline[segment + 1] ?? from;
+    // A new label takes the wire's standard side: above a horizontal wire,
+    // right of a vertical one, whichever way the wire was drawn.
+    const vertical = isNearVerticalSegment(from, to);
     const requestedPosition = presentation?.position ??
       (existingLabel
         ? existingLabel.anchor.kind === "free"
           ? existingLabel.anchor.position
           : existingLabel.anchor.fallbackPosition
         : undefined) ?? {
-        x: (from.x + to.x) / 2,
-        y: (from.y + to.y) / 2 - 8,
+        x: (from.x + to.x) / 2 + (vertical ? 8 : 0),
+        y: (from.y + to.y) / 2 - (vertical ? 0 : 8),
       };
     const position = presentation?.routeAttachment
       ? requestedPosition
@@ -181,13 +208,15 @@ export function createPropertyEditPlanner({
                   routeId: route.id,
                   legId: route.legs[segment]!.id,
                   t: 0.5,
-                  normalOffset: -8,
+                  normalOffset: netLabelSideOffset(from, to, 8),
                   direction: "forward",
                   orientation: "follow",
                   fallbackPosition: position,
                 },
         alignment:
-          presentation?.alignment ?? existingLabel?.alignment ?? "middle",
+          presentation?.alignment ??
+          existingLabel?.alignment ??
+          (vertical ? "start" : "middle"),
         rotation: 0,
         locked: false,
         ...(presentation?.sizeScale !== undefined
@@ -195,9 +224,7 @@ export function createPropertyEditPlanner({
           : existingLabel?.sizeScale !== undefined
             ? { sizeScale: existingLabel.sizeScale }
             : {}),
-        ...(presentation?.formatOverride
-          ? { formatOverride: presentation.formatOverride }
-          : {}),
+        ...(carriedFormat ? { formatOverride: carriedFormat } : {}),
       },
     });
     return edits;

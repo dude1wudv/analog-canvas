@@ -64,7 +64,7 @@ describe("fixed polarity mark properties", () => {
 
       expect(markup).toContain("Polarity mark");
       expect(markup).toContain("Annotation property code");
-      expect(markup).not.toContain(">Text<");
+      expect(markup).not.toContain(">文本<");
       expect(markup).not.toContain("Text color");
     },
   );

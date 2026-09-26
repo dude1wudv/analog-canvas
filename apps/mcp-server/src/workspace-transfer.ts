@@ -1,0 +1,139 @@
+import { AgentSessionError, type AgentSessionClient } from "@icm/agent-client";
+import type { AgentFileResourceResponse } from "@icm/agent-adapter";
+import type { FetchArtifact } from "./local-workspace.js";
+import { TransferPending } from "./transfer-pending.js";
+
+/** One sync's metadata preparation. Local cache hits never enter this function. */
+export function workspaceTransfer(client: AgentSessionClient): FetchArtifact {
+  let ids: string[] = [];
+  const batches = new Map<
+    string,
+    Promise<AgentFileResourceResponse | undefined>
+  >();
+  let legacy = false;
+  let deferPending = false;
+  const pendingIds = new Set<string>();
+  const attempts = new Map<string, { started: number; count: number }>();
+  const fetch: FetchArtifact = async (ref, offset) => {
+    const attempt = attempts.get(ref.id) ?? { started: Date.now(), count: 0 };
+    attempts.set(ref.id, attempt);
+    const first = attempt.count++ === 0;
+    const position = ids.indexOf(ref.id);
+    let descriptor: AgentFileResourceResponse | undefined;
+    if ((first || deferPending) && !legacy && position >= 0 && ids.length > 1) {
+      const group = Math.floor(position / 32);
+      // A publication retry is still one batch per round, not N individual
+      // descriptor requests. Ready/cache-hit files do not enter later rounds.
+      const key = `${group}:${deferPending ? attempt.count : 1}`;
+      let pending = batches.get(key);
+      if (!pending) {
+        pending = client
+          .fileResource({
+            apiVersion: "3.0",
+            requestId: crypto.randomUUID(),
+            operation: "simulation-input",
+            input: {
+              action: "downloads",
+              artifactIds: ids
+                .slice(group * 32, group * 32 + 32)
+                .filter((id) => first || pendingIds.has(id) || id === ref.id),
+            },
+          })
+          .then((response) => {
+            if (
+              response.ok &&
+              response.operation === "simulation-input" &&
+              response.result.ok &&
+              "downloads" in response.result
+            )
+              for (const item of response.result.downloads) {
+                if (
+                  !item.result.ok &&
+                  item.result.error.code === "ARTIFACT_TRANSFER_PENDING"
+                )
+                  pendingIds.add(item.artifactId);
+                else pendingIds.delete(item.artifactId);
+              }
+            return response;
+          })
+          .catch((error: unknown) => {
+            if (
+              error instanceof AgentSessionError &&
+              error.code === "FILE_CONTENT_INVALID" &&
+              error.httpStatus === 400
+            ) {
+              legacy = true;
+              return undefined;
+            }
+            throw error;
+          });
+        batches.set(key, pending);
+      }
+      const response = await pending;
+      if (response?.ok && response.operation === "simulation-input") {
+        if (response.result.ok && "downloads" in response.result) {
+          const entry = response.result.downloads.find(
+            (item) => item.artifactId === ref.id,
+          );
+          if (!entry) throw new Error("DOWNLOAD_DESCRIPTOR_MISSING");
+          if (
+            deferPending ||
+            entry.result.ok ||
+            entry.result.error.code !== "ARTIFACT_TRANSFER_PENDING"
+          )
+            descriptor = { ...response, result: entry.result };
+        } else if (
+          response.result.ok ||
+          response.result.error.code !== "SIMULATION_FILE_INVALID"
+        ) {
+          throw new Error(JSON.stringify(response));
+        } else legacy = true;
+        // A pre-batch editor's definite schema rejection falls back once per sync group.
+      } else if (response) throw new Error(JSON.stringify(response));
+    }
+    descriptor ??= await client.prepareArtifactDownload(
+      ref.id,
+      undefined,
+      deferPending ? { waitMs: 0 } : {},
+    );
+    if (
+      deferPending &&
+      descriptor.ok &&
+      descriptor.operation === "simulation-input" &&
+      !descriptor.result.ok &&
+      descriptor.result.error.code === "ARTIFACT_TRANSFER_PENDING"
+    ) {
+      const remaining = 120_000 - (Date.now() - attempt.started);
+      if (remaining > 0 && attempt.count <= 60)
+        throw new TransferPending(
+          Math.min(
+            remaining,
+            Math.max(
+              500,
+              Math.min(5000, descriptor.result.error.retryAfterMs ?? 2000),
+            ),
+          ),
+        );
+    }
+    if (
+      !descriptor.ok ||
+      descriptor.operation !== "simulation-input" ||
+      !descriptor.result.ok ||
+      !("download" in descriptor.result)
+    )
+      throw new Error(JSON.stringify(descriptor));
+    return client.downloadArtifact(
+      descriptor.result.download.path,
+      offset,
+      ref.sha256,
+    );
+  };
+  fetch.select = (refs, options) => {
+    ids = [...new Set(refs.map((ref) => ref.id))];
+    deferPending = options?.deferPending ?? false;
+    batches.clear();
+    pendingIds.clear();
+    attempts.clear();
+  };
+  return fetch;
+}

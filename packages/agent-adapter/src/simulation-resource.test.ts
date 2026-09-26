@@ -21,7 +21,7 @@ describe("Simulation sibling contract", () => {
       }).humanApprovalOperations,
     ).toEqual(["request-approval"]);
   });
-  it("exposes async operations, not an ambiguous synchronous run", () => {
+  it("exposes bounded submit/read waits without changing run identity", () => {
     const envelope = { apiVersion: "3.0", requestId: "test" };
     expect(
       AgentSimulationResourceRequestSchema.safeParse({
@@ -41,6 +41,31 @@ describe("Simulation sibling contract", () => {
       digest: "a".repeat(64),
     });
     expect(simulationOperationScopes(start)).toEqual(["simulation.run"]);
+    expect(
+      AgentSimulationResourceRequestSchema.parse({
+        ...envelope,
+        operation: "read",
+        runId: "run",
+        waitMs: 20_000,
+      }),
+    ).toMatchObject({ operation: "read", waitMs: 20_000 });
+    expect(
+      AgentSimulationResourceRequestSchema.parse({
+        ...envelope,
+        operation: "start",
+        preparedId: "p",
+        digest: "a".repeat(64),
+        waitMs: 1,
+      }),
+    ).toMatchObject({ operation: "start", waitMs: 1 });
+    expect(
+      AgentSimulationResourceRequestSchema.safeParse({
+        ...envelope,
+        operation: "read",
+        runId: "run",
+        waitMs: 20_001,
+      }).success,
+    ).toBe(false);
     const batch = AgentSimulationResourceRequestSchema.parse({
       ...envelope,
       operation: "prepare-batch",

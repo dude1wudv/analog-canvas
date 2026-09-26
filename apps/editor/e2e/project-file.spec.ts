@@ -7,6 +7,7 @@ import {
   createEmptyProject,
   createRoutePath,
   CURRENT_PROJECT_SCHEMA_VERSION,
+  type CircuitProject,
 } from "@icm/model";
 
 import { AGENT_SESSION_RECOVERY_STORAGE_KEY } from "../src/agent/session-recovery";
@@ -82,20 +83,157 @@ async function mockCloudProjects(page: Page) {
   return { stored: () => stored };
 }
 
-async function expectAgentRecoveryBoundToWorkingCopy(page: Page) {
+async function mockFullCloudProjectList(page: Page) {
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        user: {
+          id: "u1",
+          displayName: "Circuit Author",
+          email: "author@example.com",
+          provider: "github",
+          isAdmin: false,
+        },
+      },
+    }),
+  );
+  await page.route("**/api/projects", (route) =>
+    route.fulfill({
+      json: {
+        projects: Array.from({ length: CLOUD_PROJECT_LIMIT }, (_, index) => ({
+          id: `cloud-${index + 1}`,
+          name: `Circuit ${String(index + 1).padStart(2, "0")}`,
+          updatedAt: "2026-09-24T08:00:00.000Z",
+          revision: 1,
+          schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+        })),
+      },
+    }),
+  );
+}
+
+for (const { width, height } of [
+  { width: 1536, height: 825 },
+  { width: 1536, height: 600 },
+  { width: 720, height: 600 },
+]) {
+  test(`File commands remain reachable with 20 Cloud Projects at ${width}×${height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height });
+    await mockFullCloudProjectList(page);
+    await page.goto("/editor");
+    const fileMenu = await openMenu(page, "File");
+    const list = fileMenu.getByTestId("file-cloud-project-list");
+    await expect(list.locator(".cloud-project-command")).toHaveCount(
+      CLOUD_PROJECT_LIMIT,
+    );
+    expect(
+      await list.evaluate(
+        (element) => element.scrollHeight > element.clientHeight,
+      ),
+    ).toBe(true);
+
+    const popover = fileMenu.locator(".file-command-popover");
+    const bounds = await popover.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(height - 6);
+    const importTrigger = fileMenu.getByRole("button", {
+      name: "Import",
+      exact: true,
+    });
+    const exportTrigger = fileMenu.getByRole("button", {
+      name: "Export",
+      exact: true,
+    });
+    await expect(importTrigger).toBeInViewport();
+    await expect(exportTrigger).toBeInViewport();
+    await importTrigger.click();
+    const importOption = fileMenu.getByText("SPICE / SCS…");
+    await expect(importOption).toBeInViewport();
+    const importBounds = await importOption.boundingBox();
+    expect(importBounds!.x + importBounds!.width).toBeLessThanOrEqual(
+      width - 6,
+    );
+    await exportTrigger.click();
+    const exportOption = fileMenu.getByRole("button", {
+      name: "Export Project File…",
+    });
+    await expect(exportOption).toBeInViewport();
+    const exportBounds = await exportOption.boundingBox();
+    expect(exportBounds!.x + exportBounds!.width).toBeLessThanOrEqual(
+      width - 6,
+    );
+
+    await list.hover();
+    await page.mouse.wheel(0, 1200);
+    await expect
+      .poll(() => list.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(0);
+    const lastProject = fileMenu.getByTestId(
+      `cloud-project-cloud-${CLOUD_PROJECT_LIMIT}`,
+    );
+    await expect(lastProject).toBeInViewport();
+    await list.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    await lastProject.focus();
+    await expect(lastProject).toBeInViewport();
+    await fileMenu
+      .getByRole("button", { name: "Delete Cloud Project Circuit 20" })
+      .click();
+    const keep = fileMenu.getByRole("button", { name: "Keep it" });
+    await expect(keep).toBeInViewport();
+    await keep.click();
+    await expect(exportTrigger).toBeInViewport();
+  });
+}
+
+test("File menu falls back to one scroll area in a short viewport", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 720, height: 360 });
+  await mockFullCloudProjectList(page);
+  await page.goto("/editor");
+  const fileMenu = await openMenu(page, "File");
+  const popover = fileMenu.locator(".file-command-popover");
+  await expect
+    .poll(() =>
+      popover.evaluate(
+        (element) => element.scrollHeight > element.clientHeight,
+      ),
+    )
+    .toBe(true);
+  const bounds = await popover.boundingBox();
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(360);
+  await fileMenu.getByRole("button", { name: "Export", exact: true }).click();
+  const exportOption = fileMenu.getByRole("button", {
+    name: "Export Project File…",
+  });
+  await expect(exportOption).toBeInViewport();
+});
+
+async function expectAgentRecoveryAlongsideWorkingCopy(
+  page: Page,
+  sessionId: string,
+) {
   await expect
     .poll(() =>
       page.evaluate(
-        ([agentKey, workingCopyKey]) => {
+        ([agentKey, workingCopyKey, expectedSession]) => {
           const serialized = sessionStorage.getItem(agentKey);
           const workingCopyId = sessionStorage.getItem(workingCopyKey);
           if (!serialized || !workingCopyId) return false;
           const recovery = JSON.parse(serialized) as {
-            projectSessionId?: string;
+            sessionId?: string;
           };
-          return recovery.projectSessionId === workingCopyId;
+          return recovery.sessionId === expectedSession;
         },
-        [AGENT_SESSION_RECOVERY_STORAGE_KEY, WORKING_COPY_STORAGE_KEY] as const,
+        [
+          AGENT_SESSION_RECOVERY_STORAGE_KEY,
+          WORKING_COPY_STORAGE_KEY,
+          sessionId,
+        ] as const,
       ),
     )
     .toBe(true);
@@ -160,7 +298,7 @@ for (const duringSave of ["edit", "replace"] as const) {
     } else {
       const fileMenu = await openMenu(page, "File");
       await fileMenu.getByRole("button", { name: "New Project" }).click();
-      await expect(page.getByTestId("canvas-empty-state")).toBeVisible();
+      await expect(page.getByTestId("hit-R1")).toHaveCount(0);
       await expect(page.getByTestId("statusbar-issues")).toHaveText(
         "Not checked",
       );
@@ -253,7 +391,7 @@ test("Cloud Save updates one binding while local export stays interchange", asyn
   await expect(page).toHaveURL(/\/$/u);
   await page.goto("/editor");
   await expect(page.getByTestId("status")).toContainText(
-    "Opened Cloud Project New Circuit",
+    "Switched to New Circuit",
     { timeout: 15_000 },
   );
   await expect(page.getByTestId("hit-R1")).toHaveCount(1);
@@ -262,7 +400,6 @@ test("Cloud Save updates one binding while local export stays interchange", asyn
   await page.getByRole("link", { name: "Back to the gallery" }).click();
   await page.getByTestId("gallery-new-circuit").click();
   await expect(page).toHaveURL(/\/editor\?new=1$/u);
-  await expect(page.getByTestId("canvas-empty-state")).toBeVisible();
   await expect(page.getByTestId("hit-R1")).toHaveCount(0);
 });
 
@@ -291,7 +428,7 @@ test("paired refresh and Gallery return preserve the saved Cloud binding", async
   const client = new AgentHttpClient({ baseUrl: baseURL! });
   const session = await client.claim(claimCode);
   await expect(panel.getByTestId("agent-status")).toHaveText("Connected");
-  await expectAgentRecoveryBoundToWorkingCopy(page);
+  await expectAgentRecoveryAlongsideWorkingCopy(page, session.sessionId);
   await page.reload();
   await expect(page.getByTestId("active-instance-count")).toHaveText("1", {
     timeout: 15_000,
@@ -302,6 +439,12 @@ test("paired refresh and Gallery return preserve the saved Cloud binding", async
   await expect(page.getByTestId("status")).toContainText(
     "Saved New Circuit to Cloud",
   );
+  await expect
+    .poll(
+      async () =>
+        (await client.status(session.sessionId, session.agentToken)).editor,
+    )
+    .toBe("attached");
   const documentId = session.documentIds[0]!;
   const snapshot = await client.circuit(session.sessionId, session.agentToken, {
     apiVersion: "3.0",
@@ -336,7 +479,7 @@ test("paired refresh and Gallery return preserve the saved Cloud binding", async
   await expect
     .poll(async () => (await recoveryProjectTexts(page)).includes("paired-R"))
     .toBe(true);
-  await expectAgentRecoveryBoundToWorkingCopy(page);
+  await expectAgentRecoveryAlongsideWorkingCopy(page, session.sessionId);
   page.on("dialog", (dialog) => void dialog.accept());
   await page.reload();
   await expect(page.getByTestId("active-instance-count")).toHaveText("2", {
@@ -350,7 +493,8 @@ test("paired refresh and Gallery return preserve the saved Cloud binding", async
   );
   await expect(page.getByTestId("project-unsaved-indicator")).toHaveCount(0);
   await page.getByRole("link", { name: "Back to the gallery" }).click();
-  const agentReturn = page.getByTestId("gallery-agent-return");
+  await expect(page.getByTestId("gallery-agent-return")).toHaveCount(0);
+  const agentReturn = page.getByTestId("gallery-editor-link");
   await expect(agentReturn).toBeVisible({ timeout: 15_000 });
   await agentReturn.click();
   await expect(page.getByTestId("active-instance-count")).toHaveText("2", {
@@ -389,7 +533,100 @@ test("Gallery navigation uses the replacement decision without a second browser 
   await expect(page).toHaveURL(/\/$/u);
   await page.goto("/editor");
   await expect(page.getByTestId("startup-recovery-banner")).toHaveCount(0);
-  await expect(page.getByTestId("canvas-empty-state")).toBeVisible();
+  await expect(page.getByTestId("hit-R1")).toHaveCount(0);
+});
+
+test("File deletion stays inline, bounded and retryable without native dialogs", async ({
+  page,
+}) => {
+  const name = "LongCircuitName".repeat(7);
+  const summary = {
+    id: "delete-target",
+    name,
+    revision: 1,
+    schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+    updatedAt: "2026-09-22T00:00:00Z",
+  };
+  let deleted = false;
+  let attempts = 0;
+  let release!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const dialogs: string[] = [];
+  page.on("dialog", (dialog) => {
+    dialogs.push(dialog.type());
+    void dialog.dismiss();
+  });
+  await page.route("**/api/projects", (route) =>
+    route.fulfill({ json: { projects: deleted ? [] : [summary] } }),
+  );
+  await page.route("**/api/projects/delete-target", async (route) => {
+    attempts++;
+    if (attempts === 1) {
+      await waiting;
+      await route.fulfill({
+        status: 503,
+        json: { error: "Temporarily unavailable" },
+      });
+    } else {
+      deleted = true;
+      await route.fulfill({ json: { deleted: true } });
+    }
+  });
+  await page.setViewportSize({ width: 360, height: 500 });
+  await page.goto("/editor?new=1");
+  await openMenu(page, "File");
+  const trigger = page.getByRole("button", {
+    name: `Delete Cloud Project ${name}`,
+    exact: true,
+  });
+  await trigger.click();
+  await expect(
+    page.getByRole("button", { name: "Keep it", exact: true }),
+  ).toBeFocused();
+  expect(attempts).toBe(0);
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  for (const width of [360, 320]) {
+    await expect(page.locator(".inline-confirm-decision")).toHaveText(
+      "Really deleteKeep it",
+    );
+    await page.setViewportSize({ width, height: 400 });
+    await expect
+      .poll(async () =>
+        page.locator("[data-inline-confirm-menu]").evaluate((menu) => {
+          const rect = menu.getBoundingClientRect();
+          return (
+            rect.left >= 0 &&
+            rect.top >= 0 &&
+            rect.right <= innerWidth &&
+            rect.bottom <= innerHeight
+          );
+        }),
+      )
+      .toBe(true);
+  }
+  await page.screenshot({ path: "plan/inline-file-delete-narrow.png" });
+  await page
+    .getByRole("button", { name: "Really delete", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Working…", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Keep it", exact: true }),
+  ).toBeDisabled();
+  release();
+  await expect(page.locator(".inline-confirm [role=alert]")).toBeVisible();
+  expect(attempts).toBe(1);
+  await page
+    .getByRole("button", { name: "Really delete", exact: true })
+    .click();
+  await expect(trigger).toHaveCount(0);
+  expect(attempts).toBe(2);
+  expect(dialogs).toEqual([]);
 });
 
 test("imports and upgrades a portable Project before explicit export", async ({
@@ -650,7 +887,7 @@ test("discarding a dirty replacement does not leave a second project stack", asy
     name: "Unsaved changes",
   });
   await dialog.getByRole("button", { name: "Continue without saving" }).click();
-  await expect(page.getByTestId("canvas-empty-state")).toBeVisible();
+  await expect(page.getByTestId("hit-R1")).toHaveCount(0);
   fileMenu = await openMenu(page, "File");
   await expect(
     fileMenu.getByRole("button", { name: "Previous Project" }),
@@ -697,7 +934,9 @@ test("the circuit name drives Cloud Save and portable export", async ({
 }) => {
   const cloud = await mockCloudProjects(page);
   await page.goto("/editor");
+  await page.getByTestId("project-menu-toggle").click();
   const name = page.getByTestId("project-name-input");
+  await expect(name).toHaveAttribute("autocomplete", "off");
   await name.fill("Bandgap Reference");
   await name.press("Enter");
   const fileMenu = await openMenu(page, "File");
@@ -709,4 +948,158 @@ test("the circuit name drives Cloud Save and portable export", async ({
     ),
   ) as { name?: string };
   expect(exported.name).toBe("Bandgap Reference");
+});
+
+test("native cross-page clipboard preserves an editable circuit and text-field shortcuts", async ({
+  page,
+  context,
+  browser,
+}) => {
+  // This journey opens multiple Projects and verifies copy, export, undo and
+  // code editing. Keep per-action assertions bounded, but allow the complete
+  // workflow more than 30 seconds on the shared CI runner.
+  test.slow();
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const source = parseSavedProject(
+    readFileSync(
+      "apps/editor/src/examples/simulation-common-source.icproj.json",
+      "utf8",
+    ),
+  );
+  const typedSource = source as CircuitProject;
+  const active = typedSource.documents.find(
+    (document) => document.id === typedSource.topDocumentId,
+  )!;
+  await page.goto("/editor?new=1");
+  await page.getByTestId("project-file").setInputFiles({
+    name: "clipboard-source.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(source)),
+  });
+  await expect(page.getByTestId("active-instance-count")).toHaveText(
+    String(active.instances.length),
+  );
+  await page
+    .getByTestId("schematic-canvas")
+    .click({ position: { x: 80, y: 80 } });
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.press("ControlOrMeta+c");
+  await expect(page.getByTestId("status")).toContainText("Circuit copied");
+  const clipboard = await page.evaluate(() => navigator.clipboard.readText());
+  expect(JSON.parse(clipboard).format).toBe("analog-canvas/clipboard");
+
+  // A different page reads the real browser clipboard, not a shared React store.
+  const target = await context.newPage();
+  await target.goto("/editor?new=1");
+  await target.bringToFront();
+  const canvas = target.getByTestId("schematic-canvas");
+  await canvas.click({ position: { x: 90, y: 90 } });
+  await target.keyboard.press("ControlOrMeta+v");
+  await expect(target.getByTestId("status")).toContainText("click to place");
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error("Missing canvas");
+  await target.mouse.move(box.x + 280, box.y + 240);
+  await expect(target.getByTestId("copy-placement-preview")).toBeVisible();
+  // Cancelling a paste installs neither devices nor dependencies.
+  await target.keyboard.press("Escape");
+  await expect(target.getByTestId("active-instance-count")).toHaveText("0");
+  await target.keyboard.press("ControlOrMeta+v");
+  await canvas.click({ position: { x: 280, y: 240 } });
+  await target.keyboard.press("Escape");
+  await expect(target.getByTestId("active-instance-count")).toHaveText(
+    String(active.instances.length),
+  );
+  const copied = parseSavedProject(
+    (await downloadBytes(target, "File", "Export Project File…")).toString(
+      "utf8",
+    ),
+  );
+  const typedCopied = copied as CircuitProject;
+  const pasted = typedCopied.documents.find(
+    (document) => document.id === typedCopied.topDocumentId,
+  )!;
+  expect(
+    pasted.instances.map((item) => [item.reference, item.netlist?.parameters]),
+  ).toEqual(
+    active.instances.map((item) => [item.reference, item.netlist?.parameters]),
+  );
+  expect(copied.externalSubcircuitDefinitions.length).toBeGreaterThan(0);
+  expect(
+    typedCopied.simulationFolders.map((folder) => folder.input.files),
+  ).toEqual(typedSource.simulationFolders.map((folder) => folder.input.files));
+  const { projectElectricalGraph, compareElectricalGraphs } =
+    await import("@icm/netlist");
+  const left = projectElectricalGraph(source),
+    right = projectElectricalGraph(copied);
+  expect(left.status).toBe("ready");
+  expect(right.status).toBe("ready");
+  if (left.status === "ready" && right.status === "ready")
+    expect(compareElectricalGraphs(left.graph, right.graph)).toBe("equal");
+  await target.keyboard.press("ControlOrMeta+z");
+  await expect(target.getByTestId("active-instance-count")).toHaveText("0");
+  await target.keyboard.press("ControlOrMeta+Shift+z");
+  await expect(target.getByTestId("active-instance-count")).toHaveText(
+    String(active.instances.length),
+  );
+
+  // A real code editor keeps native text copy/paste, despite a canvas selection.
+  await target.getByTestId("project-code-toggle").click();
+  const editor = target.getByRole("textbox", {
+    name: "Project code",
+    exact: true,
+  });
+  await editor.click();
+  await target.keyboard.press("ControlOrMeta+a");
+  await target.keyboard.press("ControlOrMeta+c");
+  const code = await target.evaluate(() => navigator.clipboard.readText());
+  expect(code).not.toContain('"analog-canvas/clipboard"');
+  expect(code).toContain("schemaVersion");
+  await target.keyboard.press("ControlOrMeta+v");
+  await expect(target.getByTestId("copy-placement-preview")).toHaveCount(0);
+  await target.screenshot({ path: "plan/cross-page-clipboard.png" });
+  await target.close();
+
+  // A separate browser context/window has no shared app storage or clipboard state.
+  await page.bringToFront();
+  await page
+    .getByTestId("schematic-canvas")
+    .click({ position: { x: 80, y: 80 } });
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.press("ControlOrMeta+c");
+  const otherWindow = await browser.newContext({
+    baseURL: new URL(page.url()).origin,
+    permissions: ["clipboard-read", "clipboard-write"],
+  });
+  try {
+    const other = await otherWindow.newPage();
+    await other.goto("/editor?new=1");
+    await other.bringToFront();
+    await other
+      .getByTestId("schematic-canvas")
+      .click({ position: { x: 90, y: 90 } });
+    await other.keyboard.press("ControlOrMeta+v");
+    await expect(other.getByTestId("status")).toContainText("click to place");
+    await other
+      .getByTestId("schematic-canvas")
+      .click({ position: { x: 280, y: 240 } });
+    await other.keyboard.press("Escape");
+    await expect(other.getByTestId("active-instance-count")).toHaveText(
+      String(active.instances.length),
+    );
+    await other.evaluate(() =>
+      navigator.clipboard.writeText(
+        '{"format":"analog-canvas/clipboard","version":999}',
+      ),
+    );
+    await other.keyboard.press("ControlOrMeta+v");
+    await expect(other.getByTestId("status")).toContainText(
+      "unsupported version",
+    );
+    await expect(other.getByTestId("active-instance-count")).toHaveText(
+      String(active.instances.length),
+    );
+    await expect(other.getByTestId("copy-placement-preview")).toHaveCount(0);
+  } finally {
+    await otherWindow.close();
+  }
 });

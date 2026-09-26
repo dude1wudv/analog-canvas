@@ -329,6 +329,7 @@ function NameInput() {
       <input
         ref={input}
         aria-label={request.label}
+        autoComplete="off"
         value={value}
         aria-invalid={Boolean(error)}
         onChange={(e) => {
@@ -392,7 +393,7 @@ function NameInput() {
             ))}
           </select>
           <button type="button" onClick={() => finish(false, true)}>
-            Create
+            创建
           </button>
         </div>
       ) : null}

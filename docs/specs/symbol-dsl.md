@@ -15,11 +15,11 @@ own artwork, electrical facts and catalog eligibility. Runtime `@icm/symbols`
 and `@icm/devices` are generated projections. The ordered catalog, rather than
 a duplicated list here, declares reviewed Razavi and Extended Devices entries.
 
-`port`, `port-filled` and `vdd-port` are single-pin assets with pin `P`.
-Port and Filled Port author formal Cell Pins. VDD Power does so by default,
-with an explicit Global mode using an owned naming claim instead. A drawn
-Power Rail remains ordinary Net/Route geometry and is a separate authoring
-gesture. Naming and interface behavior follow
+`port`, `port-filled` and `vdd-port` are single-terminal assets with pin `P`.
+Cell Pin and Bias Voltage Port author formal interface terminals. VDD Power
+does so by default, with an explicit Global mode using an owned naming claim
+instead. A drawn Power Rail remains ordinary Net/Route geometry and is a
+separate authoring gesture. Naming and interface behavior follow
 [the schematic model](schematic-model.md); geometry supplies no Net authority.
 
 Canonical `nmos` and `pmos` retain D/G/S/B electrical pins. Their
@@ -42,12 +42,14 @@ rename electrical pins. Selecting `textbook-3terminal` never implies `B=S`.
 
 Primitives are line, polyline, polygon, circle, and path. Pins carry stable
 name, electrical role, anchor, direction, and visibility metadata. Pin anchors
-lie on the canonical 10-unit electrical grid; artwork may use finite decimal
+lie on the shared 2-unit electrical lattice; ordinary symbols continue to use
+the 10-unit placement grid. Artwork may use finite decimal
 coordinates. Razavi assets use semantic stroke roles resolved through the
 Document style profile. Raw per-asset compatibility widths are not accepted.
 
-A reviewed auxiliary/variant pin contact may be off that grid only when its
-`routing` metadata declares an outward, grid-aligned `preferredLanding`.
+A reviewed auxiliary/variant pin contact may be off its authored connection
+lattice only when its `routing` metadata declares an outward, grid-aligned
+`preferredLanding`.
 Registration rejects a landing behind or transverse to the pin direction.
 Runtime resolves the exact contact and the landing as one
 `EndpointConnection`; the Symbol never persists a Document Route escape.

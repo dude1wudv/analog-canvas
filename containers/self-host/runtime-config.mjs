@@ -31,8 +31,22 @@ export function renderRuntimeConfig({
         "/",
       ),
     );
-  const names = ["Analytics", "AgentSession", "Gallery", "Auth"];
-  const bindingNames = ["ANALYTICS", "AGENT_SESSION", "GALLERY", "AUTH"];
+  const names = [
+    "Analytics",
+    "AgentSession",
+    "Gallery",
+    "Auth",
+    "ComponentLibrary",
+    "TopologyTask",
+  ];
+  const bindingNames = [
+    "ANALYTICS",
+    "AGENT_SESSION",
+    "GALLERY",
+    "AUTH",
+    "COMPONENT_LIBRARY",
+    "TOPOLOGY_TASK",
+  ];
   return `using Workerd = import ${file(schemaPath)};
 const config :Workerd.Config = (
   services = [

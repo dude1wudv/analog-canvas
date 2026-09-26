@@ -1,5 +1,5 @@
-import { test, expect, beforeAll } from "vitest";
-import { execFileSync, execSync } from "node:child_process";
+import { test, expect } from "vitest";
+import { execFileSync } from "node:child_process";
 import {
   mkdtempSync,
   readFileSync,
@@ -16,23 +16,41 @@ import {
 } from "../packages/project-protocol/src/index.js";
 import { compileSourceSimulation } from "../packages/netlist/src/simulation-source-compile.js";
 
-beforeAll(() => {
-  // Exercise the standalone CLI, including on a clean CI checkout without dist.
-  execSync(
-    "pnpm --filter @icm/agent-adapter... --filter @icm/exporters... build",
-    {
-      stdio: "pipe",
-      timeout: 180000,
-    },
-  );
-}, 190000);
-
 const run = (directory, args = []) =>
   execFileSync(
     process.execPath,
     ["scripts/build-native-simulation-examples.mjs", directory, ...args],
     { stdio: "pipe", timeout: 60000 },
   );
+
+// Agent-only measured-ink observations supplement (never replace) the reviewed
+// drawing diagnostics below. Pin their owners so new findings do not silently
+// pass merely because they are informational. No fixture geometry is changed.
+const otaClearanceLabels = [
+  "instance-label-PIBIAS",
+  ...[1, 2, 3, 4, 5, 6].map((n) => `instance-label-M${n}`),
+];
+const libraryTbClearanceLabels = [
+  "instance-label-XDUT",
+  "instance-label-IBIAS",
+  "net-label-tb-ibias-route",
+];
+const expectedClearanceLabels = {
+  "common-source/cell-common-source": [
+    "instance-label-XM1",
+    "instance-value-XM1",
+  ],
+  "ota/document-ota-5t": otaClearanceLabels,
+  "ota/document-ota-5t-testbench": [
+    "instance-label-XDUT",
+    "instance-label-IBIAS",
+    "native-net-vinp",
+    "native-net-vinn",
+  ],
+  "ota-library/document-ota-5t": otaClearanceLabels,
+  "ota-library/document-ota-5t-testbench": libraryTbClearanceLabels,
+  "ota-library/document-ota-5t-testbench-sin": libraryTbClearanceLabels,
+};
 
 // The full-library case stays an acceptance obligation during migration. Do not
 // filter unfinished model-backed folders out of it to obtain a green result.
@@ -80,13 +98,49 @@ test.each([
             ),
           );
           expect(inspection.document.id).toBe(doc.id);
+          const referenceNotes = inspection.document.diagnostics.filter(
+            (diagnostic) => diagnostic.code === "IMPORT_REFERENCE_UNAVAILABLE",
+          );
+          // Reviewed legacy drawings still export unchanged; missing original
+          // archives are now explicitly informational, never fabricated.
+          for (const diagnostic of referenceNotes)
+            expect(diagnostic).toMatchObject({
+              domain: "routing",
+              severity: "info",
+              gateEligible: false,
+            });
+          const clearanceNotes = inspection.document.diagnostics.filter(
+            (diagnostic) => diagnostic.code === "VISUAL_LABEL_CLEARANCE",
+          );
+          expect(clearanceNotes.map((d) => d.objectIds[0]).sort()).toEqual(
+            [...(expectedClearanceLabels[`${item.id}/${doc.id}`] ?? [])].sort(),
+          );
+          for (const diagnostic of clearanceNotes) {
+            expect(diagnostic).toMatchObject({
+              category: "observation",
+              severity: "info",
+              confidence: "low",
+              gateEligible: false,
+              parameters: {
+                conflictingObjectCount: diagnostic.objectIds.length - 1,
+              },
+            });
+            expect(
+              diagnostic.parameters.conflictingObjectCount,
+            ).toBeGreaterThan(0);
+          }
+          const drawingDiagnostics = inspection.document.diagnostics.filter(
+            (diagnostic) =>
+              diagnostic.code !== "IMPORT_REFERENCE_UNAVAILABLE" &&
+              diagnostic.code !== "VISUAL_LABEL_CLEARANCE",
+          );
           if (item.id !== "ota-library") {
-            expect(inspection.document.diagnostics).toEqual([]);
+            expect(drawingDiagnostics).toEqual([]);
           } else {
             // The reviewed Library drawing already has advisory label overlaps.
             // Preserve these diagnostics and the drawing, rather than treating
             // a low-confidence non-gating visual warning as electrical failure.
-            for (const diagnostic of inspection.document.diagnostics)
+            for (const diagnostic of drawingDiagnostics)
               expect(diagnostic).toMatchObject({
                 code: "VISUAL_LABEL_OVERLAP",
                 domain: "visual",

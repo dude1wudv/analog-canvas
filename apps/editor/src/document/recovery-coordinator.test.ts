@@ -5,6 +5,7 @@ import { createEmptyProject } from "@icm/model";
 import { serializeProject } from "@icm/project-protocol";
 
 import { createBrowserRecoveryStore } from "./browser-recovery-store";
+import { createProjectSnapshotSerializer } from "./project-snapshot-serializer";
 import {
   WORKING_COPY_STORAGE_KEY,
   createRecoveryCoordinator,
@@ -55,7 +56,10 @@ interface Harness {
 }
 
 function createHarness(
-  options: { initialStorage?: Record<string, string> } = {},
+  options: {
+    initialStorage?: Record<string, string>;
+    serializeProject?: typeof serializeProject;
+  } = {},
 ): Harness {
   const factory = new IDBFactory() as unknown as IDBFactory;
   const store = createBrowserRecoveryStore({ idbFactory: factory });
@@ -67,6 +71,9 @@ function createHarness(
   let idCounter = 0;
   let tick = 0;
   const coordinator = createRecoveryCoordinator({
+    ...(options.serializeProject
+      ? { serializeProject: options.serializeProject }
+      : {}),
     store,
     events: {
       onStateChange: (state) => states.push(state),
@@ -110,6 +117,35 @@ const projectB = createEmptyProject("project-alpha", "Beta");
 const projectC = createEmptyProject("project-gamma", "Gamma");
 
 describe("createRecoveryCoordinator", () => {
+  it("shares computed text with workspace saving without sharing persistence state", async () => {
+    const serialize = vi.fn(serializeProject);
+    const cache = createProjectSnapshotSerializer(serialize);
+    const harness = createHarness({ serializeProject: cache.serialize });
+    const workspaceText = cache.serialize(projectA);
+    harness.coordinator.stage(projectA);
+    expect(harness.states).toEqual([]);
+    harness.fire();
+    expect(harness.states).toEqual(["pending"]);
+    await harness.settle();
+    expect(harness.states).toEqual(["pending", "stored"]);
+    expect(serialize).toHaveBeenCalledTimes(1);
+    expect(
+      (await harness.coordinator.store.readAll()).sessions[0]?.latest
+        ?.projectText,
+    ).toBe(workspaceText);
+    // Unchanged text still carries changed dirty metadata into the actual store.
+    harness.coordinator.stage(projectA, { unsavedAtSnapshot: false });
+    await harness.coordinator.flushNow();
+    expect(
+      (await harness.coordinator.store.readAll()).sessions[0]?.latest
+        ?.unsavedAtSnapshot,
+    ).toBe(false);
+    expect(serialize).toHaveBeenCalledTimes(1);
+    harness.coordinator.stage(projectB);
+    await harness.coordinator.flushNow();
+    expect(cache.serialize(projectB)).toBe(serializeProject(projectB));
+    expect(serialize).toHaveBeenCalledTimes(2);
+  });
   it("creates and persists a working-copy identity", () => {
     const harness = createHarness();
     expect(harness.coordinator.workingCopyId).toBe("id-1");
@@ -439,4 +475,44 @@ describe("createRecoveryCoordinator", () => {
     expect(read.sessions).toHaveLength(1);
     expect(read.sessions[0]?.workingCopyId).not.toBe("id-1");
   });
+});
+
+it("resumes separate project-tab recovery identities without overwriting another drawing", async () => {
+  const { coordinator, settle, storage } = createHarness();
+  await settle();
+  const first = createEmptyProject("tab-a", "First");
+  coordinator.noteFormalFileHint({ name: "first.icproj.json" });
+  coordinator.stage(first);
+  await coordinator.flushNow();
+  const a = coordinator.captureWorkingSession();
+  coordinator.beginWorkingCopy("new");
+  const second = createEmptyProject("tab-b", "Second");
+  coordinator.stage(second);
+  await coordinator.flushNow();
+  const b = coordinator.captureWorkingSession();
+  expect(a.workingCopyId).not.toBe(b.workingCopyId);
+  coordinator.resumeWorkingSession(a);
+  expect(storage.getItem(WORKING_COPY_STORAGE_KEY)).toBe(a.workingCopyId);
+  coordinator.stage({ ...first, name: "First revised" });
+  await coordinator.flushNow();
+  const restoredA = await coordinator.readSessionProject(
+    a.workingCopyId,
+    "latest",
+  );
+  const restoredB = await coordinator.readSessionProject(
+    b.workingCopyId,
+    "latest",
+  );
+  expect(restoredA.status).toBe("valid");
+  expect(restoredB.status).toBe("valid");
+  if (restoredA.status === "valid")
+    expect(restoredA.project.name).toBe("First revised");
+  if (restoredB.status === "valid")
+    expect(restoredB.project.name).toBe("Second");
+  expect(coordinator.captureWorkingSession().formalFileHint).toEqual({
+    name: "first.icproj.json",
+  });
+  coordinator.resumeWorkingSession(b);
+  expect(coordinator.captureWorkingSession().formalFileHint).toBeUndefined();
+  coordinator.dispose();
 });

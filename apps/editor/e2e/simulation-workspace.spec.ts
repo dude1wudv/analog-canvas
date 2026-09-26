@@ -12,7 +12,7 @@ import {
   readSimulationExperimentConfig,
   replaceSimulationExperimentConfig,
 } from "@icm/model";
-import { parseProject } from "@icm/project-protocol";
+import { parseProject, serializeProject } from "@icm/project-protocol";
 import {
   generateCircuitSource,
   simulationSignals,
@@ -37,6 +37,12 @@ test("simulation Agent entry is passive and reuses the existing connection panel
     "**/api/agent/sessions/sim-guide/editor",
     (route) => {
       socket = route;
+      route.onMessage((message) => {
+        const control = JSON.parse(String(message));
+        if (control.kind === "heartbeat") {
+          route.send(JSON.stringify({ ...control, kind: "heartbeat-ack" }));
+        }
+      });
     },
   );
   await page.route("**/api/agent/sessions", async (route) => {
@@ -95,11 +101,13 @@ test("simulation Agent entry is passive and reuses the existing connection panel
   await expect(panel.getByTestId("agent-copy-text")).toHaveValue(
     /sim-guide.claim/,
   );
+  // The native dialog correctly removes the background guide from the
+  // accessibility tree. Inspect the passive guide after closing the dialog.
+  await panel.getByRole("button", { name: "Close Agent dialog" }).click();
   await expect(
     guide.getByRole("button", { name: "View connection info", exact: true }),
   ).toBeVisible();
   expect(creates).toBe(1);
-  await panel.getByRole("button", { name: "Close Agent dialog" }).click();
   await expect.poll(() => socket !== null).toBe(true);
   socket!.send(
     JSON.stringify({
@@ -165,10 +173,11 @@ test("simulation examples confirm whole-Project replacement and protect existing
     mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify(project)),
   });
+  await page.getByTestId("project-menu-toggle").click();
   await page
-    .getByRole("textbox", { name: "Circuit name" })
+    .getByRole("textbox", { name: "Project name" })
     .fill("My unsaved circuit");
-  await page.getByRole("textbox", { name: "Circuit name" }).press("Enter");
+  await page.getByRole("textbox", { name: "Project name" }).press("Enter");
   await page.getByTestId("open-analog-simulation").click();
   const panel = page.getByRole("region", { name: "Analog simulation" });
   const cards = panel.getByRole("group", { name: "Simulation examples" });
@@ -607,7 +616,9 @@ test("new experiments explicitly bind the selected Cell without requiring a Test
     "experiment.json",
   ]);
   expect(saved.topDocumentId).toBe(project.topDocumentId);
-  expect(saved.documents).toEqual(project.documents);
+  expect(saved.documents).toEqual(
+    parseProject(serializeProject(project)).documents,
+  );
   const generated = generateCircuitSource(
     saved,
     folder.input.circuitBindings[0]!,
@@ -617,16 +628,24 @@ test("new experiments explicitly bind the selected Cell without requiring a Test
   expect((await editor.innerText()).trim()).toBe(generated.source.text.trim());
 
   // The next default follows Canvas, not the existing experiment's root.
-  await page.getByTestId("document-selector").selectOption(dut.id);
+  await page.getByTestId("hierarchy-entry").click();
+  let manager = page.getByRole("dialog", { name: "Cell Manager" });
+  await manager
+    .locator(".cell-manager-list-item")
+    .filter({ hasText: dut.name })
+    .dblclick();
   await page
     .getByRole("button", { name: "+ New experiment", exact: true })
     .click();
   await expect(cell).toHaveValue(dut.id);
   await cell.press("Escape");
   await expect(name).toHaveCount(0);
-  await page
-    .getByTestId("document-selector")
-    .selectOption(project.topDocumentId);
+  await page.getByTestId("hierarchy-entry").click();
+  manager = page.getByRole("dialog", { name: "Cell Manager" });
+  await manager
+    .locator(".cell-manager-list-item")
+    .filter({ hasText: /Top/u })
+    .dblclick();
   await page
     .getByRole("button", { name: "+ New experiment", exact: true })
     .click();
@@ -1664,7 +1683,10 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
     .getByRole("treeitem", { name: "Run", exact: true })
     .click({ button: "right" });
   await page
-    .getByRole("menuitem", { name: "Archive current run", exact: true })
+    .getByRole("menuitem", {
+      name: "Archive current run (latest 30 saved)",
+      exact: true,
+    })
     .click();
   pending = new Promise<void>((r) => {
     release = r;
@@ -1719,11 +1741,7 @@ test("Simulation defaults a new experiment to an ordinary authored Cell", async 
   page,
 }) => {
   await page.goto("/editor");
-  await page
-    .locator(".command-menu > summary")
-    .filter({ hasText: "Edit" })
-    .click();
-  await page.getByRole("button", { name: "Manage Cells…" }).click();
+  await page.getByTestId("hierarchy-entry").click();
   const manager = page.getByRole("dialog", { name: "Cell Manager" });
   await manager.getByRole("button", { name: "New Cell" }).click();
   const newCell = page.getByRole("dialog", { name: "New Cell" });
@@ -2323,6 +2341,7 @@ test("inline naming commits once on blur, cancels on Escape, and deletion uses a
   const input = workspace.getByRole("textbox", {
     name: "New simulation folder name",
   });
+  await expect(input).toHaveAttribute("autocomplete", "off");
   await input.fill("Gamma");
   // Switching selection must not implicitly create an experiment.
   await workspace
@@ -2375,6 +2394,7 @@ test("inline naming commits once on blur, cancels on Escape, and deletion uses a
   const fileName = workspace.getByRole("textbox", {
     name: "Relative file path",
   });
+  await expect(fileName).toHaveAttribute("autocomplete", "off");
   await fileName.fill("run.cir");
   await fileName.press("Enter");
   await expect(fileName).toHaveAttribute("aria-invalid", "true");

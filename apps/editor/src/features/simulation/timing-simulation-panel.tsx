@@ -261,6 +261,7 @@ export function TimingSimulationPanel({
           <input
             value={stopTime}
             aria-label="仿真停止时间"
+            autoComplete="off"
             onChange={(event) => setStopTime(event.currentTarget.value)}
           />
         </label>

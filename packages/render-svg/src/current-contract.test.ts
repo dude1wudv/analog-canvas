@@ -19,7 +19,7 @@ describe("current rendering contract", () => {
     const child = createEmptyDocument("child", "GainStage");
     child.netlist!.terminals.push({
       id: "terminal-v-in",
-      name: "VGS1",
+      name: "V_GS1",
       netId: "net-in",
       direction: "input",
       interfaceInstanceIds: ["P1"],
@@ -44,7 +44,7 @@ describe("current rendering contract", () => {
         kind: "subcircuit",
         sourceMasterName: child.netlist!.name,
         sourceTarget: `cell:${child.id}`,
-        terminalMapping: [{ sourcePosition: 0, pinName: "VGS1" }],
+        terminalMapping: [{ sourcePosition: 0, pinName: "V_GS1" }],
       },
     });
     const project = createEmptyProject("project", "Hierarchy", top.id);
@@ -56,7 +56,7 @@ describe("current rendering contract", () => {
       createProjectSymbolResolver(project, builtInSymbols),
     );
 
-    expect(svg).toContain('data-pin-name="VGS1"');
+    expect(svg).toContain('data-pin-name="V_GS1"');
     expect(svg).toContain("font-style:italic;font-weight:700");
     expect(svg).toContain('data-text-run="subscript"');
     expect(svg).toContain(">GS1</tspan>");
@@ -94,9 +94,9 @@ describe("current rendering contract", () => {
     );
     expect(formatted).toContain('data-text-run="subscript"');
     expect(formatted).toContain(">GS1</tspan>");
-    expect(formatted).toContain('data-pin-name="VGS1"');
+    expect(formatted).toContain('data-pin-name="V_GS1"');
     child.annotations[0]!.formatOverride = {
-      runs: [{ kind: "text", value: "VGS1" }],
+      runs: [{ kind: "text", value: "V_GS1" }],
     };
     const plain = renderDocumentSvg(
       top,
@@ -169,7 +169,7 @@ describe("current rendering contract", () => {
     expect(svg).toContain('data-pin-name="BOTTOM" x="100" y="110"');
   });
 
-  it("keeps non-hierarchical visible pin names on the plain-text path", () => {
+  it("applies drawing underscore rules to visible pin names without changing pin identities", () => {
     const namedPinSymbol = {
       schemaVersion: 1,
       id: "named-pin-test",
@@ -208,12 +208,24 @@ describe("current rendering contract", () => {
     );
 
     expect(svg).toContain('data-pin-name="V_in"');
-    expect(svg).toContain(">V_in</text>");
+    expect(svg).toContain('data-text-run="subscript"');
+    expect(svg).toContain(">in</tspan>");
     const pinText = svg.match(
       /<text data-pin-name="V_in"[^>]*>.*?<\/text>/u,
     )?.[0];
     expect(pinText).toBeDefined();
-    expect(pinText).not.toContain("font-style:italic");
+    expect(pinText).toContain("font-style:italic");
+    expect(pinText).toContain('data-text-run="subscript"');
+    expect(pinText).toContain("font-style:normal");
+    document.presentation.labelUnderscoreSubscript = false;
+    document.presentation.labelSubscriptAfterFirst = false;
+    const literal = renderDocumentSvg(
+      document,
+      new InMemorySymbolResolver([...builtInSymbols, namedPinSymbol]),
+    );
+    expect(literal).toContain('data-pin-name="V_in"');
+    expect(literal).toContain(">V</tspan>_in</text>");
+    expect(literal).not.toContain('data-text-run="subscript"');
   });
 
   it("renders an explicit pin display name without changing electrical identity", () => {
@@ -264,6 +276,61 @@ describe("current rendering contract", () => {
     expect(svg).not.toContain(">QBAR</text>");
     expect(svg).toContain("font-style:italic;font-weight:700");
     expect(svg).toContain('font-size="10.28"');
+    document.presentation.labelUnderscoreSubscript = false;
+    document.presentation.labelFirstLetterItalic = false;
+    const upright = renderDocumentSvg(
+      document,
+      new InMemorySymbolResolver([...builtInSymbols, namedPinSymbol]),
+    );
+    expect(upright).toContain('data-pin-name="QBAR"');
+    expect(upright).toContain('data-text-run="overbar"');
+    expect(upright).toContain(">Q</tspan>");
+    const uprightPin = upright.match(
+      /<text data-pin-name="QBAR"[^>]*>.*?<\/text>/u,
+    )?.[0];
+    expect(uprightPin).toBeDefined();
+    expect(uprightPin).not.toContain("font-style:italic");
+  });
+
+  it("keeps fixed DFF pin names on one baseline under default label typography", () => {
+    for (const symbolId of [
+      "d-flip-flop",
+      "d-flip-flop-reset",
+      "d-flip-flop-q",
+    ]) {
+      for (const rotation of [0, 90, 180, 270] as const) {
+        const document = createEmptyDocument("doc", "DFF pins");
+        // Fixed names stay whole even when the drawing shows first-letter looks.
+        document.presentation.labelSubscriptAfterFirst = true;
+        document.instances.push({
+          id: "X1",
+          symbolId,
+          placement: {
+            position: { x: 100, y: 100 },
+            rotation,
+            mirror: "none",
+          },
+        });
+        const svg = renderDocumentSvg(document, resolver);
+        for (const name of symbolId === "d-flip-flop-reset"
+          ? ["CK", "RST"]
+          : ["CK"]) {
+          const pinText = svg.match(
+            new RegExp(`<text data-pin-name="${name}"[^>]*>.*?<\\/text>`, "u"),
+          )?.[0];
+          expect(pinText, `${symbolId} ${rotation}° ${name}`).toBeDefined();
+          expect(pinText?.replace(/<[^>]+>/gu, "")).toBe(name);
+          expect(pinText).not.toContain('data-text-run="subscript"');
+        }
+        expect(svg).toContain('data-pin-name="Q"');
+        if (symbolId !== "d-flip-flop-q") {
+          const qBar = svg.match(
+            /<text data-pin-name="QBAR"[^>]*>.*?<\/text>/u,
+          )?.[0];
+          expect(qBar).toContain('data-text-run="overbar"');
+        }
+      }
+    }
   });
 
   it("renders both Port assets as symbols and labels only from annotations", () => {
@@ -414,7 +481,7 @@ describe("current rendering contract", () => {
       'style="font-style:italic;font-weight:700">V<tspan data-text-run="subscript"',
     );
     expect(svg).toContain(
-      'data-text-run="subscript" dx="0.528455" dy="3.216685" font-size="11.48816px" style="font-style:normal;font-weight:700">DD',
+      'data-text-run="subscript" dx="0.528455" dy="5.05479" font-size="11.48816px" style="font-style:normal;font-weight:700">DD',
     );
     expect(svg).not.toContain("baseline-shift");
   });

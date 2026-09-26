@@ -9,6 +9,147 @@ import type { SymbolResolver } from "@icm/symbols";
 import { BrowserAgentFileHost } from "./browser-agent-file-host";
 import { BrowserSimulationSession } from "../features/simulation/browser-simulation-session";
 import { createSimulationProjectFileHost } from "../features/simulation/project-file-host";
+import { EditorDocumentController } from "../document/document-controller";
+
+it("inspects a staged Cell, commits it to an existing identity, retains failed candidates and supports one undo", async () => {
+  const controller = new EditorDocumentController(
+    createEmptyProject("live", "Live"),
+  );
+  const initial = structuredClone(controller.project);
+  const approvals = vi.fn();
+  const host = new BrowserAgentFileHost({
+    getProjectSessionId: () => controller.projectSessionId,
+    getProject: () => controller.project,
+    getDocument: (id) =>
+      controller.project.documents.find((d) => d.id === id) ?? null,
+    getResolver: () => controller.resolver,
+    getActiveDocumentId: () => controller.document.id,
+    onApprovalRequested: approvals,
+    commitProjectStructure: (project, active) => {
+      controller.commitProjectStructure(project, active);
+    },
+  });
+  const source = createEmptyProject("source", "Source");
+  source.documents[0]!.instances.push({
+    id: "r",
+    reference: "R1",
+    symbolId: "resistor",
+    placement: null,
+    netlist: { parameters: { value: "1k" } },
+  });
+  const bytes = new TextEncoder().encode(serializeProject(source));
+  const stage = await host.handle({
+    apiVersion: AGENT_API_VERSION,
+    requestId: "stage-cell",
+    operation: "stage",
+    kind: "project",
+    files: [
+      {
+        name: "source.json",
+        mediaType: "application/json",
+        encoding: "base64",
+        data: base64EncodeBytes(bytes),
+        byteLength: bytes.length,
+        sha256: await sha256(bytes),
+      },
+    ],
+  });
+  if (!stage.ok || stage.operation !== "stage")
+    throw new Error(JSON.stringify(stage));
+  const candidateId = stage.candidate.candidateId;
+  expect(stage.candidate.documents).toEqual([
+    {
+      id: source.topDocumentId,
+      name: source.documents[0]!.name,
+      instanceCount: 1,
+      terminalNames: [],
+    },
+  ]);
+  const inspect = await host.handle({
+    apiVersion: AGENT_API_VERSION,
+    requestId: "inspect-cell",
+    operation: "inspect",
+    candidateId,
+    documentId: source.topDocumentId,
+  });
+  if (!inspect.ok || inspect.operation !== "inspect")
+    throw new Error(JSON.stringify(inspect));
+  expect(JSON.parse(inspect.documentCode!).instances[0].reference).toBe("R1");
+  const request = {
+    apiVersion: AGENT_API_VERSION,
+    requestId: "replace-cell",
+    operation: "import-cell" as const,
+    candidateId,
+    sourceDocumentId: source.topDocumentId,
+    targetDocumentId: controller.document.id,
+    mode: "replace-body" as const,
+    expectedStructureRevision: initial.structureRevision,
+    expectedRevision: controller.document.revision,
+  };
+  const stale = await host.handle({
+    ...request,
+    expectedStructureRevision: initial.structureRevision + 1,
+  });
+  expect(stale).toMatchObject({
+    ok: false,
+    error: { code: "STALE_STRUCTURE_REVISION" },
+  });
+  expect(controller.project).toEqual(initial);
+  expect(
+    await host.handle({
+      ...request,
+      expectedRevision: request.expectedRevision + 1,
+    }),
+  ).toMatchObject({ ok: false, error: { code: "STALE_REVISION" } });
+  const result = await host.handle(request);
+  expect(result).toMatchObject({
+    ok: true,
+    targetDocumentId: initial.topDocumentId,
+    structureRevision: initial.structureRevision + 1,
+  });
+  expect(controller.document.instances[0]?.reference).toBe("R1");
+  expect(controller.project.id).toBe(initial.id);
+  expect(approvals).not.toHaveBeenCalled();
+  expect(host.consumeApproved(candidateId)).toBeNull();
+  expect(controller.transact([{ kind: "undo" }]).ok).toBe(true);
+  expect(controller.document.instances).toEqual(
+    initial.documents[0]!.instances,
+  );
+});
+
+it("rechecks the bound Project after lazy feature loading before importing a Cell", async () => {
+  let sessionId = "old";
+  const project = createEmptyProject("live", "Live");
+  const commit = vi.fn();
+  const host = new BrowserAgentFileHost({
+    getProjectSessionId: () => sessionId,
+    getProject: () => project,
+    getDocument: () => project.documents[0]!,
+    getResolver: () => ({}) as SymbolResolver,
+    onApprovalRequested: () => {},
+    commitProjectStructure: commit,
+    loadProjectCode: async () => {
+      sessionId = "new";
+      return import("../features/project-code/project-code");
+    },
+  });
+  const result = await host.handle({
+    apiVersion: AGENT_API_VERSION,
+    requestId: "lost-target",
+    operation: "import-cell",
+    candidateId: "candidate",
+    sourceDocumentId: "main",
+    targetDocumentId: "main",
+    mode: "replace-body",
+    expectedStructureRevision: 0,
+    expectedRevision: 0,
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: { code: "PROJECT_REPLACED" },
+  });
+  expect(commit).not.toHaveBeenCalled();
+});
 
 it.each(["ngspice", "vacask"] as const)(
   "generates the same %s source through Agent and GUI files",
@@ -162,6 +303,53 @@ it("uses the same Cadence bang naming profile as GUI SPICE import", async () => 
   expect(names).not.toContain("vdd!");
 });
 
+it("shows imported device references and formal Pin names like GUI import", async () => {
+  const { host } = setup();
+  const bytes = new TextEncoder().encode(
+    ".subckt stage vin vout\nR1 vin vout 1k\n.ends stage\n",
+  );
+  const stage = await host.handle({
+    apiVersion: AGENT_API_VERSION,
+    requestId: "stage-labelled-spice",
+    operation: "stage",
+    kind: "structural-spice",
+    entryPath: "stage.spi",
+    files: [
+      {
+        name: "stage.spi",
+        mediaType: "text/plain",
+        encoding: "base64",
+        data: base64EncodeBytes(bytes),
+        byteLength: bytes.byteLength,
+        sha256: await sha256(bytes),
+      },
+    ],
+  });
+  expect(stage).toMatchObject({ ok: true, operation: "stage" });
+  if (!stage.ok || stage.operation !== "stage") return;
+  const project = host.consumeApproved(stage.candidate.candidateId)!;
+  const document = project.documents.find(
+    (candidate) => candidate.netlist?.name === "stage",
+  )!;
+  const resistor = document.instances.find(
+    (instance) => instance.reference === "R1",
+  )!;
+  expect(document.annotations).toContainEqual(
+    expect.objectContaining({
+      kind: "instance-label",
+      binding: { kind: "instance-reference", instanceId: resistor.id },
+    }),
+  );
+  for (const terminal of document.netlist!.terminals) {
+    expect(document.annotations).toContainEqual(
+      expect.objectContaining({
+        kind: "instance-label",
+        binding: { kind: "cell-terminal-name", terminalId: terminal.id },
+      }),
+    );
+  }
+});
+
 async function sha256(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -245,6 +433,58 @@ describe("BrowserAgentFileHost", () => {
     expect(host.consumeApproved(stage.candidate.candidateId)?.name).toBe(
       "Staged Project",
     );
+    expect(host.consumeApproved(stage.candidate.candidateId)).toBeNull();
+  });
+
+  it("opens a staged import in a new tab without replacing the current Project", async () => {
+    const live = createEmptyProject("live", "Live Project");
+    const staged = createEmptyProject("staged", "Staged Project");
+    const opened: string[] = [];
+    const approvals: string[] = [];
+    const host = new BrowserAgentFileHost({
+      getProjectSessionId: () => "live-session",
+      getProject: () => live,
+      getDocument: (id) =>
+        live.documents.find((document) => document.id === id) ?? null,
+      getResolver: () => ({}) as SymbolResolver,
+      onApprovalRequested: (candidate) => approvals.push(candidate.candidateId),
+      openProjectInNewTab: async (project) => {
+        opened.push(project.id);
+        return true;
+      },
+    });
+    const bytes = new TextEncoder().encode(serializeProject(staged));
+    const stage = await host.handle({
+      apiVersion: AGENT_API_VERSION,
+      requestId: "stage-for-new-tab",
+      operation: "stage",
+      kind: "project",
+      files: [
+        {
+          name: "staged.icproj.json",
+          mediaType: "application/json",
+          encoding: "base64",
+          data: base64EncodeBytes(bytes),
+          byteLength: bytes.byteLength,
+          sha256: await sha256(bytes),
+        },
+      ],
+    });
+    if (!stage.ok || stage.operation !== "stage")
+      throw new Error(JSON.stringify(stage));
+    const result = await host.handle({
+      apiVersion: AGENT_API_VERSION,
+      requestId: "open-new-tab",
+      operation: "open",
+      candidateId: stage.candidate.candidateId,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      operation: "open",
+    });
+    expect(opened).toEqual([staged.id]);
+    expect(approvals).toEqual([]);
+    expect(live.name).toBe("Live Project");
     expect(host.consumeApproved(stage.candidate.candidateId)).toBeNull();
   });
 

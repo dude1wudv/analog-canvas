@@ -1,4 +1,8 @@
-import { semanticTextDocument } from "@icm/model";
+import {
+  boundAnnotationName,
+  flattenRichText,
+  labelTextDocument,
+} from "@icm/model";
 import type {
   Annotation,
   RichTextDocument,
@@ -26,6 +30,8 @@ export function resolveAnnotationText(
   annotation: Annotation,
   logicalNets?: ResolvedDocumentLogicalNets,
 ): RichTextDocument {
+  const semanticLabel = (name: string): RichTextDocument =>
+    labelTextDocument(name, document.presentation);
   const binding = annotation.binding;
   if (!binding) return annotation.content ?? EMPTY_TEXT;
   if (
@@ -41,7 +47,7 @@ export function resolveAnnotationText(
       const instance = document.instances.find(
         (candidate) => candidate.id === binding.instanceId,
       );
-      return semanticTextDocument(instance?.reference ?? "", "instance-label");
+      return semanticLabel(instance?.reference ?? "");
     }
     case "instance-value": {
       const instance = document.instances.find(
@@ -49,9 +55,20 @@ export function resolveAnnotationText(
       );
       if (!instance) return EMPTY_TEXT;
       const display = binding.parameter
-        ? displayableInstanceParameter(instance, binding.parameter)
+        ? displayableInstanceParameter(
+            instance,
+            binding.parameter,
+            binding.showValue === false ? { showValue: false } : {},
+          )
         : displayableInstanceValue(instance);
-      return display.kind === "displayable" ? display.content : EMPTY_TEXT;
+      if (display.kind !== "displayable") return EMPTY_TEXT;
+      // A value's live parameter remains authoritative. A stale authored look
+      // must never display an old electrical value after an edit/import.
+      return annotation.formatOverride &&
+        flattenRichText(annotation.formatOverride) ===
+          flattenRichText(display.content)
+        ? annotation.formatOverride
+        : display.content;
     }
     case "net-name": {
       const ownerClaim = document.connectivityEvidence.find(
@@ -69,16 +86,34 @@ export function resolveAnnotationText(
       ).byBaseNetId.get(binding.netId)?.name;
       const ownerClaimName =
         ownerClaim?.kind === "name-claim" ? ownerClaim.name : undefined;
-      return semanticTextDocument(
-        ownerClaimName ?? logicalName ?? "",
-        annotation.kind === "power-label" ? "power-label" : "net-label",
-      );
+      return semanticLabel(ownerClaimName ?? logicalName ?? "");
     }
     case "cell-terminal-name": {
       const terminal = document.netlist?.terminals.find(
         (candidate) => candidate.id === binding.terminalId,
       );
-      return semanticTextDocument(terminal?.name ?? "", "formal-port");
+      return semanticLabel(terminal?.name ?? "");
     }
   }
+}
+
+/** Electrical names must never be inferred from a lossy rendered string. */
+export function resolveAnnotationName(
+  document: SchematicDocument,
+  annotation: Annotation,
+  logicalNets?: ResolvedDocumentLogicalNets,
+): string {
+  const name = boundAnnotationName(document, annotation);
+  if (annotation.binding?.kind === "net-name")
+    return (
+      name ||
+      (logicalNets ?? resolveDocumentLogicalNets(document)).byBaseNetId.get(
+        annotation.binding.netId,
+      )?.name ||
+      ""
+    );
+  return (
+    name ??
+    flattenRichText(resolveAnnotationText(document, annotation, logicalNets))
+  );
 }

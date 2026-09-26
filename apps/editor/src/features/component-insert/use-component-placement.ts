@@ -10,7 +10,6 @@ import type {
 import {
   createHierarchyInstance,
   createExternalSubcircuitInstance,
-  planCreateCellPin,
   planPlaceExternalSubcircuitInstance,
   planPlaceCellInstance,
 } from "@icm/edit-engine";
@@ -40,9 +39,8 @@ import {
   proposePlacementContact,
   planInsertedInstanceConnections,
 } from "./placement-connectivity";
-import { planInitialMosBulkDefault } from "./mos-bulk-defaults";
+import { planPlacedCellPin } from "./cell-pin-placement";
 import { constrainedPowerRailEndpoint, planVddRailEdits } from "./vdd-rail";
-import { vddPowerLabelAnnotation } from "./vdd-power-label";
 import {
   defaultInstanceDisplayAnnotations,
   missingDefaultInstanceDisplayAnnotations,
@@ -469,7 +467,7 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
       placementRequest.kind === "cell-pin"
         ? placementRequest.portName?.trim()
         : undefined;
-    const formalName =
+    const authoredName =
       requestedName ||
       connectedName ||
       (supply
@@ -479,6 +477,9 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
             new Set(),
             symbolId === "port-filled" ? "filled" : "hollow",
           ));
+    // The Pin Name is exactly what was typed, connected or generated; the
+    // label's look never inserts characters into it.
+    const formalName = authoredName;
     const baseNetId = `net-cell-pin-${id.toLowerCase()}`;
     let netId = contact.netId ?? baseNetId;
     let netSuffix = 2;
@@ -509,61 +510,38 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
               newNetId: netId,
             },
           ]),
-      ...(supply
-        ? planInitialMosBulkDefault(options.document, "vdd", netId)
-        : []),
     ];
     const terminalId = `terminal-${id.toLowerCase()}`;
-    const resolvedSupply = supply
-      ? options.resolver.resolve(instance.symbolId)
-      : undefined;
-    const annotations =
-      supply && resolvedSupply
-        ? [
-            {
-              ...vddPowerLabelAnnotation({
-                instance,
-                resolved: resolvedSupply,
-                netId,
-                grid: options.document.presentation.grid,
-              }),
-              binding: {
-                kind: "cell-terminal-name" as const,
-                terminalId,
-              },
-            },
-          ]
-        : defaultInstanceDisplayAnnotations(
-            options.document,
-            instance,
-            options.resolver,
-            options.styleProfile,
-            { formalTerminalId: terminalId },
-          );
-    const annotation = annotations[0];
     const committed = options.transactProject(
       "place-cell-pin",
-      planCreateCellPin(options.project, options.document.id, {
-        instance,
-        connectionEdits,
-        terminal: {
-          id: terminalId,
+      planPlacedCellPin(
+        options.project,
+        options.document.id,
+        options.resolver,
+        {
+          instance,
+          connectionEdits,
+          terminalId,
           name: formalName,
           netId,
           direction:
             supply || placementRequest.kind !== "cell-pin"
               ? "inout"
               : placementRequest.direction!,
-          interfaceInstanceIds: [id],
+          styleProfile: options.styleProfile,
         },
-        ...(annotation ? { annotation } : {}),
-      }),
+      ),
     );
     if (!committed) return;
     options.selectOnly("instance", [id]);
     options.setComponentPreviewPoint(position);
+    const placedKind = supply
+      ? "VDD Power Cell Pin"
+      : symbolId === "port-filled"
+        ? "Bias Voltage Port"
+        : "Cell Pin";
     options.setStatus(
-      `Added ${supply ? "VDD Power Cell Pin" : "Cell Pin"} ${formalName} · click to place another · Esc exits`,
+      `Added ${placedKind} ${authoredName} · click to place another · Esc exits`,
     );
   };
 

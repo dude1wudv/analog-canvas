@@ -35,7 +35,15 @@ function browserImplementationPaths(plan) {
 }
 
 function browserSelectionGates(plan) {
-  return plan.selectedGates ?? plan.gates;
+  const browserPaths = new Set(browserImplementationPaths(plan));
+  // The gate plan also classifies unit tests under their production owners.
+  // In a mixed batch, only browser-impacting paths may activate those owners'
+  // browser contracts; Core still validates every implementation/test path.
+  return (plan.selectedGates ?? plan.gates).filter((gate) =>
+    (gate.groups ?? []).some((group) =>
+      (plan.groupPaths[group] ?? []).some((path) => browserPaths.has(path)),
+    ),
+  );
 }
 
 function e2eArgs(plan) {
@@ -56,9 +64,10 @@ function e2eCoveredPaths(plan) {
 
 /**
  * Convert the repository gate plan into the intentionally smaller PR choice.
- * Core contracts still run for every implementation change. Pull requests run
- * affected browser contracts, with a small product fallback for unmapped
- * browser paths; scheduled and manual audits alone force the complete suite.
+ * Core contracts still run for every implementation change. Pull requests and
+ * their merge-queue groups run affected browser contracts, with a small product
+ * fallback for unmapped browser paths. CI never forces the complete suite;
+ * `--force-full` remains for local planning.
  */
 export function planCiValidation(plan, { forceFull = false } = {}) {
   if (forceFull) {
@@ -103,8 +112,9 @@ export function planCiValidation(plan, { forceFull = false } = {}) {
       heavy: true,
       browser: true,
       mode: "fallback",
-      e2eArgs: fallbackBrowserArgs,
+      e2eArgs: unique([...focusedArgs, ...fallbackBrowserArgs]).sort(),
       reasons: [
+        ...focusedArgs.map((arg) => `focused browser contract: ${arg}`),
         "the small browser fallback covers unmapped product impact",
         ...uncoveredPaths.map((path) => `uncovered browser impact: ${path}`),
       ],

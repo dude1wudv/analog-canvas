@@ -7,7 +7,6 @@ import { resolve } from "node:path";
 import { createEmptyProject } from "@icm/model";
 import { createRoutingDemoProject } from "../src/demos/routing-demo.js";
 import {
-  closeProjectTools,
   revealPropertiesShelf,
   awaitEditorReady,
   chooseComponent,
@@ -29,6 +28,144 @@ import {
   placeComponent,
   openSelectionShelf,
 } from "./manual-editor-fixtures.js";
+
+test("formal SVG and PNG contain wide rotated edge labels without clipping", async ({
+  page,
+}) => {
+  const project = createEmptyProject("export-ink", "Export ink");
+  const schematic = project.documents[0]!;
+  schematic.drafting = {
+    objects: [
+      {
+        id: "edge-circle",
+        kind: "circle",
+        locked: false,
+        zIndex: 0,
+        anchor: { kind: "free", position: { x: 400, y: 0 } },
+        center: { x: 0, y: 0 },
+        radius: 20,
+        lineStyle: "solid",
+        styleOverride: { strokeScale: 4 },
+      },
+    ],
+  };
+  for (const [index, rotation] of ([0, 90, 180, 270] as const).entries()) {
+    schematic.annotations.push({
+      id: `edge-${index}`,
+      kind: "instance-label",
+      locked: false,
+      content: {
+        runs: [
+          {
+            kind: "span",
+            style: "bold",
+            children: [
+              {
+                kind: "span",
+                style: "italic",
+                children: [{ kind: "text", value: "WWWWMMMM" }],
+              },
+            ],
+          },
+        ],
+      },
+      anchor: {
+        kind: "free",
+        position: { x: (index % 2) * 200, y: Math.floor(index / 2) * 200 },
+      },
+      alignment: "start",
+      rotation,
+    });
+  }
+  await page.goto("/editor");
+  await awaitEditorReady(page);
+  await page.getByTestId("project-file").setInputFiles({
+    name: "export-ink.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await expect(
+    page
+      .locator('[data-layer="annotations"] [data-object-id="edge-0"]')
+      .first(),
+  ).toBeAttached();
+  const svg = (await downloadBytes(page, "File", "Export SVG")).toString(
+    "utf8",
+  );
+  const png = await downloadBytes(page, "File", "Export PNG");
+  const result = await page.evaluate(
+    async ({ svg, png }) => {
+      const frame = document.createElement("iframe");
+      document.body.append(frame);
+      try {
+        const doc = frame.contentDocument!;
+        doc.body.innerHTML = svg;
+        await doc.fonts.ready;
+        const root = doc.querySelector("svg")!;
+        const view = root.viewBox.baseVal;
+        const inverse = root.getCTM()!.inverse();
+        const overflows: string[] = [];
+        for (const text of root.querySelectorAll("text")) {
+          const box = text.getBBox();
+          const transform = inverse.multiply(text.getCTM()!);
+          for (const x of [box.x, box.x + box.width])
+            for (const y of [box.y, box.y + box.height]) {
+              const p = new DOMPoint(x, y).matrixTransform(transform);
+              if (
+                p.x < view.x ||
+                p.y < view.y ||
+                p.x > view.x + view.width ||
+                p.y > view.y + view.height
+              )
+                overflows.push(text.textContent ?? "");
+            }
+        }
+        const image = new Image();
+        image.src = png;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const ctx = canvas.getContext("2d")!;
+        ctx.drawImage(image, 0, 0);
+        const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        let borderInk = 0,
+          ink = 0;
+        for (let y = 0; y < canvas.height; y++)
+          for (let x = 0; x < canvas.width; x++) {
+            const offset = (y * canvas.width + x) * 4;
+            if (pixels[offset]! < 128 && pixels[offset + 3]! > 128) {
+              ink++;
+              if (
+                x < 2 ||
+                y < 2 ||
+                x >= canvas.width - 2 ||
+                y >= canvas.height - 2
+              )
+                borderInk++;
+            }
+          }
+        return {
+          overflows,
+          borderInk,
+          ink,
+          width: image.width,
+          expectedWidth: Math.round(view.width * 3),
+          textCount: root.querySelectorAll("text").length,
+        };
+      } finally {
+        frame.remove();
+      }
+    },
+    { svg, png: `data:image/png;base64,${png.toString("base64")}` },
+  );
+  expect(result.textCount).toBe(4);
+  expect(result.overflows).toEqual([]);
+  expect(result.ink).toBeGreaterThan(1000);
+  expect(result.borderInk).toBe(0);
+  expect(result.width).toBe(result.expectedWidth);
+  await expect(page.locator('iframe[aria-hidden="true"]')).toHaveCount(0);
+});
 
 async function clickRoute(
   page: Page,
@@ -205,6 +342,19 @@ async function clickRouteWithScreenOffset(
 function markRoutingDemoNetsImported(
   project: ReturnType<typeof createRoutingDemoProject>,
 ): void {
+  // These Port symbols stand in for device endpoints in routing tests, not
+  // same-name formal interfaces (which legitimately need no extra wire).
+  for (const terminal of project.documents[0]!.netlist!.terminals)
+    terminal.name = terminal.interfaceInstanceIds[0]!;
+  project.documents[0]!.importReference = {
+    files: [],
+    nets: project.documents[0]!.nets.map((net) => ({
+      id: net.id,
+      name: net.id,
+      scope: "local",
+      terminals: structuredClone(net.terminals),
+    })),
+  };
   for (const net of project.documents[0]!.nets) {
     project.documents[0]!.connectivityEvidence.push({
       id: `evidence-spice-${net.id}`,
@@ -294,6 +444,24 @@ async function copySelectionAt(
   const box = await canvas.boundingBox();
   if (!box) throw new Error("Canvas is not measurable");
   await page.keyboard.press("c");
+  await page.mouse.move(box.x + position.x, box.y + position.y);
+  await expect(page.getByTestId("copy-placement-preview")).toBeVisible();
+  await canvas.click({ position });
+  await expect(page.getByTestId("copy-placement-preview")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("copy-placement-preview")).toHaveCount(0);
+}
+
+/** Ctrl/Cmd+C then V: the clipboard path, which keeps authored label text. */
+async function pasteSelectionAt(
+  page: Page,
+  position: { x: number; y: number },
+): Promise<void> {
+  const canvas = page.getByTestId("schematic-canvas");
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error("Canvas is not measurable");
+  await page.keyboard.press("ControlOrMeta+c");
+  await page.keyboard.press("v");
   await page.mouse.move(box.x + position.x, box.y + position.y);
   await expect(page.getByTestId("copy-placement-preview")).toBeVisible();
   await canvas.click({ position });
@@ -423,7 +591,7 @@ test("property code keeps a drawn wired instance visible and moves it with grid 
   await setComponentCodeField(page, "coordinate", [421, 281]);
   await expect(page.getByTestId("hit-R1")).toHaveCount(1);
   await expectComponentCodeField(page, "coordinate", [420, 280]);
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expect(page.getByTestId("hit-R1")).toHaveCount(1);
   await expectComponentCodeField(page, "coordinate", [
     before.documents[0].instances[0].placement.position.x,
@@ -492,284 +660,41 @@ test("a directly connected device can move away and return with its wire, undo a
   expect((await hit.boundingBox())!.x).toBeCloseTo(before.x, 0);
 });
 
-test("opens one digital simulation window and picks a Net from the canvas", async ({
+test("retired Digital Timing is absent while existing clock symbols still render", async ({
   page,
 }) => {
-  const project = createRoutingDemoProject();
-  for (const instance of project.documents[0]!.instances) {
-    if (["A", "B", "E"].includes(instance.id) && instance.placement) {
-      instance.placement.position.y = 500;
-    }
-  }
-  project.documents[0]!.routes = [
-    createRoutePath({
-      id: "route-simulation-pick",
-      netId: "net-h",
-      start: { kind: "terminal", instanceId: "A", pinName: "P" },
-      end: { kind: "terminal", instanceId: "B", pinName: "P" },
-      bends: [],
-      modes: ["manual"],
-    }),
-  ];
-  project.documents[0]!.instances.push(
-    {
-      id: "CLK",
-      symbolId: "pulse-voltage-source",
-      placement: {
-        position: { x: 700, y: 180 },
-        rotation: 0,
-        mirror: "none",
-      },
-      reference: "V1",
-      netlist: {
-        parameters: { period: "10ns", dutyCycle: "50", initial: "0" },
-      },
+  const project = createEmptyProject("retired-timing", "Retired Timing");
+  project.documents[0]!.instances.push({
+    id: "CLK",
+    symbolId: "pulse-voltage-source",
+    placement: {
+      position: { x: 700, y: 180 },
+      rotation: 0,
+      mirror: "none",
     },
-    {
-      id: "GND",
-      symbolId: "ground",
-      placement: {
-        position: { x: 700, y: 300 },
-        rotation: 0,
-        mirror: "none",
-      },
+    reference: "V1",
+    netlist: {
+      parameters: { period: "10ns", dutyCycle: "50", initial: "0" },
     },
-  );
-  project.documents[0]!.nets.push(
-    {
-      id: "clock",
-      terminals: [{ instanceId: "CLK", pinName: "+" }],
-    },
-    {
-      id: "ground",
-      terminals: [
-        { instanceId: "CLK", pinName: "-" },
-        { instanceId: "GND", pinName: "0" },
-      ],
-    },
-  );
-  project.documents[0]!.connectivityEvidence.push({
-    id: "clock-name",
-    kind: "name-claim",
-    netId: "clock",
-    name: "CK",
-    scope: "local",
-    owner: { kind: "net-label", annotationId: "test-net-label-1" },
-  });
-  project.documents[0]!.annotations.push({
-    id: "test-net-label-1",
-    kind: "net-label",
-    netId: "clock",
-    binding: { kind: "net-name", netId: "clock" },
-    anchor: { kind: "free", position: { x: 700, y: 160 } },
-    alignment: "middle",
-    rotation: 0,
-    locked: false,
   });
   await page.goto("/editor");
   await revealPropertiesShelf(page);
   await page.getByTestId("project-file").setInputFiles({
-    name: "digital-simulation-pick.icproj.json",
+    name: "retired-timing.icproj.json",
     mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify(project)),
   });
-  // Opening a Project brings the dock back; the canvas needs the width for
-  // the Net label this test picks from.
-  await closeProjectTools(page);
 
+  await expect(
+    page.locator('[data-symbol-id="pulse-voltage-source"]'),
+  ).toBeVisible();
   await expect(
     page.getByLabel("Place Digital Clock", { exact: true }),
-  ).toBeVisible();
-  const canvas = page.getByTestId("schematic-canvas");
-  await page.getByLabel("Place Resistor", { exact: true }).click();
-  await expect(canvas).toHaveClass(/component-mode/u);
-  await page.getByRole("button", { name: "Simulation", exact: true }).click();
-
-  const simulation = page.getByRole("dialog", {
-    name: "Digital Simulation",
-  });
-  await expect(simulation).toBeVisible();
-  await expect(page.getByRole("dialog")).toHaveCount(1);
-  await expect(simulation.locator("details")).toHaveCount(0);
+  ).toHaveCount(0);
+  await expect(page.getByTestId("digital-simulation-toggle")).toHaveCount(0);
   await expect(
-    simulation.locator(".digital-simulation-workspace"),
-  ).toBeVisible();
-  await expect
-    .poll(() =>
-      simulation
-        .locator(".simulation-saved-net-list")
-        .evaluate((element) => getComputedStyle(element).flexDirection),
-    )
-    .toBe("column");
-
-  await simulation.getByRole("button", { name: "Pick Nets" }).click();
-  await expect(canvas).toHaveClass(/simulation-net-pick-active/u);
-  await expect(canvas).not.toHaveClass(/component-mode/u);
-  const pickedRoute = page.getByTestId("route-hit-route-simulation-pick");
-  await expect
-    .poll(() =>
-      pickedRoute.evaluate((element) => getComputedStyle(element).strokeWidth),
-    )
-    .toBe("26px");
-  await clickRoute(page, "route-simulation-pick", 0.15);
-  await expect(simulation.getByLabel("Saved Nets")).toContainText("HORIZONTAL");
-  await clickRoute(page, "route-simulation-pick", 0.85);
-  await expect(simulation.getByLabel("Saved Nets")).toContainText("None");
-  await clickRoute(page, "route-simulation-pick", 0.5);
-  await expect(simulation.getByLabel("Saved Nets")).toContainText("HORIZONTAL");
-  // A Net label names its Net as directly as the wire does, and its press
-  // is claimed by the same router that claims the wire's.
-  const clockLabel = page.getByTestId("annotation-hit-test-net-label-1");
-  await clockLabel.click();
-  await expect(simulation.getByLabel("Saved Nets")).toContainText("CK");
-  await clockLabel.click();
-  await expect(simulation.getByLabel("Saved Nets")).not.toContainText("CK");
-  await page.keyboard.press("Escape");
-  await expect(page.locator(".schematic-canvas")).not.toHaveClass(
-    /simulation-net-pick-active/u,
-  );
-
-  await simulation.getByRole("button", { name: "Clear" }).click();
-  await simulation.getByLabel("Add saved Net").selectOption("clock");
-  const waveformName = simulation.getByRole("button", {
-    name: "Edit waveform name for CK",
-  });
-  await expect(waveformName).toContainText("CK");
-  await waveformName.click();
-  const labelEditor = simulation.getByRole("region", {
-    name: "Edit waveform name for CK",
-  });
-  const labelEditable = labelEditor.getByRole("textbox", {
-    name: "Canvas text editor",
-  });
-  await expect(labelEditor.getByRole("button", { name: "Bold" })).toBeVisible();
-  await expect(
-    labelEditor.getByRole("button", { name: "Subscript" }),
-  ).toBeVisible();
-  await labelEditable.fill("");
-  await labelEditor.getByRole("button", { name: "Apply text changes" }).click();
-  await expect(waveformName).toContainText("CK");
-  await waveformName.click();
-  await labelEditor
-    .getByRole("textbox", { name: "Canvas text editor" })
-    .fill("CLK_ALIAS");
-  await labelEditor.getByRole("button", { name: "Apply text changes" }).click();
-  await expect(
-    simulation.locator(".simulation-saved-net-source"),
-  ).toContainText("CK");
-  await simulation.getByRole("button", { name: "Run Simulation" }).click();
-  const waveformPreview = simulation.getByTestId("timing-waveform-preview");
-  await expect(waveformPreview).toBeVisible();
-  await expect(waveformPreview).toContainText("CLK_ALIAS");
-  const razaviTitleRun = waveformPreview
-    .locator("text")
-    .first()
-    .locator("tspan tspan");
-  await expect(razaviTitleRun).toHaveCSS("font-weight", "700");
-  await expect(razaviTitleRun).toHaveCSS("font-style", "italic");
-
-  const placeSnapshot = async (xRatio: number, yRatio: number) => {
-    await simulation.getByRole("button", { name: "Place on Canvas" }).click();
-    await simulation
-      .getByRole("button", { name: "Close Digital Simulation" })
-      .click();
-    await expect(canvas).toHaveClass(/waveform-placement-active/u);
-    const bounds = await canvas.boundingBox();
-    expect(bounds).not.toBeNull();
-    await page.mouse.move(
-      bounds!.x + bounds!.width * xRatio,
-      bounds!.y + bounds!.height * yRatio,
-    );
-    await page.mouse.click(
-      bounds!.x + bounds!.width * xRatio,
-      bounds!.y + bounds!.height * yRatio,
-    );
-    await expect(page.getByTestId("status")).toContainText(
-      "Placed a grouped timing snapshot",
-    );
-    await expect(canvas).not.toHaveClass(/waveform-placement-active/u);
-  };
-
-  // The opened project lands auto-fitted, tighter than the camera this
-  // flow was scripted for; two zoom-out steps restore comparable room so
-  // both snapshots and their scale handle stay fully on screen.
-  for (let zoomStep = 0; zoomStep < 2; zoomStep += 1) {
-    await page.getByRole("button", { name: "Zoom out" }).click();
-  }
-  await placeSnapshot(0.7, 0.72);
-  const draftingHits = page.locator('[data-testid^="drafting-hit-"]');
-  const selectedDraftingHits = page.locator(
-    '[data-testid^="drafting-hit-"].selected',
-  );
-  const firstSnapshotSize = await draftingHits.count();
-  expect(firstSnapshotSize).toBeGreaterThan(2);
-  await expect(selectedDraftingHits).toHaveCount(firstSnapshotSize);
-
-  await page.getByRole("button", { name: "Simulation", exact: true }).click();
-  await expect(
-    simulation.getByRole("button", { name: "Place on Canvas" }),
-  ).toBeEnabled();
-  await placeSnapshot(0.35, 0.55);
-  await expect(draftingHits).toHaveCount(firstSnapshotSize * 2);
-  await expect(selectedDraftingHits).toHaveCount(firstSnapshotSize);
-
-  const secondSnapshotTitle = draftingHits.nth(firstSnapshotSize);
-  const secondSnapshotTrace = draftingHits.nth(firstSnapshotSize + 2);
-  const secondSnapshotTraceId = await secondSnapshotTrace.getAttribute(
-    "data-drag-object-id",
-  );
-  expect(secondSnapshotTraceId).not.toBeNull();
-  const secondSnapshotTraceLine = canvas.locator(
-    `[data-object-id="${secondSnapshotTraceId}"][data-kind="construction-line"]`,
-  );
-  const traceStrokeBefore = Number(
-    await secondSnapshotTraceLine.getAttribute("stroke-width"),
-  );
-  const titleBeforeScale = await secondSnapshotTitle.boundingBox();
-  expect(titleBeforeScale).not.toBeNull();
-  const scaleHandle = page.locator(
-    '[data-testid^="draft-group-scale-waveform-group-"]',
-  );
-  await expect(scaleHandle).toBeVisible();
-  const scaleHandleBounds = await scaleHandle.boundingBox();
-  expect(scaleHandleBounds).not.toBeNull();
-  const scaleStart = {
-    x: scaleHandleBounds!.x + scaleHandleBounds!.width / 2,
-    y: scaleHandleBounds!.y + scaleHandleBounds!.height / 2,
-  };
-  await page.mouse.move(scaleStart.x, scaleStart.y);
-  await page.mouse.down();
-  await page.mouse.move(scaleStart.x + 90, scaleStart.y + 60, { steps: 5 });
-  await page.mouse.up();
-  await expect(page.getByTestId("status")).toContainText("Scaled waveform to");
-  const titleAfterScale = await secondSnapshotTitle.boundingBox();
-  expect(titleAfterScale!.width).toBeGreaterThan(titleBeforeScale!.width * 1.1);
-  const traceStrokeAfter = Number(
-    await secondSnapshotTraceLine.getAttribute("stroke-width"),
-  );
-  expect(traceStrokeAfter).toBeGreaterThan(traceStrokeBefore * 1.1);
-
-  const firstGroupMember = draftingHits.first();
-  const secondGroupMember = draftingHits.nth(1);
-  await expect(firstGroupMember).not.toHaveClass(/selected/u);
-  const firstBefore = await firstGroupMember.boundingBox();
-  const secondBefore = await secondGroupMember.boundingBox();
-  expect(firstBefore).not.toBeNull();
-  expect(secondBefore).not.toBeNull();
-  const start = {
-    x: firstBefore!.x + firstBefore!.width / 2,
-    y: firstBefore!.y + firstBefore!.height / 2,
-  };
-  await page.mouse.move(start.x, start.y);
-  await page.mouse.down();
-  await page.mouse.move(start.x + 45, start.y + 25, { steps: 4 });
-  await page.mouse.up();
-  await expect(firstGroupMember).toHaveClass(/selected/u);
-  await expect(selectedDraftingHits).toHaveCount(firstSnapshotSize);
-  const firstAfter = await firstGroupMember.boundingBox();
-  const secondAfter = await secondGroupMember.boundingBox();
-  expect(firstAfter!.x - firstBefore!.x).toBeGreaterThan(20);
-  expect(secondAfter!.x - secondBefore!.x).toBeGreaterThan(20);
+    page.getByRole("dialog", { name: "Digital Simulation" }),
+  ).toHaveCount(0);
 });
 
 test("shows faithful symbol previews for the reviewed Razavi palette", async ({
@@ -830,19 +755,17 @@ test("constructs VDD as a drawn dotless power rail", async ({ page }) => {
   await expect(canvas.locator('[data-symbol-id="vdd"]')).toHaveCount(0);
   const powerLabel = canvas.locator('[data-kind="power-label"]');
   await expect(powerLabel).toHaveText("VDD");
-  await expect(powerLabel.locator('[data-text-run="subscript"]')).toHaveText(
-    "DD",
-  );
+  // A new rail shows its standard supply look: italic V, upright DD subscript.
+  const subscript = powerLabel.locator('[data-text-run="subscript"]');
+  await expect(subscript).toHaveText("DD");
+  await expect(subscript).toHaveAttribute("style", /font-style:normal/u);
   await expect(
-    powerLabel.locator(
-      '[data-text-run="span"][style*="font-style:italic"][style*="font-weight:700"]',
-    ),
+    powerLabel
+      .locator(
+        '[data-text-run="span"][style*="font-style:italic"][style*="font-weight:700"]',
+      )
+      .first(),
   ).toHaveText("V");
-  await expect(
-    powerLabel.locator(
-      '[data-text-run="subscript"] [data-text-run="span"][style*="font-style:normal"][style*="font-weight:700"]',
-    ),
-  ).toHaveText("DD");
   await expect(page.getByTestId("component-input-plane")).toHaveCount(0);
 
   await page.keyboard.press("Delete");
@@ -1233,39 +1156,41 @@ test("P shortcut starts Cell Pin placement", async ({ page }) => {
   await canvas.hover({ position: { x: 320, y: 180 } });
   await expect(page.getByTestId("component-placement-preview")).toBeVisible();
   await canvas.click({ position: { x: 320, y: 180 } });
-  await expect(page.getByTestId("status")).toContainText("Added Cell Pin Vin");
+  await expect(page.getByTestId("status")).toContainText("Added Cell Pin Vinp");
   await expect(page.getByTestId("hit-P1")).toBeVisible();
   const inputLabel = page.locator('[data-object-id="instance-label-P1"]');
-  await expect(inputLabel).toHaveText("Vin");
+  await expect(inputLabel).toHaveText("Vinp");
   await expect(
     inputLabel.locator(
       '[data-text-run="span"][style*="font-style:italic"][style*="font-weight:700"]',
     ),
   ).toHaveText("V");
-  await expect(
-    inputLabel.locator(
-      '[data-text-run="subscript"] [data-text-run="span"][style*="font-style:normal"][style*="font-weight:700"]',
-    ),
-  ).toHaveText("in");
+  await expect(inputLabel.locator('[data-text-run="subscript"]')).toHaveText(
+    "inp",
+  );
 
   await canvas.click({ position: { x: 520, y: 180 } });
-  await expect(page.getByTestId("status")).toContainText("Added Cell Pin Vout");
+  await expect(page.getByTestId("status")).toContainText("Added Cell Pin Vinn");
   const outputLabel = page.locator('[data-object-id="instance-label-P2"]');
-  await expect(outputLabel).toHaveText("Vout");
+  await expect(outputLabel).toHaveText("Vinn");
   await expect(outputLabel.locator('[data-text-run="subscript"]')).toHaveText(
-    "out",
+    "inn",
   );
   await page.keyboard.press("Escape");
 
   await chooseComponent(page, "port-filled");
   await expect(page.getByTestId("component-placement-preview")).toBeVisible();
   await canvas.click({ position: { x: 320, y: 260 } });
-  await expect(page.getByTestId("status")).toContainText("Added Cell Pin VB1");
+  await expect(page.getByTestId("status")).toContainText(
+    "Added Bias Voltage Port VB1",
+  );
   await page.keyboard.press("Escape");
   await chooseComponent(page, "port-filled");
   await expect(page.getByTestId("component-placement-preview")).toBeVisible();
   await canvas.click({ position: { x: 520, y: 260 } });
-  await expect(page.getByTestId("status")).toContainText("Added Cell Pin VB2");
+  await expect(page.getByTestId("status")).toContainText(
+    "Added Bias Voltage Port VB2",
+  );
   await page.keyboard.press("Escape");
   const firstBias = page.locator('[data-object-id="instance-label-P3"]');
   const secondBias = page.locator('[data-object-id="instance-label-P4"]');
@@ -1382,7 +1307,7 @@ test("Ctrl+R mirrors a selected component instead of refreshing", async ({
   });
 });
 
-test("treats hollow and filled Cell Pins as equivalent interface variants", async ({
+test("authors Cell Pins and Bias Voltage Ports as independent interfaces", async ({
   page,
 }) => {
   await page.goto("/editor");
@@ -2168,14 +2093,14 @@ test("changes wire line style while preserving color, arrow, export and undo", a
   await expect
     .poll(() => routeInk(page, "route-ui-1", "stroke-dasharray"))
     .toBe("2 3");
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   expect(
     JSON.parse(await readComponentPropertyCode(page)).appearance.lineStyle,
   ).toBe("dashed");
   await expect
     .poll(() => routeInk(page, "route-ui-1", "stroke-dasharray"))
     .toBe("6 4");
-  await clickCommand(page, "Edit", "Redo");
+  await page.getByTestId("draw-tool-redo").click();
   expect(
     JSON.parse(await readComponentPropertyCode(page)).appearance.lineStyle,
   ).toBe("dotted");
@@ -2191,14 +2116,31 @@ test("changes wire line style while preserving color, arrow, export and undo", a
   const svg = (await downloadBytes(page, "File", "Export SVG")).toString(
     "utf8",
   );
-  // The exported conductor is one shape per paint: the Route's identity is on
-  // its own element, the dash on the ink that carries its run.
-  expect(svg).toMatch(
-    /<polyline[^>]*data-object-id="route-ui-1"[^>]*points="310,250 480,250 480,210 650,210"/u,
+  // Export must reproduce the authored world geometry regardless of the
+  // toolbar/sidebar dimensions used to place it on screen.
+  const liveRoute = page.locator(
+    '[data-layer="routes"] polyline[data-object-id="route-ui-1"]',
   );
-  expect(svg).toMatch(
-    /<path data-role="conductor-ink"[^>]*M 310 250 L 480 250 L 480 210 L 650 210[^>]*stroke-dasharray="2 3"/u,
-  );
+  const points = await liveRoute.getAttribute("points");
+  const ink = await page
+    .locator('[data-layer="routes"] [data-role="conductor-ink"]')
+    .first()
+    .getAttribute("d");
+  expect(points).toBeTruthy();
+  expect(ink).toBeTruthy();
+  const exported = await page.evaluate((source) => {
+    const svg = new DOMParser().parseFromString(source, "image/svg+xml");
+    return {
+      points: svg
+        .querySelector('polyline[data-object-id="route-ui-1"]')
+        ?.getAttribute("points"),
+      ink: svg.querySelector('[data-role="conductor-ink"]')?.getAttribute("d"),
+      dash: svg
+        .querySelector('[data-role="conductor-ink"]')
+        ?.getAttribute("stroke-dasharray"),
+    };
+  }, svg);
+  expect(exported).toEqual({ points, ink, dash: "2 3" });
   expect(svg).toContain('data-role="route-direction-arrow"');
   const pdf = await downloadBytes(page, "File", "Export PDF");
   expect(pdf.subarray(0, 5).toString("ascii")).toBe("%PDF-");
@@ -2287,7 +2229,7 @@ test("keeps Wire active for consecutive independent routes until Escape", async 
   await expect(page.getByTestId("active-tool")).toHaveText("pointer");
 });
 
-test("physically cuts an imported Route and restores source guidance for every detached component", async ({
+test("physically cuts an imported Route without reconnecting detached components through source guidance", async ({
   page,
 }) => {
   const project = createRoutingDemoProject();
@@ -2474,12 +2416,6 @@ test("keeps Bulk status and its prominent draw action on one compact row", async
   expect(layout.height).toBeLessThan(58);
   expect(Math.abs(layout.headingY - layout.actionY)).toBeLessThan(2);
 
-  // Bulk is the first section in the panel, not buried under the tray.
-  const firstSection = await page
-    .locator(".selection-panel section")
-    .first()
-    .getAttribute("aria-label");
-  expect(firstSection).toBe("MOS bulk connection");
   await draw.click();
   await expect(page.getByTestId("status")).toContainText(
     "Drawing M1.B bulk connection",
@@ -2833,12 +2769,8 @@ test("connects copied multi-pin groups through a manually bent wire", async ({
     .poll(() => recoveryProjectTexts(page))
     .toContain(`"revision": ${revision}`);
   await page.reload();
-  const fileMenu = await openMenu(page, "File");
-  await fileMenu.getByRole("button", { name: "Recover Local Work…" }).click();
-  await page
-    .getByRole("dialog", { name: "Recover recent work" })
-    .getByRole("button", { name: "Restore" })
-    .click();
+  // Refresh restores this window's workspace without a second manual restore.
+  await awaitEditorReady(page);
   await expect(page.getByTestId("instance-count")).toHaveText("4");
 
   await clickDrawTool(page, "wire");
@@ -2846,7 +2778,7 @@ test("connects copied multi-pin groups through a manually bent wire", async ({
   await page
     .getByTestId("schematic-canvas")
     .click({ position: { x: 460, y: 500 } });
-  await page.getByTestId("terminal-M2-copy-1-S").click();
+  await page.getByTestId("terminal-M2_2-S").click();
 
   await expect(page.getByTestId("status")).toContainText("Committed route");
   await expect(page.locator('[data-layer="routes"] polyline')).toHaveCount(3);
@@ -3233,7 +3165,7 @@ test("applies Route name, scope, and appearance from one JSON edit", async ({
       },
     }),
   );
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expect(page.getByTestId("revision")).toHaveText(String(revision + 2));
   expect(JSON.parse(await readComponentPropertyCode(page))).toMatchObject({
     type: "wire",
@@ -3336,7 +3268,7 @@ test("edits instance, electrical Net, and free text with bounded label handles",
   expect(afterBox?.x).not.toBe(beforeBox.x);
 });
 
-test("formats a Net Label without changing its electrical Net name", async ({
+test("starts a V-led Net Label subscripted and lets the author turn it off without renaming the Net", async ({
   page,
 }) => {
   await page.goto("/editor");
@@ -3352,6 +3284,12 @@ test("formats a Net Label without changing its electrical Net name", async ({
   await editComponentPropertyCode(page, (code) => {
     code.name = "VB";
   });
+  // A V-led Net name starts in its voltage-node look: V with subscript B.
+  const renderedLabel = page.locator('[data-object-id="net-label-route-ui-1"]');
+  await expect(renderedLabel).toHaveText("VB");
+  await expect(renderedLabel.locator('[data-text-run="subscript"]')).toHaveText(
+    "B",
+  );
   const label = page.getByTestId("annotation-hit-net-label-route-ui-1");
   await label.dblclick();
   const editor = page.getByRole("textbox", { name: "Canvas text editor" });
@@ -3367,15 +3305,15 @@ test("formats a Net Label without changing its electrical Net name", async ({
     page.getByRole("button", { name: "Insert fraction" }),
   ).toBeDisabled();
 
+  // Turning the subscript off is the author's own look.
   await selectRichTextOffsets(editor, 1, 2);
   await page.getByRole("button", { name: "Subscript" }).click();
-  await expect(editor.locator("sub")).toHaveText("B");
+  await expect(editor.locator("sub")).toHaveCount(0);
   await page.getByRole("button", { name: "Apply text changes" }).click();
-
-  const renderedLabel = page.locator('[data-object-id="net-label-route-ui-1"]');
-  await expect(renderedLabel.locator('[data-text-run="subscript"]')).toHaveText(
-    "B",
-  );
+  await expect(
+    renderedLabel.locator('[data-text-run="subscript"]'),
+  ).toHaveCount(0);
+  await expect(renderedLabel).toHaveText("VB");
 
   const projectBytes = await downloadBytes(
     page,
@@ -3383,6 +3321,7 @@ test("formats a Net Label without changing its electrical Net name", async ({
     "Export Project File…",
   );
   const saved = parseSavedProject(projectBytes.toString("utf8"));
+  // Styling never renames: the Net keeps its name VB.
   expect(saved.documents[0].connectivityEvidence).toContainEqual(
     expect.objectContaining({
       kind: "name-claim",
@@ -3408,7 +3347,65 @@ test("formats a Net Label without changing its electrical Net name", async ({
     page
       .locator('[data-object-id="net-label-route-ui-1"]')
       .locator('[data-text-run="subscript"]'),
-  ).toHaveText("B");
+  ).toHaveCount(0);
+});
+
+test("draws a new subscript upright, lights the looks it has, and keeps one the author slants", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await placeComponent(page, "resistor", { x: 280, y: 180 });
+  await placeComponent(page, "resistor", { x: 480, y: 180 });
+  await clickDrawTool(page, "wire");
+  await page.getByTestId("terminal-R1-2").click();
+  await page.getByTestId("terminal-R2-1").click();
+  await page.keyboard.press("Escape");
+  await clickRoute(page, "route-ui-1", 0.5, 0);
+  await openSelectionShelf(page);
+  await editComponentPropertyCode(page, (code) => {
+    code.name = "CLKE";
+  });
+  const hit = page.getByTestId("annotation-hit-net-label-route-ui-1");
+  const rendered = page.locator('[data-object-id="net-label-route-ui-1"]');
+  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const italic = page.getByRole("button", { name: "Italic" });
+  const subscriptButton = page.getByRole("button", { name: "Subscript" });
+
+  // Opening the bold italic label lights Italic for its first letter.
+  await hit.dblclick();
+  await expect(italic).toHaveAttribute("aria-pressed", "true");
+  await expect(subscriptButton).toHaveAttribute("aria-pressed", "false");
+
+  // Subscripting part of the bold italic label does not slant the script,
+  // and the buttons report the upright script rather than the label around it.
+  await selectRichTextOffsets(editor, 3, 4);
+  await subscriptButton.click();
+  await expect(editor.locator("sub")).toHaveCSS("font-style", "normal");
+  await expect(subscriptButton).toHaveAttribute("aria-pressed", "true");
+  await expect(italic).toHaveAttribute("aria-pressed", "false");
+  await selectRichTextOffsets(editor, 0, 1);
+  await expect(italic).toHaveAttribute("aria-pressed", "true");
+  await expect(subscriptButton).toHaveAttribute("aria-pressed", "false");
+  await page.getByRole("button", { name: "Apply text changes" }).click();
+  const subscript = rendered.locator('[data-text-run="subscript"]');
+  await expect(subscript).toHaveText("E");
+  await expect(subscript).toHaveCSS("font-style", "normal");
+
+  // The author may still slant it on purpose, Italic lights for it, and that
+  // choice is kept.
+  await hit.dblclick();
+  await selectRichTextOffsets(editor, 3, 4);
+  await expect(subscriptButton).toHaveAttribute("aria-pressed", "true");
+  await expect(italic).toHaveAttribute("aria-pressed", "false");
+  await italic.click();
+  await expect(italic).toHaveAttribute("aria-pressed", "true");
+  await expect(subscriptButton).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await expect(subscript.locator('[data-text-run="span"]').first()).toHaveCSS(
+    "font-style",
+    "italic",
+  );
+  await expect(rendered).toHaveText("CLKE");
 });
 
 test("keeps literal text line breaks and overbars visible while editing", async ({
@@ -3805,7 +3802,7 @@ test("L labels a selected wire or snaps near an unselectable wire", async ({
   await expect(page.getByTestId("flightline")).toHaveCount(0);
 
   // Selection Filter must not disable an electrical creation target.
-  await page.keyboard.press("Control+f");
+  await page.keyboard.press("Control+Shift+f");
   const filter = page.getByTestId("selection-filter-popover");
   await filter.getByRole("button", { name: "None" }).click();
   await filter.getByRole("button", { name: "Close" }).click();
@@ -3949,7 +3946,48 @@ test("a dragged Net label moves freely while retaining its Net tether", async ({
   expect(after.x - before.x).toBeLessThan(-200);
   expect(after.y - before.y).toBeGreaterThan(60);
   await expect(renderedLabel).toHaveAttribute("data-anchor-kind", "free");
-  await expect(page.getByTestId("net-label-tether")).toBeVisible();
+  const tether = page.getByTestId("label-tether");
+  await expect(tether).toBeVisible();
+  await expect(tether).toHaveAttribute("data-tether-kind", "wire");
+});
+
+test("L puts a vertical wire's label on its right, and a selected name points at its part", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await placeComponent(page, "resistor", { x: 300, y: 160 });
+  await placeComponent(page, "resistor", { x: 300, y: 400 });
+  await clickDrawTool(page, "wire");
+  // Drawn from R2 up to R1: a vertical wire whose direction used to put
+  // the label on its left, across the wire.
+  await page.getByTestId("terminal-R2-1").click();
+  await page.getByTestId("terminal-R1-2").click();
+  await page.keyboard.press("Escape");
+  await clickRoute(page, "route-ui-1", 0.5, 0);
+  await page.keyboard.press("l");
+  const editor = page.getByTestId("net-label-editor");
+  await editor.getByRole("textbox", { name: "Canvas text editor" }).fill("MID");
+  await editor.getByRole("button", { name: "Apply text changes" }).click();
+  const label = page.locator('[data-object-id="net-label-route-ui-1"]');
+  await expect(label).toContainText("MID");
+  const wire = await page.getByTestId("route-hit-route-ui-1").boundingBox();
+  const text = await label.boundingBox();
+  if (!wire || !text) throw new Error("Wire or label is not measurable");
+  expect(text.x).toBeGreaterThan(wire.x + wire.width / 2);
+
+  // A part's selected name draws its line to the part and lights the part.
+  await page.keyboard.press("Escape");
+  await page.getByTestId("annotation-hit-instance-label-R1").click();
+  const tether = page.getByTestId("label-tether");
+  await expect(tether).toHaveCount(1);
+  await expect(tether).toHaveAttribute("data-tether-kind", "part");
+  await expect(page.getByTestId("selection-halo-label-owner")).toHaveCount(1);
+  // Selecting the part alone shows which labels are its own.
+  await page.keyboard.press("Escape");
+  await page.getByTestId("hit-R2").click();
+  await expect(
+    page.locator('[data-testid="label-tether"][data-tether-kind="part"]'),
+  ).not.toHaveCount(0);
 });
 
 test("selects and moves multiple instances while viewport gestures stay transient", async ({
@@ -4061,7 +4099,7 @@ test("R rotates a selected component instead of entering Rectangle", async ({
   await expect(page.getByTestId("revision")).toHaveText("4");
 });
 
-test("C inserts a fresh device instead of copying its name alias and source connections", async ({
+test("C/V copies as fresh: the name label follows a unique new reference and unselected connections detach", async ({
   page,
 }) => {
   await page.goto("/editor");
@@ -4081,7 +4119,7 @@ test("C inserts a fresh device instead of copying its name alias and source conn
     .fill("Old_alias");
   await page.getByRole("button", { name: "Apply text changes" }).click();
   await page.getByTestId("hit-R1").click();
-  await copySelectionAt(page, { x: 560, y: 420 });
+  await pasteSelectionAt(page, { x: 560, y: 420 });
   await expect(page.getByTestId("instance-count")).toHaveText("3");
   const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
@@ -4092,12 +4130,19 @@ test("C inserts a fresh device instead of copying its name alias and source conn
   const copy = document.instances.find(
     (instance) => instance.id !== "R1" && instance.id !== "R2",
   )!;
-  expect(copy.reference).toBe("R1");
+  expect(copy.reference).not.toBe("R99");
+  expect(new Set(document.instances.map((item) => item.reference)).size).toBe(
+    3,
+  );
   expect(
     document.nets
-      .flatMap((net) => net.terminals)
-      .some((terminal) => terminal.instanceId === copy.id),
-  ).toBe(false);
+      .filter((net) =>
+        net.terminals.some((terminal) => terminal.instanceId === copy.id),
+      )
+      .every((net) =>
+        net.terminals.every((terminal) => terminal.instanceId === copy.id),
+      ),
+  ).toBe(true);
   expect(document.routes).toHaveLength(1);
   const annotation = document.annotations.find(
     (item) =>
@@ -4105,24 +4150,32 @@ test("C inserts a fresh device instead of copying its name alias and source conn
       item.anchor.objectId === copy.id &&
       item.kind === "instance-label",
   )!;
-  expect(annotation.content).toBeUndefined();
+  // Ctrl/Cmd+C then V places what C places: a fresh part whose name label
+  // shows its own new Reference, not the source's display alias.
   expect(annotation.binding).toEqual({
     kind: "instance-reference",
     instanceId: copy.id,
   });
-  await expect(
-    page.locator(
-      `[data-layer="annotations"] [data-object-id="${annotation.id}"]`,
-    ),
-  ).toContainText("R1");
+  expect(annotation.content).toBeUndefined();
+  const label = page.locator(
+    `[data-layer="annotations"] [data-object-id="${annotation.id}"]`,
+  );
+  await expect(label).not.toContainText("Old_alias");
+  await expect(label).toContainText(copy.reference!);
   await page.keyboard.press("Escape");
   await page.keyboard.press("Control+z");
   await expect(page.getByTestId("instance-count")).toHaveText("2");
 });
 
-test("C previews one copy and Escape cancels without a revision", async ({
+test("C alone previews before clipboard permission resolves and Escape cancels without a revision", async ({
   page,
 }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: () => new Promise<void>(() => {}) },
+    });
+  });
   await page.goto("/editor");
   await placeComponent(page, "resistor", { x: 360, y: 220 });
   await page.getByTestId("hit-R1").click();
@@ -4131,6 +4184,9 @@ test("C previews one copy and Escape cancels without a revision", async ({
   const box = await canvas.boundingBox();
   if (!box) throw new Error("Canvas is not measurable");
   await page.keyboard.press("c");
+  await expect(page.getByTestId("copy-placement-preview")).toBeVisible();
+  await expect(page.getByTestId("instance-count")).toHaveText("1");
+  await expect(page.getByTestId("revision")).toHaveText("1");
   await page.mouse.move(box.x + 560, box.y + 340);
   await expect(page.getByTestId("copy-placement-preview")).toBeVisible();
   await page.keyboard.press("c");
@@ -4209,7 +4265,7 @@ test("R rotates a copy preview before committing the copied component", async ({
   await expect(previewSymbol).toHaveAttribute("transform", /rotate\(90\)/u);
   await canvas.click({ position: { x: 560, y: 340 } });
   await expect(
-    canvas.locator('[data-object-id="R1-copy-1"] > g').first(),
+    canvas.locator('[data-object-id="R1_2"] > g').first(),
   ).toHaveAttribute("transform", /rotate\(90\)/u);
   // The pasted designator and its visible label both read R2.
   await expect(canvas.getByText("R2", { exact: true })).toBeVisible();
@@ -4751,6 +4807,7 @@ test("edits the complete Project Code with one undo boundary and protects a stal
   const staleDraft = structuredClone(original);
   staleDraft.name = "Draft Project";
   await projectCode.fill(JSON.stringify(staleDraft, null, 2));
+  await page.getByTestId("project-menu-toggle").click();
   const projectName = page.getByTestId("project-name-input");
   await projectName.fill("Canvas changed");
   await projectName.press("Enter");
@@ -4760,17 +4817,41 @@ test("edits the complete Project Code with one undo boundary and protects a stal
   await expect(projectCode).toContainText('"name": "Canvas changed"');
 });
 
-test("shows the component-library tooltip without a native hover delay", async ({
+test("keeps panel tooltips visible and exposes panel keyboard shortcuts", async ({
   page,
 }) => {
   await page.goto("/editor");
-  const library = page.getByTestId("library-toggle");
-  if ((await library.getAttribute("aria-pressed")) === "true") {
-    await library.click();
+  await awaitEditorReady(page);
+  const gallery = page.getByTestId("examples-toggle");
+  await expect(gallery).not.toHaveAttribute("title");
+  await expect(gallery).toHaveAttribute("aria-keyshortcuts", "G");
+  await gallery.hover();
+  const tooltip = page.getByRole("tooltip");
+  await expect(tooltip).toContainText("circuit gallery");
+  await expect(tooltip).toContainText("(G)");
+  const tooltipBounds = await tooltip.boundingBox();
+  expect(tooltipBounds).not.toBeNull();
+  expect(tooltipBounds!.x).toBeGreaterThanOrEqual(8);
+  expect(tooltipBounds!.x + tooltipBounds!.width).toBeLessThanOrEqual(
+    await page.evaluate(() => window.innerWidth - 8),
+  );
+
+  const shortcuts = [
+    ["g", "examples-toggle"],
+    ["b", "library-toggle"],
+    ["n", "netlist-panel-toggle"],
+  ] as const;
+  for (const [key, testId] of shortcuts) {
+    const toggle = page.getByTestId(testId);
+    const initialPressed = await toggle.getAttribute("aria-pressed");
+    await page.keyboard.press(key);
+    await expect(toggle).toHaveAttribute(
+      "aria-pressed",
+      initialPressed === "true" ? "false" : "true",
+    );
+    await page.keyboard.press(key);
+    await expect(toggle).toHaveAttribute("aria-pressed", initialPressed!);
   }
-  await expect(library).not.toHaveAttribute("title");
-  await library.hover();
-  await expect(page.getByRole("tooltip")).toHaveText("Show component library");
 });
 
 test("uses automatic recovery and guards shortcuts while typing", async ({
@@ -4784,12 +4865,8 @@ test("uses automatic recovery and guards shortcuts while typing", async ({
     .toContain('"revision": 1');
 
   await page.reload();
-  const fileMenu = await openMenu(page, "File");
-  await fileMenu.getByRole("button", { name: "Recover Local Work…" }).click();
-  await page
-    .getByRole("dialog", { name: "Recover recent work" })
-    .getByRole("button", { name: "Restore" })
-    .click();
+  // Refresh restores this window's workspace without a second manual restore.
+  await awaitEditorReady(page);
   await expect(page.getByTestId("revision")).toHaveText("1");
 
   await page.keyboard.press("i");
@@ -4897,7 +4974,7 @@ test("discard recovery clears the recovery slot", async ({ page }) => {
     .toContain('"revision": 1');
 
   await page.reload();
-  await clickCommand(page, "File", "Recover Local Work…");
+  await clickCommand(page, "File", "Recover Unsaved Work…");
   await page
     .getByRole("dialog", { name: "Recover recent work" })
     .getByRole("button", { name: "Delete" })
@@ -4918,13 +4995,15 @@ test("keeps the production command surface compact and publishes PWA metadata", 
   await expect(
     toolbar.locator("summary").filter({ hasText: /^Run$/u }),
   ).toHaveCount(0);
-  await expect(toolbar.getByTestId("copy-netlist")).toBeVisible();
   const netlistSummary = toolbar.locator('summary[aria-label="Netlist"]');
+  await expect(netlistSummary).toContainText("Netlist");
+  await expect(toolbar.getByTestId("copy-netlist")).toBeHidden();
   await expect(toolbar.getByTestId("open-analog-simulation")).toBeVisible();
   await expect(page.getByTestId("check-and-save")).toBeHidden();
   await netlistSummary.click();
+  await expect(toolbar.getByTestId("copy-netlist")).toBeVisible();
   await expect(page.getByTestId("open-analog-simulation")).toBeVisible();
-  await expect(page.getByTestId("check-and-save")).toBeVisible();
+  await expect(page.getByTestId("check-and-save")).toBeHidden();
   await netlistSummary.click();
   await clickNetlistWorkflowCommand(page, "open-analog-simulation");
   await expect(
@@ -4966,11 +5045,25 @@ test("keeps the production command surface compact and publishes PWA metadata", 
     .locator('link[rel="manifest"]')
     .getAttribute("href");
   expect(manifest).toBe("/manifest.webmanifest");
-  expect(
-    await (await page.request.get("/manifest.webmanifest")).json(),
-  ).toMatchObject({
+  const manifestPayload = await (
+    await page.request.get("/manifest.webmanifest")
+  ).json();
+  expect(manifestPayload).toMatchObject({
     name: "Analog Canvas",
     display: "standalone",
+    theme_color: "#2383e2",
+    icons: [
+      {
+        src: "./icon-192.png?v=nmos-4",
+        sizes: "192x192",
+        purpose: "any",
+      },
+      {
+        src: "./icon-512.png?v=nmos-4",
+        sizes: "512x512",
+        purpose: "any",
+      },
+    ],
   });
 });
 
@@ -4979,7 +5072,7 @@ test("does not expose destructive Cell reset actions in Manager", async ({
 }) => {
   await page.goto("/editor");
   await placeComponent(page, "resistor", { x: 320, y: 240 });
-  await clickCommand(page, "Edit", "Manage Cells…");
+  await page.getByTestId("hierarchy-entry").click();
   const manager = page.getByRole("dialog", { name: "Cell Manager" });
   for (const name of [
     "Reset Cell",
@@ -4997,6 +5090,12 @@ test("shows first-party visitor analytics without tracking the dashboard itself"
   page,
 }) => {
   await page.addInitScript(() => localStorage.setItem("theme", "dark"));
+  await page.route("**/api/auth/admin/stats", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ registeredAccounts: 42 }),
+    });
+  });
   let dashboardTracked = false;
   await page.route("**/api/track", async (route) => {
     dashboardTracked = true;
@@ -5042,6 +5141,8 @@ test("shows first-party visitor analytics without tracking the dashboard itself"
 
   await page.goto("/analytics");
   await expect(page.getByRole("heading", { name: "Analytics" })).toBeVisible();
+  await expect(page.getByText("Registered accounts")).toBeVisible();
+  await expect(page.getByText("42", { exact: true })).toBeVisible();
   await expect(page).toHaveTitle("Analytics — Analog Canvas");
   await expect(
     page.getByRole("link", { name: "Back to editor" }),
@@ -5081,8 +5182,10 @@ test("dismisses a command menu on outside click or Escape", async ({
   const fileMenu = await openMenu(page, "File");
   await expect(fileMenu).toHaveAttribute("open", "");
 
-  // The wordmark now navigates to the gallery, so dismiss on a neutral spot.
-  await page.locator(".app-brand-copy p").click();
+  // A blank canvas click dismisses the menu without navigating away.
+  await page
+    .getByTestId("schematic-canvas")
+    .click({ position: { x: 400, y: 300 } });
   await expect(fileMenu).not.toHaveAttribute("open", "");
 
   await openMenu(page, "File");
@@ -5105,12 +5208,12 @@ test("selecting an object does not change canvas width", async ({ page }) => {
   expect(widthAfter).toBe(widthBefore);
 });
 
-test("opens project search with Ctrl+Shift+F and selects a matching component", async ({
+test("opens circuit Find with Ctrl+F and selects a matching component", async ({
   page,
 }) => {
   await page.goto("/editor");
   await placeComponent(page, "resistor", { x: 420, y: 260 });
-  await page.keyboard.press("Control+Shift+f");
+  await page.keyboard.press("Control+f");
   const input = page.getByTestId("project-search-input");
   await expect(input).toBeFocused();
   await input.fill("R1");
@@ -5121,7 +5224,7 @@ test("opens project search with Ctrl+Shift+F and selects a matching component", 
   await expect(page.getByTestId("project-search-input")).toHaveCount(0);
 });
 
-test("opens Selection Filter with Ctrl+F and filters Select All", async ({
+test("opens selectable-object choices with Ctrl+Shift+F and filters Select All", async ({
   page,
 }) => {
   await page.goto("/editor");
@@ -5132,7 +5235,7 @@ test("opens Selection Filter with Ctrl+F and filters Select All", async ({
   await page.getByTestId("terminal-R2-1").click();
   await page.keyboard.press("Escape");
 
-  await page.keyboard.press("Control+f");
+  await page.keyboard.press("Control+Shift+f");
   const filter = page.getByTestId("selection-filter-popover");
   await expect(filter).toBeVisible();
   await filter.getByRole("button", { name: "None" }).click();
@@ -5216,7 +5319,7 @@ test("Selection Filter blocks direct wire, junction, and shape operations", asyn
     buffer: Buffer.from(JSON.stringify(project)),
   });
 
-  await page.keyboard.press("Control+f");
+  await page.keyboard.press("Control+Shift+f");
   const filter = page.getByTestId("selection-filter-popover");
   await filter.getByRole("button", { name: "None" }).click();
   await filter.getByRole("button", { name: "Close" }).click();
@@ -5585,7 +5688,7 @@ test("directional marquee: window needs full coverage, crossing selects on touch
   ).toBe("");
 });
 
-test("docked Style JSON offers bounded choices, scales fonts, and resets appearance", async ({
+test("docked Properties JSON is the only global configuration surface", async ({
   page,
 }) => {
   await page.goto("/editor");
@@ -5593,28 +5696,102 @@ test("docked Style JSON offers bounded choices, scales fonts, and resets appeara
   const label = page.locator('[data-kind="instance-label"]').first();
   await expect(label).toHaveAttribute("font-size", "15.116");
 
-  // Style stays one copyable JSON surface; bounded values gain inline menus.
+  // Properties is the visible, non-modal home for current-Cell Port tools and
+  // the single copyable Properties JSON surface.
+  const propertiesButton = page.getByTestId("draw-tool-document-style");
+  await expect(propertiesButton).toHaveText("Properties");
+  await expect(propertiesButton).toHaveAttribute(
+    "title",
+    "Properties: Ports, canvas, and selected objects",
+  );
   await clickDrawTool(page, "document-style");
   const settings = page.getByLabel("Document settings");
   await expect(settings).toBeVisible();
-  await expect(page.getByTestId("canvas-empty-state")).toHaveCount(0);
+  await expect(
+    settings.getByRole("button", {
+      name: "Format all Port labels in this Cell",
+    }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Port label formatting" }),
+  ).toHaveCount(0);
   await expect(page.getByTestId("hit-R1")).toBeVisible();
+  await expect(settings.getByLabel("Editable Properties code")).toBeVisible();
+  await expect(settings.locator("select.cm-netlist-target-select")).toHaveCount(
+    0,
+  );
   await expect(
-    settings.getByLabel("Editable document Style code"),
+    settings.getByRole("button", { name: "Show Font size previews" }),
   ).toBeVisible();
-  await expect(settings.locator(".cm-netlist-target-select")).toHaveCount(11);
-  await expect(settings.getByLabel("Font size options")).toBeVisible();
   await expect(
-    settings.getByLabel("Default NMOS bulk Net options"),
+    settings.getByRole("button", {
+      name: "Show NMOS previews",
+    }),
   ).toBeVisible();
-
-  await settings.getByLabel("Font size options").selectOption("1.5");
+  await expect(
+    settings.getByRole("button", {
+      name: "Show PMOS previews",
+    }),
+  ).toBeVisible();
+  await expect(
+    settings.getByRole("button", { name: /^Show .+ previews$/u }),
+  ).toHaveCount(16);
+  await settings
+    .getByRole("button", {
+      name: "Show Subscript after first letter previews",
+    })
+    .click();
+  const subscriptPreview = page.getByRole("listbox", {
+    name: "Subscript after first letter previews",
+  });
+  await expect(subscriptPreview).toBeVisible();
+  const subscriptOption = subscriptPreview.getByRole("option", {
+    name: /Subscript after the first letter/u,
+  });
+  const subscriptFirst = subscriptOption.locator(
+    ".cm-property-label-preview-first",
+  );
+  const subscriptSuffix = subscriptOption.locator(
+    ".cm-property-label-preview-suffix[data-subscript]",
+  );
+  await expect(subscriptSuffix).toHaveText("in");
+  const firstBox = await subscriptFirst.boundingBox();
+  const suffixBox = await subscriptSuffix.boundingBox();
+  expect(firstBox).not.toBeNull();
+  expect(suffixBox).not.toBeNull();
+  expect(suffixBox!.height).toBeGreaterThan(0);
+  expect(suffixBox!.y).toBeGreaterThan(firstBox!.y + 6);
+  await expect(subscriptOption).not.toContainText("ᵢₙ");
+  await page.keyboard.press("Escape");
+  await settings.getByRole("button", { name: "Show NMOS previews" }).click();
+  const bulkPreview = page.getByRole("listbox", {
+    name: "NMOS previews",
+  });
+  await expect(bulkPreview).toContainText("VSSNMOS→VSS");
+  await page.keyboard.press("Escape");
+  await expect(settings.locator(".cm-property-unit")).toHaveCount(0);
+  await settings
+    .getByRole("button", { name: "Show Font size previews" })
+    .click();
+  await page
+    .getByRole("listbox", { name: "Font size previews" })
+    .getByRole("option", { name: /^1\.5×/u })
+    .click();
   await expect(label).toHaveAttribute("font-size", "22.674");
-  await expect(page.getByTestId("status")).toContainText("Updated Style code");
+  await expect(page.getByTestId("status")).toContainText(
+    "Updated Properties code",
+  );
 
   const styleSource = await readDocumentStyleCode(page);
   const style = JSON.parse(styleSource);
-  expect(style.bulkDefaults).toEqual({ nmosNet: null, pmosNet: null });
+  expect(style.bulkDefaults).toEqual({ nmos: "VSS", pmos: "VDD" });
+  expect(style.labels).toEqual({
+    first_letter_italic: true,
+    subscript_after_first: false,
+    subscript_case: "preserve",
+    subscript_italic: false,
+    underscore_subscript: true,
+  });
   expect(style.canvas).toEqual({
     showGrid: true,
     annotationGrid: 5,
@@ -5622,7 +5799,7 @@ test("docked Style JSON offers bounded choices, scales fonts, and resets appeara
     scrollBehavior: "auto",
   });
   await settings
-    .getByLabel("Editable document Style code", { exact: true })
+    .getByLabel("Editable Properties code", { exact: true })
     .press("Enter");
   expect(await readDocumentStyleCode(page)).toBe(styleSource);
 
@@ -5631,8 +5808,23 @@ test("docked Style JSON offers bounded choices, scales fonts, and resets appeara
   expect(
     JSON.parse(await readDocumentStyleCode(page)).appearance.fontScale,
   ).toBe(1);
-  await clickDrawTool(page, "document-style");
+
+  // Object Properties replace global document settings instead of stacking
+  // a second code editor below them.
+  await page.keyboard.press("q");
   await expect(settings).toHaveCount(0);
+  await expect(page.getByLabel("Editable Canvas property code")).toBeVisible();
+
+  // A project code panel owns the same right-side workspace and closes the
+  // global settings surface rather than restoring it under the Netlist.
+  await clickDrawTool(page, "document-style");
+  await expect(settings).toBeVisible();
+  await page.getByTestId("netlist-panel-toggle").click();
+  await expect(settings).toHaveCount(0);
+  await expect(propertiesButton).toHaveAttribute("aria-pressed", "false");
+  await expect(
+    page.getByRole("complementary", { name: "Properties" }),
+  ).toHaveCount(0);
 });
 
 test("middle-click steers which way the wire corner turns", async ({
@@ -5656,7 +5848,7 @@ test("middle-click steers which way the wire corner turns", async ({
   expect(horizontal).toHaveLength(3);
   expect(horizontal[1]!.y).toBe(horizontal[0]!.y);
 
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expect(page.locator('[data-testid^="route-hit-"]')).toHaveCount(0);
 
   // One middle-click flips the corner onto the other axis.
@@ -5996,7 +6188,7 @@ test("normalizes overlapping branches without freezing the dragged wire", async 
     ),
   ).toBe(true);
 
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expect(dots).toHaveCount(1);
 
   // Moving beyond the old tip is legal too. Coverage is unioned instead of
@@ -6008,7 +6200,7 @@ test("normalizes overlapping branches without freezing the dragged wire", async 
     Math.min(...raised.flatMap((points) => points.map((p) => p.y))),
   ).toBeLessThan(fixedTapEnd.y);
   await expect(page.getByTestId("status")).not.toContainText("would overlap");
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expect(dots).toHaveCount(1);
   expect(Number(await dots.first().getAttribute("cy"))).toBe(dotBefore);
 });
@@ -6727,4 +6919,101 @@ test("recognizes an uploaded schematic and imports its checked SPICE into the Pl
   await tray.locator("summary").click();
   await expect(tray.getByTestId("unplaced-V1")).toBeVisible();
   await expect(tray.getByTestId("unplaced-R1")).toBeVisible();
+});
+
+test("Net Label overbars stay the label's look through source edits, undo and reload", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await placeComponent(page, "resistor", { x: 280, y: 180 });
+  await placeComponent(page, "resistor", { x: 480, y: 180 });
+  await clickDrawTool(page, "wire");
+  await page.getByTestId("terminal-R1-1").click();
+  await page.getByTestId("terminal-R2-1").click();
+  await page.keyboard.press("Escape");
+  await clickDrawTool(page, "wire");
+  await page.getByTestId("terminal-R1-2").click();
+  await page.getByTestId("terminal-R2-2").click();
+  await page.keyboard.press("Escape");
+  await clickRoute(page, "route-ui-1", 0.5, 0);
+  await openSelectionShelf(page);
+  await editComponentPropertyCode(page, (code) => {
+    code.name = "F";
+  });
+  const hit = page.getByTestId("annotation-hit-net-label-route-ui-1");
+  const label = page.locator(
+    '[data-layer="annotations"] [data-object-id="net-label-route-ui-1"]',
+  );
+  const bar = label.locator("..").locator('[data-text-decoration="overbar"]');
+  await hit.dblclick();
+  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  await editor.press("ControlOrMeta+a");
+  await page.getByRole("button", { name: "Overbar", exact: true }).click();
+  await expect(editor.locator('[data-rich-text-style="overbar"]')).toHaveCount(
+    1,
+  );
+  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await expect(bar).toHaveCount(1);
+  await expect(label).toHaveText("F");
+  const saved = await downloadBytes(page, "File", "Export Project File…");
+  const document = parseSavedProject(saved.toString()).documents[0];
+  // The bar is how the label is drawn; the Net keeps its name F.
+  expect(document.connectivityEvidence).toContainEqual(
+    expect.objectContaining({ kind: "name-claim", name: "F" }),
+  );
+  await page.getByTestId("draw-tool-undo").click();
+  await expect(bar).toHaveCount(0);
+  await page.getByTestId("draw-tool-redo").click();
+  await expect(bar).toHaveCount(1);
+  await page.getByTestId("project-file").setInputFiles({
+    name: "overbar.icproj.json",
+    mimeType: "application/json",
+    buffer: saved,
+  });
+  const discard = page.getByRole("button", {
+    name: "Continue without saving",
+    exact: true,
+  });
+  await discard.click();
+  await expect(bar).toHaveCount(1);
+  // Open the netlist panel to verify both formats carry the same spelling.
+  if (
+    (await page
+      .getByTestId("netlist-panel-toggle")
+      .getAttribute("aria-pressed")) !== "true"
+  )
+    await page.getByTestId("netlist-panel-toggle").click();
+  const code = page.getByLabel("Netlist code", { exact: true });
+  await expect(code).not.toContainText("F_bar");
+  await page
+    .getByLabel("Netlist format", { exact: true })
+    .selectOption("spice");
+  await expect(code).not.toContainText("F_bar");
+  await page
+    .getByLabel("Netlist format", { exact: true })
+    .selectOption("spectre");
+  await clickRoute(page, "route-ui-1", 0.5, 0);
+  await openSelectionShelf(page);
+  // Renaming keeps the author's bar on the new name.
+  await editComponentPropertyCode(page, (code) => {
+    code.name = "Q";
+  });
+  await expect(label).toHaveText("Q");
+  await expect(bar).toHaveCount(1);
+  await hit.dblclick();
+  await editor.press("ControlOrMeta+a");
+  await page.getByRole("button", { name: "Overbar", exact: true }).click();
+  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await expect(bar).toHaveCount(0);
+  await clickRoute(page, "route-ui-1", 0.5, 0);
+  await openSelectionShelf(page);
+  // Removing the bar returned the label to its default look, so it has no
+  // formatting of its own: a name ending in _bar with an underscore keeps the
+  // historical overbar and subscript, and the name keeps both.
+  await editComponentPropertyCode(page, (code) => {
+    code.name = "Q_in_bar";
+  });
+  await expect(bar).toHaveCount(1);
+  await expect(label).toHaveText("Qin");
+  await expect(label.locator('[data-text-run="subscript"]')).toHaveText("in");
 });

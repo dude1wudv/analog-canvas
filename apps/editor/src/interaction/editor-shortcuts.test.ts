@@ -52,6 +52,16 @@ function resolve(
 const command = (value: object) => ({ kind: "run-command", command: value });
 
 describe("editor shortcut contract", () => {
+  it("uses plain C/V for selection reuse without intercepting text editing", () => {
+    expect(resolve("c")).toEqual(command({ id: "selection.copy" }));
+    expect(resolve("v")).toEqual({ kind: "paste-selection" });
+    expect(resolve("c", { isTyping: true })).toBeNull();
+    expect(resolve("v", { isTyping: true })).toBeNull();
+    expect(resolve("v", { interactionMode: "wire" })).toEqual({
+      kind: "blocked-interaction-command",
+      command: "Paste",
+    });
+  });
   it("opens a selected component definition with E without stealing typing, Q or hierarchy navigation", () => {
     expect(resolve("e", { hasDefinitionSelection: true })).toEqual({
       kind: "edit-component-definition",
@@ -94,13 +104,13 @@ describe("editor shortcut contract", () => {
     }
   });
 
-  it("gives Ctrl/Cmd+F to Selection Filter and shifts schematic Search", () => {
+  it("gives Ctrl/Cmd+F to Find and shifts the selectable-object filter", () => {
     for (const modifiers of [{ ctrlKey: true }, { metaKey: true }]) {
       expect(resolve("f", {}, modifiers)).toEqual(
-        command({ id: "selection.filter.open" }),
+        command({ id: "search.open" }),
       );
       expect(resolve("f", {}, { ...modifiers, shiftKey: true })).toEqual(
-        command({ id: "search.open" }),
+        command({ id: "selection.filter.open" }),
       );
     }
     expect(resolve("f", { isTyping: true }, { ctrlKey: true })).toBeNull();
@@ -250,12 +260,32 @@ describe("editor shortcut contract", () => {
     expect(resolve("q", { propertiesOpen: true })).toEqual(
       command({ id: "properties.close" }),
     );
-    expect(resolve("g")).toBeNull();
     expect(resolve("t")).toEqual(command({ id: "drafting.add-text" }));
     expect(resolve("f")).toEqual(command({ id: "view.fit" }));
     expect(resolve("f", {}, { shiftKey: true })).toBeNull();
     expect(resolve("Home")).toEqual(command({ id: "view.fit" }));
     expect(resolve("x")).toBeNull();
+  });
+
+  it("gives the three primary panels browser-safe letter shortcuts", () => {
+    expect(resolve("g")).toEqual({
+      kind: "toggle-panel",
+      panel: "gallery",
+    });
+    expect(resolve("b")).toEqual({
+      kind: "toggle-panel",
+      panel: "library",
+    });
+    expect(resolve("n")).toEqual({
+      kind: "toggle-panel",
+      panel: "netlist",
+    });
+    expect(resolve("j")).toBeNull();
+
+    for (const value of ["g", "b", "n"]) {
+      expect(resolve(value, { isTyping: true })).toBeNull();
+      expect(resolve(value, { interactionMode: "drawing" })).toBeNull();
+    }
   });
 
   it("maps unmodified arrow keys to camera pan commands", () => {

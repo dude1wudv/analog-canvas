@@ -40,8 +40,8 @@ export function ProjectSearchDialog({
       >
         <header>
           <div>
-            <p className="help-kicker">项目导航</p>
-            <h2 id="project-search-title">搜索原理图</h2>
+            <p className="help-kicker">Project navigation</p>
+            <h2 id="project-search-title">Find in Circuit</h2>
           </div>
           <button type="button" onClick={onClose} aria-label="关闭搜索">
             关闭
@@ -51,7 +51,8 @@ export function ProjectSearchDialog({
           dir="auto"
           ref={inputRef}
           data-testid="project-search-input"
-          aria-label="搜索项目"
+          aria-label="Find in circuit"
+          autoComplete="off"
           value={query}
           placeholder="实例、网络、端口、属性…"
           onChange={(event) => onQueryChange(event.currentTarget.value)}

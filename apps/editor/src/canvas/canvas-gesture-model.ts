@@ -1,6 +1,7 @@
 import type { GridRect, Point } from "@icm/model";
 
 import type { EditorTool } from "../interaction/interaction-state";
+import { cameraDeltaFromScreen } from "./fit-view";
 
 export interface BoxPreview {
   start: Point;
@@ -50,6 +51,7 @@ export function classifyCanvasGestureStart({
     tool === "wire" ||
     tool === "construction-line" ||
     tool === "arrow" ||
+    tool === "polyline" ||
     tool === "rectangle" ||
     tool === "circle";
   if (frameZoomDrag) {
@@ -77,14 +79,18 @@ export function updateCanvasPan(
   const clientDy = client.y - preview.clientStart.y;
   const moved = Math.hypot(clientDx, clientDy) >= thresholdPx;
   if (!moved && !preview.dragged) return null;
-  const dx = (clientDx / viewportSize.width) * preview.viewBoxStart.width;
-  const dy = (clientDy / viewportSize.height) * preview.viewBoxStart.height;
+  const delta = cameraDeltaFromScreen(
+    preview.viewBoxStart,
+    { x: clientDx, y: clientDy },
+    viewportSize,
+  );
+  if (!delta) return null;
   return {
     preview: preview.dragged ? preview : { ...preview, dragged: true },
     viewBox: {
       ...preview.viewBoxStart,
-      x: Math.round(preview.viewBoxStart.x - dx),
-      y: Math.round(preview.viewBoxStart.y - dy),
+      x: Math.round(preview.viewBoxStart.x - delta.x),
+      y: Math.round(preview.viewBoxStart.y - delta.y),
     },
   };
 }

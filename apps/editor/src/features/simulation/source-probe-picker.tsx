@@ -70,6 +70,7 @@ export function SourceProbePicker({
         value={query}
         onChange={(e) => setQuery(e.currentTarget.value)}
         aria-label="搜索信号"
+        autoComplete="off"
         placeholder="搜索信号或输入准确的原生向量…"
       />
       <div className="simulation-helper-options">

@@ -3,8 +3,11 @@ import {
   SimulationInputPathSchema,
   SimulationSourceDraftSchema,
 } from "@icm/model";
-import { Id, Digest, ArtifactRefSchema } from "./contract.js";
-import { SimulationSourceChangesSchema } from "./source-files.js";
+import { Id, Digest, ArtifactRefSchema, ProblemSchema } from "./contract.js";
+import {
+  SimulationSourceChangesSchema,
+  SourceUpdateReceiptSchema,
+} from "./source-files.js";
 
 export const SimulationFileOwnerSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("session-workspace"), workspaceId: Id }),
@@ -18,7 +21,12 @@ export const WorkspaceSchema = z.strictObject({
   entry: z.string().nullable(),
   configPath: SimulationInputPathSchema,
   files: z.array(z.strictObject({ path: z.string(), text: z.string() })),
-  expiresAt: z.number(),
+  expiresAt: z
+    .number()
+    .nullable()
+    .describe(
+      "Null means retained until explicit discard or host teardown; not an authorization lease.",
+    ),
 });
 export type Workspace = z.infer<typeof WorkspaceSchema>;
 
@@ -35,6 +43,12 @@ export const SimulationFileOperationSchema = z.discriminatedUnion("action", [
     path: SimulationInputPathSchema,
     offset: Revision.default(0),
     maxChars: z.number().int().positive().max(65536).default(65536),
+    detail: z
+      .enum(["text", "mapped"])
+      .optional()
+      .describe(
+        "text: code only; mapped (default): include generated editing spans.",
+      ),
   }),
   z.strictObject({
     action: z.literal("discard"),
@@ -61,6 +75,14 @@ export const SimulationFileOperationSchema = z.discriminatedUnion("action", [
       .default([]),
   }),
   z.strictObject({
+    action: z.literal("download"),
+    artifactId: Id,
+  }),
+  z.strictObject({
+    action: z.literal("downloads"),
+    artifactIds: z.array(Id).min(1).max(32),
+  }),
+  z.strictObject({
     action: z.literal("artifact"),
     artifactId: Id,
     offset: Revision.default(0),
@@ -80,11 +102,38 @@ export const SimulationSourceListingSchema = z.strictObject({
     z.strictObject({
       path: SimulationInputPathSchema,
       kind: z.enum(["authored", "generated", "dependency"]),
+      editing: z.enum(["text", "mapped-parameters", "read-only"]).optional(),
       byteLength: Revision.optional(),
     }),
   ),
 });
+export const ArtifactDownloadResultSchema = z.strictObject({
+  ok: z.literal(true),
+  artifact: ArtifactRefSchema,
+  download: z.strictObject({
+    path: z
+      .string()
+      .regex(
+        /^\/api\/agent\/sessions\/[^/]+\/artifacts\/[a-zA-Z0-9_-]{1,128}$/u,
+      ),
+  }),
+});
 export const SimulationFileResultSchema = z.union([
+  ArtifactDownloadResultSchema,
+  z.strictObject({
+    ok: z.literal(true),
+    downloads: z
+      .array(
+        z.strictObject({
+          artifactId: Id,
+          result: z.union([
+            ArtifactDownloadResultSchema,
+            z.strictObject({ ok: z.literal(false), error: ProblemSchema }),
+          ]),
+        }),
+      )
+      .max(32),
+  }),
   z.strictObject({
     ok: z.literal(true),
     workspaces: z.array(WorkspaceSchema.omit({ files: true })),
@@ -93,6 +142,7 @@ export const SimulationFileResultSchema = z.union([
   z.strictObject({
     ok: z.literal(true),
     source: SimulationSourceListingSchema,
+    update: SourceUpdateReceiptSchema.optional(),
   }),
   z.strictObject({ ok: z.literal(true), discarded: z.literal(true) }),
   z.strictObject({

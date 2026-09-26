@@ -14,6 +14,7 @@ describe("approved simulation Code layout", () => {
           activePath="run.cir"
           files={[{ path: "run.cir", kind: "authored" }]}
           onSelectFile={() => {}}
+          onSave={() => {}}
           folders={{
             folders: [
               { id: "a", name: "OTA AC" },
@@ -37,7 +38,7 @@ describe("approved simulation Code layout", () => {
     expect(markup).toContain("OTA transient");
     expect(markup).toContain('data-workspace-new-folder="true"');
     expect(markup).toContain("+ New experiment");
-    expect(markup).not.toContain('aria-label="Source"');
+    expect(markup).not.toContain('aria-label="源文件"');
     expect(markup).not.toContain("Run target");
     expect(markup).not.toContain("More code actions");
     expect(markup).not.toContain("New file");
@@ -58,7 +59,8 @@ describe("approved simulation Code layout", () => {
             { path: "experiment.json", kind: "authored" },
           ]}
           onSelectFile={() => {}}
-          actions={<button>运行</button>}
+          onSave={() => {}}
+          actions={<button>Run</button>}
           outputPane="console"
           onSelectOutputPane={() => {}}
           console={<p>Run console</p>}
@@ -109,6 +111,7 @@ describe("approved simulation Code layout", () => {
             },
           ]}
           onSelectFile={() => {}}
+          onSave={() => {}}
           folders={{
             folders: [{ id: "a", name: "Untitled" }],
             activeId: "a",
@@ -125,7 +128,7 @@ describe("approved simulation Code layout", () => {
         </SimulationCodeWorkspace>
       </WorkspaceInteractions>,
     );
-    expect(markup).not.toContain('aria-label="Source"');
+    expect(markup).not.toContain('aria-label="源文件"');
     expect(markup).toContain('aria-expanded="true"');
     expect(markup).not.toContain('aria-label="Prepare"');
     expect(markup).toContain('aria-label="Run"');

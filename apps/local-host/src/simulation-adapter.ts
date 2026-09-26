@@ -1,4 +1,8 @@
-import { SIMULATION_EXECUTOR_RESPONSE_MAX_BYTES } from "@icm/spice-run";
+import {
+  SIMULATION_EXECUTOR_RESPONSE_MAX_BYTES,
+  SIMULATION_EXECUTOR_STREAM_MAX_BYTES,
+  SIMULATION_EXECUTOR_TRANSFER_HEADER,
+} from "@icm/spice-run";
 
 /** Explicit loopback transport. The executor owns runtime discovery, capabilities
  * and process lifetime; this adapter never starts or retries a simulation. */
@@ -42,37 +46,55 @@ export function createLocalSimulationHandler(
     try {
       const reply = await fetchImpl(target, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          [SIMULATION_EXECUTOR_TRANSFER_HEADER]: "receipt-v1",
+        },
         body: text,
         redirect: "error",
         signal: AbortSignal.timeout(operation === undefined ? 150000 : 10000),
       });
       const reader = reply.body?.getReader();
-      const chunks: Uint8Array[] = [];
+      const maximum = reply.headers.has("x-analog-simulation-receipt")
+        ? SIMULATION_EXECUTOR_STREAM_MAX_BYTES
+        : SIMULATION_EXECUTOR_RESPONSE_MAX_BYTES;
       let size = 0;
-      try {
-        if (reader)
-          while (true) {
-            const next = await reader.read();
-            if (next.done) break;
-            size += next.value.byteLength;
-            if (size > SIMULATION_EXECUTOR_RESPONSE_MAX_BYTES)
-              throw new Error("Executor response too large");
-            chunks.push(next.value);
-          }
-      } catch (error) {
-        await reader?.cancel().catch(() => {});
-        throw error;
-      } finally {
-        reader?.releaseLock();
-      }
+      // Preserve backpressure: the adapter must not buffer or duplicate the
+      // complete numerical envelope. Once headers are sent, a broken body is
+      // a stream failure, never a fabricated successful/complete JSON reply.
+      const body = reader
+        ? new ReadableStream<Uint8Array>({
+            async pull(controller) {
+              try {
+                const next = await reader.read();
+                if (next.done) {
+                  reader.releaseLock();
+                  controller.close();
+                  return;
+                }
+                size += next.value.byteLength;
+                if (size > maximum)
+                  throw new Error("Executor response too large");
+                controller.enqueue(next.value);
+              } catch (error) {
+                await reader.cancel().catch(() => {});
+                reader.releaseLock();
+                controller.error(error);
+              }
+            },
+            async cancel(reason) {
+              await reader.cancel(reason).catch(() => {});
+              reader.releaseLock();
+            },
+          })
+        : null;
       const headers = new Headers({
         "content-type": "application/json",
         "cache-control": "no-store",
       });
       const retry = reply.headers.get("retry-after");
       if (retry) headers.set("retry-after", retry);
-      return new Response(Buffer.concat(chunks), {
+      return new Response(body, {
         status: reply.status,
         headers,
       });

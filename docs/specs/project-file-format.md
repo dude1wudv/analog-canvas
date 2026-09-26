@@ -2,18 +2,31 @@
 
 Status: `accepted`
 
-Portable file schema: `60`; normalized editor model schema: `58`.
+Portable file schema: `63`; normalized editor model schema: `58`.
 
 Primary owner: `packages/project-protocol` (portable source and codec).
 `packages/model` validates the normalized editor indexes used by rendering,
 connectivity and transactions. The normalized indexes are decoded working data;
-serialization always writes the one schema-60 authoring representation.
+serialization always writes the one schema-63 authoring representation.
 
 An `.icproj.json` file contains a complete Project. The public `parseProject`
-boundary reads file schemas 24 through 60. Historical schemas pass through the
-existing explicit upgrades; schemas 59 and 60 decode through the owned-object codec. Schema 60 derives
-network membership from connection facts. Both return the same validated editor model. File/envelope metadata must
-use `CURRENT_PROJECT_FILE_VERSION`, not the internal model version.
+boundary reads file schemas 24 through 63. Historical schemas pass through the
+existing explicit upgrades; schemas 59 through 63 decode through the
+owned-object codec. Schema 60 introduced derived network membership from
+connection facts. Schema 62 lets a Symbol's body text keep an authored look. Both return the same validated editor model. File/envelope
+metadata must use `CURRENT_PROJECT_FILE_VERSION`, not the internal model
+version.
+
+Schema 63 adds optional `source.files[].content` (decoded text and encoding),
+`originalContent` for inputs converted before parsing, and Document
+`importReference`. The reference stores source Net names/scopes and immutable
+terminal membership: instance ID plus source terminal position, or a formal
+Port's pin name. Current device `terminalMapping` resolves positions after
+symbol pin remapping. Reference file IDs keep the input archive with Cell copies.
+Missing instances remain missing reference members; merge/split never rewrite
+this topology. Older projects do not acquire a guessed reference during loading.
+Source text is retained by private saves/portable backups, omitted from Gallery
+publication, and never used as the current netlist export authority.
 
 ## Instance-owned source
 
@@ -30,6 +43,14 @@ Attached name, value, parameter and literal labels live in that same instance's
 owner IDs. An anchor `{ "offset": [25, 0], "fallback": [225, 200] }` likewise
 inherits that owner. Unusual cross-object, free and route anchors stay explicit;
 conversion never guesses that a visual attachment changes a text binding.
+Named parameter bindings may set `"showValue": false` to draw only the live
+parameter label while retaining the electrical value. Omitting it draws the
+usual `label = value` presentation.
+A Symbol's body text lives in the instance's `signalFlowParameters`: `formula`
+holds its characters and, from schema 62, `formulaFormat` holds the author's
+RichText look for them (slant, weight, scripts, overbars, fractions, formulas).
+Without `formulaFormat` the text draws in the Symbol's own look, reading
+`formula`'s compact syntax (`z^-1`, `g_m`, `1/(1-z)`) as before.
 Literal `text` and formatting `format` accept plain strings or complete RichText
 objects, retaining fractions, formulas, spans and line breaks. Every label has
 an `order` preserving the original annotation sequence across owned and free
@@ -119,7 +140,7 @@ atomic database snapshot. Separate local and private remote copies are retained.
 
 ## Included component definitions
 
-Schemas 58 through 60 save each referenced Symbol once in `componentDefinitions`.
+Schemas 58 through 62 save each referenced Symbol once in `componentDefinitions`.
 Portable `Instance.type` (decoded as `Instance.symbolId`) and drafting
 `floating-symbol.symbolId` reference these local classes. Each class contains
 the complete Symbol geometry, pins,
@@ -182,106 +203,27 @@ an unsolicited bulk conversion of Gallery, Cloud or recovery data.
 
 ## Decoded model authorities
 
-The following names describe the normalized editor model. At the file boundary,
-`Instance.reference` is `name`, `symbolId` is `type`, `placement` becomes
-`coordinate`/`rotation`/`mirror`, and `netlist` becomes `parameters`/`target`.
-Instance-owned annotations become `labels` with `bind`, `text` and `format`.
-These are two representations of the same facts, never independently editable
-sources of truth.
+Portable and normalized objects represent the same facts, not independently
+editable sources. At the boundary, `Instance.reference` maps to `name`,
+`symbolId` to `type`, `placement` to `coordinate`/`rotation`/`mirror`,
+and `netlist` to `parameters`/`target`. Attached annotations become instance
+`labels` with `bind`, `text` and `format`; the codec preserves authored order
+and identity. Runtime membership indexes are derived from the connection facts
+described above.
 
-- `Document.netlist.terminals` defines ordered authored Cell-Pin declarations
-  with stable identity, direction, Net binding, and exactly one interface owner:
-  either an ordinary Cell Pin Instance or a visible Power Rail annotation. Equal
-  case-folded names identify one Logical Net without
-  physically merging their independently authored Base Nets.
-- `Document.netlist.formalParameters` and project-level
-  `externalSubcircuitDefinitions` define exact nonlocal netlist interfaces.
-  Each external definition has a stable identity, an ordered list of stable
-  terminals, raw formal defaults, interface status and optional block
-  presentation. It has no internal Document body.
-- `Instance.reference` is the sole authored Reference for an ordinary
-  referenced Instance and is displayed by default. Process/model selection
-  preserves it. SPICE extraction adds the required invocation prefix when
-  needed (for example, `M1` becomes `XM1` for a PDK subcircuit); Spectre
-  preserves the authored name. Derived names reserve existing legal names and
-  add a numeric suffix on collision. Export and simulation share this mapping;
-  code-editor renames edit the authored portion. Imported `X` references remain
-  valid through model transitions. Cell Pins use `CellTerminal.name` and never
-  display a `P#` reference.
-  `Instance.netlist` contains only binding and typed parameter values for
-  emitting Instances.
-  Import source
-  order and symbol-mapping registry identity live in
-  `Instance.importProvenance`; there is no persisted property bag.
-  `Instance.signalFlowParameters` stores optional schematic-only formula data
-  plus 10-unit-grid minimum frame dimensions. The dimensions are presentation
-  lower bounds, not fixed geometry: the renderer expands the frame to preserve
-  the shared 12-unit formula size and content padding. The metadata remains
-  independent from emitted netlist parameters.
-- Hierarchy is an acyclic graph of ordinary Instances whose typed subcircuit
-  bindings resolve to child Documents; orphan Cell definitions are allowed.
-- Canvas `port` and `port-filled` objects are Cell Pin marker Instances with
-  terminal `P`. A `vdd-port` Instance may use the same formal-terminal protocol
-  or, mutually exclusively, own a Global VDD name claim. Their connectivity is
-  stored in `Net.terminals` and ordinary terminal Route endpoints.
-- Base `Net.terminals` is a derived physical membership index. Connection facts
-  in portable source are authoritative.
-- `Document.connectivityEvidence` records owner-addressed name claims, explicit
-  imported global declarations, non-electrical source-name hints, and
-  SPICE-source assertions for one Base Net at a time. The shared Logical-Net
-  resolver joins distinct Base Nets through authoritative scoped names or equal
-  formal Cell-Pin names; hints and source identity never create connectivity.
-- Route endpoints are terminal or Junction references only.
-- A marker claim may classify its Logical Net as `vdd` or `ground`; role never
-  substitutes for name identity.
-- A named Power Rail uses an ordinary Base Net, Route/Junction geometry, a
-  local VDD name claim by default, and a bound RichText annotation that owns a
-  formal Cell terminal. An explicitly Global Rail has no formal terminal.
-- Every visible editable label is a RichText annotation. `instance-reference`
-  projects only `Instance.reference`; `instance-value`, `net-name`, and
-  `cell-terminal-name` project their own typed facts. Other attached labels,
-  including visible master descriptions, are literal text without identity or
-  export authority. Renderers never synthesize Instance text from an internal
-  ID. `Annotation.textColor`
-  is an independent presentation override; when absent, instance reference and
-  value annotations inherit their owning Instance foreground, while other
-  annotations inherit the Document foreground. Bound `instance-reference`,
-  `net-name`, and `cell-terminal-name` annotations may
-  carry a RichText `formatOverride` only when its flattened text equals the
-  semantic Reference, Net, or terminal name. Reference allocation and rename
-  update that same-text projection atomically without discarding its styling.
-  Device visual annotations customized on the canvas use literal `content`
-  instead, on the same Annotation ID and anchor, without `binding` or
-  `formatOverride`. They do not rename or duplicate `Instance.reference`.
-  Save/open and copy preserve this exclusive choice; clearing **Use display
-  alias** returns a custom annotation to following. The JSON field
-  is `Instance.name` in portable source and `Instance.reference` in the decoded
-  model (UI: **Netlist Reference**).
-- A RichText document is either ordinary styled text runs or one atomic
-  formula run containing bounded LaTeX source and `inline`/`block` display
-  intent. Typeset SVG paths and metrics are derived artifacts, never Project
-  content.
-- `Document.presentation.cellSymbol` is optional definition-level block intent:
-  a minimum body size and stable formal-terminal side/offset placements.
-  The shared generated class is included in `componentDefinitions`; its source
-  interface and presentation record determine when to regenerate the artwork.
-  Caller Instances reference that class rather than persisting their own copy.
-- MOS assets are canonical `nmos`/`pmos`; visual variant selection does not
-  change persisted terminal connectivity.
-- `Project.simulationFolders` is the named version-4 source collection defined
-  in [simulation](simulation.md#authored-authority). A folder owns source files,
-  entry/config paths, optional generated Cell bindings, declared dependencies
-  and unapplied drafts. Generated circuit bytes and results are not persisted.
-  New experiments use minimal version-2 configuration; version-1 sidecars remain
-  an explicit compatibility path. Project schema, folder envelope version and
-  configuration version are distinct contracts.
+The [schematic model](schematic-model.md) owns Instance, Cell interface, Net,
+annotation and presentation semantics. [Connectivity](connectivity-and-routing.md)
+owns physical/logical resolution and lifecycle; [netlist export](netlist-export.md)
+owns dialect name projection. [Simulation](simulation.md#authored-authority)
+owns source folders and their separate envelope/configuration versions. The
+file codec preserves these contracts rather than redefining them.
 
 ## Read and write
 
 ```text
-import text -> parse JSON -> require Project file schema 24 through 60
--> migrate old files or decode 59/60 -> strict model validation -> install unbound
-export -> validate -> encode file schema 60 -> readable canonical JSON -> download
+import text -> parse JSON -> require Project file schema 24 through 61
+-> migrate old files or decode 59/60/61 -> strict model validation -> install unbound
+export -> validate -> encode file schema 61 -> readable canonical JSON -> download
 ```
 
 An invalid candidate never replaces the current browser Project. File Resource
@@ -304,9 +246,9 @@ open, and recovery remain exact.
 Canonical serialization ends with one newline and is byte-stable across
 serialize/parse/serialize. The current corpus is listed in
 `fixtures/projects/compatibility-corpus.json`; its `current` entries must all be
-already canonical Project file schema 60. Explicit `migrated` witnesses retain their
-source bytes and declared source version; loading and saving must produce a
-byte-stable current Project. The rejected corpus names expected validation
+already canonical Project file schema 61. Explicit `migrated` witnesses retain
+their source bytes and declared source version; loading and saving must produce
+a byte-stable current Project. The rejected corpus names expected validation
 failures. These are test inventory categories, not new Project fields.
 
 Viewport, selection, undo history, canvas overlays, Agent credentials,

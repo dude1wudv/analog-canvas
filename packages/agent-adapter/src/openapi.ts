@@ -245,6 +245,12 @@ export const agentTransportErrorExamples = {
 function transportErrorResponse(
   example: (typeof agentTransportErrorExamples)[keyof typeof agentTransportErrorExamples],
 ) {
+  return { $ref: `#/components/responses/${example.error.code}` } as const;
+}
+
+function transportErrorDefinition(
+  example: (typeof agentTransportErrorExamples)[keyof typeof agentTransportErrorExamples],
+) {
   return {
     description: "Typed Agent session transport error",
     content: {
@@ -259,6 +265,13 @@ function transportErrorResponse(
 const circuitSessionResponses = {
   "200": {
     description: "Circuit API response",
+    headers: {
+      "x-agent-context": {
+        description:
+          "Browser context stamp; use a successful snapshot's value for subsequent Project-bound requests",
+        schema: { type: "string" },
+      },
+    },
     content: { "application/json": { schema: agentCircuitResponseRef } },
   },
   "400": {
@@ -370,10 +383,62 @@ const claimResponses = {
 export const agentCircuitOpenApi = {
   openapi: "3.1.0",
   info: {
-    title: "Interactive Circuit Maker Agent Circuit API",
+    title: "Analog Canvas Agent Circuit API",
     version: AGENT_API_VERSION,
   },
   paths: {
+    "/api/agent/sessions/{sessionId}/artifacts/{fileId}": {
+      get: {
+        operationId: "agentSessionArtifactDownload",
+        description: agentApiHelp.agentSessionArtifactDownload,
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "sessionId",
+            in: "path",
+            required: true,
+            schema: { type: "string", minLength: 1 },
+          },
+          {
+            name: "fileId",
+            in: "path",
+            required: true,
+            schema: { type: "string", pattern: "^[a-zA-Z0-9_-]{1,128}$" },
+          },
+          {
+            name: "Range",
+            in: "header",
+            schema: { type: "string", pattern: "^bytes=[0-9]+-[0-9]*$" },
+          },
+          { name: "If-Range", in: "header", schema: { type: "string" } },
+        ],
+        responses: {
+          "200": {
+            description: "Complete file byte stream",
+            content: {
+              "application/octet-stream": {
+                schema: { type: "string", format: "binary" },
+              },
+            },
+          },
+          "206": {
+            description: "Requested byte range",
+            headers: { "Content-Range": { schema: { type: "string" } } },
+            content: {
+              "application/octet-stream": {
+                schema: { type: "string", format: "binary" },
+              },
+            },
+          },
+          "401": transportErrorResponse(agentTransportErrorExamples["401"]),
+          "403": { description: "Session is paused or lacks simulation.run" },
+          "404": {
+            description: "No registered transfer for this file and session",
+          },
+          "416": { description: "Invalid or unavailable byte range" },
+        },
+      },
+    },
     "/api/agent/sessions/{sessionId}/status": {
       get: {
         operationId: "agentSessionStatus",
@@ -442,6 +507,20 @@ export const agentCircuitOpenApi = {
         security: [{ bearerAuth: [] }],
         parameters: [
           {
+            name: "x-agent-context",
+            in: "header",
+            description:
+              "Required for active-tab operations; an explicit x-agent-workspace target remains bound across foreground tab changes",
+            schema: { type: "string" },
+          },
+          {
+            name: "x-agent-workspace",
+            in: "header",
+            description:
+              "Optional open working-copy ID from workspace list; routes without changing the foreground tab",
+            schema: { type: "string", minLength: 1, maxLength: 256 },
+          },
+          {
             name: "sessionId",
             in: "path",
             required: true,
@@ -467,6 +546,18 @@ export const agentCircuitOpenApi = {
         security: [{ bearerAuth: [] }],
         parameters: [
           {
+            name: "x-agent-context",
+            in: "header",
+            schema: { type: "string" },
+          },
+          {
+            name: "x-agent-workspace",
+            in: "header",
+            description:
+              "Optional open working-copy ID from workspace list; routes without changing the foreground tab",
+            schema: { type: "string", minLength: 1, maxLength: 256 },
+          },
+          {
             name: "sessionId",
             in: "path",
             required: true,
@@ -488,6 +579,18 @@ export const agentCircuitOpenApi = {
         description: agentApiHelp.agentSessionSimulationResource,
         security: [{ bearerAuth: [] }],
         parameters: [
+          {
+            name: "x-agent-context",
+            in: "header",
+            schema: { type: "string" },
+          },
+          {
+            name: "x-agent-workspace",
+            in: "header",
+            description:
+              "Optional open working-copy ID from workspace list; routes without changing the foreground tab",
+            schema: { type: "string", minLength: 1, maxLength: 256 },
+          },
           {
             name: "sessionId",
             in: "path",
@@ -511,6 +614,18 @@ export const agentCircuitOpenApi = {
         security: [{ bearerAuth: [] }],
         parameters: [
           {
+            name: "x-agent-context",
+            in: "header",
+            schema: { type: "string" },
+          },
+          {
+            name: "x-agent-workspace",
+            in: "header",
+            description:
+              "Optional open working-copy ID from workspace list; routes without changing the foreground tab",
+            schema: { type: "string", minLength: 1, maxLength: 256 },
+          },
+          {
             name: "sessionId",
             in: "path",
             required: true,
@@ -528,6 +643,12 @@ export const agentCircuitOpenApi = {
     },
   },
   components: {
+    responses: Object.fromEntries(
+      Object.values(agentTransportErrorExamples).map((example) => [
+        example.error.code,
+        transportErrorDefinition(example),
+      ]),
+    ),
     securitySchemes: {
       bearerAuth: { type: "http", scheme: "bearer" },
     },

@@ -8,10 +8,13 @@ import {
 import type { RichTextDocument } from "@icm/model";
 import {
   defaultInstanceLabelPlacement,
+  instanceLabelInkBounds,
+  instanceLabelMetrics,
+  legacyDefaultInstanceLabelPlacement,
+  legacyPortLabelPlacement,
   displayableInstanceValue,
   resolveDocumentLogicalNets,
   resolveSchematicStyleProfile,
-  visibleSymbolLocalBounds,
 } from "@icm/derived";
 import { InMemorySymbolResolver, builtInSymbols } from "@icm/symbols";
 import { describe, expect, it } from "vitest";
@@ -395,7 +398,7 @@ describe("Edit Transaction envelope", () => {
       runs: [
         {
           kind: "span" as const,
-          style: "overbar" as const,
+          style: "bold" as const,
           children: [{ kind: "text" as const, value: "Vout" }],
         },
       ],
@@ -448,10 +451,18 @@ describe("Edit Transaction envelope", () => {
     });
     expect(renamed).toMatchObject({ ok: true });
     if (!renamed.ok) return;
-    expect(renamed.document.annotations[0]!.formatOverride).toBeUndefined();
+    expect(renamed.document.annotations[0]!.formatOverride).toEqual({
+      runs: [
+        {
+          kind: "span",
+          style: "bold",
+          children: [{ kind: "text", value: "OUT" }],
+        },
+      ],
+    });
   });
 
-  it("clears a stale Net-label format override when the Net is renamed", () => {
+  it("updates a Net-label projection without discarding its authored typeface", () => {
     const document = createEmptyDocument("document-main", "Main");
     document.nets.push({
       id: "net-vin",
@@ -497,7 +508,87 @@ describe("Edit Transaction envelope", () => {
 
     expect(result).toMatchObject({ ok: true });
     if (!result.ok) return;
-    expect(result.document.annotations[0]!.formatOverride).toBeUndefined();
+    expect(result.document.annotations[0]!.formatOverride).toEqual({
+      runs: [
+        {
+          kind: "span",
+          style: "italic",
+          children: [{ kind: "text", value: "VINP" }],
+        },
+      ],
+    });
+  });
+
+  it("accepts a Port-matching Net Label and rejects a different label before it bridges remote wiring", () => {
+    const document = createEmptyDocument("document-main", "Main");
+    document.instances.push({ id: "P1", symbolId: "port", placement: null });
+    document.nets.push(
+      { id: "net-port", terminals: [{ instanceId: "P1", pinName: "P" }] },
+      { id: "net-remote", terminals: [] },
+    );
+    document.netlist!.terminals.push({
+      id: "terminal-vin",
+      name: "Vin",
+      netId: "net-port",
+      direction: "input",
+      interfaceInstanceIds: ["P1"],
+    });
+    for (const [id, netId] of [
+      ["port-label", "net-port"],
+      ["remote-label", "net-remote"],
+    ] as const) {
+      document.annotations.push({
+        id,
+        kind: "net-label",
+        binding: { kind: "net-name", netId },
+        netId,
+        anchor: { kind: "free", position: { x: 0, y: 0 } },
+        alignment: "start",
+        rotation: 0,
+        locked: false,
+      });
+    }
+    document.connectivityEvidence.push({
+      id: "remote-bias",
+      kind: "name-claim",
+      netId: "net-remote",
+      name: "Bias",
+      scope: "local",
+      owner: { kind: "net-label", annotationId: "remote-label" },
+    });
+    const claim = {
+      id: "port-label-claim",
+      kind: "name-claim" as const,
+      netId: "net-port",
+      name: "VIN",
+      scope: "local" as const,
+      owner: { kind: "net-label" as const, annotationId: "port-label" },
+    };
+    const matching = executeTransaction(document, {
+      ...transaction(),
+      edits: [{ kind: "upsert_connectivity_evidence", evidence: claim }],
+    });
+    if (!matching.ok) throw new Error(matching.error.message);
+    expect(resolveDocumentLogicalNets(matching.document).groups).toHaveLength(
+      2,
+    );
+
+    const conflicting = executeTransaction(matching.document, {
+      ...transaction(matching.document.revision),
+      edits: [
+        {
+          kind: "upsert_connectivity_evidence",
+          evidence: { ...claim, name: "Bias" },
+        },
+      ],
+    });
+    expect(conflicting).toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_RESULT",
+        message: "Transaction introduces conflicting Logical Net names",
+      },
+    });
   });
 
   it("enforces the same layout lock before placing a retained Instance", () => {
@@ -2342,12 +2433,50 @@ describe("Edit Transaction envelope", () => {
     expect(renamed.document.instances[0]!.reference).toBe("M21");
     const presentation = renamed.document.annotations[0]!.formatOverride!;
     expect(flattenRichText(presentation)).toBe("M21");
-    expect(presentation.runs[0]).toEqual(
-      semanticTextDocument("M1", "instance-label").runs[0],
-    );
-    expect(presentation.runs[1]).toEqual(
-      semanticTextDocument("M21", "instance-label").runs[1],
-    );
+    expect(presentation).toEqual(semanticTextDocument("M21", "instance-label"));
+  });
+
+  it("keeps literal underscores and authored styles after renaming a bound reference", () => {
+    const document = documentWithInstance();
+    document.presentation.labelUnderscoreSubscript = false;
+    document.presentation.labelSubscriptAfterFirst = false;
+    document.instances[0]!.reference = "M_left";
+    document.annotations.push({
+      id: "label",
+      kind: "instance-label",
+      binding: { kind: "instance-reference", instanceId: "M1" },
+      formatOverride: {
+        runs: [
+          {
+            kind: "span",
+            style: "bold",
+            children: [{ kind: "text", value: "M_left" }],
+          },
+        ],
+      },
+      textColor: "#ff0000",
+      anchor: { kind: "free", position: { x: 0, y: 0 } },
+      alignment: "start",
+      rotation: 0,
+      locked: false,
+    });
+    const result = executeTransaction(document, {
+      ...transaction(),
+      edits: [
+        {
+          kind: "set_instance_reference",
+          instanceId: "M1",
+          reference: "M_right",
+        },
+      ],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const label = result.document.annotations[0]!;
+    expect(flattenRichText(label.formatOverride!)).toBe("M_right");
+    expect(JSON.stringify(label.formatOverride)).not.toContain('"subscript"');
+    expect(JSON.stringify(label.formatOverride)).toContain('"bold"');
+    expect(label.textColor).toBe("#ff0000");
   });
 
   it("applies a bounded bulk netlist patch atomically", () => {
@@ -2430,9 +2559,9 @@ describe("Edit Transaction envelope", () => {
     });
   });
 
-  it("reflows a legacy canonical resistor label after another rotation", () => {
-    // Before the Resistor path declared tight ink bounds, its viewBox put
-    // these untouched 90-degree rows one grid interval too far from the glyph.
+  it("preserves authored legacy resistor label offsets through rotation", () => {
+    // Historical rows are no longer today's compact defaults. Keep their
+    // authored offsets under rotation instead of silently adopting new spacing.
     const document = documentWithLegacyResistorLabels([
       {
         id: "instance-label-R1",
@@ -2461,21 +2590,21 @@ describe("Edit Transaction envelope", () => {
     if (!result.ok) return;
     expect(result.document.annotations).toMatchObject([
       {
-        alignment: "end",
+        alignment: "middle",
         rotation: 0,
         anchor: {
           kind: "object",
-          localOffset: { x: -20, y: -10 },
-          fallbackPosition: { x: 80, y: 90 },
+          localOffset: { x: -40, y: -10 },
+          fallbackPosition: { x: 60, y: 90 },
         },
       },
       {
-        alignment: "end",
+        alignment: "middle",
         rotation: 0,
         anchor: {
           kind: "object",
-          localOffset: { x: -20, y: 20 },
-          fallbackPosition: { x: 80, y: 120 },
+          localOffset: { x: -70, y: -10 },
+          fallbackPosition: { x: 30, y: 90 },
         },
       },
     ]);
@@ -2565,7 +2694,7 @@ describe("Edit Transaction envelope", () => {
     expect(rotated.ok).toBe(true);
     if (!rotated.ok) return;
     const rotatedInstance = rotated.document.instances[0]!;
-    const localBounds = visibleSymbolLocalBounds(resolved);
+    const localBounds = instanceLabelInkBounds(resolved);
     const worldCorners = [
       { x: localBounds.x, y: localBounds.y },
       { x: localBounds.x + localBounds.width, y: localBounds.y },
@@ -2584,100 +2713,269 @@ describe("Edit Transaction envelope", () => {
     const bottom = Math.max(...worldCorners.map((point) => point.y));
     const label = rotated.document.annotations[0]!;
     expect(label).toMatchObject({ alignment: "middle", rotation: 0 });
-    // The persisted semantic anchor is grid-snapped.  Assert the visible glyph
-    // edge, not the raw baseline: the label must retain at least one whole
-    // Document-grid interval outside the rotated symbol.
+    // Labels keep one artwork gap at integer precision, not the electrical
+    // grid or the symbol's padded interaction envelope.
     if (label.anchor.kind === "free") {
       throw new Error("Rotated instance label must retain an object anchor");
     }
     const fallback = label.anchor.fallbackPosition;
-    const glyphTop = fallback.y - profile.typography.instanceFontSize * 1.05;
-    expect(glyphTop).toBeGreaterThanOrEqual(
-      bottom + document.presentation.grid,
-    );
+    const metrics = instanceLabelMetrics(profile);
+    const glyphTop = fallback.y - metrics.capHeight;
+    expect(Math.abs(glyphTop - bottom - metrics.gap)).toBeLessThanOrEqual(0.5);
   });
 
-  it("reuses the canonical upright placement when a Cell Pin rotates", () => {
-    const document = createEmptyDocument("document-main", "Port label");
-    const instance = {
-      id: "P1",
-      symbolId: "port",
-      placement: {
-        position: { x: 100, y: 100 },
-        rotation: 0 as const,
-        mirror: "none" as const,
-      },
-    };
-    document.instances.push(instance);
-    document.nets.push({
-      id: "net-vin",
-
-      terminals: [{ instanceId: "P1", pinName: "P" }],
-    });
-    defineCellPin(document, "P1", "VIN", "net-vin");
-    const resolved = resolver.resolve("port");
-    if (!resolved) throw new Error("missing port");
-    const profile = resolveSchematicStyleProfile(
-      document.presentation.styleProfileId,
-    );
-    const initial = defaultInstanceLabelPlacement(
-      instance,
-      resolved,
-      profile,
-      document.presentation.grid,
-      "reference",
-    );
-    if (!initial) throw new Error("missing default Port label placement");
-    document.annotations.push({
-      id: "cell-pin-label-p1",
-      kind: "instance-label",
-      binding: { kind: "cell-terminal-name", terminalId: "terminal-p1" },
-      anchor: {
-        kind: "object",
-        objectId: "P1",
-        localOffset: {
-          x: initial.position.x - instance.placement.position.x,
-          y: initial.position.y - instance.placement.position.y,
+  it.each(["current", "previous"] as const)(
+    "moves a device label placed by the %s rule with the current rule when the device rotates",
+    (rule) => {
+      const document = createEmptyDocument("document-main", "Device label");
+      const instance = {
+        id: "R1",
+        symbolId: "resistor",
+        reference: "R1",
+        placement: {
+          position: { x: 100, y: 100 },
+          rotation: 0 as const,
+          mirror: "none" as const,
         },
-        fallbackPosition: initial.position,
-      },
-      alignment: initial.alignment,
-      rotation: 0,
-      locked: false,
-    });
-
-    const result = executeTransaction(
-      document,
-      {
-        ...transaction(),
-        edits: [{ kind: "rotate_instance", instanceId: "P1", rotation: 90 }],
-      },
-      { symbolResolver: resolver },
-    );
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const expected = defaultInstanceLabelPlacement(
-      result.document.instances[0]!,
-      resolved,
-      profile,
-      result.document.presentation.grid,
-      "reference",
-    );
-    const label = result.document.annotations[0]!;
-    expect(expected).not.toBeNull();
-    expect(label).toMatchObject({
-      alignment: expected!.alignment,
-      rotation: 0,
-      anchor: {
-        kind: "object",
-        localOffset: {
-          x: expected!.position.x - 100,
-          y: expected!.position.y - 100,
+      };
+      document.instances.push(instance);
+      const resolved = resolver.resolve("resistor");
+      if (!resolved) throw new Error("missing resistor");
+      const profile = resolveSchematicStyleProfile(
+        document.presentation.styleProfileId,
+      );
+      // A label put down before 2026-09-25 carries the previous rule's
+      // position; it is just as untouched, so it follows the part too.
+      const place =
+        rule === "current"
+          ? defaultInstanceLabelPlacement
+          : legacyDefaultInstanceLabelPlacement;
+      const initial = place(
+        instance,
+        resolved,
+        profile,
+        document.presentation.grid,
+        "reference",
+      );
+      if (!initial) throw new Error("missing default label placement");
+      document.annotations.push({
+        id: "instance-label-R1",
+        kind: "instance-label",
+        binding: { kind: "instance-reference", instanceId: "R1" },
+        anchor: {
+          kind: "object",
+          objectId: "R1",
+          localOffset: {
+            x: initial.position.x - instance.placement.position.x,
+            y: initial.position.y - instance.placement.position.y,
+          },
+          fallbackPosition: initial.position,
         },
-        fallbackPosition: expected!.position,
-      },
-    });
-  });
+        alignment: initial.alignment,
+        rotation: 0,
+        locked: false,
+      });
+
+      const result = executeTransaction(
+        document,
+        {
+          ...transaction(),
+          edits: [{ kind: "rotate_instance", instanceId: "R1", rotation: 270 }],
+        },
+        { symbolResolver: resolver },
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const expected = defaultInstanceLabelPlacement(
+        result.document.instances[0]!,
+        resolved,
+        profile,
+        result.document.presentation.grid,
+        "reference",
+      );
+      const label = result.document.annotations[0]!;
+      if (label.anchor.kind !== "object") throw new Error("object anchor");
+      expect(label.anchor.fallbackPosition).toEqual(expected!.position);
+      expect(label.alignment).toBe(expected!.alignment);
+    },
+  );
+
+  it.each([
+    ["its own size", 0.8],
+    ["the size it was placed at before it was resized", 1],
+  ] as const)(
+    "keeps a resized device label following its part through a full turn from where the rule puts %s",
+    (_, placedAtSize) => {
+      // A turn re-places an untouched label at its own size, so a label a
+      // person made smaller must still read as untouched at the next turn,
+      // not only the first; otherwise it turns rigidly from then on.
+      const document = createEmptyDocument("document-main", "Resized label");
+      const instance = {
+        id: "R1",
+        symbolId: "resistor",
+        reference: "R1",
+        placement: {
+          position: { x: 100, y: 100 },
+          rotation: 0 as const,
+          mirror: "none" as const,
+        },
+      };
+      document.instances.push(instance);
+      const resolved = resolver.resolve("resistor");
+      if (!resolved) throw new Error("missing resistor");
+      const profile = resolveSchematicStyleProfile(
+        document.presentation.styleProfileId,
+      );
+      const initial = defaultInstanceLabelPlacement(
+        instance,
+        resolved,
+        profile,
+        document.presentation.grid,
+        "reference",
+        placedAtSize,
+      );
+      if (!initial) throw new Error("missing default label placement");
+      document.annotations.push({
+        id: "instance-label-R1",
+        kind: "instance-label",
+        binding: { kind: "instance-reference", instanceId: "R1" },
+        anchor: {
+          kind: "object",
+          objectId: "R1",
+          localOffset: {
+            x: initial.position.x - instance.placement.position.x,
+            y: initial.position.y - instance.placement.position.y,
+          },
+          fallbackPosition: initial.position,
+        },
+        alignment: initial.alignment,
+        rotation: 0,
+        sizeScale: 0.8,
+        locked: false,
+      });
+
+      let current = document;
+      for (const rotation of [90, 180, 270, 0] as const) {
+        const result = executeTransaction(
+          current,
+          {
+            ...transaction(current.revision),
+            edits: [{ kind: "rotate_instance", instanceId: "R1", rotation }],
+          },
+          { symbolResolver: resolver },
+        );
+        if (!result.ok) throw new Error(JSON.stringify(result.diagnostics));
+        current = result.document;
+        const expected = defaultInstanceLabelPlacement(
+          current.instances[0]!,
+          resolved,
+          profile,
+          current.presentation.grid,
+          "reference",
+          0.8,
+        );
+        const label = current.annotations[0]!;
+        if (label.anchor.kind !== "object") throw new Error("object anchor");
+        expect(label.anchor.fallbackPosition).toEqual(expected!.position);
+        expect(label.alignment).toBe(expected!.alignment);
+      }
+    },
+  );
+
+  it.each(["current", "previous"] as const)(
+    "reuses the canonical upright placement when a Cell Pin placed by the %s rule rotates",
+    (rule) => {
+      const document = createEmptyDocument("document-main", "Port label");
+      const instance = {
+        id: "P1",
+        symbolId: "port",
+        placement: {
+          position: { x: 100, y: 100 },
+          rotation: 0 as const,
+          mirror: "none" as const,
+        },
+      };
+      document.instances.push(instance);
+      document.nets.push({
+        id: "net-vin",
+
+        terminals: [{ instanceId: "P1", pinName: "P" }],
+      });
+      defineCellPin(document, "P1", "VIN", "net-vin");
+      const resolved = resolver.resolve("port");
+      if (!resolved) throw new Error("missing port");
+      const profile = resolveSchematicStyleProfile(
+        document.presentation.styleProfileId,
+      );
+      // A Pin named before 2026-09-24 still carries the previous rule's
+      // position; it is just as untouched, so it follows the Pin too.
+      const initial =
+        rule === "current"
+          ? defaultInstanceLabelPlacement(
+              instance,
+              resolved,
+              profile,
+              document.presentation.grid,
+              "reference",
+            )
+          : legacyPortLabelPlacement(
+              instance,
+              resolved,
+              profile,
+              document.presentation.grid,
+            );
+      if (!initial) throw new Error("missing default Port label placement");
+      document.annotations.push({
+        id: "cell-pin-label-p1",
+        kind: "instance-label",
+        binding: { kind: "cell-terminal-name", terminalId: "terminal-p1" },
+        anchor: {
+          kind: "object",
+          objectId: "P1",
+          localOffset: {
+            x: initial.position.x - instance.placement.position.x,
+            y: initial.position.y - instance.placement.position.y,
+          },
+          fallbackPosition: initial.position,
+        },
+        alignment: initial.alignment,
+        rotation: 0,
+        locked: false,
+      });
+
+      const result = executeTransaction(
+        document,
+        {
+          ...transaction(),
+          edits: [{ kind: "rotate_instance", instanceId: "P1", rotation: 90 }],
+        },
+        { symbolResolver: resolver },
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const expected = defaultInstanceLabelPlacement(
+        result.document.instances[0]!,
+        resolved,
+        profile,
+        result.document.presentation.grid,
+        "reference",
+      );
+      const label = result.document.annotations[0]!;
+      expect(expected).not.toBeNull();
+      expect(label).toMatchObject({
+        alignment: expected!.alignment,
+        rotation: 0,
+        anchor: {
+          kind: "object",
+          localOffset: {
+            x: expected!.position.x - 100,
+            y: expected!.position.y - 100,
+          },
+          fallbackPosition: expected!.position,
+        },
+      });
+    },
+  );
 
   it("returns a canonical instance label to its initial position after four quarter turns", () => {
     let document = createEmptyDocument("document-main", "Stable label");

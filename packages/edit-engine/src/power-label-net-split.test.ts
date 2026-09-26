@@ -1,11 +1,128 @@
-import { createEmptyDocument, createRoutePath } from "@icm/model";
+import {
+  createEmptyDocument,
+  createRoutePath,
+  semanticTextDocument,
+} from "@icm/model";
+import { resolveDocumentLogicalNets } from "@icm/derived";
 import { builtInSymbols, InMemorySymbolResolver } from "@icm/symbols";
 import { describe, expect, it } from "vitest";
 import { executeTransaction, type SchematicEdit } from "./transaction.js";
+import { planRoutingDeletion } from "./routing-deletion-planner.js";
+import { gateRoutingOperationPlan } from "./routing-operation-plan.js";
+import { retargetOwnerEvidenceAfterSplit } from "./transaction-connectivity.js";
 
 const resolver = new InMemorySymbolResolver(builtInSymbols);
 
 describe("power label ownership across a physical cut", () => {
+  it.each([
+    { reverse: false, styled: false },
+    { reverse: false, styled: true },
+    { reverse: true, styled: false },
+    { reverse: true, styled: true },
+  ])(
+    "deletes a transistor-to-supply wire without losing its label (reverse: $reverse, styled: $styled)",
+    ({ reverse, styled }) => {
+      const document = createEmptyDocument("main", "Main");
+      document.instances.push(
+        {
+          id: "M1",
+          symbolId: "nmos",
+          symbolVariantId: "textbook-3terminal",
+          placement: {
+            position: { x: -130, y: 10 },
+            rotation: 0,
+            mirror: "none",
+          },
+        },
+        {
+          id: "VDD1",
+          symbolId: "vdd-port",
+          placement: {
+            position: { x: -120, y: -40 },
+            rotation: 0,
+            mirror: "none",
+          },
+        },
+      );
+      const transistor = { instanceId: "M1", pinName: "D" };
+      const supply = { instanceId: "VDD1", pinName: "P" };
+      document.nets.push({ id: "supply", terminals: [transistor, supply] });
+      document.routes.push(
+        createRoutePath({
+          id: "short",
+          netId: "supply",
+          start: { kind: "terminal", ...(reverse ? supply : transistor) },
+          end: { kind: "terminal", ...(reverse ? transistor : supply) },
+          bends: [],
+          modes: ["manual"],
+        }),
+      );
+      document.connectivityEvidence.push({
+        id: "supply-name",
+        kind: "name-claim",
+        netId: "supply",
+        name: "V_IN",
+        scope: "global",
+        powerDomain: "vdd",
+        // The symbol owns the name; its text is a separate bound annotation.
+        owner: { kind: "power-marker", objectId: "VDD1" },
+      });
+      const label = {
+        id: "power-label-vdd1",
+        kind: "power-label" as const,
+        netId: "supply",
+        binding: { kind: "net-name" as const, netId: "supply" },
+        ...(styled
+          ? { formatOverride: semanticTextDocument("V_IN", "net-label") }
+          : {}),
+        anchor: {
+          kind: "object" as const,
+          objectId: "VDD1",
+          localOffset: { x: 20, y: 10 },
+          fallbackPosition: { x: -100, y: -30 },
+        },
+        alignment: "start" as const,
+        rotation: 0 as const,
+        locked: false,
+      };
+      document.annotations.push(label);
+      const original = structuredClone(document);
+      const plan = planRoutingDeletion(
+        document,
+        resolver,
+        { instanceIds: [], routeIds: ["short"], junctionIds: [] },
+        1,
+      );
+      const result = gateRoutingOperationPlan(document, plan, {
+        symbolResolver: resolver,
+      });
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      if (!result.ok) return;
+      const after = result.evaluated.finalDocument;
+      const supplyNet = after.nets.find((net) =>
+        net.terminals.some((terminal) => terminal.instanceId === "VDD1"),
+      )!;
+      const drainNet = after.nets.find((net) =>
+        net.terminals.some((terminal) => terminal.instanceId === "M1"),
+      )!;
+      expect(after.routes).toEqual([]);
+      expect(after.instances).toEqual(document.instances);
+      expect(supplyNet.id === "supply").toBe(reverse);
+      expect(supplyNet.id).not.toBe(drainNet.id);
+      expect(after.annotations).toEqual([
+        {
+          ...label,
+          netId: supplyNet.id,
+          binding: { kind: "net-name", netId: supplyNet.id },
+        },
+      ]);
+      const logical = resolveDocumentLogicalNets(after).byBaseNetId;
+      expect(logical.get(supplyNet.id)?.name).toBe("V_IN");
+      expect(logical.get(drainNet.id)?.name).toBeUndefined();
+      expect(document).toEqual(original);
+    },
+  );
+
   it.each([false, true])(
     "keeps the rail, label and formal terminal together (rail retains old Net: %s)",
     (reverse) => {
@@ -98,4 +215,59 @@ describe("power label ownership across a physical cut", () => {
       ).toBe("cell-terminal-name");
     },
   );
+});
+
+describe("a label on a part with several pins", () => {
+  it("stays on the Net where its part has a pin, not the part's first Net", () => {
+    // The process ties R1's body B, a property pin, to ground through a
+    // hidden label on R1. Pin 1's Net sorts first by id; a label that
+    // followed the part's first Net put ground on pin 1.
+    const document = createEmptyDocument("main", "Main");
+    document.instances.push({
+      id: "R1",
+      reference: "R1",
+      symbolId: "resistor",
+      placement: { position: { x: 0, y: 0 }, rotation: 0, mirror: "none" },
+      netlist: { parameters: { value: "1k" } },
+    });
+    document.nets.push(
+      { id: "a-signal", terminals: [{ instanceId: "R1", pinName: "1" }] },
+      { id: "substrate", terminals: [{ instanceId: "R1", pinName: "B" }] },
+    );
+    document.annotations.push({
+      id: "substrate-label",
+      kind: "net-label",
+      netId: "substrate",
+      binding: { kind: "net-name", netId: "substrate" },
+      visible: false,
+      anchor: {
+        kind: "object",
+        objectId: "R1",
+        localOffset: { x: 0, y: 0 },
+        fallbackPosition: { x: 0, y: 0 },
+      },
+      alignment: "start",
+      rotation: 0,
+      locked: false,
+    });
+    document.connectivityEvidence.push({
+      id: "substrate-name",
+      kind: "name-claim",
+      netId: "substrate",
+      name: "0",
+      scope: "global",
+      powerDomain: "ground",
+      owner: { kind: "net-label", annotationId: "substrate-label" },
+    });
+    const changed = new Set<string>();
+    for (const net of document.nets)
+      retargetOwnerEvidenceAfterSplit(document, net.id, changed);
+    expect(document.annotations[0]!.netId).toBe("substrate");
+    expect(document.annotations[0]!.binding).toEqual({
+      kind: "net-name",
+      netId: "substrate",
+    });
+    expect(document.connectivityEvidence[0]!.netId).toBe("substrate");
+    expect(changed).toEqual(new Set());
+  });
 });

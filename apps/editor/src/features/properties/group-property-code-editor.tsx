@@ -133,15 +133,15 @@ export function GroupPropertyCodeEditor({
       data-testid="group-property-code-editor"
     >
       <header>
-        <strong>Properties</strong>
+        <strong>属性</strong>
         <div className="component-property-header-actions">
           <span className="group-property-scope">{count} selected</span>
           {!parsed.ok || rejected ? (
             <button
               type="button"
               className="component-property-copy"
-              aria-label="Discard draft"
-              title="Discard invalid draft"
+              aria-label="丢弃草稿"
+              title="丢弃无效草稿"
               onClick={() => {
                 setDraft(baseline);
                 setMessage(null);
@@ -154,8 +154,8 @@ export function GroupPropertyCodeEditor({
           <button
             type="button"
             className="component-property-copy"
-            aria-label="Copy JSON"
-            title="Copy JSON"
+            aria-label="复制 JSON"
+            title="复制 JSON"
             onClick={() => void copy()}
           >
             <svg

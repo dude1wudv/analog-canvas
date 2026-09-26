@@ -80,8 +80,9 @@ bounded source identifiers outside the shared subset so an imported Project can
 still open; explicit invalid names block export and printers do not silently
 rename them.
 
-`terminals` stores independently authored Cell-Pin declarations. Canvas `port`
-and `port-filled` symbols are Cell Pins: each owns exactly one singleton
+`terminals` stores independently authored interface declarations. Canvas
+`port` is the hollow Cell Pin and `port-filled` is the solid Bias Voltage Port;
+each owns exactly one singleton
 declaration through `terminals[].interfaceInstanceIds` and neither emits an
 instance line. Cell Pins are available in top and child Documents. A hierarchy
 instance uses its bound child Document and the read-only formal projection of
@@ -91,8 +92,9 @@ Its bound Annotation may retain same-text RichText formatting, which never
 changes emitted names. At extraction, names are grouped case-insensitively;
 first occurrence fixes order and spelling, and every member Net maps to that
 one emitted formal node. This projection does not merge Base Nets or mutate the
-Project. Repeated internal Net naming still uses Net Labels. The copy/export
-projection below may then change only the letter case of formal names.
+Project. Repeated internal Net naming still uses Net Labels. Only an Agent that
+explicitly asks the copy/export projection below for a letter case changes the
+case of formal names; the editor never does.
 
 Every manually inserted device receives an explicit reference. References are
 unique per cell and have the prefix required by their device definition. Model-
@@ -169,6 +171,18 @@ explicit Global marker claim. A local Power Rail has no Instance but its visible
 power-label annotation owns a formal Cell terminal, so its authored name appears
 in the `.subckt` interface. An explicitly global Power Rail has no formal
 terminal and is emitted through the dialect's global declaration.
+A drawn switch is an ngspice voltage-controlled `S` card. A two-terminal switch
+(Open, Closed, Simple) is controlled by the clock phase its display label
+names: a label drawn Φ₁ means phase `Φ1`, written `PHI1` like any Greek name.
+A single-ended switch is controlled by its CTRL pin. Both read the control
+against the Cell's ground (`VSS` in a structural netlist, `0` at a deck's top),
+so a Cell holding one states a ground. The phase node is the Net of that name
+in the same Cell, from a Net Label or a Cell Pin. A phase no Net supplies is a
+node of its own, reported as `SWITCH_PHASE_NOT_DRIVEN`. Every such switch
+closes through `ideal_switch`, an `SW` model card (RON 1 Ω, ROFF 1e12 Ω, VT
+0.5 V, VH 0) printed once inside each Cell that uses it. A two-terminal switch
+whose label shows its own name has no phase and blocks export. Switches are
+SPICE only (`SWITCH_SPICE_ONLY`), and the SPDT selector has no primitive.
 Decorative symbols never have a device definition. An unsupported electrical
 Symbol blocks export.
 
@@ -223,7 +237,8 @@ globals, and parameter names use deterministic ordering. Hierarchy cycles are
 errors. Net-marker instances are validated and omitted.
 
 The IR contains no geometry, Route, Junction, annotation, source text, include,
-analysis, PDK path, or renderer state.
+analysis, PDK path, or renderer state. A Cell may carry the model cards only
+its own instances use, such as the ideal switch.
 
 ## Printer contracts
 
@@ -232,7 +247,8 @@ Project, Symbol resolver, filesystem, network, or diagnostics repair path.
 
 SPICE `.spi` emits a generated-file/version comment, sorted `.global`
 declarations, dependency-first `.subckt`/`.ends` blocks, ordered defaulted
-formal parameters, structural device lines, and deterministic continuations.
+formal parameters, a Cell's own `.model` cards inside its body, structural
+device lines, and deterministic continuations.
 It emits no guessed `.include`, `.lib`, analysis, stimulus, or `.end` deck
 marker.
 
@@ -280,13 +296,13 @@ device parameters or renumbers an Instance before extraction. An authored
 external-subcircuit remains an `X` call everywhere and an authored primitive MOS
 remains an `M` card everywhere.
 
-Netlist configuration stores `format`, `portCase`, the selected process and
-editable device templates for Abstract, SKY130, TSMC 28, TSMC 180 and Custom.
+Netlist configuration stores `format`, the selected process and editable
+device templates for Abstract, SKY130, TSMC 28, TSMC 180 and Custom.
 The editor works in SKY130 until told otherwise, and a native device placed
 while a process is selected is bound to that process's model as part of the
 placement, so a drawn circuit exports as that process rather than with missing
 model fields.
-Format and case are output preferences. Process/device selection is an
+Format is an output preference; names always keep their authored case. Process/device selection is an
 undoable Project transaction that writes ordinary typed bindings and parameters
 before any consumer extracts the circuit. Creating a bundled example applies
 missing native-device defaults from the cached template while retaining
@@ -418,7 +434,22 @@ A valid edit applies after a short typing pause or Enter (Shift+Enter inserts a
 line break). The printer supplies stable Document/Instance locations, including
 SPICE continuation lines; the caret highlights the corresponding canvas Instance
 and opens its Cell when necessary. It does not infer identity from Reference
-spelling, which may repeat across Cells.
+spelling, which may repeat across Cells. The link runs both ways:
+- Parts selected on the canvas light their printed cards, and a new selection
+  scrolls them into view.
+- A new selection on the canvas takes over from the caret's part.
+
+While the strict export is blocked, the panel shows a read-only draft printed
+from the authoring IR (`createDraftNetlistPreview`), so a part appears in the
+netlist as soon as it is placed. In the draft:
+- an unconnected pin, a missing model and a missing required value print as
+  `?`;
+- a part with no netlist form is named in a closing comment;
+- the first line says the text is a draft.
+The cards a blocking finding names are lit in yellow and keep the canvas link.
+A `?` is no identifier in either format, so a draft never passes for a
+netlist. Copy and export stay blocked until the strict export is ready, and
+`designExtractsNetlist` never reads the draft.
 Explicit inspector actions (Q, double-clicking a component, Issues and import
 review) replace the default netlist panel. Canvas editing never requires closing
 the netlist first. A project panel is closed by the control that opened it —
@@ -437,11 +468,14 @@ in this panel is disabled until the draft is applied or discarded. The printed
 source and the circuit share undo/redo through those same transactions.
 
 The copy/export projection removes the strict printer's generated title and
-adds no diagnostic, preset or library comments. It also accepts
-an optional `portCase` (`upper` or `lower`), which the editor always supplies
-from its remembered choice, uppercase by default. Every formal Port name and
-the Cell-local node it owns, subcircuit-call pin names, and external-master
-terminal names then take that case; all other Nets keep their spelling. SPICE
+adds no diagnostic, preset or library comments. It prints every name exactly as
+authored: the live panel, Check Report, copy and download never change a
+name's letter case. The projection still accepts an optional `portCase`
+(`upper` or `lower`) for Agent API callers that request it explicitly; every
+formal Port name and the Cell-local node it owns, subcircuit-call pin names,
+and external-master terminal names then take that case, and all other Nets
+keep their spelling. A browser that saved the retired case preference drops
+it on load and keeps its process choices. SPICE
 preserves an empty first title line so an entry-file reader does not consume
 the first directive. Native SCS begins with its language declaration before an
 include. Structured diagnostics remain available in the optional Check Report;

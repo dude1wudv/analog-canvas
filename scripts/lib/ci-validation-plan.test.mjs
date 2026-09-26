@@ -50,6 +50,69 @@ describe("CI validation planning", () => {
     });
   });
 
+  it("routes Shelf, snapshot history, duplicate correspondence and project sessions to their actual browser workflows", () => {
+    for (const path of [
+      "worker/gallery-do.ts",
+      "apps/editor/src/components/shelf-wall.tsx",
+      "apps/editor/src/components/gallery-version-diff.ts",
+      "apps/editor/src/components/gallery-version-project.ts",
+      "apps/editor/src/components/version-history-comparison.tsx",
+      "apps/editor/src/components/version-history-dialog.css",
+      "apps/editor/src/features/editor-shell/cloud-projects.ts",
+      "apps/editor/src/features/editor-shell/gallery-topology-comparison.tsx",
+      "apps/editor/src/features/editor-shell/gallery-topology-task.ts",
+      "apps/editor/src/features/editor-shell/publish-gallery-dialog.css",
+      "apps/editor/src/gallery-topology-match.ts",
+      "apps/editor/src/gallery.css",
+      "packages/netlist/src/equivalence.ts",
+      "packages/netlist/src/index.ts",
+      "packages/netlist/src/topology-correspondence.ts",
+    ]) {
+      const plan = ciPlan([path]);
+      expect(plan.mode, path).toBe("focused");
+      expect(plan.e2eArgs, path).toContain("apps/editor/e2e/gallery.spec.ts");
+    }
+    for (const path of [
+      "apps/editor/src/features/editor-shell/project-tabs.tsx",
+      "apps/editor/src/features/editor-shell/project-tabs.css",
+      "apps/editor/src/features/project-code/project-code-panel.tsx",
+    ]) {
+      const plan = ciPlan([path]);
+      expect(plan.mode, path).toBe("focused");
+      expect(plan.e2eArgs, path).toContain(
+        "apps/editor/e2e/project-tabs.spec.ts",
+      );
+      expect(plan.e2eArgs, path).toContain(
+        "apps/editor/e2e/project-file.spec.ts",
+      );
+    }
+  });
+
+  it("maps label naming, circuit settings and recovery changes to their browser contracts", () => {
+    for (const [path, spec] of [
+      ["apps/editor/src/components/recovery-banners.tsx", "recovery-hardening"],
+      [
+        "apps/editor/src/features/editor-shell/document-settings-code-assists.ts",
+        "manual-editor",
+      ],
+      [
+        "apps/editor/src/features/editor-shell/document-settings-code.ts",
+        "manual-editor",
+      ],
+      [
+        "apps/editor/src/features/editor-shell/document-settings-section.tsx",
+        "manual-editor",
+      ],
+      ["packages/derived/src/annotation-text.ts", "manual-editor"],
+      ["packages/derived/src/connectivity-index.ts", "wiring-semantics"],
+      ["packages/derived/src/connectivity.ts", "wiring-semantics"],
+    ]) {
+      const plan = ciPlan([path]);
+      expect(plan.mode, path).toBe("focused");
+      expect(plan.e2eArgs, path).toContain(`apps/editor/e2e/${spec}.spec.ts`);
+    }
+  });
+
   it("selects the existing Analog Simulation browser contract", () => {
     expect(
       ciPlan(["packages/simulation-service/src/service.ts"]),
@@ -65,6 +128,7 @@ describe("CI validation planning", () => {
         "apps/editor/e2e/simulation-profile-probes.spec.ts",
         "apps/editor/e2e/simulation-setup.spec.ts",
         "apps/editor/e2e/simulation-spec-results.spec.ts",
+        "apps/editor/e2e/simulation-storage.spec.ts",
         "apps/editor/e2e/simulation-workspace.spec.ts",
       ],
     });
@@ -241,7 +305,7 @@ describe("CI validation planning", () => {
   it("does not allocate a browser runner for non-shipping tests and manifests", () => {
     expect(
       ciPlan([
-        "apps/editor/src/components/editor-help-dialog.test.tsx",
+        "apps/editor/src/app/App.test.tsx",
         "apps/local-host/src/local-host.test.ts",
         "apps/editor/package.json",
         "packages/platform-node/package.json",
@@ -261,9 +325,66 @@ describe("CI validation planning", () => {
       "apps/editor/src/lib/new-helper.ts",
     ]);
     expect(plan.mode).toBe("fallback");
+    expect(plan.e2eArgs).toEqual([
+      "apps/editor/e2e/component-insert.spec.ts",
+      "apps/editor/e2e/gallery.spec.ts",
+      "apps/editor/e2e/runtime-crash-safety.spec.ts",
+    ]);
     expect(plan.reasons).toContain(
       "uncovered browser impact: apps/editor/src/lib/new-helper.ts",
     );
+  });
+
+  it.each([
+    [
+      "apps/editor/e2e/component-property-workflows.spec.ts",
+      ["apps/editor/e2e/component-property-workflows.spec.ts"],
+    ],
+    ["worker/gallery.ts", ["apps/editor/e2e/gallery.spec.ts"]],
+    [
+      "apps/editor/src/lib/new-helper.ts",
+      [
+        "apps/editor/e2e/component-insert.spec.ts",
+        "apps/editor/e2e/runtime-crash-safety.spec.ts",
+      ],
+    ],
+  ])(
+    "does not let non-shipping tests widen browser impact for %s",
+    (path, specs) => {
+      expect(
+        ciPlan([
+          path,
+          "apps/editor/src/app/App.test.tsx",
+          "packages/derived/src/performance-parity.test.ts",
+          "packages/model/src/protocol-documentation.test.ts",
+          "apps/editor/package.json",
+        ]),
+      ).toMatchObject({ heavy: true, browser: true, e2eArgs: specs });
+    },
+  );
+
+  it("retains a production owner's browser coverage when its unit tests also change", () => {
+    const product = [
+      "apps/editor/src/app/App.tsx",
+      "apps/editor/e2e/component-property-workflows.spec.ts",
+    ];
+    expect(ciPlan([...product, "apps/editor/src/app/App.test.tsx"])).toEqual(
+      ciPlan(product),
+    );
+  });
+
+  it("deduplicates fallback specs already selected by a mixed batch", () => {
+    const plan = ciPlan([
+      "apps/editor/e2e/component-insert.spec.ts",
+      "apps/editor/e2e/gallery.spec.ts",
+      "apps/editor/src/lib/new-helper.ts",
+    ]);
+    expect(plan.e2eArgs).toContain("apps/editor/e2e/gallery.spec.ts");
+    expect(
+      plan.e2eArgs.filter(
+        (arg) => arg === "apps/editor/e2e/component-insert.spec.ts",
+      ),
+    ).toHaveLength(1);
   });
 
   it("keeps every browser spec reachable through a focused route", async () => {
@@ -298,7 +419,7 @@ describe("CI validation planning", () => {
     });
   });
 
-  it("forces complete validation for scheduled and manual events", () => {
+  it("forces complete validation when asked to", () => {
     expect(
       ciPlan(["docs/user/getting-started.md"], { forceFull: true }),
     ).toMatchObject({

@@ -3,6 +3,7 @@ import { nativeWorkerEnv } from "./simulation.test-fixture";
 import { SimulationControlDO } from "./simulation-control-do";
 import type {
   SimulationArtifactBucket,
+  SimulationArtifactObject,
   SimulationJobMessage,
   SimulationOperationsEnv,
 } from "./simulation-operations";
@@ -11,9 +12,14 @@ import type {
 // object storage are in-memory test adapters, not Cloudflare qualification.
 function sqliteState() {
   const db = new DatabaseSync(":memory:");
+  let alarm: number | null = null;
   return {
     close: () => db.close(),
     storage: {
+      getAlarm: async () => alarm,
+      setAlarm: async (time: number) => {
+        alarm = time;
+      },
       sql: {
         exec<T>(query: string, ...bindings: unknown[]) {
           const statement = db.prepare(query);
@@ -47,12 +53,37 @@ function sqliteState() {
 
 class MemoryBucket implements SimulationArtifactBucket {
   readonly objects = new Map<string, string>();
-  async get(key: string) {
+  readonly metadata = new Map<string, Record<string, string>>();
+  async get(key: string): Promise<SimulationArtifactObject | null> {
     const value = this.objects.get(key);
-    return value === undefined ? null : { text: async () => value };
+    return value === undefined
+      ? null
+      : {
+          body: new Blob([value]).stream(),
+          text: async () => value,
+          ...(this.metadata.has(key)
+            ? { customMetadata: this.metadata.get(key)! }
+            : {}),
+        };
   }
-  async put(key: string, value: string) {
-    this.objects.set(key, value);
+  async put(
+    key: string,
+    value: string | ReadableStream<Uint8Array>,
+    options?: { sha256?: string; customMetadata?: Record<string, string> },
+  ) {
+    const text =
+      typeof value === "string" ? value : await new Response(value).text();
+    if (options?.sha256) {
+      const digest = Array.from(
+        new Uint8Array(
+          await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)),
+        ),
+        (byte) => byte.toString(16).padStart(2, "0"),
+      ).join("");
+      if (digest !== options.sha256) throw new Error("R2 digest mismatch");
+    }
+    this.objects.set(key, text);
+    if (options?.customMetadata) this.metadata.set(key, options.customMetadata);
     return {};
   }
   async delete(key: string) {
@@ -60,25 +91,30 @@ class MemoryBucket implements SimulationArtifactBucket {
   }
 }
 
-export function createSimulationOperationsHarness() {
+export function createSimulationOperationsHarness(
+  dispatch: "queue" | "alarm" = "queue",
+) {
   const state = sqliteState();
-  const control = new SimulationControlDO(state, undefined, () => 100);
+  const env = {} as SimulationOperationsEnv;
+  const control = new SimulationControlDO(state, env, () => 100);
   const bucket = new MemoryBucket();
   const jobs: SimulationJobMessage[] = [];
-  const env: SimulationOperationsEnv = {
+  Object.assign(env, {
+    SIMULATION_DISPATCH: dispatch,
     SIMULATION_CONTROL: {
       getByName: () => ({
-        fetch: (input, init) => control.fetch(new Request(input, init)),
+        fetch: (input: string, init?: RequestInit) =>
+          control.fetch(new Request(input, init)),
       }),
     },
     SIMULATION_ARTIFACTS: bucket,
     SIMULATION_JOBS: {
-      async send(message) {
+      async send(message: SimulationJobMessage) {
         jobs.push(message);
       },
     },
     ...nativeWorkerEnv(),
-  };
+  });
   const principal = {
     id: "user-a",
     displayName: "User A",
@@ -92,5 +128,5 @@ export function createSimulationOperationsHarness() {
     now: () => 100,
     uuid: () => "lease-a",
   };
-  return { bucket, control, env, jobs, runtime, close: state.close };
+  return { bucket, control, env, jobs, runtime, state, close: state.close };
 }

@@ -136,7 +136,8 @@ export function EditorCrashScreen({
           />
         </div>
         <p className="editor-crash-note">
-          重新加载后，如果最新更改丢失，请使用“文件 / 恢复本地工作…”。
+          After reloading, use File / Recover Unsaved Work… if your latest
+          changes are missing.
         </p>
       </div>
     </div>

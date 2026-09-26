@@ -105,25 +105,33 @@ export function nextCellPinName(
   reservedNames: ReadonlySet<string> = new Set(),
   appearance: "hollow" | "filled" = "hollow",
 ): string {
-  const occupied = new Set(
-    (document.netlist?.terminals ?? []).map((terminal) =>
-      terminal.name.trim().toLowerCase(),
+  const nameKey = (name: string): string =>
+    name.trim().toLowerCase().replace(/^(.)_/, "$1");
+  const unavailableNames = new Set([
+    ...(document.netlist?.terminals ?? []).map((terminal) =>
+      nameKey(terminal.name),
     ),
-  );
+    ...Array.from(reservedNames, nameKey),
+  ]);
   const unavailable = (name: string): boolean =>
-    occupied.has(name.toLowerCase()) || reservedNames.has(name.toLowerCase());
+    unavailableNames.has(nameKey(name));
   if (appearance === "filled") {
     let ordinal = 1;
     while (unavailable(`VB${ordinal}`)) ordinal += 1;
     return `VB${ordinal}`;
   }
-  let pair = 1;
+  // A differential pair in and out, drawn V over an upright lowercase
+  // subscript (Vinp is V with subscript inp); later groups count up.
+  let group = 1;
   while (true) {
-    for (const base of ["Vin", "Vout"] as const) {
-      const name = pair === 1 ? base : `${base}${pair}`;
+    const names =
+      group === 1
+        ? ["Vinp", "Vinn", "Voutp", "Voutn"]
+        : [`Vin${group}p`, `Vin${group}n`, `Vout${group}p`, `Vout${group}n`];
+    for (const name of names) {
       if (!unavailable(name)) return name;
     }
-    pair += 1;
+    group += 1;
   }
 }
 

@@ -6,17 +6,28 @@ const workflow = readFileSync(".github/workflows/ci.yml", "utf8");
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 
 describe("CI workflow", () => {
-  it("validates each current pull-request candidate once", () => {
+  it("validates fork PRs and optional queued groups by changed paths", () => {
     expect(workflow).toContain("  pull_request:\n");
-    expect(workflow).not.toContain("merge_group");
+    expect(workflow).toContain("  merge_group:\n");
+    // The fork has no merge queue; real PR checks must run before delivery.
+    expect(workflow).toContain("if: needs.changes.outputs.heavy == 'true'\n");
+    expect(workflow).toContain(
+      "if: always() && needs.changes.outputs.browser == 'true'",
+    );
+    // Test-Impact is still enforced where the checks run.
+    expect(workflow).toContain(
+      "BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
+    );
+    // A queued group is planned from the main it was queued on, not forced
+    // full.
+    expect(workflow).toContain('base="$MERGE_GROUP_BASE_SHA"');
+    expect(workflow).not.toContain("--force-full");
   });
 
   it("uses runner Chrome for one core and one affected-browser job", () => {
     for (const name of ["Core contracts", "Browser tests"])
       expect(workflow).toContain(`name: ${name}`);
-    expect(workflow).toContain(
-      "if: github.event_name == 'pull_request' && needs.changes.outputs.browser == 'true'",
-    );
+    expect(workflow).toContain("if: needs.changes.outputs.browser == 'true'");
     expect(workflow).toContain(
       "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: /usr/bin/google-chrome",
     );
@@ -49,16 +60,10 @@ describe("CI workflow", () => {
     expect(workflow).toContain('test "$SHARD_RESULT" = "success"');
   });
 
-  it("keeps a weekly browser audit and manual complete validation", () => {
-    expect(workflow).toContain("workflow_dispatch:");
-    expect(workflow).toContain("schedule:");
-    expect(workflow).toContain('cron: "23 18 * * 0"');
-    expect(workflow).toContain("force_args+=(--force-full)");
-    expect(workflow).toContain(
-      "needs.changes.outputs.heavy == 'true' && github.event_name != 'schedule'",
-    );
-    expect(workflow).toContain("Full browser audit (${{ matrix.shard }})");
-    for (const shard of ["1/4", "2/4", "3/4", "4/4"])
-      expect(workflow).toContain(shard);
+  it("runs no scheduled, manual or full browser audit", () => {
+    expect(workflow).not.toContain("schedule:");
+    expect(workflow).not.toContain("cron:");
+    expect(workflow).not.toContain("workflow_dispatch:");
+    expect(workflow).not.toContain("Full browser audit");
   });
 });

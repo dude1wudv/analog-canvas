@@ -103,30 +103,31 @@ describe("editor shell", () => {
     expect(markup).not.toContain("Cell netlist interface");
     expect(markup).not.toContain("网表位号");
     expect(markup).not.toContain("Component model");
-    // Cell navigation is hierarchy navigation, so a flat Project does not
-    // carry a row of controls that cannot do anything yet. 管理 Cell… stays
-    // reachable from Edit.
+    // Hierarchy stays discoverable for a flat Project; the operational row is
+    // still omitted until there is hierarchy to navigate or enter.
     expect(markup).not.toContain('data-testid="cell-navigation"');
-    expect(markup).toContain('data-testid="edit-manage-cells"');
+    expect(markup).toContain('data-testid="hierarchy-entry"');
+    expect(markup).not.toContain('data-testid="edit-manage-cells"');
     expect(markup).not.toContain('data-testid="cell-command-menu"');
-    expect(markup).toContain("管理 Cell…");
-    expect(markup).not.toContain("New Testbench Cell…");
-    expect(markup).not.toContain("Reset Cell Placement");
-    expect(markup).not.toContain("Reset Cell Body");
-    expect(markup).toContain("Instances…");
+    expect(markup).toContain(">Hierarchy</button>");
+    expect(markup).toContain("Project name");
+    expect(markup).toContain("Current Cell");
+    expect(markup).toContain("Edit Device Data…");
     const netlistStart = markup.indexOf('aria-label="Netlist"');
     const netlistEnd = markup.indexOf("</details>", netlistStart);
     const netlistMenu = markup.slice(netlistStart, netlistEnd);
     expect(netlistStart).toBeGreaterThan(-1);
+    expect(netlistMenu).toContain("Copy Netlist");
     expect(netlistMenu).not.toContain("Copy SPICE netlist");
     expect(netlistMenu).not.toContain("Copy Spectre netlist");
     expect(markup).toContain('data-testid="netlist-panel-toggle"');
     expect(markup).toContain('data-testid="project-code-toggle"');
-    expect(markup).toContain("Check Report…");
+    expect(markup).toContain("Review Netlist Issues…");
     expect(netlistMenu).not.toContain('data-testid="open-analog-simulation"');
     expect(markup).toContain('data-testid="open-analog-simulation"');
-    expect(netlistMenu).toContain('data-testid="check-and-save"');
-    expect(markup).not.toContain("<summary>运行</summary>");
+    expect(netlistMenu).not.toContain('data-testid="check-and-save"');
+    expect(markup).toContain('data-testid="check-and-save"');
+    expect(markup).not.toContain("<summary>Run</summary>");
     const agentEnd =
       markup.indexOf("</button>", markup.indexOf('data-testid="open-agent"')) +
       "</button>".length;
@@ -141,14 +142,10 @@ describe("editor shell", () => {
     // "Preflight" named a stage of a netlist pipeline, not the question the
     // person is asking; the Netlist menu carries the plain action.
     expect(markup).not.toContain("Preflight…");
-    // Formal Cloud Save has one File-menu entry; the retired snapshot action
-    // cannot return as a second control source.
     expect(markup).toContain('data-testid="save-cloud-project"');
-    expect(markup).not.toContain("Save cloud snapshot");
-    expect(markup).not.toContain("Edit Cell Interface…");
   });
 
-  it("shows a resolvable imported subcircuit in Cell navigation", () => {
+  it("shows the hierarchy operation row for a resolvable imported subcircuit", () => {
     const project = createEmptyProject("imported-hierarchy", "Imported");
     const topDocument = project.documents[0]!;
     const childDocument = {
@@ -178,30 +175,44 @@ describe("editor shell", () => {
     project.documents.push(childDocument);
 
     const markup = renderToStaticMarkup(<App project={project} />);
+    expect(markup).toContain('data-testid="hierarchy-entry"');
     expect(markup).toContain('data-testid="cell-navigation"');
     expect(markup).toContain("Enter Cell");
-    expect(markup).toContain("dut (top)");
+    expect(markup).toContain("Manage Cells…");
   });
 
-  it("provides one Help entry without rendering its dialog by default", () => {
-    const project = createEmptyProject("help-tutorial", "Help Tutorial");
+  it("links GitHub and the change log directly without a Help surface", () => {
+    const project = createEmptyProject("resource-links", "Resource Links");
     const markup = renderToStaticMarkup(<App project={project} />);
 
-    expect(markup).toContain('aria-haspopup="dialog"');
-    // About folded into Help: one entry, not two saying the same thing.
     expect(markup).not.toContain(">About</button>");
+    expect(markup).not.toContain(">帮助</button>");
+    expect(markup).not.toContain('id="editor-help-dialog"');
     expect(markup).toContain('data-testid="editor-report-bug"');
-    expect(markup).toContain("报告问题");
-    expect(markup).toContain(">帮助</button>");
+    expect(markup).toContain("Report bug");
+    expect(markup).toContain('data-testid="editor-repository-link"');
+    expect(markup).toContain('aria-label="GitHub repository"');
+    expect(markup).toContain(
+      'href="https://github.com/cascode-ai/analog-canvas"',
+    );
+    expect(markup).toContain('data-testid="statusbar-change-log"');
+    expect(markup).toContain(
+      'href="https://github.com/cascode-ai/analog-canvas/commits/main"',
+    );
+    expect(markup).toContain('data-testid="statusbar-shortcut-hints"');
+    expect(markup).toContain("Hints</button>");
+    expect(markup).not.toContain('data-testid="canvas-shortcut-hints"');
     expect(markup).toContain('class="app-chrome-actions"');
     expect(markup).toContain("出品方");
     expect(markup).toContain('href="https://tokenzhang.com"');
     expect(markup).toContain('src="/tokenzhang-favicon.png"');
     const navigationEnd = markup.indexOf("</nav>");
-    const helpButton = markup.indexOf(">帮助</button>");
+    const repositoryLink = markup.indexOf(
+      'data-testid="editor-repository-link"',
+    );
     const ownerLink = markup.indexOf('href="https://tokenzhang.com"');
-    expect(helpButton).toBeGreaterThan(navigationEnd);
-    expect(ownerLink).toBeGreaterThan(helpButton);
+    expect(repositoryLink).toBeGreaterThan(navigationEnd);
+    expect(ownerLink).toBeGreaterThan(repositoryLink);
     expect(markup).not.toContain('role="dialog"');
     // Agent connects directly from the command row; no one-item menu or
     // connection panel appears before the user clicks it.
@@ -245,18 +256,12 @@ describe("editor shell", () => {
     expect(project.simulationFolders).toEqual(persistedSimulation);
   });
 
-  it("keeps the timing surface behind its deployment flag", () => {
+  it("does not expose the retired Digital Timing surface", () => {
     const project = createEmptyProject("timing-flag", "Timing Flag");
-    const localMarkup = renderToStaticMarkup(
-      <App project={project} timingUiEnabled />,
-    );
-    const productionMarkup = renderToStaticMarkup(
-      <App project={project} timingUiEnabled={false} />,
-    );
+    const markup = renderToStaticMarkup(<App project={project} />);
 
-    expect(localMarkup).toContain('title="数字仿真"');
-    expect(productionMarkup).not.toContain('title="数字仿真"');
-    expect(localMarkup).not.toContain('data-testid="timing-simulation-panel"');
+    expect(markup).not.toContain('title="数字仿真"');
+    expect(markup).not.toContain('data-testid="timing-simulation-panel"');
   });
 
   it("links to first-party visitor analytics without crowding editor commands", () => {
@@ -287,7 +292,7 @@ describe("editor shell", () => {
     // The toolbar button that opens a panel is the one that closes it.
     expect(markup).not.toContain('aria-label="Close project tools"');
     expect(markup).not.toContain('data-testid="selection-shelf"');
-    expect(markup).not.toContain('aria-label="Properties"');
+    expect(markup).not.toContain('aria-label="属性"');
     // The panel toggles live in the horizontal toolbar; there is no rail.
     expect(markup).not.toContain('aria-label="Tool rail"');
     expect(markup).toContain('aria-label="图形"');
@@ -309,7 +314,12 @@ describe("editor shell", () => {
     expect(markup).not.toContain('data-testid="draw-tool-line"');
     expect(markup).not.toContain('data-testid="draw-tool-rectangle"');
     expect(markup).not.toContain('data-testid="draw-tool-circle"');
-    expect(markup).toContain("Selection filter");
+    expect(markup).toContain('data-testid="selection-filter-button"');
+    expect(markup).toContain("Choose Selectable Objects… (Ctrl+Shift+F)");
+    expect(markup).toContain("Find in Circuit… (Ctrl+F)");
+    expect(markup).toContain("User Components…");
+    expect(markup).not.toContain("&gt;Undo&lt;");
+    expect(markup).not.toContain("&gt;Redo&lt;");
     expect(markup).not.toContain("Symbols &amp; Tools");
     expect(markup).not.toContain("Search components");
     expect(markup).not.toContain("Browse all");

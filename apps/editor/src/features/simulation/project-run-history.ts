@@ -4,15 +4,11 @@ import type {
   SimulationReply,
 } from "@icm/simulation-service/contract";
 import type { SimulationFiles } from "@icm/simulation-service/files";
-import {
-  createBrowserSimulationArchiveStore,
-  type BrowserSimulationArchiveStore,
-} from "./browser-simulation-archive-store";
-import {
-  captureSimulationRunArchive,
-  MAX_SIMULATION_ARCHIVE_BYTES,
-  type SimulationArchivePresentation,
-  type SimulationRunArchiveV1,
+import type { BrowserSimulationArchiveStore } from "./browser-simulation-archive-store";
+import type {
+  SimulationArchivePresentation,
+  SimulationRunArchiveSummary,
+  SimulationRunArchiveV1,
 } from "./simulation-run-archive";
 
 export interface ProjectRunRecord {
@@ -20,7 +16,9 @@ export interface ProjectRunRecord {
   owner: "agent" | "human";
   presentation: SimulationArchivePresentation;
   state: Run["state"];
-  archive?: SimulationRunArchiveV1;
+  archive?: SimulationRunArchiveSummary;
+  /** Only retained when persistence fails; durable history holds metadata. */
+  memoryArchive?: SimulationRunArchiveV1;
   error?: string;
 }
 
@@ -33,7 +31,7 @@ export class ProjectRunHistory {
   private disposed = false;
   constructor(
     readonly projectId: string,
-    private store: BrowserSimulationArchiveStore = createBrowserSimulationArchiveStore(),
+    private store?: BrowserSimulationArchiveStore,
   ) {}
   snapshot = (): readonly ProjectRunRecord[] => [...this.records.values()];
   /** React StrictMode replays mount effects before any user-owned run starts. */
@@ -44,6 +42,11 @@ export class ProjectRunHistory {
     for (const record of this.records.values()) {
       if (record.archive?.id === archiveId) this.records.delete(record.id);
     }
+    this.notify();
+  }
+  forgetRun(runId: string) {
+    this.records.delete(runId);
+    // Also refresh a mounted history panel for a Run from an older session.
     this.notify();
   }
   subscribe = (listener: () => void) => {
@@ -91,6 +94,21 @@ export class ProjectRunHistory {
           this.notify();
           return;
         }
+        // The registry is created with the editor, but archive codecs and disk
+        // storage are needed only after a run produces evidence.
+        const [
+          {
+            captureSimulationRunArchive,
+            MAX_SIMULATION_ARCHIVE_BYTES,
+            summarizeSimulationRunArchive,
+          },
+          { createBrowserSimulationArchiveStore },
+        ] = await Promise.all([
+          import("./simulation-run-archive"),
+          import("./browser-simulation-archive-store"),
+        ]);
+        if (this.disposed) return;
+        this.store ??= createBrowserSimulationArchiveStore();
         const captured = await captureSimulationRunArchive(input.files, {
           projectId: this.projectId,
           presentation: { ...input.presentation, origin: input.owner },
@@ -103,9 +121,10 @@ export class ProjectRunHistory {
           const byteLength =
             captured.value.byteLength +
             new TextEncoder().encode(input.projectFile ?? "").byteLength;
-          record.archive = {
+          const archive: SimulationRunArchiveV1 = {
             ...captured.value,
             id: `run-${run.id}`,
+            retention: "cache",
             ...(input.projectFile && byteLength <= MAX_SIMULATION_ARCHIVE_BYTES
               ? { projectFile: input.projectFile, byteLength }
               : {}),
@@ -113,17 +132,24 @@ export class ProjectRunHistory {
           if (input.projectFile && byteLength > MAX_SIMULATION_ARCHIVE_BYTES)
             record.error =
               "Project snapshot exceeds the archive size limit; result-only export is available";
-          const saved = await this.store.save(record.archive);
-          if (!saved.ok)
+          const saved = await this.store.save(archive);
+          if (saved.ok)
+            void this.store
+              .pruneCache(this.projectId)
+              .then(async (pruned) => {
+                if (pruned.ok)
+                  for (const archiveId of pruned.value)
+                    this.forgetArchive(archiveId);
+                await this.store?.cleanup(this.projectId);
+              })
+              .catch(() => {});
+          record.archive = saved.ok
+            ? saved.value
+            : summarizeSimulationRunArchive(archive);
+          if (!saved.ok) {
+            record.memoryArchive = archive;
             record.error = `Result available for this session only: ${saved.message}`;
-          const completed = [...this.records.values()].filter(
-            (item) => item.archive,
-          );
-          for (const old of completed.slice(
-            0,
-            Math.max(0, completed.length - 10),
-          ))
-            this.records.delete(old.id);
+          }
         }
         this.notify();
         return;
@@ -165,6 +191,6 @@ export class ProjectRunHistory {
     for (const timer of this.timers) clearTimeout(timer);
     this.timers.clear();
     this.listeners.clear();
-    this.store.close();
+    this.store?.close();
   }
 }

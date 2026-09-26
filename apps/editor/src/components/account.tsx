@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { LocalAccountForm } from "./local-account-form";
-import "./local-account.css";
+import { lazy, Suspense, useEffect, useState } from "react";
+
+const AccountMenuView = lazy(() => import("./account-menu-view"));
 
 /**
  * Gallery accounts (roadmap phase G2), dark-shipped: the worker reports
@@ -166,163 +166,6 @@ export interface AccountMenuViewProps {
   ) => Promise<string | null>;
 }
 
-/** Presentational account area; all effects live in `AccountMenu`. */
-export function AccountMenuView({
-  state,
-  notice,
-  showGalleryLinks = true,
-  onEmailStart,
-  onRename,
-  onSignOut,
-  onLocalAuthenticate,
-}: AccountMenuViewProps) {
-  const [email, setEmail] = useState("");
-  const [renaming, setRenaming] = useState(false);
-  const [draftName, setDraftName] = useState("");
-  const { providers, user } = state;
-
-  if (user) {
-    return (
-      <div className="account-menu" data-testid="account-menu">
-        {renaming ? (
-          <input
-            className="account-rename-input"
-            aria-label="显示名称"
-            data-testid="account-rename-input"
-            value={draftName}
-            maxLength={40}
-            autoFocus
-            onChange={(event) => setDraftName(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && draftName.trim()) {
-                onRename(draftName.trim());
-                setRenaming(false);
-              }
-              if (event.key === "Escape") setRenaming(false);
-            }}
-            onBlur={() => setRenaming(false)}
-          />
-        ) : (
-          <button
-            type="button"
-            className="account-name"
-            data-testid="account-name"
-            title="点击修改显示名称"
-            onClick={() => {
-              setDraftName(user.displayName);
-              setRenaming(true);
-            }}
-          >
-            {user.displayName}
-          </button>
-        )}
-        {/* One disclosure instead of a row of links: at half-screen width the
-            badge, Review, My submissions, and Sign out each wrapped onto two
-            lines and the header became unreadable. */}
-        <details className="account-more">
-          <summary aria-label="账户菜单">
-            {user.isAdmin ? (
-              <span className="account-owner-badge" data-testid="account-owner">
-                所有者
-              </span>
-            ) : user.role === "moderator" ? (
-              <span className="account-owner-badge" data-testid="account-mod">
-                审核员
-              </span>
-            ) : null}
-            <span aria-hidden="true">⋯</span>
-          </summary>
-          <div className="account-popover">
-            {showGalleryLinks && (user.isAdmin || user.role === "moderator") ? (
-              <a
-                className="account-link"
-                href="/moderation"
-                data-testid="account-moderation-link"
-              >
-                内容审核
-              </a>
-            ) : null}
-            {showGalleryLinks ? (
-              <a
-                className="account-link"
-                href="/mine"
-                data-testid="account-mine"
-              >
-                我的提交
-              </a>
-            ) : null}
-            <button
-              type="button"
-              className="account-signout"
-              data-testid="account-signout"
-              onClick={onSignOut}
-            >
-              退出登录
-            </button>
-          </div>
-        </details>
-      </div>
-    );
-  }
-
-  if (
-    !providers.github &&
-    !providers.google &&
-    !providers.email &&
-    !providers.local
-  ) {
-    // Dark ship: with no provider configured, sign-in does not exist.
-    return null;
-  }
-
-  return (
-    <details className="account-signin" data-testid="account-signin">
-      <summary>登录</summary>
-      <div className="account-signin-panel">
-        {providers.local && onLocalAuthenticate && (
-          <LocalAccountForm authenticate={onLocalAuthenticate} />
-        )}
-        {providers.github ? (
-          <a href="/api/auth/github/start" data-testid="signin-github">
-            使用 GitHub 继续
-          </a>
-        ) : null}
-        {providers.google ? (
-          <a href="/api/auth/google/start" data-testid="signin-google">
-            使用 Google 继续
-          </a>
-        ) : null}
-        {providers.email ? (
-          <form
-            className="account-signin-email"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (email.trim()) onEmailStart(email.trim());
-            }}
-          >
-            <input
-              type="email"
-              aria-label="邮箱地址"
-              data-testid="signin-email-input"
-              placeholder="you@example.com"
-              value={email}
-              onChange={(event) => setEmail(event.currentTarget.value)}
-            />
-            <button type="submit" data-testid="signin-email-send">
-              向我发送登录链接
-            </button>
-          </form>
-        ) : null}
-        {notice ? (
-          <p className="account-notice" data-testid="account-notice">
-            {notice}
-          </p>
-        ) : null}
-      </div>
-    </details>
-  );
-}
-
 /** Self-loading account area shared by Gallery and Editor chrome. */
 export function AccountMenu({
   showGalleryLinks = true,
@@ -348,51 +191,53 @@ export function AccountMenu({
 
   if (!state) return null;
   return (
-    <AccountMenuView
-      state={state}
-      notice={notice}
-      onLocalAuthenticate={async (username, password, register) => {
-        try {
-          const response = await fetch(
-            `/api/auth/local/${register ? "register" : "login"}`,
-            {
-              method: "POST",
-              credentials: "same-origin",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ username, password }),
-            },
-          );
-          const payload = (await response.json()) as {
-            user?: SessionUser;
-            message?: string;
-          };
-          if (!response.ok || !payload.user)
-            return payload.message ?? "无法登录，请稍后重试。";
-          cacheSessionUser(fetch, payload.user);
-          setState({ providers: state.providers, user: payload.user });
-          return null;
-        } catch {
-          return "登录服务暂不可用，请稍后重试。";
-        }
-      }}
-      showGalleryLinks={showGalleryLinks}
-      onEmailStart={(email) => {
-        void requestEmailLink(email).then(setNotice);
-      }}
-      onRename={(displayName) => {
-        void renameAccount(displayName).then((user) => {
-          if (user) {
-            setState({ providers: state.providers, user });
-            cacheSessionUser(fetch, user);
+    <Suspense fallback={null}>
+      <AccountMenuView
+        state={state}
+        notice={notice}
+        onLocalAuthenticate={async (username, password, register) => {
+          try {
+            const response = await fetch(
+              `/api/auth/local/${register ? "register" : "login"}`,
+              {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username, password }),
+              },
+            );
+            const payload = (await response.json()) as {
+              user?: SessionUser;
+              message?: string;
+            };
+            if (!response.ok || !payload.user)
+              return payload.message ?? "无法登录，请稍后重试。";
+            cacheSessionUser(fetch, payload.user);
+            setState({ providers: state.providers, user: payload.user });
+            return null;
+          } catch {
+            return "登录服务暂不可用，请稍后重试。";
           }
-        });
-      }}
-      onSignOut={() => {
-        void signOut().then(() => {
-          setState({ providers: state.providers, user: null });
-          cacheSessionUser(fetch, null);
-        });
-      }}
-    />
+        }}
+        showGalleryLinks={showGalleryLinks}
+        onEmailStart={(email) => {
+          void requestEmailLink(email).then(setNotice);
+        }}
+        onRename={(displayName) => {
+          void renameAccount(displayName).then((user) => {
+            if (user) {
+              setState({ providers: state.providers, user });
+              cacheSessionUser(fetch, user);
+            }
+          });
+        }}
+        onSignOut={() => {
+          void signOut().then(() => {
+            setState({ providers: state.providers, user: null });
+            cacheSessionUser(fetch, null);
+          });
+        }}
+      />
+    </Suspense>
   );
 }

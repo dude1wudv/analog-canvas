@@ -1,6 +1,9 @@
+import { plainNameDocument } from "@icm/model";
+import { resolveAnnotationName } from "./annotation-text.js";
 import {
   createEmptyDocument,
   flattenRichText,
+  labelTextDocument,
   semanticTextDocument,
   type Annotation,
 } from "@icm/model";
@@ -38,7 +41,7 @@ describe("bound annotation text", () => {
     };
 
     expect(resolveAnnotationText(document, annotation)).toEqual(
-      semanticTextDocument("M_INTERNAL", "instance-label"),
+      labelTextDocument("M_INTERNAL", document.presentation),
     );
     expect(
       resolveAnnotationText(document, {
@@ -70,7 +73,7 @@ describe("bound annotation text", () => {
       locked: false,
     };
     expect(resolveAnnotationText(document, annotation)).toEqual(
-      semanticTextDocument("R7", "instance-label"),
+      labelTextDocument("R7", document.presentation),
     );
     delete document.instances[0]!.reference;
     expect(resolveAnnotationText(document, annotation)).toEqual(
@@ -117,7 +120,7 @@ describe("bound annotation text", () => {
     };
 
     expect(resolveAnnotationText(document, annotation)).toEqual(
-      semanticTextDocument("Vout", "formal-port"),
+      labelTextDocument("Vout", document.presentation),
     );
     annotation.formatOverride = {
       runs: [
@@ -137,6 +140,44 @@ describe("bound annotation text", () => {
       annotation.formatOverride,
     );
     expect(document.netlist.terminals[0]!.name).toBe("Vout");
+  });
+
+  it("shows a same-text Value look but never a stale electrical value", () => {
+    const document = createEmptyDocument("value-look", "Value look");
+    document.instances.push({
+      id: "R1",
+      symbolId: "resistor",
+      placement: null,
+      netlist: { parameters: { value: "RL" } },
+    });
+    const formatOverride = {
+      runs: [
+        { kind: "text" as const, value: "R" },
+        {
+          kind: "span" as const,
+          style: "subscript" as const,
+          children: [{ kind: "text" as const, value: "L" }],
+        },
+      ],
+    };
+    const annotation: Annotation = {
+      id: "R1-value",
+      kind: "instance-value",
+      binding: { kind: "instance-value", instanceId: "R1" },
+      formatOverride,
+      anchor: { kind: "free", position: { x: 0, y: 0 } },
+      alignment: "start",
+      rotation: 0,
+      locked: false,
+    };
+    expect(resolveAnnotationText(document, annotation)).toEqual(formatOverride);
+    document.instances[0]!.netlist!.parameters.value = "RD";
+    expect(flattenRichText(resolveAnnotationText(document, annotation))).toBe(
+      "RD",
+    );
+    expect(resolveAnnotationText(document, annotation)).not.toEqual(
+      formatOverride,
+    );
   });
 
   it("projects a Net name without touching its movable route anchor", () => {
@@ -175,17 +216,11 @@ describe("bound annotation text", () => {
     });
 
     const before = structuredClone(annotation.anchor);
-    expect(flattenRichText(resolveAnnotationText(document, annotation))).toBe(
-      "V_{in,cm}",
-    );
-    expect(flattenRichText(resolveAnnotationText(document, annotation))).toBe(
-      "V_{in,cm}",
-    );
+    expect(resolveAnnotationName(document, annotation)).toBe("V_{in,cm}");
+    expect(resolveAnnotationName(document, annotation)).toBe("V_{in,cm}");
     const claim = document.connectivityEvidence[0];
     if (claim?.kind === "name-claim") claim.name = "V_{refp}";
-    expect(flattenRichText(resolveAnnotationText(document, annotation))).toBe(
-      "V_{refp}",
-    );
+    expect(resolveAnnotationName(document, annotation)).toBe("V_{refp}");
     expect(annotation.anchor).toEqual(before);
   });
 
@@ -194,7 +229,7 @@ describe("bound annotation text", () => {
     const annotation = {
       id: "master-M1",
       kind: "instance-label" as const,
-      content: semanticTextDocument("sky130_nfet", "instance-label"),
+      content: plainNameDocument("sky130_nfet"),
       anchor: { kind: "free" as const, position: { x: 0, y: 0 } },
       alignment: "start" as const,
       rotation: 0 as const,
@@ -205,4 +240,39 @@ describe("bound annotation text", () => {
       "sky130_nfet",
     );
   });
+});
+
+it("uses the saved slant for generated subscripts while preserving explicit per-label formatting", () => {
+  const document = createEmptyDocument("slant", "Slant");
+  document.instances.push({
+    id: "R1",
+    reference: "R_load",
+    symbolId: "resistor",
+    placement: null,
+  });
+  document.presentation.labelSubscriptItalic = false;
+  const annotation: Annotation = {
+    id: "label",
+    kind: "instance-label",
+    binding: { kind: "instance-reference", instanceId: "R1" },
+    anchor: { kind: "free", position: { x: 0, y: 0 } },
+    alignment: "start",
+    rotation: 0,
+    locked: false,
+  };
+  expect(resolveAnnotationText(document, annotation).runs[1]).toEqual({
+    kind: "span",
+    style: "subscript",
+    children: [
+      {
+        kind: "span",
+        style: "bold",
+        children: [{ kind: "text", value: "load" }],
+      },
+    ],
+  });
+  annotation.formatOverride = semanticTextDocument("R_load", "instance-label");
+  expect(resolveAnnotationText(document, annotation)).toEqual(
+    annotation.formatOverride,
+  );
 });

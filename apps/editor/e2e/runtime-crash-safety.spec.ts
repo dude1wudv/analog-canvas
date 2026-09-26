@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { chooseComponent, clickCommand } from "./editor-fixtures.js";
+import { awaitEditorReady, chooseComponent } from "./editor-fixtures.js";
 
 // These cases deliberately break and reload the shared editor origin. Keep
 // them in one worker so cache cleanup and failed chunk requests cannot race.
@@ -10,7 +10,7 @@ test("a render crash shows the recovery screen instead of a blank page", async (
   page,
 }) => {
   await page.goto("/editor");
-  await expect(page.getByTestId("schematic-canvas")).toBeVisible();
+  await awaitEditorReady(page);
 
   // Arm the DEV-only render crash probe and force one more App render.
   page.on("pageerror", (error) => console.log("PAGEERROR:", error.message));
@@ -36,8 +36,8 @@ test("a render crash shows the recovery screen instead of a blank page", async (
   expect(bugReportBody).not.toContain("test hook");
 
   // Reloading brings the editor back without the transient crash flag.
-  await crashScreen.getByRole("button", { name: "重新加载编辑器" }).click();
-  await expect(page.getByTestId("schematic-canvas")).toBeVisible();
+  await crashScreen.getByRole("button", { name: "Reload editor" }).click();
+  await awaitEditorReady(page);
 });
 
 test("a repeated route chunk failure is not misreported as an old build", async ({
@@ -101,7 +101,7 @@ test("the recovery button gets a stuck page back into the editor", async ({
   chunkRetired = false;
   await recover.click();
 
-  await expect(page.getByTestId("schematic-canvas")).toBeVisible();
+  await awaitEditorReady(page);
   await expect(crashScreen).toHaveCount(0);
   // The build's cached shell is gone, not merely bypassed by the reload.
   expect(await page.evaluate(() => caches.keys())).not.toContain(
@@ -123,7 +123,7 @@ test("a failed dialog chunk degrades to a scoped notice, not the crash screen", 
   // A tab that survives a redeploy asks for chunk names the server no longer
   // has. Aborting the request reproduces the same rejected dynamic import.
   await page.route("**/cell-manager-dialog*", (route) => route.abort());
-  await clickCommand(page, "Edit", "Manage Cells…");
+  await page.getByTestId("hierarchy-entry").click();
 
   const fallback = page.getByTestId("dialog-chunk-load-fallback");
   await expect(fallback).toBeVisible();
@@ -136,7 +136,7 @@ test("a failed dialog chunk degrades to a scoped notice, not the crash screen", 
   await expect(page.getByTestId("hit-R1")).toBeVisible();
 
   // Refreshing from the notice restores the circuit automatically.
-  await clickCommand(page, "Edit", "Manage Cells…");
+  await page.getByTestId("hierarchy-entry").click();
   const navigated = page.waitForEvent("framenavigated");
   await page.unroute("**/cell-manager-dialog*");
   await page
@@ -145,9 +145,15 @@ test("a failed dialog chunk degrades to a scoped notice, not the crash screen", 
     .click();
   await navigated;
   await expect(page.getByTestId("hit-R1")).toBeVisible();
-  await expect(page.getByTestId("status")).toHaveText(
-    "Restored recovery revision 1",
-  );
+  // Whole-window recovery now restores the project tab, so the old
+  // single-document recovery toast is no longer the recovery contract.
+  // Check the actual restored revision and that the editor remains usable.
+  await expect(page.getByTestId("revision")).toHaveText("1");
+  await page.getByTestId("hierarchy-entry").click();
+  await expect(page.getByTestId("dialog-chunk-load-fallback")).toHaveCount(0);
+  await expect(
+    page.getByRole("dialog", { name: "Cell Manager" }),
+  ).toBeVisible();
 });
 
 test("a scene build failure degrades to the last good view and recovers", async ({

@@ -1,4 +1,6 @@
+import { planComponentDefinitionEdit } from "./component-definition-plan";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { InlineConfirm } from "../../components/inline-confirm";
 import type { ComponentDefinition } from "@icm/model";
 import {
   AccountMenu,
@@ -23,8 +25,14 @@ export interface ComponentDefinitionEditorProps {
   definition: ComponentDefinition;
   entry?: SharedComponent;
   mode: "new" | "instance" | "library";
-  validateApply?(definition: ComponentDefinition): string | null;
-  onSaved(entry: SharedComponent): string | null;
+  validateApply?(
+    definition: ComponentDefinition,
+    planner: typeof planComponentDefinitionEdit,
+  ): string | null;
+  onSaved(
+    entry: SharedComponent,
+    planner: typeof planComponentDefinitionEdit,
+  ): string | null;
   onManaged(): void;
   onClose(): void;
 }
@@ -86,19 +94,22 @@ export default function ComponentDefinitionEditor(
       (record.authorId === user?.id && record.status === "shared"));
   const id = canUpdate ? record!.id : newId;
   const revision = canUpdate ? record!.revision : 0;
+  const [discarding, setDiscarding] = useState(false);
   function close() {
     if (busy) return;
-    if (
-      source !== baseline &&
-      !window.confirm("Discard unsaved component changes?")
-    )
+    if (source !== baseline) {
+      setDiscarding(!discarding);
       return;
+    }
     props.onClose();
   }
   async function save() {
     if (!parsed.definition || busy || !user || record?.status === "deleted")
       return;
-    const conflict = latest.current.validateApply?.(parsed.definition);
+    const conflict = latest.current.validateApply?.(
+      parsed.definition,
+      planComponentDefinitionEdit,
+    );
     if (conflict) {
       setNotice(conflict);
       return;
@@ -109,7 +120,7 @@ export default function ComponentDefinitionEditor(
       const saved = await saveSharedComponent(id, revision, parsed.definition);
       setRecord(saved);
       setBaseline(source);
-      const error = latest.current.onSaved(saved);
+      const error = latest.current.onSaved(saved, planComponentDefinitionEdit);
       setNotice(
         error ? `Saved publicly. ${error}` : "Saved to the public library.",
       );
@@ -121,13 +132,6 @@ export default function ComponentDefinitionEditor(
   }
   async function manage(status: "official" | "deleted" | "shared") {
     if (!record || busy) return;
-    if (
-      status === "deleted" &&
-      !window.confirm(
-        `Remove ${record.definition.symbol.name} from the public library? Existing circuits keep their copy.`,
-      )
-    )
-      return;
     setBusy(true);
     setNotice(null);
     try {
@@ -191,14 +195,28 @@ export default function ComponentDefinitionEditor(
                     ? "Save"
                     : "Save as new component"}
           </button>
-          <button
-            type="button"
-            aria-label="Close component editor"
-            disabled={busy}
-            onClick={close}
-          >
-            ×
-          </button>
+          {source !== baseline ? (
+            <InlineConfirm
+              aria-label="Close component editor"
+              disabled={busy}
+              open={discarding}
+              onOpenChange={setDiscarding}
+              confirmLabel="Discard changes"
+              cancelLabel="Keep editing"
+              onConfirm={props.onClose}
+            >
+              ×
+            </InlineConfirm>
+          ) : (
+            <button
+              type="button"
+              aria-label="Close component editor"
+              disabled={busy}
+              onClick={close}
+            >
+              ×
+            </button>
+          )}
         </div>
       </header>
       <p className="component-definition-note">
@@ -290,13 +308,9 @@ export default function ComponentDefinitionEditor(
             </button>
           ) : null}
           {record.status !== "deleted" ? (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void manage("deleted")}
-            >
+            <InlineConfirm disabled={busy} onConfirm={() => manage("deleted")}>
               Delete component
-            </button>
+            </InlineConfirm>
           ) : null}
         </footer>
       ) : null}

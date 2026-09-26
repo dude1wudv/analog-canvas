@@ -1,3 +1,4 @@
+import { applyLabelSubscriptCase } from "../text-editing/label-subscript-case";
 import {
   lazy,
   Suspense,
@@ -10,6 +11,7 @@ import type { SchematicDocument } from "@icm/model";
 import type { PropertyJsonEditorAdapter } from "../properties/component-property-json-editor";
 
 import {
+  documentSettingsCodeValue,
   defaultDocumentSettingsCode,
   formatDocumentSettingsCode,
   parseDocumentSettingsCode,
@@ -31,10 +33,12 @@ export interface DocumentSettingsSectionProps {
   canvas: CanvasPreferenceCodeValue;
   onApply(
     value: DocumentSettingsCodeValue,
+    current: DocumentSettingsCodeValue,
+    applyLabels: typeof applyLabelSubscriptCase,
   ): { ok: true } | { ok: false; message: string };
 }
 
-/** One plain JSON surface for Document appearance and uncommon canvas preferences. */
+/** One plain JSON surface for every Document-wide and editor preference. */
 export function DocumentSettingsSection({
   document,
   canvas,
@@ -87,7 +91,11 @@ export function DocumentSettingsSection({
     if (!next.ok) return;
     const normalized = serializeDocumentSettingsCode(next.value);
     if (normalized === baseline) return;
-    const result = onApply(next.value);
+    const result = onApply(
+      next.value,
+      documentSettingsCodeValue(document, canvas),
+      applyLabelSubscriptCase,
+    );
     if (!result.ok) {
       setMessage(result.message);
       setRejected(true);
@@ -99,7 +107,7 @@ export function DocumentSettingsSection({
   async function copy(): Promise<void> {
     try {
       await navigator.clipboard.writeText(draft);
-      setMessage("Style JSON copied");
+      setMessage("Properties JSON copied");
     } catch {
       setMessage("Clipboard unavailable; select the code and copy it");
     }
@@ -108,11 +116,11 @@ export function DocumentSettingsSection({
   return (
     <section
       className="component-property-code-editor document-settings-code-editor"
-      aria-label="Document settings"
+      aria-label="文档设置"
       data-testid="document-settings-code-editor"
     >
       <header>
-        <strong>Style</strong>
+        <strong>Properties code</strong>
         <div className="component-property-header-actions">
           <button
             type="button"
@@ -121,14 +129,14 @@ export function DocumentSettingsSection({
               change(defaultDocumentSettingsCode(document, canvas))
             }
           >
-            Defaults
+            默认值
           </button>
           {(!parsed.ok || rejected) && (
             <button
               type="button"
               className="component-property-copy"
-              aria-label="Discard Style draft"
-              title="Discard invalid Style draft"
+              aria-label="Discard Properties draft"
+              title="Discard invalid Properties draft"
               onClick={() => {
                 setDraft(baseline);
                 setMessage(null);
@@ -141,8 +149,8 @@ export function DocumentSettingsSection({
           <button
             type="button"
             className="component-property-copy"
-            aria-label="Copy Style JSON"
-            title="Copy Style JSON"
+            aria-label="Copy Properties JSON"
+            title="Copy Properties JSON"
             onClick={() => void copy()}
           >
             <svg
@@ -161,7 +169,7 @@ export function DocumentSettingsSection({
       <Suspense
         fallback={
           <textarea
-            aria-label="Loading document Style code"
+            aria-label="Loading Properties code"
             value={draft}
             readOnly
             rows={20}
@@ -173,7 +181,7 @@ export function DocumentSettingsSection({
           historyKey={historyKey}
           adapter={adapter}
           defaultForeground="#000000"
-          ariaLabel="Editable document Style code"
+          ariaLabel="Editable Properties code"
           onChange={change}
         />
       </Suspense>

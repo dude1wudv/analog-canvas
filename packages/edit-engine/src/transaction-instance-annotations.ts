@@ -1,7 +1,8 @@
 import {
+  flattenRichText,
   inverseTransformPoint,
   mirrorScale,
-  rewriteRichTextPlainText,
+  renamedLabelFormat,
   snapGridPoint,
   transformPoint,
 } from "@icm/model";
@@ -14,6 +15,8 @@ import type {
 } from "@icm/model";
 import {
   defaultInstanceLabelPlacement,
+  legacyDefaultInstanceLabelPlacement,
+  legacyPortLabelPlacement,
   defaultInstanceParameterLabelPlacement,
   displayableInstanceParameter,
   defaultVddPowerLabelPlacement,
@@ -23,6 +26,7 @@ import {
   placeUprightInstanceLabel,
   resolveDocumentStyleProfile,
   visibleSymbolInkBounds,
+  type InstanceLabelPlacement,
 } from "@icm/derived";
 import type { SymbolResolver } from "@icm/symbols";
 
@@ -126,23 +130,39 @@ function isCanonicalCellPinLabel(
   ) {
     return false;
   }
-  const expected = defaultInstanceLabelPlacement(
-    { ...instance, placement: { position: oldPosition, ...oldOrientation } },
-    resolved,
-    resolveDocumentStyleProfile(document.presentation),
-    document.presentation.grid,
-    "reference",
-  );
-  if (!expected) return false;
+  const before = {
+    ...instance,
+    placement: { position: oldPosition, ...oldOrientation },
+  };
+  const profile = resolveDocumentStyleProfile(document.presentation);
   const visiblePosition = {
     x: oldPosition.x + annotation.anchor.localOffset.x,
     y: oldPosition.y + annotation.anchor.localOffset.y,
   };
-  return (
-    annotation.rotation === 0 &&
-    annotation.alignment === expected.alignment &&
-    samePoint(visiblePosition, expected.position) &&
-    samePoint(annotation.anchor.fallbackPosition, expected.position)
+  const fallbackPosition = annotation.anchor.fallbackPosition;
+  // A label the previous rule placed is just as untouched as one the current
+  // rule placed, so both keep following their Pin.
+  return [
+    defaultInstanceLabelPlacement(
+      before,
+      resolved,
+      profile,
+      document.presentation.grid,
+      "reference",
+    ),
+    legacyPortLabelPlacement(
+      before,
+      resolved,
+      profile,
+      document.presentation.grid,
+    ),
+  ].some(
+    (expected) =>
+      expected !== null &&
+      annotation.rotation === 0 &&
+      annotation.alignment === expected.alignment &&
+      samePoint(visiblePosition, expected.position) &&
+      samePoint(fallbackPosition, expected.position),
   );
 }
 
@@ -174,11 +194,35 @@ export function refreshInstanceValueAnnotation(
       continue;
     }
     if (annotation.binding?.kind === "instance-value") {
+      const previousDisplay = annotation.binding.parameter
+        ? displayableInstanceParameter(
+            before,
+            annotation.binding.parameter,
+            annotation.binding.showValue === false ? { showValue: false } : {},
+          )
+        : previous;
       const next = annotation.binding.parameter
-        ? displayableInstanceParameter(instance, annotation.binding.parameter)
+        ? displayableInstanceParameter(
+            instance,
+            annotation.binding.parameter,
+            annotation.binding.showValue === false ? { showValue: false } : {},
+          )
         : displayableInstanceValue(instance);
       if (next.kind !== "displayable") {
         annotation.visible = false;
+      } else if (annotation.formatOverride) {
+        if (previousDisplay.kind === "displayable") {
+          const format = renamedLabelFormat(
+            annotation,
+            flattenRichText(previousDisplay.content),
+            flattenRichText(next.content),
+            draft.presentation,
+          );
+          if (format) annotation.formatOverride = format;
+          else delete annotation.formatOverride;
+        } else {
+          delete annotation.formatOverride;
+        }
       }
       changedObjectIds.add(annotation.id);
       continue;
@@ -232,10 +276,16 @@ export function refreshInstanceReferenceAnnotation(
       continue;
     }
     if (annotation.formatOverride) {
-      annotation.formatOverride = rewriteRichTextPlainText(
-        annotation.formatOverride,
+      // A stored M₁ look follows the new Reference; an authored format keeps
+      // its styling around the new text.
+      const format = renamedLabelFormat(
+        annotation,
+        previousReference,
         nextReference,
+        draft.presentation,
       );
+      if (format) annotation.formatOverride = format;
+      else delete annotation.formatOverride;
     }
     changedObjectIds.add(annotation.id);
   }
@@ -265,35 +315,59 @@ export function isCanonicalInstanceLabel(
     annotation.binding?.kind === "instance-value"
       ? annotation.binding.parameter
       : undefined;
-  const expected = parameter
-    ? defaultInstanceParameterLabelPlacement(
-        { ...instance, placement },
-        resolved,
-        resolveDocumentStyleProfile(document.presentation),
-        document.presentation.grid,
-        parameter,
-      )
-    : defaultInstanceLabelPlacement(
-        { ...instance, placement },
-        resolved,
-        resolveDocumentStyleProfile(document.presentation),
-        document.presentation.grid,
-        slot,
-      );
+  const profile = resolveDocumentStyleProfile(document.presentation);
   const visiblePosition = {
     x: oldPosition.x + anchor.localOffset.x,
     y: oldPosition.y + anchor.localOffset.y,
   };
-  const matches = (candidate: typeof expected): boolean =>
+  const matches = (candidate: InstanceLabelPlacement | null): boolean =>
     candidate !== null &&
     annotation.alignment === candidate.alignment &&
     visiblePosition.x === candidate.position.x &&
     visiblePosition.y === candidate.position.y &&
     anchor.fallbackPosition.x === candidate.position.x &&
     anchor.fallbackPosition.y === candidate.position.y;
-  if (matches(expected) && (!parameter || annotation.rotation === 0))
+  if (parameter)
+    return (
+      annotation.rotation === 0 &&
+      matches(
+        defaultInstanceParameterLabelPlacement(
+          { ...instance, placement },
+          resolved,
+          profile,
+          document.presentation.grid,
+          parameter,
+        ),
+      )
+    );
+  // An orientation edit re-places an untouched label at its own size, so it
+  // is untouched where a rule puts a label of that size, or of the default
+  // size it was placed at before a person resized it. Placements computed
+  // at a size other than the label's own would stop matching after one turn.
+  const sizeScales = [...new Set([annotation.sizeScale ?? 1, 1])];
+  const placedBy = (
+    rule: typeof defaultInstanceLabelPlacement,
+    symbol: NonNullable<ReturnType<SymbolResolver["resolve"]>> = resolved,
+  ) =>
+    sizeScales.some((sizeScale) =>
+      matches(
+        rule(
+          { ...instance, placement },
+          symbol,
+          profile,
+          document.presentation.grid,
+          slot,
+          sizeScale,
+        ),
+      ),
+    );
+  // A label the previous placement rule put down is just as untouched; the
+  // next orientation edit moves it with the current rule.
+  if (
+    placedBy(defaultInstanceLabelPlacement) ||
+    placedBy(legacyDefaultInstanceLabelPlacement)
+  )
     return true;
-  if (parameter) return false;
 
   // Projects saved before the reviewed Resistor path declared tight bounds
   // used its wider viewBox for the canonical label. Accept that one exact
@@ -301,7 +375,7 @@ export function isCanonicalInstanceLabel(
   // it through the current placement rule. This stays Symbol-specific so a
   // nearby user-authored label is never absorbed by a general tolerance.
   if (instance.symbolId !== "resistor") return false;
-  const legacyResolved = {
+  return placedBy(legacyDefaultInstanceLabelPlacement, {
     ...resolved,
     definition: {
       ...resolved.definition,
@@ -311,15 +385,7 @@ export function isCanonicalInstanceLabel(
         return withoutBounds;
       }),
     },
-  };
-  const legacyExpected = defaultInstanceLabelPlacement(
-    { ...instance, placement },
-    legacyResolved,
-    resolveDocumentStyleProfile(document.presentation),
-    document.presentation.grid,
-    slot,
-  );
-  return matches(legacyExpected);
+  });
 }
 
 /**

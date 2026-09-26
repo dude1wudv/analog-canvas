@@ -8,8 +8,8 @@ import {
   NetHighlightOverlay,
   DiagnosticMarkersOverlay,
   WireUnderSymbolOverlay,
-  NetLabelTetherOverlay,
-  type NetLabelTether,
+  LabelTetherOverlay,
+  type LabelTether,
 } from "./editor-canvas-overlays";
 import { EditorCanvasHitLayer } from "./editor-canvas-hit-layer";
 import { EditorCellSymbolLayoutOverlay } from "./editor-cell-symbol-layout-overlay";
@@ -31,8 +31,7 @@ import type { CameraRuntime } from "./camera-runtime";
 import { EDITOR_SHORTCUT_REFERENCE } from "../interaction/editor-shortcut-reference";
 
 export interface EditorCanvasSurfaceProps {
-  empty: boolean;
-  showQuickStart?: boolean;
+  shortcutHintsVisible: boolean;
   className: string;
   viewBox: string;
   cameraRuntime: CameraRuntime;
@@ -61,7 +60,7 @@ export interface EditorCanvasSurfaceProps {
   netHighlight: ComponentProps<typeof NetHighlightOverlay>;
   wireUnderSymbol: ComponentProps<typeof WireUnderSymbolOverlay>;
   diagnosticMarkers: ComponentProps<typeof DiagnosticMarkersOverlay>;
-  netLabelTether: NetLabelTether | null;
+  labelTethers: readonly LabelTether[];
   copyPreviewInnerHtml: { __html: string } | null;
   copyPreviewTransform: string | undefined;
   inputPlanes: ComponentProps<typeof CanvasInputPlanes>;
@@ -86,8 +85,7 @@ function CanvasShortcutChord({ keys }: { keys: readonly string[] }) {
 
 /** SVG scene composition; interaction semantics arrive through typed models. */
 export function EditorCanvasSurface({
-  empty,
-  showQuickStart = true,
+  shortcutHintsVisible,
   className,
   viewBox,
   cameraRuntime,
@@ -101,7 +99,7 @@ export function EditorCanvasSurface({
   netHighlight,
   wireUnderSymbol,
   diagnosticMarkers,
-  netLabelTether,
+  labelTethers,
   copyPreviewInnerHtml,
   copyPreviewTransform,
   inputPlanes,
@@ -205,15 +203,15 @@ export function EditorCanvasSurface({
   }, [cameraRuntime]);
   return (
     <section className="canvas-panel">
-      {empty && showQuickStart ? (
+      {shortcutHintsVisible ? (
         <aside
           className="canvas-shortcut-menu"
-          data-testid="canvas-empty-state"
-          aria-label="快速入门快捷键"
+          data-testid="canvas-shortcut-hints"
+          aria-label="Keyboard shortcuts"
         >
           <div className="canvas-shortcut-menu-heading">
-            <p className="canvas-shortcut-menu-title">快速开始</p>
-            <span>全部快捷键</span>
+            <p className="canvas-shortcut-menu-title">Keyboard shortcuts</p>
+            <span>Hints</span>
           </div>
           <ul className="canvas-shortcut-list">
             {EDITOR_SHORTCUT_REFERENCE.map((shortcut) => (
@@ -241,7 +239,7 @@ export function EditorCanvasSurface({
         <EditorSelectionHalo {...selectionHalo} />
         <g dangerouslySetInnerHTML={sceneInnerHtml} />
         <NetHighlightOverlay {...netHighlight} />
-        <NetLabelTetherOverlay tether={netLabelTether} />
+        <LabelTetherOverlay tethers={labelTethers} />
         {copyPreviewInnerHtml ? (
           <g
             data-testid="copy-placement-preview"

@@ -10,16 +10,16 @@ import {
   resolveDocumentStyleProfile,
   resolveDraftingObjectGeometry,
 } from "@icm/derived";
-import type {
-  DraftingObject,
-  LayoutGroup,
-  Rect,
-  SchematicDocument,
-} from "@icm/model";
+import type { DraftingObject, SchematicDocument } from "@icm/model";
 import type { SymbolResolver } from "@icm/symbols";
 
 import { type DraftingHandle } from "../features/drafting/drafting-manipulation";
-import { draftingGroupBounds } from "../features/drafting/drafting-group-scale";
+import {
+  isClosedPolyline,
+  polylineCorners,
+  POLYLINE_RESIZE_PADDING,
+  POLYLINE_CORNER_DIRECTIONS,
+} from "../features/drafting/drafting-polyline";
 import {
   draftingPathData,
   quadraticMidpoint,
@@ -83,6 +83,7 @@ export function EditorDraftingHitTargets({
     const drawingThroughScene =
       tool === "wire" ||
       tool === "arrow" ||
+      tool === "polyline" ||
       tool === "construction-line" ||
       tool === "rectangle" ||
       tool === "circle";
@@ -133,7 +134,7 @@ export function EditorDraftingHitTargets({
         <path
           key={object.id}
           {...common}
-          className={selectedClass}
+          className={`${selectedClass} drafting-path-hit`}
           fill="none"
           d={draftingPathData(geometry.points, geometry.curveControls)}
           onDoubleClick={doubleClick}
@@ -142,7 +143,7 @@ export function EditorDraftingHitTargets({
         <polyline
           key={object.id}
           {...common}
-          className={selectedClass}
+          className={`${selectedClass} drafting-path-hit`}
           fill="none"
           points={object.points
             .map((point) => `${point.x},${point.y}`)
@@ -195,7 +196,7 @@ export function EditorDraftingHitTargets({
             <path
               key={object.id}
               {...common}
-              className={selectedClass}
+              className={`${selectedClass} drafting-path-hit`}
               fill="none"
               d={draftingPathData(geometry.points, geometry.curveControls)}
               onDoubleClick={doubleClick}
@@ -204,7 +205,7 @@ export function EditorDraftingHitTargets({
             <polyline
               key={object.id}
               {...common}
-              className={selectedClass}
+              className={`${selectedClass} drafting-path-hit`}
               fill="none"
               points={geometry.points
                 .map((point) => `${point.x},${point.y}`)
@@ -311,74 +312,22 @@ export function EditorDraftingHandles({
   document,
   resolver,
   selectedDraftingId,
-  selectedDraftingIds,
   onHandlePointerDown,
-  onGroupScalePointerDown,
   onDeleteVertex,
 }: {
   document: SchematicDocument;
   resolver: SymbolResolver;
   selectedDraftingId: string | null;
-  selectedDraftingIds: readonly string[];
   onHandlePointerDown: (
     event: ReactPointerEvent<SVGElement>,
     object: DraftingObject,
     handle: DraftingHandle,
-  ) => void;
-  onGroupScalePointerDown: (
-    event: ReactPointerEvent<SVGElement>,
-    group: LayoutGroup,
-    bounds: Rect,
   ) => void;
   onDeleteVertex: (
     object: Extract<DraftingObject, { kind: "construction-line" }>,
     index: number,
   ) => void;
 }) {
-  const selectedIds = new Set(selectedDraftingIds);
-  const selectedGroup = document.layoutGroups.find(
-    (group) =>
-      group.id.startsWith("waveform-group-") &&
-      group.objectIds.length > 1 &&
-      selectedDraftingId !== null &&
-      group.objectIds.includes(selectedDraftingId) &&
-      group.objectIds.every((objectId) => selectedIds.has(objectId)),
-  );
-  if (selectedGroup) {
-    const bounds = draftingGroupBounds(
-      document,
-      resolver,
-      selectedGroup.objectIds,
-    );
-    if (!bounds) return null;
-    const handle = {
-      x: bounds.x + bounds.width,
-      y: bounds.y + bounds.height,
-    };
-    return (
-      <g data-testid={`drafting-group-handles-${selectedGroup.id}`}>
-        <rect
-          className="draft-group-bounds"
-          x={bounds.x}
-          y={bounds.y}
-          width={bounds.width}
-          height={bounds.height}
-        />
-        <rect
-          className="draft-handle draft-group-scale-handle"
-          data-testid={`draft-group-scale-${selectedGroup.id}`}
-          aria-label="缩放波形"
-          x={handle.x - 5}
-          y={handle.y - 5}
-          width="10"
-          height="10"
-          onPointerDown={(event) =>
-            onGroupScalePointerDown(event, selectedGroup, bounds)
-          }
-        />
-      </g>
-    );
-  }
   const object = document.drafting?.objects.find(
     (candidate) => candidate.id === selectedDraftingId,
   );
@@ -423,8 +372,19 @@ export function EditorDraftingHandles({
     );
   };
   if (object.kind === "arrow" && geometry.kind === "arrow") {
-    const dx = geometry.to.x - geometry.from.x,
-      dy = geometry.to.y - geometry.from.y;
+    const closed = isClosedPolyline(object);
+    // Rotation edits the bearing of the first leg, not the endpoint chord.
+    const directionEnd = geometry.points[1]!;
+    const dx = directionEnd.x - geometry.from.x,
+      dy = directionEnd.y - geometry.from.y;
+    const corners = polylineCorners(object)?.map((point, index) => ({
+      x:
+        point.x +
+        POLYLINE_CORNER_DIRECTIONS[index]!.x * POLYLINE_RESIZE_PADDING,
+      y:
+        point.y +
+        POLYLINE_CORNER_DIRECTIONS[index]!.y * POLYLINE_RESIZE_PADDING,
+    }));
     const length = Math.hypot(dx, dy) || 1;
     const offset = object.outline ? object.outline.width / 2 + 18 : 25;
     const rotationHandle = {
@@ -437,6 +397,36 @@ export function EditorDraftingHandles({
     };
     return (
       <g data-testid={`drafting-handles-${object.id}`}>
+        {corners && (
+          <>
+            <rect
+              className="draft-group-bounds"
+              x={corners[0]!.x}
+              y={corners[0]!.y}
+              width={corners[2]!.x - corners[0]!.x}
+              height={corners[2]!.y - corners[0]!.y}
+              pointerEvents="none"
+            />
+            {corners.map((point, index) => (
+              <rect
+                key={`path-corner-${index}`}
+                className="draft-handle"
+                data-testid={`draft-handle-path-corner-${index}-${object.id}`}
+                aria-label={`Resize path corner ${index + 1}`}
+                x={point.x - 4}
+                y={point.y - 4}
+                width="8"
+                height="8"
+                onPointerDown={(event) =>
+                  onHandlePointerDown(event, object, {
+                    kind: "path-corner",
+                    index,
+                  })
+                }
+              />
+            ))}
+          </>
+        )}
         {object.from.kind === "free" && object.to.kind === "free" ? (
           <>
             <line
@@ -477,7 +467,8 @@ export function EditorDraftingHandles({
                 index,
               ),
             )}
-        {circle(geometry.to, `draft-handle-to-${object.id}`, { kind: "to" })}
+        {!closed &&
+          circle(geometry.to, `draft-handle-to-${object.id}`, { kind: "to" })}
       </g>
     );
   }

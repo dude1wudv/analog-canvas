@@ -3,11 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import {
-  type AccountMenuViewProps,
-  AccountMenuView,
   fetchSessionUser,
   type AccountState,
+  type AccountMenuViewProps,
 } from "./account";
+import AccountMenuView from "./account-menu-view";
 
 function markupFor(
   state: AccountState,

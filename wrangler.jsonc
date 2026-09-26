@@ -15,6 +15,7 @@
     },
   ],
   "vars": {
+    "SIMULATION_DISPATCH": "alarm",
     "SIMULATION_UPSTREAM_URL": "https://sim-fra.analog-canvas.tokenzhang.com",
     "SIMULATION_DEFAULT_EXECUTOR": "operator-host",
     // The second engine is selected only by its Profile. It has its own
@@ -38,10 +39,19 @@
     // because the asset layer alone answers both with the shell and a
     // browser expecting JavaScript gets HTML at status 200.
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/assets/*"],
+    "run_worker_first": [
+      "/api/*",
+      "/assets/*",
+      "/",
+      "/g/*",
+      "/robots.txt",
+      "/sitemap.xml",
+      "/llms.txt",
+    ],
   },
   "durable_objects": {
     "bindings": [
+      { "name": "TOPOLOGY_TASK", "class_name": "TopologyTaskDO" },
       { "name": "COMPONENT_LIBRARY", "class_name": "ComponentLibraryDO" },
       {
         "name": "ANALYTICS",
@@ -119,6 +129,7 @@
       "new_sqlite_classes": ["SimulationControlDO"],
     },
     { "tag": "v6", "new_sqlite_classes": ["ComponentLibraryDO"] },
+    { "tag": "v7", "new_sqlite_classes": ["TopologyTaskDO"] },
   ],
   "observability": {
     "enabled": true,

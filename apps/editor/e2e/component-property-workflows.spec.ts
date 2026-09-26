@@ -1,13 +1,12 @@
 import { parseSavedProject } from "./editor-fixtures";
 import type { SchematicDocument } from "@icm/model";
 import { razaviProductSymbols } from "@icm/symbols";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { createEmptyProject } from "@icm/model";
 import { serializeProject } from "@icm/project-protocol";
 import {
   revealPropertiesShelf,
   awaitEditorReady,
-  clickCommand,
   clickDrawTool,
   downloadBytes,
   editComponentPropertyCode,
@@ -20,6 +19,65 @@ import {
   placeComponent,
   openSelectionShelf,
 } from "./manual-editor-fixtures.js";
+
+test("Cell Pin Properties edits the formal name even without a canvas label", async ({
+  page,
+}) => {
+  const project = createEmptyProject("pin-name", "Pin name");
+  const document = project.documents[0]!;
+  document.instances.push({
+    id: "P2-copy-1",
+    symbolId: "port",
+    placement: {
+      position: { x: 300, y: 200 },
+      rotation: 0,
+      mirror: "none",
+    },
+  });
+  document.nets.push({
+    id: "net-voc",
+    terminals: [{ instanceId: "P2-copy-1", pinName: "P" }],
+  });
+  document.netlist = {
+    name: document.name,
+    formalParameters: [],
+    terminals: [
+      {
+        id: "terminal-voc",
+        name: "Voc",
+        netId: "net-voc",
+        direction: "passive",
+        interfaceInstanceIds: ["P2-copy-1"],
+      },
+    ],
+  };
+  await page.goto("/editor");
+  await awaitEditorReady(page);
+  await page.getByTestId("project-file").setInputFiles({
+    name: "pin-name.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(serializeProject(project)),
+  });
+  await page.getByTestId("hit-P2-copy-1").click();
+  await openSelectionShelf(page);
+  await expect(page.getByTestId("selection-shelf")).toContainText("Voc · port");
+  await expectComponentCodeField(page, "name", "Voc");
+  await editComponentPropertyCode(page, (code) => {
+    code.name = "Vcm";
+  });
+  await expectComponentCodeField(page, "name", "Vcm");
+  const saved = parseSavedProject(
+    (await downloadBytes(page, "File", "Export Project File…")).toString(
+      "utf8",
+    ),
+  );
+  expect(saved.documents[0]!.netlist!.terminals[0]).toMatchObject({
+    id: "terminal-voc",
+    name: "Vcm",
+    netId: "net-voc",
+  });
+  expect(saved.documents[0]!.instances[0]!.id).toBe("P2-copy-1");
+});
 
 test("property inspection and remounts keep canvas keyboard ownership", async ({
   page,
@@ -85,7 +143,10 @@ test("live JSON properties update controls immediately and round-trip raw parame
   await expect(panel.getByRole("button", { name: "Apply code" })).toHaveCount(
     0,
   );
-  await expect(panel.locator(".cm-property-unit")).toHaveCount(2);
+  await expect(panel.locator(".cm-property-unit")).toHaveCount(0);
+  await expect(
+    panel.getByRole("button", { name: /Use Cell parameter/ }),
+  ).toHaveCount(0);
   await expect(panel.getByLabel("Target netlist options")).toBeVisible();
   await editComponentPropertyCode(page, (code) => {
     code.rotation = 90;
@@ -134,9 +195,9 @@ test("live JSON properties update controls immediately and round-trip raw parame
     styleOverride: { foreground: "#dc2626" },
     placement: { rotation: 90 },
   });
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expectComponentCodeField(page, "parameters.w", "1u");
-  await clickCommand(page, "Edit", "Redo");
+  await page.getByTestId("draw-tool-redo").click();
   await expectComponentCodeField(page, "parameters.w", "EV");
   await page.getByTestId("project-file").setInputFiles({
     name: "raw.icproj.json",
@@ -161,7 +222,7 @@ test("live Defaults are undoable and invalid drafts never change the canvas", as
   await expect(page.getByTestId("revision")).toHaveText(
     String(Number(revision) + 1),
   );
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expectComponentCodeField(page, "parameters.w", "7u");
   const code = page.getByLabel("Editable Canvas property code");
   const invalid = JSON.parse(await readComponentPropertyCode(page));
@@ -213,85 +274,105 @@ test("one live JSON edit combines model, dimensions and appearance in one undo b
   await expectComponentCodeField(page, "netlistName", "M1");
   await expectComponentCodeField(page, "parameters.w", "5u");
   await expectComponentCodeField(page, "color", [20, 30, 40]);
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expectComponentCodeField(page, "netlistName", "M1");
   await expectComponentCodeField(page, "parameters.w", "1u");
   await expectComponentCodeField(page, "color", "auto");
-  await clickCommand(page, "Edit", "Redo");
+  await page.getByTestId("draw-tool-redo").click();
   await expectComponentCodeField(page, "netlistName", "M1");
   await expectComponentCodeField(page, "parameters.w", "5u");
 });
 
-for (const platform of ["native", "Win32", "Linux x86_64"])
-  test(`live typing preserves the caret, local undo and incomplete JSON (${platform})`, async ({
-    page,
-  }) => {
-    if (platform !== "native")
-      await page.addInitScript(
-        (name) =>
-          Object.defineProperty(navigator, "platform", { get: () => name }),
-        platform,
-      );
-    const modifier = platform === "native" ? "ControlOrMeta" : "Control";
-    await page.goto("/editor");
-    await placeComponent(page, "nmos", { x: 360, y: 220 });
-    await openSelectionShelf(page);
-    const code = page.getByLabel("Editable Canvas property code");
-    await editComponentPropertyCode(page, (value) => {
-      value.display.value = true;
+async function selectWidthValue(code: Locator) {
+  // Locate the width string through the actual editable DOM, then type normally.
+  await code
+    .locator(".cm-line")
+    .filter({ hasText: '"w":' })
+    .evaluate((line) => {
+      const token = line.querySelector(".cm-json-string")!;
+      const text = document
+        .createTreeWalker(token, NodeFilter.SHOW_TEXT)
+        .nextNode()!;
+      const range = document.createRange();
+      range.setStart(text, 1);
+      range.setEnd(text, 3);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      (line.closest('[contenteditable="true"]') as HTMLElement).focus();
     });
-    // Locate the width string through the actual editable DOM, then type normally.
-    await code
-      .locator(".cm-line")
-      .filter({ hasText: '"w":' })
-      .evaluate((line) => {
-        const token = line.querySelector(".cm-json-string")!;
-        const text = document
-          .createTreeWalker(token, NodeFilter.SHOW_TEXT)
-          .nextNode()!;
-        const range = document.createRange();
-        range.setStart(text, 1);
-        range.setEnd(text, 3);
-        const selection = window.getSelection()!;
-        selection.removeAllRanges();
-        selection.addRange(range);
-        (line.closest('[contenteditable="true"]') as HTMLElement).focus();
-      });
-    await page.keyboard.type("EV", { delay: 80 });
-    const value = page.locator(
-      '[data-layer="formal"] [data-object-id="instance-value-M1"]',
-    );
-    await expect(value).toContainText("EV");
-    await page.keyboard.type("x", { delay: 80 });
-    await expect(value).toContainText("EVx");
-    await code.press(`${modifier}+z`);
-    await expect(value).toContainText("1u");
-    // Emit the actual shifted letter, not lowercase z with Shift held: the
-    // latter is a synthetic layout event that CodeMirror interprets as Undo.
-    await code.press(`${modifier}+Shift+Z`);
-    await expect(value).toContainText("EVx");
-    const raw = await readComponentPropertyCode(page);
-    const revision = await page.getByTestId("revision").textContent();
-    await code.fill(raw.slice(0, -1));
-    await expect(
-      page.getByText(/Canvas keeps the last valid edit/u),
-    ).toBeVisible();
-    await expect(value).toContainText("EVx");
-    await expect(page.getByTestId("revision")).toHaveText(revision!);
-    await code.press("Escape");
-    await expect(code).not.toBeFocused();
-    await expect(
-      page.getByText(/Canvas keeps the last valid edit/u),
-    ).toBeVisible();
-    await expect(page.getByTestId("revision")).toHaveText(revision!);
-    await code.press(`${modifier}+End`);
-    await code.press("}");
-    await expect(
-      page.getByText(/Canvas keeps the last valid edit/u),
-    ).toHaveCount(0);
-    await expect(page.getByText("Live", { exact: true })).toHaveCount(0);
-    await expect(page.getByTestId("revision")).toHaveText(revision!);
+}
+
+test("live typing preserves the caret, local undo and incomplete JSON", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await placeComponent(page, "nmos", { x: 360, y: 220 });
+  await openSelectionShelf(page);
+  const code = page.getByLabel("Editable Canvas property code");
+  await editComponentPropertyCode(page, (value) => {
+    value.display.value = true;
   });
+  await selectWidthValue(code);
+  // These keystrokes form one typing burst. Keep the transaction clock fixed
+  // so waiting for live rendering on a busy runner cannot split CodeMirror's
+  // 500 ms undo group between "EV" and "x". Browser timers still run normally.
+  await page.clock.setFixedTime(new Date());
+  await page.keyboard.type("EV", { delay: 80 });
+  const value = page.locator(
+    '[data-layer="formal"] [data-object-id="instance-value-M1"]',
+  );
+  await expect(value).toContainText("EV");
+  await page.keyboard.type("x", { delay: 80 });
+  await expect(value).toContainText("EVx");
+  await code.press("ControlOrMeta+z");
+  await expect(value).toContainText("1u");
+  // Emit the actual shifted letter, not lowercase z with Shift held: the
+  // latter is a synthetic layout event that CodeMirror interprets as Undo.
+  await code.press("ControlOrMeta+Shift+Z");
+  await expect(value).toContainText("EVx");
+  const raw = await readComponentPropertyCode(page);
+  const revision = await page.getByTestId("revision").textContent();
+  await code.fill(raw.slice(0, -1));
+  await expect(
+    page.getByText(/Canvas keeps the last valid edit/u),
+  ).toBeVisible();
+  await expect(value).toContainText("EVx");
+  await expect(page.getByTestId("revision")).toHaveText(revision!);
+  await code.press("Escape");
+  await expect(code).not.toBeFocused();
+  await expect(
+    page.getByText(/Canvas keeps the last valid edit/u),
+  ).toBeVisible();
+  await expect(page.getByTestId("revision")).toHaveText(revision!);
+  await code.press("ControlOrMeta+End");
+  await code.press("}");
+  await expect(page.getByText(/Canvas keeps the last valid edit/u)).toHaveCount(
+    0,
+  );
+  await expect(page.getByText("Live", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("revision")).toHaveText(revision!);
+});
+
+// Native Linux CI covers the full editing journey above. Exercise the Windows
+// CodeMirror keymap separately without repeating malformed JSON and focus flows.
+test("property code undo and redo use Control on Windows", async ({ page }) => {
+  await page.addInitScript(() =>
+    Object.defineProperty(navigator, "platform", { get: () => "Win32" }),
+  );
+  await page.goto("/editor");
+  await placeComponent(page, "nmos", { x: 360, y: 220 });
+  await openSelectionShelf(page);
+  const code = page.getByLabel("Editable Canvas property code");
+  await selectWidthValue(code);
+  await page.keyboard.insertText("5u");
+  await expectComponentCodeField(page, "parameters.w", "5u");
+  await code.press("Control+z");
+  await expectComponentCodeField(page, "parameters.w", "1u");
+  await code.press("Control+Shift+Z");
+  await expectComponentCodeField(page, "parameters.w", "5u");
+  await expect(page.getByTestId("hit-M1")).toHaveCount(1);
+});
 
 for (const width of [300, 540]) {
   test(`plain selectable property code and inline controls at ${width}px`, async ({
@@ -577,7 +658,7 @@ test("Q opens a text-first Properties editor with one-click exact draft copy", a
     });
   expect(positions.copyBottom).toBeGreaterThan(0);
   expect(positions.editorHeight).toBeGreaterThan(240);
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expectComponentCodeField(page, "parameters.w", "1u");
 });
 
@@ -1386,9 +1467,9 @@ test("edits the transconductance trapezoid from gm to -gmL", async ({
     formalScene.locator('[data-role="formula-subscript"]'),
   ).toHaveText("mL");
 
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expectComponentCodeField(page, "signalFlow", {});
-  await clickCommand(page, "Edit", "Redo");
+  await page.getByTestId("draw-tool-redo").click();
   await expectComponentCodeField(page, "signalFlow.formula", "−gₘL");
 });
 
@@ -1449,9 +1530,9 @@ test("edits a formula-capable Signal Flow block with undo, redo, and Reset defau
   await expect(frame).toHaveAttribute("width", "160");
   await expect(frame).toHaveAttribute("height", "80");
 
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expect(frame).toHaveAttribute("height", "50");
-  await clickCommand(page, "Edit", "Redo");
+  await page.getByTestId("draw-tool-redo").click();
   await expect(frame).toHaveAttribute("height", "80");
 
   await properties
@@ -1523,7 +1604,7 @@ test("selects a reviewed SKY130 MOS through the inline Target netlist field", as
   expect(saved.documents[0].instances[0]).toMatchObject({
     id: "M1",
     symbolId: "nmos",
-    reference: "XM1",
+    reference: "M1",
     netlist: {
       parameters: { w: "1u", l: "150n", nf: "1", m: "1" },
       binding: { kind: "external-subcircuit" },
@@ -1658,6 +1739,90 @@ for (const fixture of [
 }
 
 for (const symbol of ["xfmr", "tcoil"] as const) {
+  test(`${symbol} parameter label editing commits, escapes invalid input and closes when hidden`, async ({
+    page,
+  }) => {
+    await page.goto("/editor");
+    await placeComponent(page, symbol, { x: 360, y: 220 });
+    await openSelectionShelf(page);
+    const winding = symbol === "xfmr" ? "lp" : "l1";
+    const windingLabel = symbol === "xfmr" ? "Lp" : "L1";
+    await editComponentPropertyCode(page, (code) => {
+      code.display.parameters[winding] = true;
+      code.rotation = 270;
+    });
+    const label = page.locator(
+      '[data-layer="formal"] [data-kind="instance-value"]',
+    );
+    const id = await label.getAttribute("data-object-id");
+    const hit = page.getByTestId(`annotation-hit-${id}`);
+    const editor = page.getByLabel("Canvas text editor", { exact: true });
+    await hit.dblclick();
+    await editor.fill(`${windingLabel} = 2.5n`);
+    await editor.press("Enter");
+    await expect(editor).toHaveCount(0);
+    await expect(label).toContainText(`${windingLabel} = 2.5n`);
+    await page.getByTestId("draw-tool-undo").click();
+    await expect(label).toContainText(`${windingLabel} = 1n`);
+    await page.getByTestId("draw-tool-redo").click();
+    await expect(label).toContainText(`${windingLabel} = 2.5n`);
+    await hit.dblclick();
+    await editor.fill(`${windingLabel} =`);
+    await editor.press("Enter");
+    await expect(editor).toBeVisible();
+    await editor.press("Escape");
+    await expect(editor).toHaveCount(0);
+    await expect(label).toContainText(`${windingLabel} = 2.5n`);
+
+    await hit.dblclick();
+    await editor.fill(windingLabel);
+    await editor.press("Enter");
+    await expect(editor).toHaveCount(0);
+    await expect(label).toHaveText(windingLabel);
+    const labelOnlySaved = parseSavedProject(
+      (await downloadBytes(page, "File", "Export Project File…")).toString(
+        "utf8",
+      ),
+    );
+    expect(
+      labelOnlySaved.documents[0].annotations.find(
+        (annotation: { id: string }) => annotation.id === id,
+      )?.binding,
+    ).toEqual({
+      kind: "instance-value",
+      instanceId: labelOnlySaved.documents[0].instances[0].id,
+      parameter: winding,
+      showValue: false,
+    });
+    expect(
+      labelOnlySaved.documents[0].instances[0].netlist.parameters[winding],
+    ).toBe("2.5n");
+
+    await hit.dblclick();
+    await editor.fill("");
+    await editor.press("Enter");
+    await expect(editor).toHaveCount(0);
+    await expect(label).toHaveCount(0);
+    await page.getByTestId("draw-tool-undo").click();
+    await expect(label).toHaveText(windingLabel);
+
+    await hit.dblclick();
+    await editor.fill("");
+    await page.getByTestId("schematic-canvas").click({
+      position: { x: 80, y: 80 },
+    });
+    await expect(label).toHaveCount(0);
+    await expect(editor).toHaveCount(0);
+    const saved = parseSavedProject(
+      (await downloadBytes(page, "File", "Export Project File…")).toString(
+        "utf8",
+      ),
+    );
+    expect(saved.documents[0].instances[0].netlist.parameters[winding]).toBe(
+      "2.5n",
+    );
+  });
+
   test(`${symbol} independently displays magnetic parameters and preserves them through history and files`, async ({
     page,
   }) => {
@@ -1684,9 +1849,9 @@ for (const symbol of ["xfmr", "tcoil"] as const) {
     });
     await expect(formalLabels).toHaveCount(1);
     await expect(formalLabels).toContainText(`${windingLabel} = 2.5n`);
-    await clickCommand(page, "Edit", "Undo");
+    await page.getByTestId("draw-tool-undo").click();
     await expect(formalLabels).toContainText("K = 1");
-    await clickCommand(page, "Edit", "Redo");
+    await page.getByTestId("draw-tool-redo").click();
     await expect(formalLabels).toContainText(`${windingLabel} = 2.5n`);
     await editComponentPropertyCode(page, (code) => {
       code.display.parameters.k = true;

@@ -15,6 +15,21 @@ never stored, echoed, or served. Previews are rendered by `@icm/render-svg`
 from the entry's top document and served as `image/svg+xml` with a
 restrictive content-security-policy.
 
+## Reader access
+
+The Gallery is for signed-in readers. Every Gallery read (the list, tags,
+authors, an entry and its Project, its preview and its history) needs a
+signed-in session or the read-only Gallery credential (`GALLERY_BACKUP_TOKEN`
+as a Bearer token). Without either, each read answers
+`401 {"error":"sign-in-required"}` with `cache-control: no-store`, and the
+landing page shows a sign-in prompt instead of the wall. "Public" below means
+published on the wall for those readers, not readable anonymously. Admin and
+owner-only routes keep their own, stricter checks, and writes keep theirs.
+A reader's preview is served `private`, so a shared cache never keeps it; the
+Worker's edge cache keeps the immutable bytes behind the reader check. A valid
+session is remembered for a minute per Worker isolate, so a wall of previews
+asks the AuthDO once.
+
 ## Public surface
 
 - `GET /api/gallery` — newest-first `public` entries
@@ -45,17 +60,35 @@ restrictive content-security-policy.
   lights its mark immediately, and the scheduled maintenance pass below
   re-answers stored marks after the rule itself changes.
 - `GET /api/gallery/tags` — distinct public tags with counts, most
-  frequent first (feeds the multi-select menu).
+  frequent first. The landing Gallery places these in a left sidebar grouped
+  by circuit family, with per-tag counts and clearable multi-selection. Groups
+  are presentation only: no authored tag or URL value is rewritten, unknown
+  tags remain available under Custom & legacy, and tags restored from old links
+  remain removable. One overall search at the top of the left column matches
+  circuit names, authors, descriptions and tags without changing the tag list.
+  Narrow mobile layouts keep that search visible while collapsing the filters
+  and tag groups behind a Search & filters button. An empty tag selection result
+  does not substitute unfiltered examples.
 - `GET /api/gallery/authors` — non-empty public bylines with their currently
-  visible circuit counts, ranked by count and then author name. The clickable
-  wall count uses this roll-up for its contributor leaderboard; expanding one
-  author lazily reads that author's newest circuits from the ordinary feed and
-  can switch the wall to the existing exact-author filter.
+  visible circuit counts, ranked by count and then author name. This endpoint
+  remains the unfiltered public ranking. The clickable wall count instead uses
+  the `authors` aggregate returned by `GET /api/gallery`: the same author,
+  tags, netlist, liked and authorized Needs attention filters as its cards,
+  counted before pagination. Text search derives contributors from matching
+  loaded cards and marks incomplete counts “so far”. Empty results show no
+  contributors. Selecting an author retains the other active filters.
 - `GET /api/gallery/<id>` — one public entry with its canonical
   `projectText`.
-- `GET /api/gallery/<id>/preview.svg?v=<previewRevision>` — the
+- `GET /api/gallery/<id>/preview.svg?v=<previewRevision>&render=formula-sans-v2` — the
   server-rendered preview. A revision matching the stored SVG is immutable;
   unversioned, stale-revision, hidden, and missing responses are `no-store`.
+  The renderer variant bypasses browser caches of obsolete formula artwork.
+  Old formula placeholders and earlier formula typography are rendered from
+  their stored Project on read, without rewriting publication data, revisions,
+  or history. Hidden-entry authorization still applies, including on edge
+  cache hits. Ordinary previews retain their stored artwork and do not require
+  a Project read. Shelf and historical previews share formula preparation and
+  recovery while retaining their private access rules.
 - Which circuits a reader is looking at — the wall (`view`), the byline
   (`author`), the tags (`tags`), the text (`q`), and the two marks
   (`netlist`, `liked`) — is one preference and persists as one: it rides in
@@ -77,13 +110,79 @@ restrictive content-security-policy.
   its renderer, symbol catalogue, and bundled Projects only after the remote
   feed has settled empty or unavailable; a populated Gallery never pays for
   those fallback-only dependencies.
+- The editor Publish dialog offers an on-demand **Check Duplicate**
+  action. It compares the currently visible Cell (not
+  unconditionally the Project's root Cell) against every public Gallery
+  entry through the [duplicate-task service](#current-cell-duplicate-tasks).
+  Exact topology results ignore instance, Net, Cell and
+  external-port names; model and parameter values; top-level port order; and
+  whether an external rail was represented as a Port or a global power Net.
+  Device classes, recognizable MOS/BJT polarity, terminal roles and actual
+  connectivity remain structural evidence. This topology-only contract is
+  intentionally broader than the administrator's exact electrical duplicate
+  contract. Results are bounded and ranked by verified structural coverage and
+  parameter/model closeness as described in the task contract. The action is
+  public and does not mutate Gallery entries: results
+  link to the existing Gallery entry and offer read-only snapshot comparison.
+  No cleanup authority is exposed in the editor.
+  The click captures the comparison Cell: subsequent edits, hiding the panel,
+  or refreshing its feed do not cancel the running scan or erase its results.
+  A notice identifies results from an earlier canvas state; checking again
+  captures the latest state. Only explicit Cancel or leaving the editor stops
+  the job. Transient read failures retry within a bounded budget. Unverified
+  comparisons are counted separately, and approximate results never display
+  100%. Topology projection uses authored transistor polarity and reviewed
+  external device pin mappings; unknown black-box targets remain distinct.
+  The administrator's stricter netlist duplicate contract is unchanged.
+
+## Classification and visual attention
+
+[The taxonomy](../../config/gallery-taxonomy.json) defines one tag vocabulary
+covering circuit function, topology, implementation and architecture. A circuit
+may carry up to twelve tags; catalog suggestions include unused tags so the
+current library does not define the limits of classification. Legacy/custom
+tags remain browsable. Visual group headings organize the tag list but are not
+a second filtering system. Tag search and multi-selection live in the resizable
+left sidebar; its preferred width is local to the browser.
+
+Visual attention is independent of publication status and netlist extraction.
+A suspected gap, unintended diagonal, overlap, clipping, unreadable label or
+incomplete drawing may be flagged with a location-specific explanation. A
+textbook abstraction, intentional open port or missing simulation model alone
+is not a drawing defect. Visual review does not certify electrical correctness.
+
+`attention=1` requires a session. Authors receive only their own pending entries;
+administrators receive all pending entries. Attention details on both the feed
+and individual entries are omitted for everyone else. The author/admin card
+allows adding a note, marking the finding resolved and reopening it. None of
+these actions unpublishes the circuit or changes its Project, name, owner,
+likes, preview, or visitor statistics.
+
+`PATCH /api/gallery/<id>/curation` accepts `tags`, `attention`
+(`null` or `{status: "needs-attention" | "resolved", issues: [{kind, detail}]}`),
+`expectedPreviewRevision`, and `expectedCurationRevision`. It requires same-origin
+requests and the entry's author or an administrator. An empty pending finding
+is invalid. A changed image or review returns 409; an old review never silently
+overwrites newer work. Revisions are existing identifiers/counters, with no
+new payload hashing. A drawing changed after assessment retains its findings
+and displays a recheck notice. Metadata changes preserve a version snapshot;
+curation fields are included in backups and restores.
+
+A bulk visual audit records the inspected image revision, original tags,
+proposed tags, findings and uncertainty for every entry. The
+[application script](../../scripts/curate-gallery.mjs) validates this report
+without writing by default. Explicit application requires an origin, a session
+cookie file and a before/after receipt. Changed entries are skipped for review;
+interruption can resume without repeating already-applied metadata. Local
+inspection does not authorize publication or a production data rewrite.
 
 ## Publishing
 
 `POST /api/gallery/submissions` (same-origin) publishes immediately with:
 trimmed `name` (required, ≤120), `description`
-(≤300), and `tags` (array; normalized lowercase `[a-z0-9 +/-]`, ≤24
-chars each, at most 5, deduplicated — `sanitizeGalleryTags` is the one
+(≤1000, room for a full citation; a Gallery tile shows its first three lines
+and the entry shows all of it), and `tags` (array; normalized lowercase `[a-z0-9 +/-]`, ≤32
+chars each, at most 12, deduplicated — `sanitizeGalleryTags` is the one
 normalization for writes and filters), `projectText` ≤2 MiB. The Worker validates, stamps the canonical
 serialization, renders the preview, and stores the entry as `public`.
 Ordinary submissions count against a per-account limit of 100 per UTC day,
@@ -110,8 +209,32 @@ name, and an update never re-attributes an entry.
 After a successful first publication, the editor associates the live Project
 with the returned entry id. Further edits followed by Publish default to
 `PUT /api/gallery/<id>` for that same item rather than creating duplicates.
-Replacing the active Project clears the association; deliberately choosing
-"Publish as a new entry" replaces it with the newly returned entry id.
+For a saved Shelf draft, this association is persisted as private Cloud Project
+metadata (`gallery_entry_id`) and is restored after reopening, including browser
+recovery. Loading this metadata never replaces private drawing content with the
+public snapshot. A transient lookup failure blocks publication and offers Retry,
+instead of falling back to a new entry. Replacing the active Project clears only
+the editor's old context; the replacement draft restores its own association.
+
+A bound Publish/Update sends `cloudProjectId` and `expectedGalleryEntryId` (null
+before the first link). The Durable Object scopes the draft to the signed-in
+account, rejects a changed link with 409, and commits the publication and source
+association in one transaction. Publication does not Save or rewrite the private
+draft. A first private Save after publishing may establish the link too, provided
+that account has not already assigned another draft to the publication.
+
+For historical drafts without a link, **Use an existing Gallery publication…**
+accepts a Gallery address the user may update. Selecting it previews the update
+target; **Update entry** commits the source change. This keeps the public id,
+byline, likes and bounded version history, retires this account's previous source
+association, and preserves both private drafts. Old tabs with a retired link
+cannot overwrite the publication. No matching by title, Project id or topology
+runs automatically. Source selection requires a saved Shelf draft.
+
+Deliberately choosing **Publish as a new entry** associates the current draft
+with the newly returned id and leaves the earlier public entry intact. Unbound
+Gallery editing remains possible under the existing ownership/moderator rules;
+it does not change another account's private source association.
 
 Every entry records the submitting account: `owner_user_id` plus the
 `submitter_email` and `submitter_provider` read from the session at
@@ -167,14 +290,20 @@ Every community tile carries a Like toggle backed by
 one like per public entry, pressing again removes it, and the feed reports each
 entry's `likes` count and the viewer's `likedByViewer`. The Gallery feed gives
 the super-admin a direct Reject (`×`) control on every community tile, plus an
-Owner menu for Edit and replace and Withdraw.
+Owner menu for Edit and replace and Withdraw. A signed-in member's own tiles
+carry a `×` that withdraws the entry after a second step, the same owner
+withdrawal as `/mine`; My submissions restores it.
 Reject opens a multi-select form with common reasons (`too ugly`,
 `circuit incorrect`, `too simple`, `duplicate`) and an independent optional
 note/other-reason field. The editor surfaces the full administration lifecycle
-at `/moderation` (rejected entries, recycle bin, plus admin-only moderator
-appointment) and the submitter's view at `/mine` (status chips, rejection
+at `/moderation` (full-width masonry for rejected entries and the recycle bin)
+and the submitter's view at `/mine` (status chips, rejection
 reason, owner-visible preview, open-in-editor). Every gallery page state wears
-the shared site chrome.
+the shared site chrome. Moderation cards open the circuit normally; their
+bottom ellipsis menu contains Restore to Gallery and Move to recycle bin
+(or confirmed Delete forever for recycled entries). Moderator appointment,
+schema convergence, and netlist-mark maintenance have no product forms;
+authorized operator scripts use the existing admin-only APIs.
 
 ## Owner editing
 
@@ -213,14 +342,16 @@ entries, and a confirmed Delete.
 Every content-replacing update (`PUT`, and Restore itself) first
 snapshots the entry's previous state — name, author, description, tags,
 canonical project text, preview — into `gallery_entry_versions`,
-numbered per entry and capped at the newest 2 (older versions are pruned).
-The live current state is separate and does not count toward those 2 snapshots.
+numbered per entry and capped at the newest 3 (older versions are pruned).
+The live current state is separate and does not count toward those 3 snapshots.
 Maintenance re-serialization does not snapshot (content-equivalent).
 Authority: moderators (admin or moderator session) and the entry's
 owning session:
 
 - `GET /api/gallery/<id>/versions` — versions, newest first.
 - `GET /api/gallery/<id>/versions/<versionId>/preview.svg`.
+- `GET /api/gallery/<id>/versions/<versionId>/project` — canonical Project text;
+  same owner/reviewer access, `no-store`, no submitter metadata.
 - `POST /api/gallery/<id>/versions/<versionId>/restore` — snapshots the
   current state, then adopts the version's content and metadata, so
   restores are themselves reversible. A restore keeps the entry's status
@@ -228,7 +359,21 @@ owning session:
 
 The editor surfaces this as "Version history…" inside the publish
 dialog's update mode (moderators and owners) and as a per-entry
-"Version history" action on `/mine`.
+"Version history" action on `/mine`. Compare loads frozen historical and current
+published Projects, shows additions (green), removals (red) and modifications
+(amber), with per-component field changes and a Cell selector. Stable Cell and
+Instance ids own correspondence; delete/recreate is addition/removal. Parameters,
+placement, labels, embedded definitions and logical terminal membership are
+compared; generated Net ids and source provenance are not. Standalone drawings
+and raw source-file changes are outside this component report. A component with
+no placement remains listed but has no highlight on the canvas.
+
+Branch opens a full independent Project, with a fresh Project identity and no
+Cloud/publication binding. In the editor it opens a new project tab; `/mine`
+opens an editor tab using the protected historical Project endpoint. Save creates
+an independent private draft; publishing it is a separate action. There is no
+merge graph or automatic publication. Private Cloud Project history follows
+the separate [save-history contract](persistence-and-recovery.md#private-save-history).
 
 ## Accounts and sessions
 
@@ -236,7 +381,9 @@ dialog's update mode (moderators and owners) and as a per-entry
 behind `/api/auth/*`. Every provider is invisible until its Worker
 secrets exist (`GET /api/auth/providers` reports `{github, google,
 email}`); with no provider configured the site shows no sign-in UI at
-all. No passwords ever exist. The browser holds a random session token in
+all. Otherwise both the Gallery header and the editor's top bar show the
+signed-in display name with its account menu, or Sign in. No passwords ever
+exist. The browser holds a random session token in
 an HttpOnly `SameSite=Lax` cookie (`icm_session`, 30-day TTL); the
 database stores only SHA-256 hashes of session and login tokens.
 
@@ -291,6 +438,21 @@ header buys nothing. Without such a session every admin route answers
 - `GET /api/gallery/rejected` — rejected entries and their reasons.
 - `GET /api/gallery/maintenance/schema-backup` — download a full-fidelity
   administrator backup of entries, saved versions, and private Cloud Projects.
+- `GET /api/gallery/maintenance/automated-backup` — bounded Gallery-only pages
+  for the dedicated read-only backup credential; no Cloud Projects or writes.
+  See [off-site backups and recovery](../gallery-backup.md).
+- `GET /api/gallery/maintenance/netlists` — the public entries' netlists, in
+  entry-id order, for an administrator session or the same read-only
+  credential. `format=spice|spectre` (default `spice`), `limit=1..200`
+  (default 100) and `after=<nextCursor>` page through the wall; `id=<entry>`
+  reads one entry. Each entry carries its name, author, tags, creation time
+  and stored netlistable mark, then the design netlist its drawing prints
+  (the editor's netlist printer), or `null` when printing is blocked, with
+  every diagnostic. A drawing the editor calls unfinished (a wire that
+  reaches no peer) still prints; its `DEAD_END_NET` finding says so and its
+  netlistable mark is false. A page also ends once its Project Code reaches
+  8,000,000 characters; `nextCursor` is `null` on the last page. Recycled and
+  rejected entries are not included.
 - `POST /api/gallery/maintenance/schema-current` — validate or transactionally
   converge every stored Project to `CURRENT_PROJECT_FILE_VERSION`. The
   request body is `{ "apply": false }` for a dry run and `{ "apply": true }`
@@ -299,7 +461,7 @@ header buys nothing. Without such a session every admin route answers
   it does not embed a second Gallery-specific migration policy.
 - `POST /api/gallery/maintenance/netlist-badges` — re-answer one batch of
   stored netlistable marks (`{ "limit"?: 1..200 }` → `{scanned, changed,
-  unreadable, ruleVersion, remaining}`). Every entry stores the rule version
+unreadable, ruleVersion, remaining}`). Every entry stores the rule version
   its mark came from (`NETLIST_MARK_RULE_VERSION`, bumped whenever a change
   can turn a stored answer stale), so the pass selects exactly the entries
   behind this build and carries no cursor: running it again when none is
@@ -308,10 +470,30 @@ header buys nothing. Without such a session every admin route answers
   The same pass runs on a schedule (`triggers.crons` in both channels'
   Wrangler configs), so a deployed rule change converges without anybody
   pressing anything; the route stays for when somebody wants it now.
+- `POST /api/gallery/maintenance/label-looks` — bring up to 20 entries'
+  labels to the standard (see [names and labels](names-and-labels.md)):
+  drawn supply, device Reference, Cell Pin and Net labels without a look of
+  their own take their standard look (V_DD, M₁, V_BP), and a drawing that
+  never chose a subscript slant draws subscripts upright. The body is
+  `{ "ids": [...], "apply"?: true, "expected"?: {<id>: <sha256>}, "nudges"?:
+{<id>: [{label, dx, dy}]}, "keep"?: {<id>: [label]}, "legacyLooks"?: true }`.
+  `legacyLooks` also restyles looks stored before these standards (stored
+  copies of a historical look, scripts slanted by the surrounding italic) and
+  is only for drawings made before them. The server computes the change
+  itself; a nudge may only move a label given its standard look, by at most
+  16 × 12 units, and `keep` names standard-look candidates to leave exactly as
+  they are (for a label that cannot stay as clear as it was). Without
+  `apply` it reports, per entry, the labels, the SHA-256 of the stored Project
+  Code, and whether every electrical name and the SPICE and Spectre netlists
+  are unchanged. An apply needs that SHA-256 for each entry (`stale`
+  otherwise), refuses any electrical change, re-renders the preview, and
+  replaces only the Project Code and preview through a compare-and-set;
+  saved versions, byline, status, tags and likes are untouched. Same-origin
+  only.
 - `POST /api/gallery/maintenance/schema-restore` — atomically restore the three
   Project-bearing tables from a `schema-backup` payload supplied as
   `{ "backup": ... }`. Current retention is reapplied, so a legacy backup with
-  more than 2 versions for an entry restores only its newest 2. This same-origin
+  more than 3 versions for an entry restores only its newest 3. This same-origin
   endpoint is an emergency rollback operation, not a general import surface.
 
 ## Retention and privacy
@@ -330,3 +512,64 @@ identity is not public:
 
 What a visitor sees is the byline — the account's display name — which
 the account holder controls from the account menu.
+
+## Current-cell duplicate tasks
+
+The duplicate scan captures the current Cell when started. On the hosted site,
+one private durable task belongs to the account or anonymous browser identity.
+Server alarms advance and checkpoint work; browser polling observes it.
+Closing the dialog, changing the drawing, refreshing or closing the page does
+not cancel it. Reopening resumes progress/results within the seven-day retention
+window. Explicit Cancel stops work. A second start while running is refused;
+request identity makes a lost start acknowledgement safe to retry.
+
+The hosted result retains the best 20 matches within an 8 MiB result budget;
+omissions and incomplete coverage remain explicit. Access does not expose another
+owner's snapshot. Storage, admission and limits are owned by
+[TopologyTaskDO](../../worker/topology-task.ts), and browser resumption by
+[the task client](../../apps/editor/src/features/editor-shell/gallery-topology-task.ts).
+
+Without the hosted endpoint, the local Web Worker fallback belongs to the page
+session. It survives closing the Publish dialog but ends on page close/reload.
+The UI distinguishes this fallback from durable execution; it is not a second
+promise of server recovery.
+
+Exact topology is confirmed using device classes, polarity, pin roles and
+connectivity. Full netlist equivalence, including models and parameters, is
+checked separately. The public comparison returns a graph witness and device
+occurrence paths; it does not weaken the administrator's exact-duplicate
+cleanup contract.
+
+For partial results, a bounded injective mapping of compatible devices and
+incident nets proves each displayed correspondence. A common net remains
+common and distinct nets cannot collapse. Passive two-pin devices may reverse;
+transistor and external black-box terminal roles may not. Structural score is
+matched-device Dice coverage multiplied by `0.8 + 0.2 × neighborhood score`.
+An exact topology receives structural score 1.
+
+Parameter comparison normalizes SPICE engineering numbers and averages
+`min(abs(a), abs(b)) / max(abs(a), abs(b))` over parameter names present on either
+side, with equal values scoring 1, missing values or different signs scoring 0.
+Symbolic expressions require literal equality. This contributes 80% of the
+parameter/model score, with 20% from matching model and invocation identity.
+Overall score is `structure × (0.85 + 0.15 × parameter/model score)`. Results
+sort by this score; only confirmed full netlist equality displays 100%. The local
+fallback retains all exact topology matches and at most five partial matches;
+hosted tasks apply the bounded retention above. A similarity
+percentage is not a simulation-equivalence guarantee.
+
+**Compare on canvas** renders frozen source and candidate Projects side by
+side. Equal colors mark corresponding devices. Selecting a pair opens each
+leaf Cell, focuses its device and lists the original parameters. Complete
+instance paths distinguish repeated child Cell occurrences. Unplaced devices
+have a parameter comparison but no highlight. Subsequent live edits or Gallery
+updates do not replace these snapshots; closing or using keys in this dialog
+cannot edit the live circuit.
+
+Matching is bounded. Budget exhaustion is visible and only verified pairs are
+shown, without claiming maximal coverage. Symmetric circuits may have multiple
+valid correspondences; parameter ordering is a preference, not a guarantee of
+the globally best assignment. Graph extraction's existing limits and
+uncheckable cases remain explicit. The primary algorithm tests live in
+`packages/netlist/src/topology-correspondence.test.ts`; Gallery ranking, task
+lifetime and browser workflows cover their own boundaries.

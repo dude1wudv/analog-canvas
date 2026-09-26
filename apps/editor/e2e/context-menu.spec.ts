@@ -60,7 +60,7 @@ test("right-click on a device only offers direct selection actions", async ({
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Edit Component Definition (E)",
     "Properties (Q)",
-    "Duplicate (C)",
+    "Copy (C)",
     "Rotate 90° (R)",
     "Mirror left/right (Shift+R)",
     "Mirror top/bottom (Ctrl+R)",
@@ -78,8 +78,9 @@ test("right-click on a device only offers direct selection actions", async ({
   ).toHaveAttribute("transform", /rotate\(90\)/u);
 
   await instance.click({ button: "right" });
-  await menu.getByRole("menuitem", { name: "Duplicate (C)" }).click();
+  await menu.getByRole("menuitem", { name: "Copy (C)" }).click();
   await expect(menu).toHaveCount(0);
+  await page.keyboard.press("v");
   await page
     .getByTestId("schematic-canvas")
     .click({ position: { x: 520, y: 300 } });
@@ -470,9 +471,24 @@ test("multiple selected component annotations move as one text selection", async
       labelBoxes[0].y + labelBoxes[0].height,
       labelBoxes[1].y + labelBoxes[1].height,
     ) + 5;
-  await page.mouse.move(left, top);
+  // A left-to-right window selects only what it fully covers. Start it on
+  // empty canvas: the label's corner can sit on a pin's hit area, where the
+  // press would begin a wire instead of a window.
+  const startY = await page.evaluate(
+    ({ x, candidates }) =>
+      candidates.find(
+        (y) =>
+          !document
+            .elementFromPoint(x, y)
+            ?.closest(
+              '[data-testid^="terminal-"], [data-testid^="hit-"], [data-testid^="annotation-hit-"]',
+            ),
+      ) ?? candidates[0]!,
+    { x: left, candidates: [top, bottom, top - 8, bottom + 8] },
+  );
+  await page.mouse.move(left, startY);
   await page.mouse.down();
-  await page.mouse.move(right, bottom, { steps: 8 });
+  await page.mouse.move(right, startY >= bottom ? top : bottom, { steps: 8 });
   await page.mouse.up();
   await expect(first).toHaveClass(/selected/);
   await expect(second).toHaveClass(/selected/);
@@ -711,13 +727,13 @@ test("visual clipboard reports denied access and empty selection without downloa
       name: "Copy selection as PNG",
       exact: true,
     }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   await expect(
     emptyEditMenu.getByRole("button", {
       name: "Copy selection as SVG",
       exact: true,
     }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   await emptyEditMenu.locator("summary").click();
   await placeComponent(page, "resistor", { x: 300, y: 220 });
   const downloads: string[] = [];
@@ -750,6 +766,20 @@ test("Netlist keeps format selection in the project panel while File keeps drawi
   await expect(
     menu.getByRole("button", { name: "Export SVG", exact: true }),
   ).toBeHidden();
+  const importMenu = menu.getByRole("button", { name: "Import", exact: true });
+  await expect(importMenu).toHaveAttribute("aria-expanded", "false");
+  await importMenu.click();
+  await expect(
+    menu.locator("label.file-import", { hasText: "Project File…" }),
+  ).toBeVisible();
+  await expect(
+    menu.locator("label.file-import", { hasText: "SPICE / SCS…" }),
+  ).toBeVisible();
+  await expect(
+    menu.locator("label.file-import", {
+      hasText: "Cadence SPICE (`!` globals)…",
+    }),
+  ).toBeVisible();
   await expect(
     menu.getByRole("button", { name: "Copy SPICE netlist", exact: true }),
   ).toHaveCount(0);
@@ -802,9 +832,7 @@ test("Netlist keeps format selection in the project panel while File keeps drawi
       .getByRole("tab"),
   ).toHaveCount(0);
   await openMenu(page, "File");
-  await menu
-    .getByRole("button", { name: "Export drawing", exact: true })
-    .click();
+  await menu.getByRole("button", { name: "Export", exact: true }).click();
   await expect(
     menu.getByRole("button", { name: "Export SVG", exact: true }),
   ).toBeVisible();
@@ -812,19 +840,19 @@ test("Netlist keeps format selection in the project panel while File keeps drawi
     .getByTestId("schematic-canvas")
     .getAttribute("viewBox");
   await menu
-    .getByRole("button", { name: "Export drawing", exact: true })
+    .getByRole("button", { name: "Export", exact: true })
     .press("ArrowRight");
   await expect(
-    menu.getByRole("button", { name: "Export SVG", exact: true }),
+    menu.getByRole("button", { name: "Export Project File…", exact: true }),
   ).toBeFocused();
   expect(
     await page.getByTestId("schematic-canvas").getAttribute("viewBox"),
   ).toBe(viewBox);
   await menu
-    .getByRole("button", { name: "Export SVG", exact: true })
+    .getByRole("button", { name: "Export Project File…", exact: true })
     .press("ArrowLeft");
   await expect(
-    menu.getByRole("button", { name: "Export drawing", exact: true }),
+    menu.getByRole("button", { name: "Export", exact: true }),
   ).toBeFocused();
   await expect(
     menu.getByRole("button", { name: "Export SVG", exact: true }),

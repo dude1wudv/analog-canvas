@@ -48,6 +48,7 @@ function ParameterRow({
     <>
       <div className="cell-parameter-row" role="row">
         <input
+          autoComplete="off"
           aria-label={`Parameter ${parameter.name} name`}
           title={`${count} internal uses; ${overrides} instance overrides`}
           value={name}
@@ -60,6 +61,7 @@ function ParameterRow({
           }}
         />
         <input
+          autoComplete="off"
           aria-label={`Parameter ${parameter.name} default`}
           placeholder="No default"
           value={value}
@@ -105,7 +107,7 @@ export function CellParametersEditor({
   return (
     <section className="cell-interface-section" aria-label="Cell parameters">
       <header>
-        <h3>Parameters</h3>
+        <h3>参数</h3>
         <span className="cell-count-badge">{parameters.length}</span>
       </header>
       <div
@@ -115,7 +117,7 @@ export function CellParametersEditor({
       >
         <div className="cell-parameter-row" role="row">
           <span role="columnheader">Name</span>
-          <span role="columnheader">Default</span>
+          <span role="columnheader">默认</span>
           <span />
         </div>
         {parameters.map((parameter) => (

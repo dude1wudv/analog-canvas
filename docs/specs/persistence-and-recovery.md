@@ -5,7 +5,7 @@ Status: `accepted`
 Primary owner: Worker Cloud Project storage, `packages/project-protocol`, and
 the editor document lifecycle
 
-Project content uses canonical schema-60 JSON. A private Cloud Project is the
+Project content uses canonical schema-63 JSON. A private Cloud Project is the
 formal saved resource; `.icproj.json` is portable import/export and backup.
 The current-only model in `packages/model` validates the normalized shape;
 `packages/project-protocol` owns parsing, compatibility diagnostics,
@@ -16,7 +16,7 @@ supported historical content before current-schema validation; all writers emit
 the current schema. Persistence does not maintain a separate migration policy.
 
 Recovery state is a non-authoritative browser safety copy. It may restore a
-complete schema-60 Project or a supported historical record that validates
+complete schema-63 Project or a supported historical record that validates
 after the chained upgrade, associated with a recorded working-copy session.
 Corrupt, incompatible, or partial recovery data is discarded or retained as raw
 data without changing the live Project. User-saved Library examples and their
@@ -25,6 +25,9 @@ selection, viewport, overlays, and pending external approvals are never
 embedded in Project JSON or recovery records.
 
 ## Browser recovery records
+
+These bounded crash-recovery copies are distinct from the window workspace
+below. They do not limit the number of open project tabs.
 
 Recovery copies are complete canonical Project texts stored in IndexedDB under
 an application-specific database, keyed by a random `workingCopyId` plus a
@@ -64,6 +67,24 @@ upgraded launch; the old key is removed only after the IndexedDB transaction
 commits. Unmigratable legacy data stays in localStorage for raw
 download/discard.
 
+## Browser-window workspace
+
+The editor persists its open project tabs, unsaved Project content, active tab,
+Cloud bindings and Cell views separately from bounded crash recovery. Refresh
+restores that window's workspace for the same route. The window identity is
+kept in sessionStorage, with snapshots in IndexedDB and a synchronous journal
+for immediate refresh. This state never changes a Cloud Project or enters
+portable Project JSON. See
+[workspace storage](../../apps/editor/src/document/project-workspace.ts).
+
+Inactive tabs retain live controllers and Undo histories during a session;
+refresh reconstructs controllers without Undo stacks or unfinished text-field
+edits. Workspace restoration does not make unsaved content formally saved.
+A closed project tab stays closed after refresh. Read/write failures leave
+earlier snapshots intact and report the need to export; clearing browser data
+can remove this origin-local state. Cloud Save and portable backups remain
+separate durability choices.
+
 ## Cloud Project and Save semantics
 
 The private Cloud Project API owns one current revision per stable resource:
@@ -71,18 +92,73 @@ The private Cloud Project API owns one current revision per stable resource:
 ```text
 POST /api/projects                 create and bind revision 1
 PUT  /api/projects/:id             update the bound Project
+PATCH /api/projects/:id            set favorite metadata only
 If-Match: revision-N               reject stale writers
 GET  /api/projects                 list distinct Projects
 GET  /api/projects/:id             open one Project
 DELETE /api/projects/:id           explicitly delete one Project
 ```
 
+Cloud summary/open responses also return nullable `galleryEntryId`. This is
+private publication metadata, separate from the portable Project document and
+from its content revision. The additive column leaves pre-existing rows unlinked
+and does not rewrite their drawings. Full schema backup/restore preserves the
+link; older backups without it restore as unlinked. The browser reloads current
+source metadata before presenting Publish, so recovery pointers are not authority.
+
+Save never republishes a drawing or takes over an existing publication's source.
+`POST /api/projects` may include an authorized `galleryEntryId` for a just-published
+unbound draft; an existing source remains in place. Changing a saved draft's
+publication source is an explicit Gallery Publish/Update transaction, not a
+side effect of `PUT /api/projects/:id`.
+
 Repeated Save updates the same id and does not consume another account slot.
 The first Save of an unbound New/imported/recovered Project creates a Cloud
 Project. The editor exposes no second Save command that silently creates a
-duplicate Project. The server retains no implicit save history and never
-evicts another Project to make room. A revision mismatch or capacity limit
-blocks only that explicit Save; editing and local recovery continue.
+duplicate Project. Changed saves retain bounded history as described below;
+the server never evicts another Project to make room. A revision mismatch or
+capacity limit blocks only that explicit Save; editing and local recovery continue.
+
+Shelf cards expose Duplicate, Rename, Export, Favorite and Version history
+through the visible actions button, plus Open in new tab. Right-click and
+long-press retain normal browser behavior. Duplicate creates an independent
+private Project with all serialized circuit/source data
+and a new Project identity; it never inherits a Gallery link. Rename loads the
+current document and uses revision-checked Save, preserving its other content
+and publication association. Export downloads the complete stored Project file.
+
+Favorite is account-scoped metadata (`favorite`, default false), included in
+summary/open and full backup/restore. Toggling it changes neither Project bytes
+nor the drawing revision or publication; starred cards sort first. Older backups
+without the field restore false. Card actions report capacity, permission and
+revision failures without deleting existing Projects or overwriting newer edits.
+
+### Private save history
+
+Each changed Save atomically snapshots the displaced revision and advances the
+current Cloud Project. The newest three earlier revisions are retained; the
+current revision is separate. Identical retries create neither another revision
+nor a history entry. Pruning does not recover previously discarded history.
+The account boundary and optimistic revision guard remain the same as Save.
+
+Shelf **Version history** lists saved revisions and offers component comparison,
+Restore and Branch. Restore goes through revision-checked Save, preserving the
+displaced current version within the same retention bound. It retains the
+Project's publication/favorite binding but never republishes to Gallery.
+Branch opens an independent Project without that binding; saving it creates a
+new private draft. Component comparison uses the same
+[snapshot comparison](community-gallery.md#version-history) as Gallery history.
+This is bounded save history, not named milestones or a merge graph.
+
+The owned routes are `GET /api/projects/:id/versions`, version-specific
+`project`/`preview.svg` reads, and `POST .../versions/:versionId/restore`.
+Responses are private and not cached. Full-store backup/restore includes these
+snapshots; [Gallery-only backups](../gallery-backup.md) intentionally do not.
+The executable storage/retention boundary is
+[Cloud Project storage](../../worker/gallery-do.ts); authorization and restore
+reuse live in [the HTTP handler](../../worker/gallery.ts).
+
+### Working-copy transitions
 
 The editor session owns only the transient Cloud binding (`id` and acknowledged
 revision), the saved content baseline, and its recovery working-copy id. No
@@ -100,7 +176,10 @@ remain their only removal paths.
 The editor persistence lifecycle is the single source of unsaved truth. A
 successful persistent edit marks it dirty; only an acknowledged Cloud Save of
 the current content marks it clean. Selection, view, export, download, and
-panel changes do not. While dirty, and only while dirty, the editor registers
+panel changes do not. The unsaved marks on the Project menu and a Project tab,
+and a tab's close question, also treat a Gallery publication of exactly the
+current content as saved: the Gallery keeps that content and its history. The
+next edit brings them back; an exported file never clears them. While dirty, and only while dirty, the editor registers
 the browser-native `beforeunload` guard for Back, Refresh, and tab/window close.
 The application does not synthesize history entries, customize the
 browser-owned warning, or depend on unload-time asynchronous storage as its

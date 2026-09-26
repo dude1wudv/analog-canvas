@@ -1,20 +1,32 @@
+import taxonomy from "../../../../../config/gallery-taxonomy.json";
 import { useEffect, useState } from "react";
 
 import type { SubmissionGateReport } from "@icm/derived";
+import type { CircuitProject } from "@icm/model";
+import { galleryTagLabel } from "../../gallery-tag-label";
 
 import {
   describePublishOutcome,
+  GALLERY_DESCRIPTION_LIMIT,
   type GalleryPublishFields,
   type GalleryPublishOutcome,
   type PublishSessionUser,
 } from "./gallery-publish";
+import { GalleryTopologyCheck } from "./gallery-topology-check";
 
 export interface PublishGalleryDialogProps {
   defaultName: string;
+  publicationLinkLoading?: boolean;
+  publicationLinkError?: string | null;
+  publicationLinkNotice?: string | null;
+  onRetryPublicationLink?: () => void;
+  onLinkExisting?: (url: string) => Promise<void>;
   /** The signed-in user; null means there is nothing to publish with yet. */
   session?: PublishSessionUser | null;
   /** Quality-gate evaluation of the live Project. */
   gateReport?: SubmissionGateReport | null;
+  /** Current Cell projected as the duplicate-comparison root. */
+  topologyProject?: CircuitProject | null;
   /** Present when the current Project is associated with a gallery entry the
    * signed-in user may update (owner, admin, or moderator). */
   updateTarget?: { id: string; name: string } | null;
@@ -52,6 +64,7 @@ export interface PublishGalleryDraft {
   name: string;
   description: string;
   tags: readonly string[];
+  editedFields?: { name: boolean; description: boolean; tags: boolean };
 }
 
 /**
@@ -65,8 +78,14 @@ export interface PublishGalleryDraft {
  */
 export function PublishGalleryDialog({
   defaultName,
+  publicationLinkLoading = false,
+  publicationLinkError = null,
+  publicationLinkNotice = null,
+  onRetryPublicationLink,
+  onLinkExisting,
   session = null,
   gateReport = null,
+  topologyProject = null,
   updateTarget = null,
   updateDefaults = null,
   publish,
@@ -84,10 +103,24 @@ export function PublishGalleryDialog({
   );
   const updating = canUpdate && mode === "update";
   const [name, setName] = useState(draft?.name ?? defaultName);
+  const [nameEdited, setNameEdited] = useState(
+    draft?.editedFields?.name ?? !!draft?.name,
+  );
+  useEffect(() => {
+    if (!nameEdited) setName(defaultName);
+  }, [defaultName, nameEdited]);
   const [description, setDescription] = useState(draft?.description ?? "");
+  const [descriptionEdited, setDescriptionEdited] = useState(
+    draft?.editedFields?.description ?? !!draft?.description,
+  );
   const [tags, setTags] = useState<string[]>([...(draft?.tags ?? [])]);
+  const [tagsEdited, setTagsEdited] = useState(
+    draft?.editedFields?.tags ?? !!draft?.tags.length,
+  );
   const [tagDraft, setTagDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [linkInput, setLinkInput] = useState("");
+  const [linkBusy, setLinkBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // The update permission arrives with the session; default to updating the
@@ -97,23 +130,46 @@ export function PublishGalleryDialog({
     if (canUpdate && !modeTouched) setMode("update");
   }, [canUpdate, modeTouched]);
 
-  // In update mode, prefill the entry's stored fields exactly once so
-  // "edit the tags any time" is open → adjust → save.
-  const [defaultsApplied, setDefaultsApplied] = useState(false);
+  // Follow the chosen publication, preserving fields the author explicitly edited.
   useEffect(() => {
-    if (!canUpdate || !updateDefaults || defaultsApplied) return;
-    setDefaultsApplied(true);
-    setDescription((previous) => previous || updateDefaults.description);
-    setTags((previous) =>
-      previous.length > 0 ? previous : [...updateDefaults.tags],
-    );
-  }, [canUpdate, updateDefaults, defaultsApplied]);
+    if (!canUpdate || !updateDefaults) return;
+    if (!descriptionEdited) setDescription(updateDefaults.description);
+    if (!tagsEdited)
+      setTags((previous) =>
+        previous.length === updateDefaults.tags.length &&
+        previous.every((tag, index) => tag === updateDefaults.tags[index])
+          ? previous
+          : [...updateDefaults.tags],
+      );
+  }, [canUpdate, updateDefaults, descriptionEdited, tagsEdited]);
 
   // Report the draft outward on every keystroke, so it survives whichever way
   // the dialog closes — backdrop, Escape, or Cancel.
   useEffect(() => {
-    onDraftChange?.({ name, description, tags });
-  }, [name, description, tags, onDraftChange]);
+    onDraftChange?.({
+      name,
+      description,
+      tags,
+      editedFields: {
+        name: nameEdited,
+        description: descriptionEdited,
+        tags: tagsEdited,
+      },
+    });
+  }, [
+    name,
+    description,
+    tags,
+    nameEdited,
+    descriptionEdited,
+    tagsEdited,
+    onDraftChange,
+  ]);
+
+  // The limit is shown, never enforced by clipping: a textarea maxLength cut
+  // a pasted citation short without a word, and the text was published cut.
+  const descriptionLength = description.trim().length;
+  const descriptionTooLong = descriptionLength > GALLERY_DESCRIPTION_LIMIT;
 
   const hasDraft =
     description.trim().length > 0 ||
@@ -124,8 +180,9 @@ export function PublishGalleryDialog({
   function addTag(raw: string): void {
     const tag = raw.replace(/\s+/gu, " ").trim().toLowerCase();
     if (!tag) return;
+    setTagsEdited(true);
     setTags((previous) =>
-      previous.includes(tag) || previous.length >= 5
+      previous.includes(tag) || previous.length >= 12
         ? previous
         : [...previous, tag],
     );
@@ -133,16 +190,25 @@ export function PublishGalleryDialog({
   }
 
   async function submit(): Promise<void> {
+    if (publicationLinkLoading || publicationLinkError || linkBusy) return;
+    const pendingTag = tagDraft.replace(/\s+/gu, " ").trim().toLowerCase();
+    const submittedTags =
+      pendingTag && !tags.includes(pendingTag) && tags.length < 12
+        ? [...tags, pendingTag]
+        : tags;
+    if (pendingTag) setTagsEdited(true);
+    setTags(submittedTags);
+    setTagDraft("");
     setBusy(true);
     setError(null);
     const send = updating ? (publishUpdate ?? publish) : publish;
-    const outcome = await send({ name, description, tags });
+    const outcome = await send({ name, description, tags: submittedTags });
     if (outcome.status === "published") {
       onPublished({
         id: outcome.id,
         name: name.trim(),
         description: description.trim(),
-        tags,
+        tags: submittedTags,
         updated: updating,
         ...(outcome.previewRevision === undefined
           ? {}
@@ -189,13 +255,13 @@ export function PublishGalleryDialog({
                 href="/api/auth/github/start"
                 data-testid="publish-signin-github"
               >
-                Continue with GitHub
+                使用 GitHub 继续
               </a>
               <a
                 href="/api/auth/google/start"
                 data-testid="publish-signin-google"
               >
-                Continue with Google
+                使用 Google 继续
               </a>
             </div>
             <p className="publish-gallery-signin-note">
@@ -205,6 +271,60 @@ export function PublishGalleryDialog({
           </div>
         ) : (
           <>
+            {publicationLinkLoading ? (
+              <p role="status">Loading linked publication…</p>
+            ) : null}
+            {publicationLinkError ? (
+              <p role="alert">
+                {publicationLinkError}{" "}
+                <button type="button" onClick={onRetryPublicationLink}>
+                  Retry
+                </button>
+              </p>
+            ) : null}
+            {publicationLinkNotice ? <p>{publicationLinkNotice}</p> : null}
+            {onLinkExisting &&
+            !publicationLinkLoading &&
+            !publicationLinkError ? (
+              <details className="publish-gallery-link-existing">
+                <summary>Use an existing Gallery publication…</summary>
+                <p>
+                  Paste its Gallery link to use this draft as the source.
+                  Updating keeps the public link, likes, author and history. The
+                  previous Shelf draft stays saved.
+                </p>
+                <input
+                  aria-label="Existing Gallery link"
+                  autoComplete="off"
+                  placeholder="/g/…"
+                  value={linkInput}
+                  onChange={(event) => setLinkInput(event.currentTarget.value)}
+                />
+                <button
+                  type="button"
+                  disabled={busy || linkBusy || !linkInput.trim()}
+                  onClick={() => {
+                    setLinkBusy(true);
+                    setError(null);
+                    void onLinkExisting(linkInput)
+                      .then(() => {
+                        setMode("update");
+                        setModeTouched(false);
+                      })
+                      .catch((cause: unknown) =>
+                        setError(
+                          cause instanceof Error
+                            ? cause.message
+                            : "Could not link this publication.",
+                        ),
+                      )
+                      .finally(() => setLinkBusy(false));
+                  }}
+                >
+                  {linkBusy ? "Loading…" : "Use this publication"}
+                </button>
+              </details>
+            ) : null}
             {canUpdate ? (
               <div className="publish-gallery-mode" data-testid="publish-mode">
                 <label>
@@ -251,10 +371,14 @@ export function PublishGalleryDialog({
                 <input
                   dir="auto"
                   aria-label="电路名称"
+                  autoComplete="off"
                   value={name}
                   maxLength={120}
                   autoFocus
-                  onChange={(event) => setName(event.currentTarget.value)}
+                  onChange={(event) => {
+                    setNameEdited(true);
+                    setName(event.currentTarget.value);
+                  }}
                 />
               </label>
               <label>
@@ -265,18 +389,30 @@ export function PublishGalleryDialog({
                 <textarea
                   dir="auto"
                   aria-label="说明"
+                  aria-describedby="publish-gallery-description-count"
+                  aria-invalid={descriptionTooLong}
                   value={description}
-                  maxLength={300}
                   rows={3}
-                  onChange={(event) =>
-                    setDescription(event.currentTarget.value)
-                  }
+                  onChange={(event) => {
+                    setDescriptionEdited(true);
+                    setDescription(event.currentTarget.value);
+                  }}
                 />
+                <span
+                  id="publish-gallery-description-count"
+                  className="publish-gallery-count"
+                  data-over={descriptionTooLong ? "true" : "false"}
+                  data-testid="publish-description-count"
+                >
+                  {descriptionTooLong
+                    ? `${descriptionLength} / ${GALLERY_DESCRIPTION_LIMIT} characters · shorten to publish`
+                    : `${descriptionLength} / ${GALLERY_DESCRIPTION_LIMIT}`}
+                </span>
               </label>
               <div className="publish-gallery-tags" data-testid="publish-tags">
                 <span className="publish-gallery-tags-label">
-                  标签{" "}
-                  <span className="publish-gallery-optional">最多 5 个</span>
+                  Tags{" "}
+                  <span className="publish-gallery-optional">up to 12</span>
                 </span>
                 {tags.length > 0 ? (
                   <div className="publish-gallery-tag-chips">
@@ -287,13 +423,14 @@ export function PublishGalleryDialog({
                         className="publish-gallery-tag"
                         data-testid={`publish-tag-${tag}`}
                         title="移除标签"
-                        onClick={() =>
+                        onClick={() => {
+                          setTagsEdited(true);
                           setTags((previous) =>
                             previous.filter((candidate) => candidate !== tag),
-                          )
-                        }
+                          );
+                        }}
                       >
-                        {tag} ×
+                        {galleryTagLabel(tag)} ×
                       </button>
                     ))}
                   </div>
@@ -301,9 +438,10 @@ export function PublishGalleryDialog({
                 <input
                   dir="auto"
                   aria-label="添加标签"
+                  autoComplete="off"
                   placeholder="输入标签后按 Enter"
                   value={tagDraft}
-                  maxLength={24}
+                  maxLength={32}
                   onChange={(event) => setTagDraft(event.currentTarget.value)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === ",") {
@@ -311,20 +449,15 @@ export function PublishGalleryDialog({
                       addTag(tagDraft);
                     }
                   }}
-                  onBlur={() => addTag(tagDraft)}
                 />
                 <div className="publish-gallery-tag-presets">
-                  {[
-                    "amplifier",
-                    "comparator",
-                    "adc",
-                    "dac",
-                    "pll",
-                    "oscillator",
-                    "filter",
-                    "current mirror",
-                  ]
-                    .filter((preset) => !tags.includes(preset))
+                  {[...new Set(Object.values(taxonomy.tagsByGroup).flat())]
+                    .filter(
+                      (preset) =>
+                        !tags.includes(preset) &&
+                        preset.includes(tagDraft.trim().toLowerCase()),
+                    )
+                    .slice(0, 12)
                     .map((preset) => (
                       <button
                         key={preset}
@@ -332,7 +465,7 @@ export function PublishGalleryDialog({
                         data-testid={`publish-preset-${preset.replace(/\s/gu, "-")}`}
                         onClick={() => addTag(preset)}
                       >
-                        + {preset}
+                        + {galleryTagLabel(preset)}
                       </button>
                     ))}
                 </div>
@@ -373,11 +506,21 @@ export function PublishGalleryDialog({
           <button type="button" disabled={busy} onClick={onClose}>
             {signedOut ? "Close" : "Cancel"}
           </button>
+          {!signedOut && topologyProject ? (
+            <GalleryTopologyCheck project={topologyProject} />
+          ) : null}
           {signedOut ? null : (
             <button
               type="button"
               className="publish-gallery-primary"
-              disabled={busy || name.trim() === ""}
+              disabled={
+                busy ||
+                linkBusy ||
+                publicationLinkLoading ||
+                !!publicationLinkError ||
+                name.trim() === "" ||
+                descriptionTooLong
+              }
               onClick={() => void submit()}
             >
               {busy ? "Publishing…" : updating ? "Update entry" : "Publish"}

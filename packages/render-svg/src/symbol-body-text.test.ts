@@ -35,6 +35,28 @@ function letters(svg: string): string[] {
 }
 
 describe("lettered amplifier body text", () => {
+  it("renders A_1 and all block-name typography settings immediately", () => {
+    const document = documentWithAmplifiers("opamp-lettered", ["A_gain"]);
+    const initial = renderDocumentSvg(document, resolver);
+    expect(initial).toContain('data-text-run="subscript"');
+    expect(letters(initial)).toEqual(["Again"]);
+    document.presentation.labelUnderscoreSubscript = false;
+    document.presentation.labelSubscriptAfterFirst = false;
+    const literal = renderDocumentSvg(document, resolver);
+    expect(letters(literal)).toEqual(["A_gain"]);
+    expect(literal).not.toContain('data-text-run="subscript"');
+    document.presentation.labelUnderscoreSubscript = true;
+    document.presentation.labelSubscriptCase = "uppercase";
+    document.presentation.labelSubscriptItalic = false;
+    document.presentation.labelFirstLetterItalic = false;
+    const uppercase = renderDocumentSvg(document, resolver);
+    expect(letters(uppercase)).toEqual(["AGAIN"]);
+    const body = uppercase.match(
+      /<text data-role="formula-text"[^>]*>(.*?)<\/text>/u,
+    )![1]!;
+    expect(body).not.toContain("font-style:italic");
+    expect(body).toContain("font-weight:700");
+  });
   it("draws the default A and lets each Instance own its own letter", () => {
     // The point of the feature: one sheet with a gain stage, a buffer and an
     // unlabelled stage, all the same part.
@@ -211,6 +233,44 @@ describe("editable body text as a general Symbol capability", () => {
 });
 
 describe("converter blocks carry the same editable body text", () => {
+  it("keeps plain body words on one baseline while honoring explicit scripts", () => {
+    const document = createEmptyDocument("main", "Main");
+    for (const [index, symbolId, formula] of [
+      [0, "adc", undefined],
+      [1, "dac", undefined],
+      [2, "adc", "BUF"],
+      [3, "opamp-lettered", "A_gain"],
+    ] as const) {
+      document.instances.push({
+        id: `U${index}`,
+        symbolId,
+        placement: {
+          position: { x: 100 + index * 200, y: 100 },
+          rotation: 0,
+          mirror: "none",
+        },
+        ...(formula ? { signalFlowParameters: { formula } } : {}),
+      });
+    }
+    // Fixed names stay whole even when the drawing shows first-letter looks.
+    document.presentation.labelSubscriptAfterFirst = true;
+    const svg = renderDocumentSvg(document, resolver);
+    const bodies = [
+      ...svg.matchAll(/<text data-role="formula-text"[^>]*>(.*?)<\/text>/gu),
+    ].map((match) => match[1]!);
+    expect(bodies).toHaveLength(4);
+    expect(bodies.map((body) => body.replace(/<[^>]+>/gu, ""))).toEqual([
+      "ADC",
+      "DAC",
+      "BUF",
+      "Again",
+    ]);
+    for (const body of bodies.slice(0, 3)) {
+      expect(body).not.toContain('data-text-run="subscript"');
+    }
+    expect(bodies[3]).toContain('data-text-run="subscript"');
+  });
+
   it("renders ADC and DAC defaults and honours a per-Instance override", () => {
     const document = createEmptyDocument("main", "Main");
     document.instances.push(

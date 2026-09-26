@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSessionClient } from "@icm/agent-client";
 import { FakeAgentHttp } from "../../../packages/agent-client/src/test-support/fake-relay.js";
 import { exportFile, importFile } from "./file-operations.js";
@@ -24,6 +24,46 @@ async function tempDirectory(): Promise<string> {
 }
 
 describe("MCP file operations", () => {
+  it("forwards candidate Cell selection and explicit revision without an extra read", async () => {
+    const http = new FakeAgentHttp();
+    const client = new AgentSessionClient({ http });
+    await client.connect("session-1.code");
+    const files = vi
+      .spyOn(http, "files")
+      .mockResolvedValue({ ok: true } as never);
+    const before = http.circuitCalls.length;
+    await importFile(client, {
+      action: "import-cell",
+      candidateId: "c",
+      sourceDocumentId: "s",
+      targetDocumentId: "main",
+      mode: "append",
+      expectedStructureRevision: 0,
+      expectedRevision: 0,
+    });
+    expect(files).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({
+        operation: "import-cell",
+        sourceDocumentId: "s",
+        targetDocumentId: "main",
+        mode: "append",
+        expectedStructureRevision: 0,
+      }),
+    );
+    expect(http.circuitCalls).toHaveLength(before);
+    await importFile(client, {
+      action: "inspect",
+      candidateId: "c",
+      documentId: "s",
+    });
+    expect(files).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({ operation: "inspect", documentId: "s" }),
+    );
+  });
   it.each([
     { artifact: "project" as const },
     {
@@ -102,5 +142,44 @@ describe("MCP file operations", () => {
       operation: "stage",
       kind: "project",
     });
+  });
+
+  it("opens a staged candidate with the existing connector", async () => {
+    const http = new FakeAgentHttp({
+      files: (request) => ({
+        apiVersion: "3.0",
+        requestId: request.requestId,
+        operation: "open",
+        ok: true,
+      }),
+    });
+    vi.spyOn(http, "status").mockResolvedValue({
+      ok: true,
+      sessionId: "session-1",
+      projectId: "imported-project",
+      documentIds: ["imported-document"],
+      authorization: "active",
+      editor: "attached",
+      observedAt: 1000,
+      expiresAt: 999999,
+    });
+    const client = new AgentSessionClient({ http });
+    await client.connect("session-1.code");
+    const result = await importFile(client, {
+      action: "open",
+      candidateId: "candidate-1",
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      operation: "open",
+    });
+    expect(http.fileCalls).toEqual([
+      expect.objectContaining({
+        operation: "open",
+        candidateId: "candidate-1",
+      }),
+    ]);
+    expect((await client.status()).documentIds).toEqual(["imported-document"]);
+    expect(http.claims).toHaveLength(1);
   });
 });
