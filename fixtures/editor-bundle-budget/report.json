@@ -1,19 +1,19 @@
 {
   "version": "0.2.0",
-  "note": "Ceilings for the /editor and / Gallery first-paint payloads. Raising one requires a recorded reason; a faster or slower machine is not one.",
+  "note": "Ceilings for the /editor and / Gallery first-paint payloads. Raising one requires a recorded reason; a faster or slower machine is not one. HK fork retains Chinese UI, local account and image-import menu; image dialogs are lazy-loaded, with a bounded 5 KiB gzip allowance over upstream.",
   "routes": {
     "editor": {
       "budget": {
         "files": 36,
         "rawKib": 2745,
-        "gzipKib": 700,
+        "gzipKib": 705,
         "brotliKib": 588
       },
       "measured": {
         "files": 34,
-        "rawKib": 2579.8,
-        "gzipKib": 697.3,
-        "brotliKib": 585
+        "rawKib": 2581.3,
+        "gzipKib": 701.4,
+        "brotliKib": 586.5
       }
     },
     "gallery": {

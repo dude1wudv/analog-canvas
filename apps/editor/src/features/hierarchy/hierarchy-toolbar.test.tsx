@@ -51,7 +51,7 @@ describe("HierarchyToolbar", () => {
     expect(markup).toContain("dut (top)");
     expect(markup).toContain("Child");
     expect(markup).toContain("Enter Cell");
-    expect(markup).toContain("Manage Cells…");
+    expect(markup).toContain("管理 Cell…");
     expect(markup).not.toContain(">Up</button>");
   });
 });

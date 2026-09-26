@@ -983,7 +983,7 @@ export function RichTextEditor({
           <>
             <button
               type="button"
-              aria-label="Bold"
+              aria-label="粗体"
               aria-pressed={activeStyles.bold}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
@@ -993,7 +993,7 @@ export function RichTextEditor({
             </button>
             <button
               type="button"
-              aria-label="Italic"
+              aria-label="斜体"
               aria-pressed={activeStyles.italic}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
@@ -1003,7 +1003,7 @@ export function RichTextEditor({
             </button>
             <button
               type="button"
-              aria-label="Subscript"
+              aria-label="下标"
               aria-pressed={activeStyles.subscript}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
@@ -1013,7 +1013,7 @@ export function RichTextEditor({
             </button>
             <button
               type="button"
-              aria-label="Superscript"
+              aria-label="上标"
               aria-pressed={activeStyles.superscript}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
@@ -1023,7 +1023,7 @@ export function RichTextEditor({
             </button>
             <button
               type="button"
-              aria-label="Overbar"
+              aria-label="上划线"
               aria-pressed={activeStyles.overbar}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}

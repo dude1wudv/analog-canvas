@@ -21,7 +21,7 @@ describe("shapes quick-place", () => {
     );
 
     expect(symbols).toHaveLength(70);
-    expect(markup).toContain("All devices");
+    expect(markup).toContain("所有器件");
     expect(markup.match(/data-testid="shapes-chip-/g)).toHaveLength(
       symbols.length,
     );

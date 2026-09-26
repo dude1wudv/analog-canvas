@@ -9,8 +9,16 @@ import {
   type RefObject,
 } from "react";
 
-import { ImageSpiceDialog } from "../image-spice/image-spice-dialog";
-import { AiSettingsDialog } from "../image-spice/ai-settings-dialog";
+const ImageSpiceDialog = lazy(() =>
+  import("../image-spice/image-spice-dialog").then((module) => ({
+    default: module.ImageSpiceDialog,
+  })),
+);
+const AiSettingsDialog = lazy(() =>
+  import("../image-spice/ai-settings-dialog").then((module) => ({
+    default: module.AiSettingsDialog,
+  })),
+);
 import type { AiConfiguration } from "../image-spice/ai-configuration";
 
 import {
@@ -170,31 +178,33 @@ export function FileCommandMenu({
   const activateFileLabel = (
     event: ReactKeyboardEvent<HTMLLabelElement>,
   ): void => {
-    if (event.key !== "进入" && event.key !== " ") return;
+    if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
     event.currentTarget.querySelector("input")?.click();
   };
   return (
     <>
-      {imageSpiceOpen && (
-        <ImageSpiceDialog
-          configurations={aiConfigurations}
-          onOpenSettings={() => setAiSettingsOpen(true)}
-          onClose={() => setImageSpiceOpen(false)}
-          onImport={(file) => {
-            const transfer = new DataTransfer();
-            transfer.items.add(file);
-            onImportSpice(transfer.files);
-          }}
-        />
-      )}
-      {aiSettingsOpen && (
-        <AiSettingsDialog
-          configurations={aiConfigurations}
-          onChange={setAiConfigurations}
-          onClose={() => setAiSettingsOpen(false)}
-        />
-      )}
+      <Suspense fallback={null}>
+        {imageSpiceOpen && (
+          <ImageSpiceDialog
+            configurations={aiConfigurations}
+            onOpenSettings={() => setAiSettingsOpen(true)}
+            onClose={() => setImageSpiceOpen(false)}
+            onImport={(file) => {
+              const transfer = new DataTransfer();
+              transfer.items.add(file);
+              onImportSpice(transfer.files);
+            }}
+          />
+        )}
+        {aiSettingsOpen && (
+          <AiSettingsDialog
+            configurations={aiConfigurations}
+            onChange={setAiConfigurations}
+            onClose={() => setAiSettingsOpen(false)}
+          />
+        )}
+      </Suspense>
       <details
         className="command-menu"
         name="editor-command-menu"

@@ -33,7 +33,7 @@ describe("editor statusbar", () => {
     );
     expect(markup).toContain('data-testid="wire-options"');
     expect(markup).toContain("Saved locally");
-    expect(markup).toContain('aria-label="Current zoom"');
+    expect(markup).toContain('aria-label="当前缩放比例"');
     expect(markup).toContain('data-testid="statusbar-change-log"');
     expect(markup).toContain(
       'href="https://github.com/cascode-ai/analog-canvas/commits/main"',

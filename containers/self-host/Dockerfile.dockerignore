@@ -16,3 +16,6 @@ pdk
 .env.*
 **/.env
 **/.env.*
+
+# Generated inside the build stage and extracted only for the executor context.
+containers/ngspice/runtime

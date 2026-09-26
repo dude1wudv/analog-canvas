@@ -99,7 +99,7 @@ function ModelTargetControl({
           <input
             ref={customInput}
             dir="auto"
-            aria-label="Custom model name"
+            aria-label="自定义模型名称"
             autoComplete="off"
             value={customDraft}
             placeholder="模型名称"
@@ -223,7 +223,7 @@ export function ComponentIdentityProperties({
                   <input
                     dir="auto"
                     key={`${instance.id}-${revision}-reference`}
-                    aria-label="Netlist Reference"
+                    aria-label="网表位号"
                     autoComplete="off"
                     defaultValue={reference}
                     onBlur={(event) =>

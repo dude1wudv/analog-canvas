@@ -15,7 +15,7 @@ describe("EditorCrashScreen", () => {
     expect(html).toContain("boom in scene build");
     expect(html).toContain("重新加载编辑器");
     expect(html).toContain('data-testid="crash-report-bug"');
-    expect(html).toContain("Report bug");
+    expect(html).toContain("报告问题");
     expect(html).toContain("Recover Unsaved Work");
   });
 

@@ -6799,7 +6799,8 @@ test("keeps multiple AI profiles in page memory and safely tests success, failur
     .getByRole("button", { name: "测试连通性", exact: true })
     .click();
   const failure = settings.getByRole("alert");
-  await expect(failure).toContainText("HTTP 401");
+  await expect(failure).toContainText("自定义 AI 接口认证失败");
+  await expect(failure).toContainText("这不会影响当前登录账号");
   await expect(failure).not.toContainText("provider-key-b");
   await settings.getByRole("button", { name: "应用配置", exact: true }).click();
 
@@ -6826,7 +6827,7 @@ test("keeps multiple AI profiles in page memory and safely tests success, failur
   ).toBeEnabled();
 });
 
-test("recognizes an uploaded schematic and imports its checked SPICE into the Placement Tray", async ({
+test("recognizes an uploaded schematic and imports its checked SPICE into the drawing", async ({
   page,
 }) => {
   const imageSpice = "* Image transcription\nV1 in 0 1\nR1 in 0 1k\n.end\n";
@@ -6915,10 +6916,10 @@ test("recognizes an uploaded schematic and imports its checked SPICE into the Pl
   await expect(
     page.getByTestId("editor-test-telemetry").getByTestId("instance-count"),
   ).toHaveText("2");
-  const tray = page.getByRole("region", { name: "待放置区" });
-  await tray.locator("summary").click();
-  await expect(tray.getByTestId("unplaced-V1")).toBeVisible();
-  await expect(tray.getByTestId("unplaced-R1")).toBeVisible();
+  const canvas = page.getByTestId("schematic-canvas");
+  await expect(canvas.getByTestId("hit-V1")).toBeVisible();
+  await expect(canvas.getByTestId("hit-R1")).toBeVisible();
+  await expect(page.getByRole("region", { name: "待放置区" })).toHaveCount(0);
 });
 
 test("Net Label overbars stay the label's look through source edits, undo and reload", async ({
