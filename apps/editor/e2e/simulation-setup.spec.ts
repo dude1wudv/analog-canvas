@@ -103,16 +103,16 @@ test("the qualified OTA folder opens unchanged and preserves all root and hierar
     buffer: Buffer.from(JSON.stringify(project)),
   });
   await clickNetlistWorkflowCommand(page, "open-analog-simulation");
-  const panel = page.getByRole("region", { name: "Analog simulation" });
+  const panel = page.getByRole("region", { name: "模拟仿真" });
   // New Helper picks write native Code even in a retained legacy experiment.
   const helper = async (name: string) => {
-    await panel.getByRole("button", { name: "Helper", exact: true }).click();
+    await panel.getByRole("button", { name: "助手", exact: true }).click();
     await panel.getByRole("option", { name, exact: true }).click();
   };
   await helper("Pick Net on Canvas");
   await page.getByTestId("route-hit-tb-vinp-route").click({ force: true });
   await expect(
-    panel.getByRole("textbox", { name: "Simulation source editor" }),
+    panel.getByRole("textbox", { name: "仿真源代码编辑器" }),
   ).toContainText("save ");
   await helper("Pick current on Canvas");
   await page.getByTestId("terminal-VINP-+").click();
@@ -124,7 +124,7 @@ test("the qualified OTA folder opens unchanged and preserves all root and hierar
     /simulation-terminal-pick-active/,
   );
   await expect(
-    panel.getByRole("textbox", { name: "Simulation source editor" }),
+    panel.getByRole("textbox", { name: "仿真源代码编辑器" }),
   ).not.toBeFocused();
   // Repeated current picks stay active without duplicating native acquisition.
   await page.getByTestId("terminal-VINP-+").click();
@@ -137,7 +137,7 @@ test("the qualified OTA folder opens unchanged and preserves all root and hierar
     /simulation-terminal-pick-active/,
   );
   await helper("Save voltage…");
-  const observe = panel.getByRole("dialog", { name: "Save signal" });
+  const observe = panel.getByRole("dialog", { name: "保存信号" });
   await observe.getByRole("textbox", { name: "Search signal" }).fill("v(out)");
   await observe
     .getByRole("button", { name: "Use native vector: v(out)", exact: true })
@@ -204,7 +204,7 @@ test("the qualified OTA folder opens unchanged and preserves all root and hierar
     .click({ button: "right" });
   await page.getByRole("menuitem", { name: "Preview input netlist…" }).click();
   await expect(panel.getByLabel("Prepare temporary files")).toHaveCount(0);
-  const preview = panel.getByRole("region", { name: "File preview" });
+  const preview = panel.getByRole("region", { name: "文件预览" });
   const download = page.waitForEvent("download");
   await preview.getByRole("button", { name: "Download", exact: true }).click();
   const stream = await (await download).createReadStream();
@@ -268,16 +268,18 @@ test("the qualified OTA folder opens unchanged and preserves all root and hierar
   await clickNetlistWorkflowCommand(page, "open-analog-simulation");
   if (
     (await panel
-      .getByRole("button", { name: "Explorer", exact: true })
+      .getByRole("button", { name: "资源管理器", exact: true })
       .getAttribute("aria-expanded")) !== "true"
   )
-    await panel.getByRole("button", { name: "Explorer", exact: true }).click();
+    await panel
+      .getByRole("button", { name: "资源管理器", exact: true })
+      .click();
   await panel
     .getByRole("treeitem", { name: "experiment.json", exact: true })
     .first()
     .click();
   await expect(
-    panel.getByRole("textbox", { name: "Simulation source editor" }),
+    panel.getByRole("textbox", { name: "仿真源代码编辑器" }),
   ).toContainText(profile.id);
   const reopened = parseProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(),
@@ -299,9 +301,9 @@ test("uncommitted source survives whole-workspace reload", async ({ page }) => {
   });
   await expect.poll(() => recoveryProjectTexts(page)).toContain(ota.id);
   await clickNetlistWorkflowCommand(page, "open-analog-simulation");
-  const panel = page.getByRole("region", { name: "Analog simulation" });
+  const panel = page.getByRole("region", { name: "模拟仿真" });
   const editor = panel.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   const marker = "* unsaved recovery 🧪";
   await editor.click();
@@ -385,11 +387,11 @@ test("one Testbench persists several independently named folders", async ({
     buffer: Buffer.from(JSON.stringify(project)),
   });
   await clickNetlistWorkflowCommand(page, "open-analog-simulation");
-  const panel = page.getByRole("region", { name: "Analog simulation" });
-  const folders = panel.getByLabel("Simulation folders", { exact: true });
+  const panel = page.getByRole("region", { name: "模拟仿真" });
+  const folders = panel.getByLabel("仿真文件夹", { exact: true });
   await expect(
     folders.getByRole("treeitem", {
-      name: "Folder OTA OP, DC, AC, and TRAN",
+      name: "文件夹 OTA OP, DC, AC, and TRAN",
       exact: true,
     }),
   ).toBeVisible();
@@ -397,10 +399,10 @@ test("one Testbench persists several independently named folders", async ({
   await folders.getByLabel("New simulation folder name").fill("Bias sweep");
   await folders.getByLabel("New simulation folder name").press("Enter");
   await expect(
-    folders.getByRole("treeitem", { name: "Folder Bias sweep", exact: true }),
+    folders.getByRole("treeitem", { name: "文件夹 Bias sweep", exact: true }),
   ).toBeVisible();
   await folders
-    .getByRole("treeitem", { name: "Folder Bias sweep", exact: true })
+    .getByRole("treeitem", { name: "文件夹 Bias sweep", exact: true })
     .click({ button: "right" });
   await page.getByRole("menuitem", { name: "Rename…" }).click();
   await folders
@@ -436,7 +438,7 @@ test("one Testbench persists several independently named folders", async ({
   );
 
   await folders
-    .getByRole("treeitem", { name: "Folder Bias sweep", exact: true })
+    .getByRole("treeitem", { name: "文件夹 Bias sweep", exact: true })
     .click({ button: "right" });
   await page.getByRole("menuitem", { name: "Delete…" }).click();
   await page
@@ -444,10 +446,10 @@ test("one Testbench persists several independently named folders", async ({
     .getByRole("button", { name: "Cancel" })
     .click();
   await expect(
-    folders.getByRole("treeitem", { name: "Folder Bias sweep", exact: true }),
+    folders.getByRole("treeitem", { name: "文件夹 Bias sweep", exact: true }),
   ).toBeVisible();
   await folders
-    .getByRole("treeitem", { name: "Folder Bias sweep", exact: true })
+    .getByRole("treeitem", { name: "文件夹 Bias sweep", exact: true })
     .click({ button: "right" });
   await page.getByRole("menuitem", { name: "Delete…" }).click();
   await page
@@ -455,7 +457,7 @@ test("one Testbench persists several independently named folders", async ({
     .getByRole("button", { name: "Delete", exact: true })
     .click();
   await expect(
-    folders.getByRole("treeitem", { name: "Folder Bias sweep", exact: true }),
+    folders.getByRole("treeitem", { name: "文件夹 Bias sweep", exact: true }),
   ).toHaveCount(0);
   const afterDelete = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(),

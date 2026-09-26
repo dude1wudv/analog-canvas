@@ -555,7 +555,7 @@ test("Editor Gallery gives tags one column only after widening beyond three circ
   expect(olderRequests).toBe(1);
   await expect(cards).toHaveCount(1);
   await expect(panel.getByTestId("examples-panel-count")).toHaveText(
-    "31 circuits · 1 match",
+    "31 个电路 · 1 个匹配",
   );
   const search = panel.getByTestId("examples-panel-search");
   await search.fill("lin");
@@ -2597,7 +2597,7 @@ test("the search box reaches metadata and tolerates small typos", async ({
   await expect(page.getByTestId("gallery-tile-s1")).toBeVisible();
   await expect(page.getByTestId("gallery-tile-s2")).toHaveCount(0);
   await expect(page.getByTestId("gallery-count-panel")).toHaveText(
-    "2 circuits · 1 match",
+    "2 个电路 · 1 个匹配",
   );
 
   await box.fill("cascode");
@@ -2616,15 +2616,13 @@ test("the search box reaches metadata and tolerates small typos", async ({
     "No circuits match “zzz”.",
   );
   await expect(page.getByTestId("gallery-count-panel")).toHaveText(
-    "2 circuits · 0 matches",
+    "2 个电路 · 0 个匹配",
   );
 
   await box.fill("");
   await expect(page.getByTestId("gallery-tile-s1")).toBeVisible();
   await expect(page.getByTestId("gallery-tile-s2")).toBeVisible();
-  await expect(page.getByTestId("gallery-count-panel")).toHaveText(
-    "2 circuits",
-  );
+  await expect(page.getByTestId("gallery-count-panel")).toHaveText("2 个电路");
 });
 
 test("an unfinished feed says it is still searching, not that nothing matches", async ({
@@ -2672,7 +2670,7 @@ test("an unfinished feed says it is still searching, not that nothing matches", 
   );
   await expect(page.getByTestId("gallery-search-empty")).toHaveCount(0);
   await expect(page.getByTestId("gallery-count-panel")).toHaveText(
-    "40 circuits · 0 matches so far",
+    "40 个电路 · 0 个匹配（目前）",
   );
 });
 
@@ -2696,7 +2694,7 @@ test("the wall states how many circuits the gallery holds", async ({
   );
   await page.goto("/");
   await expect(page.getByTestId("gallery-count-panel")).toHaveText(
-    "128 circuits",
+    "128 个电路",
   );
   // The shelf states its own count; the community total stays off it.
   await page.getByTestId("gallery-view-shelf").click();
@@ -2770,7 +2768,7 @@ test("the wall count opens a contributor ranking whose names open each gallery",
     "Alice",
   );
   await expect(page.getByTestId("gallery-contributor-row-1")).toContainText(
-    "2 circuits",
+    "2 个电路",
   );
   await expect(page.getByTestId("gallery-contributor-row-2")).toContainText(
     "Bob",
@@ -2848,8 +2846,8 @@ test("contributors cover filtered pages while text search follows only matching 
     "Bob",
   ]);
   await expect(popover.locator(".gallery-contributor-count")).toHaveText([
-    "2 circuits",
-    "1 circuit",
+    "2 个电路",
+    "1 个电路",
   ]);
   await page.getByTestId("gallery-search").fill("Bob");
   await expect(popover).toContainText("0 authors so far");
@@ -2870,7 +2868,7 @@ test("contributors cover filtered pages while text search follows only matching 
     "Bob",
   ]);
   await expect(popover.locator(".gallery-contributor-count")).toHaveText([
-    "1 circuit",
+    "1 个电路",
   ]);
   await expect(popover).not.toContainText("so far");
   expect(globalRequests).toBe(0);
@@ -3229,7 +3227,7 @@ test("a signed-in owner renames the display name and signs out", async ({
   });
 
   await page.goto("/");
-  await expect(page.getByTestId("account-owner")).toHaveText("Owner");
+  await expect(page.getByTestId("account-owner")).toHaveText("所有者");
   await page.getByTestId("account-name").click();
   await page.getByTestId("account-rename-input").fill("Token Zhang");
   await page.getByTestId("account-rename-input").press("Enter");
@@ -3421,7 +3419,7 @@ test("a published tab counts as saved until its next edit", async ({
   await expect(page.getByRole("tab")).toHaveCount(2);
   const active = page.getByRole("tab", { selected: true });
   await place(340);
-  await expect(active.getByLabel("Unsaved")).toBeVisible();
+  await expect(active.getByLabel("未保存")).toBeVisible();
   await expect(page.getByTestId("project-unsaved-indicator")).toBeVisible();
 
   await page.getByTestId("publish-gallery-button").click();
@@ -3433,12 +3431,12 @@ test("a published tab counts as saved until its next edit", async ({
     'Published "Published tab" to the gallery',
   );
   // The Gallery holds exactly these bytes: nothing is unsaved.
-  await expect(active.getByLabel("Unsaved")).toHaveCount(0);
+  await expect(active.getByLabel("未保存")).toHaveCount(0);
   await expect(page.getByTestId("project-unsaved-indicator")).toHaveCount(0);
 
   // The next edit is unsaved again, until it is published too.
   await place(460);
-  await expect(active.getByLabel("Unsaved")).toBeVisible();
+  await expect(active.getByLabel("未保存")).toBeVisible();
   await page.getByTestId("publish-gallery-button").click();
   await page
     .getByTestId("publish-gallery-dialog")
@@ -3447,7 +3445,7 @@ test("a published tab counts as saved until its next edit", async ({
   await expect(page.getByTestId("status")).toHaveText(
     'Updated "Published tab" in the gallery',
   );
-  await expect(active.getByLabel("Unsaved")).toHaveCount(0);
+  await expect(active.getByLabel("未保存")).toHaveCount(0);
 
   // Closing it loses nothing, so it closes without asking.
   await active
@@ -4103,7 +4101,7 @@ test("/mine wears the site chrome and links every entry back to the editor", asy
     "href",
     "/g/mine-2",
   );
-  await expect(page.getByTestId("mine-status-mine-2")).toHaveText("Published");
+  await expect(page.getByTestId("mine-status-mine-2")).toHaveText("已发布");
 });
 
 test("/mine offers owner withdrawal, restore, and version history", async ({
@@ -4178,11 +4176,11 @@ test("/mine offers owner withdrawal, restore, and version history", async ({
   // Withdrawal asks for a second, explicit click.
   await page.getByTestId("mine-withdraw-mine-2").click();
   await page.getByTestId("mine-withdraw-confirm-mine-2").click();
-  await expect(page.getByTestId("mine-status-mine-2")).toHaveText("Withdrawn");
+  await expect(page.getByTestId("mine-status-mine-2")).toHaveText("已撤回");
   await expect(page.getByTestId("mine-notice")).toContainText("Withdrew");
   // Restore republishes a voluntary withdrawal.
   await page.getByTestId("mine-restore-mine-2").click();
-  await expect(page.getByTestId("mine-status-mine-2")).toHaveText("Published");
+  await expect(page.getByTestId("mine-status-mine-2")).toHaveText("已发布");
   // The version history dialog lists the snapshot with its preview.
   await page.getByTestId("mine-history-mine-2").click();
   const history = page.getByTestId("version-history-dialog");
@@ -4438,10 +4436,10 @@ test("the Examples panel guards dirty work before opening an entry", async ({
 
   await card.click();
   const dialog = page.getByRole("dialog", {
-    name: "Unsaved changes",
+    name: "有未保存的更改",
   });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "Stay" }).click();
+  await dialog.getByRole("button", { name: "留在此处" }).click();
   await expect(page.getByTestId("hit-R1")).toHaveCount(1);
 
   await card.click();

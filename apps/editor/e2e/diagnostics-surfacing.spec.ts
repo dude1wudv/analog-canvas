@@ -22,7 +22,7 @@ test("Check and Save surfaces findings in the existing workbench and canvas", as
   // A fresh document rests at a quiet, still-clickable entry point.
   const badge = page.getByTestId("statusbar-issues");
   await expect(badge).toHaveAttribute("data-severity", "none");
-  await expect(badge).toHaveText("Not checked");
+  await expect(badge).toHaveText("尚未检查");
 
   // Unfinished drawing produces neither diagnostic counts nor markers.
   await chooseComponent(page, "resistor");
@@ -30,7 +30,7 @@ test("Check and Save surfaces findings in the existing workbench and canvas", as
     .getByTestId("schematic-canvas")
     .click({ position: { x: 400, y: 240 } });
   await page.keyboard.press("Escape");
-  await expect(badge).toHaveText("Not checked");
+  await expect(badge).toHaveText("尚未检查");
   await expect(page.locator(".diagnostic-marker")).toHaveCount(0);
   await clickNetlistWorkflowCommand(page, "check-and-save");
   await expect(badge).toHaveAttribute("data-severity", "warning");
@@ -90,7 +90,7 @@ test("signed-out Save does not suppress ERC or visual check results", async ({
     await page.getByTestId("schematic-canvas").click({ position });
     await page.keyboard.press("Escape");
   }
-  await expect(page.getByTestId("statusbar-issues")).toHaveText("Not checked");
+  await expect(page.getByTestId("statusbar-issues")).toHaveText("尚未检查");
   await clickNetlistWorkflowCommand(page, "check-and-save");
   await expect(page.getByTestId("status")).toContainText("Sign in to save");
   await expect(page.getByTestId("project-diagnostics")).toContainText(

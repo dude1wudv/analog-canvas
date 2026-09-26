@@ -93,7 +93,7 @@ test("opens netlist preflight and navigates its canonical finding", async ({
   await expect(dialog).toBeVisible();
 
   const reportBody = dialog.locator(".netlist-preflight-body");
-  const diagnostics = dialog.getByLabel("Netlist diagnostics");
+  const diagnostics = dialog.getByLabel("网表诊断");
   const reportBodyBox = await reportBody.boundingBox();
   const diagnosticsBox = await diagnostics.boundingBox();
   expect(reportBodyBox).not.toBeNull();
@@ -208,9 +208,7 @@ R7 IN OUT 10k
     "Imported 1 Documents",
   );
   // The import draws every device: nothing waits off-sheet in a tray.
-  await expect(
-    page.getByRole("region", { name: "Placement Tray" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "待放置区" })).toHaveCount(0);
   await expect(
     page
       .getByTestId("schematic-canvas")
@@ -343,11 +341,11 @@ test("copies generated NoConnect nodes immediately and retains the optional Chec
   await expect(dialog.getByTestId("netlist-preview")).toContainText(
     "R1 IN NC0001 10k",
   );
-  await expect(dialog.getByLabel("Preflight findings")).toBeVisible();
-  await expect(dialog.getByLabel("Electrical findings")).toBeVisible();
+  await expect(dialog.getByLabel("预检结果")).toBeVisible();
+  await expect(dialog.getByLabel("电气检查结果")).toBeVisible();
 
   const previewPane = dialog.locator(".netlist-preflight-export");
-  const diagnosticsPane = dialog.getByLabel("Netlist diagnostics");
+  const diagnosticsPane = dialog.getByLabel("网表诊断");
   const desktopPreviewBox = await previewPane.boundingBox();
   const desktopDiagnosticsBox = await diagnosticsPane.boundingBox();
   expect(desktopPreviewBox).not.toBeNull();
@@ -494,7 +492,7 @@ test("copies structural SPICE and Spectre netlists while exposing instance autho
   );
   await page.keyboard.press("q");
   await openSelectionShelf(page);
-  const properties = page.getByRole("complementary", { name: "Properties" });
+  const properties = page.getByRole("complementary", { name: "属性" });
   await expect(properties.getByLabel("Cell netlist name")).toHaveCount(0);
   await expect(properties.getByLabel("Cell netlist port order")).toHaveCount(0);
   await expectComponentCodeField(page, "netlistName", "M1");

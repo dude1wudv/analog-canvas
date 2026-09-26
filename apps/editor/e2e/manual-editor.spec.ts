@@ -573,7 +573,7 @@ test("property code keeps a drawn wired instance visible and moves it with grid 
     .getByLabel("Editable Canvas property code")
     .fill(JSON.stringify(code));
   const discard = page.getByRole("button", {
-    name: "Discard draft",
+    name: "丢弃草稿",
     exact: true,
   });
   await expect(discard).toBeVisible();
@@ -692,9 +692,7 @@ test("retired Digital Timing is absent while existing clock symbols still render
     page.getByLabel("Place Digital Clock", { exact: true }),
   ).toHaveCount(0);
   await expect(page.getByTestId("digital-simulation-toggle")).toHaveCount(0);
-  await expect(
-    page.getByRole("dialog", { name: "Digital Simulation" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "数字仿真" })).toHaveCount(0);
 });
 
 test("shows faithful symbol previews for the reviewed Razavi palette", async ({
@@ -704,7 +702,7 @@ test("shows faithful symbol previews for the reviewed Razavi palette", async ({
   await awaitEditorReady(page);
   await page.keyboard.press("i");
   const dialog = page.getByRole("dialog", { name: "Insert Component" });
-  const search = dialog.getByLabel("Component search");
+  const search = dialog.getByLabel("搜索元件");
   // Browser coverage owns tile-to-artwork wiring. Catalogue completeness and
   // every symbol's geometry are covered by the symbol contract and goldens.
   for (const symbolId of ["pmos", "resistor", "comparator"]) {
@@ -1203,9 +1201,7 @@ test("P shortcut starts Cell Pin placement", async ({ page }) => {
     "B2",
   );
   await openSelectionShelf(page);
-  await expect(
-    page.getByRole("region", { name: "Routing guidance" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "布线指引" })).toHaveCount(0);
 });
 
 test("Cell Pin deletion releases its interface and Base Net lifecycle", async ({
@@ -2017,7 +2013,7 @@ test("fills a closed shape and moves it behind or in front of circuit artwork", 
   await shapeHit.click({ force: true, modifiers: ["Alt"] });
   await openSelectionShelf(page);
 
-  const properties = page.getByRole("complementary", { name: "Properties" });
+  const properties = page.getByRole("complementary", { name: "属性" });
   await expect(
     properties.getByText("Bring to front", { exact: true }),
   ).toBeVisible();
@@ -2034,7 +2030,7 @@ test("fills a closed shape and moves it behind or in front of circuit artwork", 
   await expect(
     page.locator('[data-drafting-layer="background"] [data-object-id="box"]'),
   ).toHaveCount(1);
-  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await page.getByRole("button", { name: "撤销", exact: true }).click();
   await expect(
     page.locator('[data-drafting-layer="foreground"] [data-object-id="box"]'),
   ).toHaveCount(1);
@@ -2398,8 +2394,8 @@ test("keeps Bulk status and its prominent draw action on one compact row", async
   await page.getByTestId("hit-M1").click();
   await openSelectionShelf(page);
 
-  const bulk = page.getByLabel("MOS bulk connection");
-  const draw = bulk.getByRole("button", { name: "Draw bulk connection" });
+  const bulk = page.getByLabel("MOS 体端连接");
+  const draw = bulk.getByRole("button", { name: "绘制体端连接" });
   await expect(draw).toBeVisible();
   await expect(draw).toHaveText("Connect");
   await expect(bulk.locator(".mos-bulk-status")).toHaveText("Unconnected");
@@ -2496,15 +2492,15 @@ test("initializes NMOS bulk from the first explicitly placed Ground", async ({
 
   await page.getByTestId("hit-M1").click();
   await openSelectionShelf(page);
-  const bulk = page.getByLabel("MOS bulk connection");
+  const bulk = page.getByLabel("MOS 体端连接");
   await expect(bulk.locator(".mos-bulk-status")).toHaveText("0");
   await expect(bulk.locator(".mos-bulk-status")).toHaveAttribute(
     "title",
     "M1.B → 0 · Cell default",
   );
-  await expect(
-    bulk.getByRole("button", { name: "Draw bulk connection" }),
-  ).toHaveText("Draw");
+  await expect(bulk.getByRole("button", { name: "绘制体端连接" })).toHaveText(
+    "Draw",
+  );
 
   const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
@@ -3120,7 +3116,7 @@ test("applies Route name, scope, and appearance from one JSON edit", async ({
   await clickRoute(page, "route-ui-1", 0.5, 0);
   await openSelectionShelf(page);
 
-  const properties = page.getByRole("complementary", { name: "Properties" });
+  const properties = page.getByRole("complementary", { name: "属性" });
   await expect(properties.getByLabel("Annotation property code")).toBeVisible();
   await expect(properties.getByLabel("Electrical Net label")).toHaveCount(0);
   expect(JSON.parse(await readComponentPropertyCode(page))).toMatchObject({
@@ -3298,9 +3294,7 @@ test("starts a V-led Net Label subscripted and lets the author turn it off witho
   await expect(page.getByRole("button", { name: "斜体" })).toBeVisible();
   await expect(page.getByRole("button", { name: "下标" })).toBeVisible();
   await expect(page.getByRole("button", { name: "上标" })).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Insert formula" }),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "插入公式" })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Insert fraction" }),
   ).toBeDisabled();
@@ -3804,7 +3798,7 @@ test("L labels a selected wire or snaps near an unselectable wire", async ({
   // Selection Filter must not disable an electrical creation target.
   await page.keyboard.press("Control+Shift+f");
   const filter = page.getByTestId("selection-filter-popover");
-  await filter.getByRole("button", { name: "None" }).click();
+  await filter.getByRole("button", { name: "无" }).click();
   await filter.getByRole("button", { name: "Close" }).click();
 
   await page.keyboard.press("l");
@@ -3867,7 +3861,7 @@ test("canvas text editor cancels explicitly and commits on Escape or outside cli
   await page.getByTestId("annotation-hit-instance-label-R1").dblclick();
   await page.keyboard.press("Control+a");
   await page.keyboard.type("RA");
-  await page.getByRole("button", { name: "Cancel text changes" }).click();
+  await page.getByRole("button", { name: "取消文本更改" }).click();
   await expect(rendered).toContainText("R1");
   await expect(page.getByTestId("canvas-text-editor")).toHaveCount(0);
   await expect(page.getByTestId("revision")).toHaveText("1");
@@ -3902,9 +3896,7 @@ test("a dragged Net label moves freely while retaining its Net tether", async ({
 
   await page.keyboard.press("l");
   const editor = page.getByTestId("net-label-editor");
-  await editor
-    .getByRole("textbox", { name: "画布文本编辑器" })
-    .fill("NETA");
+  await editor.getByRole("textbox", { name: "画布文本编辑器" }).fill("NETA");
   await editor.getByRole("button", { name: "应用文本更改" }).click();
   await clickRoute(page, "route-ui-1", 0.5, 0);
 
@@ -4114,9 +4106,7 @@ test("C/V copies as fresh: the name label follows a unique new reference and uns
   await setComponentCodeField(page, "netlistName", "R99");
   await page.getByTestId("annotation-hit-instance-label-R1").dblclick();
   await page.getByRole("checkbox", { name: "Use display alias" }).check();
-  await page
-    .getByRole("textbox", { name: "画布文本编辑器" })
-    .fill("Old_alias");
+  await page.getByRole("textbox", { name: "画布文本编辑器" }).fill("Old_alias");
   await page.getByRole("button", { name: "应用文本更改" }).click();
   await page.getByTestId("hit-R1").click();
   await pasteSelectionAt(page, { x: 560, y: 420 });
@@ -4870,7 +4860,7 @@ test("uses automatic recovery and guards shortcuts while typing", async ({
   await expect(page.getByTestId("revision")).toHaveText("1");
 
   await page.keyboard.press("i");
-  const search = page.getByLabel("Component search");
+  const search = page.getByLabel("搜索元件");
   await search.fill("r");
   await page.keyboard.press("r");
   await expect(page.getByTestId("revision")).toHaveText("1");
@@ -4891,14 +4881,12 @@ test("keeps component insertion and inspection from resizing the canvas", async 
   ).toBeVisible();
   expect((await canvas.boundingBox())?.width).toBe(beforePlaceCanvas.width);
   const dialog = page.getByRole("dialog", { name: "Insert Component" });
-  await dialog.getByLabel("Component search").fill("pmos");
+  await dialog.getByLabel("搜索元件").fill("pmos");
   await dialog.getByTestId("insert-component-pmos").click();
 
   await canvas.click({ position: { x: 420, y: 260 } });
 
-  await expect(
-    page.getByRole("complementary", { name: "Properties" }),
-  ).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "属性" })).toBeVisible();
   await revealPropertiesShelf(page);
   await page.getByTestId("selection-shelf").click();
   // Opening the dock changes its CSS width through a short transition. Poll
@@ -4947,7 +4935,7 @@ test("retains recovery across export but honors explicit discard on replacement"
       ),
     );
   await page
-    .getByRole("dialog", { name: "Unsaved changes" })
+    .getByRole("dialog", { name: "有未保存的更改" })
     .getByRole("button", { name: "不保存并继续" })
     .click();
   await expect(page.getByTestId("active-document-name")).toHaveText(
@@ -4976,8 +4964,8 @@ test("discard recovery clears the recovery slot", async ({ page }) => {
   await page.reload();
   await clickCommand(page, "File", "Recover Unsaved Work…");
   await page
-    .getByRole("dialog", { name: "Recover recent work" })
-    .getByRole("button", { name: "Delete" })
+    .getByRole("dialog", { name: "恢复最近工作" })
+    .getByRole("button", { name: "Delete recovery copy of New Circuit" })
     .click();
   await expect
     .poll(async () => (await readRecoveryRecords(page)).length)
@@ -4988,8 +4976,8 @@ test("keeps the production command surface compact and publishes PWA metadata", 
   page,
 }) => {
   await page.goto("/editor");
-  const toolbar = page.getByRole("navigation", { name: "Editor commands" });
-  for (const label of ["File", "Edit"]) {
+  const toolbar = page.getByRole("navigation", { name: "编辑器命令" });
+  for (const label of ["文件", "编辑"]) {
     await expect(toolbar.locator("summary", { hasText: label })).toBeVisible();
   }
   await expect(
@@ -5006,9 +4994,7 @@ test("keeps the production command surface compact and publishes PWA metadata", 
   await expect(page.getByTestId("check-and-save")).toBeHidden();
   await netlistSummary.click();
   await clickNetlistWorkflowCommand(page, "open-analog-simulation");
-  await expect(
-    page.getByRole("region", { name: "Analog simulation" }),
-  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "模拟仿真" })).toBeVisible();
   await page.getByRole("button", { name: "Exit Simulation" }).click();
   await page
     .getByRole("dialog", { name: "Exit Simulation?" })
@@ -5238,7 +5224,7 @@ test("opens selectable-object choices with Ctrl+Shift+F and filters Select All",
   await page.keyboard.press("Control+Shift+f");
   const filter = page.getByTestId("selection-filter-popover");
   await expect(filter).toBeVisible();
-  await filter.getByRole("button", { name: "None" }).click();
+  await filter.getByRole("button", { name: "无" }).click();
   await filter.getByLabel("Wires").check();
   await filter.getByRole("button", { name: "Close" }).click();
   await expect(page.getByTestId("selection-filter-status")).toContainText(
@@ -5255,7 +5241,7 @@ test("opens selectable-object choices with Ctrl+Shift+F and filters Select All",
   await expect(page.getByTestId("hit-R1")).not.toHaveClass(/selected/);
 
   await page.getByTestId("selection-filter-status").click();
-  await filter.getByRole("button", { name: "None" }).click();
+  await filter.getByRole("button", { name: "无" }).click();
   await filter.getByLabel("Instances").check();
   await filter.getByRole("button", { name: "Close" }).click();
   await expect(page.locator(".route-handle")).toHaveCount(0);
@@ -5321,7 +5307,7 @@ test("Selection Filter blocks direct wire, junction, and shape operations", asyn
 
   await page.keyboard.press("Control+Shift+f");
   const filter = page.getByTestId("selection-filter-popover");
-  await filter.getByRole("button", { name: "None" }).click();
+  await filter.getByRole("button", { name: "无" }).click();
   await filter.getByRole("button", { name: "Close" }).click();
 
   const screenPoint = async (locator: Locator, pointIndex = 0) =>
@@ -5532,7 +5518,7 @@ test("marks and clears an unconnected endpoint as No Connect", async ({
 
   await page.getByTestId("terminal-R1-1").click({ button: "right" });
   await openSelectionShelf(page);
-  await page.getByRole("button", { name: "Mark No Connect" }).click();
+  await page.getByRole("button", { name: "标记 No Connect" }).click();
   await expect(page.getByTestId("status")).toContainText(
     "Marked terminal-R1-1 No Connect",
   );
@@ -5568,9 +5554,7 @@ test("surfaces and locates current-document ERC diagnostics", async ({
     .first()
     .click();
   await expect(page.getByTestId("status")).toContainText("ERC_UNCONNECTED_PIN");
-  await expect(
-    page.getByRole("region", { name: "Endpoint actions" }),
-  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "端点操作" })).toBeVisible();
 });
 
 test("rechecks resolved diagnostics and invalidates them through undo", async ({
@@ -5585,7 +5569,7 @@ test("rechecks resolved diagnostics and invalidates them through undo", async ({
 
   for (const pinName of ["1", "2"]) {
     await page.getByTestId(`terminal-R1-${pinName}`).click({ button: "right" });
-    await page.getByRole("button", { name: "Mark No Connect" }).click();
+    await page.getByRole("button", { name: "标记 No Connect" }).click();
   }
   await expect(page.getByTestId("statusbar-issues")).toHaveText(
     "Check out of date",
@@ -5803,7 +5787,7 @@ test("docked Properties JSON is the only global configuration surface", async ({
     .press("Enter");
   expect(await readDocumentStyleCode(page)).toBe(styleSource);
 
-  await settings.getByRole("button", { name: "Defaults", exact: true }).click();
+  await settings.getByRole("button", { name: "默认值", exact: true }).click();
   await expect(label).toHaveAttribute("font-size", "15.116");
   expect(
     JSON.parse(await readDocumentStyleCode(page)).appearance.fontScale,
@@ -5822,9 +5806,9 @@ test("docked Properties JSON is the only global configuration surface", async ({
   await page.getByTestId("netlist-panel-toggle").click();
   await expect(settings).toHaveCount(0);
   await expect(propertiesButton).toHaveAttribute("aria-pressed", "false");
-  await expect(
-    page.getByRole("complementary", { name: "Properties" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: "属性" })).toHaveCount(
+    0,
+  );
 });
 
 test("middle-click steers which way the wire corner turns", async ({

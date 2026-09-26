@@ -51,7 +51,7 @@ for (const [profileId, engine] of [
       buffer: Buffer.from(JSON.stringify(project)),
     });
     await page.getByTestId("open-analog-simulation").click();
-    const panel = page.getByRole("region", { name: "Analog simulation" });
+    const panel = page.getByRole("region", { name: "模拟仿真" });
     await panel
       .getByRole("button", { name: "Set up manually", exact: true })
       .click();
@@ -62,7 +62,7 @@ for (const [profileId, engine] of [
     await name.press("Enter");
     await expect(
       panel.getByRole("treeitem", {
-        name: "Folder Native first experiment",
+        name: "文件夹 Native first experiment",
         exact: true,
       }),
     ).toBeVisible();
@@ -176,7 +176,7 @@ test("GUI imports a Canvas-bound project, runs native AC, exports and reloads it
       buffer: Buffer.from(JSON.stringify(project)),
     });
     await page.getByTestId("open-analog-simulation").click();
-    const panel = page.getByRole("region", { name: "Analog simulation" });
+    const panel = page.getByRole("region", { name: "模拟仿真" });
     await panel.getByRole("button", { name: "Run", exact: true }).click();
     await expect.poll(() => executions, { timeout: 45000 }).toBe(1);
     await expect(panel.getByRole("status")).toHaveText("completed");

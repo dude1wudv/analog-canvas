@@ -4,11 +4,11 @@ test("native postprocessor Helper inserts editable report source and preserves u
   page,
 }) => {
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   await editor.fill("Native reports\n");
   const before = await page.getByTestId("draft-source").textContent();
-  await page.getByRole("button", { name: "Helper", exact: true }).click();
+  await page.getByRole("button", { name: "助手", exact: true }).click();
   await page
     .getByRole("textbox", { name: "Search commands or purpose" })
     .fill("embed");
@@ -28,7 +28,7 @@ test("native postprocessor Helper inserts editable report source and preserves u
   await page.keyboard.press("ControlOrMeta+s");
   await expect(page.getByTestId("saved-source")).toHaveText(inserted!);
   await editor.fill("Native reports\ncontrol\n");
-  await page.getByRole("button", { name: "Helper", exact: true }).click();
+  await page.getByRole("button", { name: "助手", exact: true }).click();
   await page
     .getByRole("textbox", { name: "Search commands or purpose" })
     .fill("postprocess");
@@ -40,10 +40,10 @@ test("source Helper writes native model and instance skeletons with no electrica
   page,
 }) => {
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   await editor.fill("Native source helper\n");
-  await page.getByRole("button", { name: "Helper", exact: true }).click();
+  await page.getByRole("button", { name: "助手", exact: true }).click();
   await page
     .getByRole("textbox", { name: "Search commands or purpose" })
     .fill("voltage source");
@@ -68,7 +68,7 @@ test("Specs clears source Canvas preview without changing authored source", asyn
   page,
 }) => {
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   await editor.fill("* test\ncontrol\nsave v(out)");
   await page.keyboard.press("End");
@@ -89,7 +89,7 @@ test("native save and dc arguments open automatically and preview their Canvas t
   page,
 }) => {
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   await editor.fill("* test\ncontrol\nsave");
   await page.keyboard.press("End");
@@ -141,10 +141,10 @@ test("flat Helper finds an analysis by purpose and ghost arguments never enter s
   page,
 }) => {
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   await editor.fill("* test\ncontrol\n");
-  await page.getByRole("button", { name: "Helper", exact: true }).click();
+  await page.getByRole("button", { name: "助手", exact: true }).click();
   await page
     .getByRole("textbox", { name: "Search commands or purpose" })
     .fill("频响");
@@ -174,10 +174,10 @@ test("Spec Helper inserts an ordinary editable source comment", async ({
   page,
 }) => {
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   await editor.fill("* test\n.control\nmeas tran peak MAX v(out)");
-  await page.getByRole("button", { name: "Helper", exact: true }).click();
+  await page.getByRole("button", { name: "助手", exact: true }).click();
   await page
     .getByRole("textbox", { name: "Search commands or purpose" })
     .fill("spec");
@@ -194,16 +194,12 @@ test("unknown input offers explicit help and Escape suppresses parameter ghosts"
   page,
 }) => {
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   await editor.fill("* test\ncontrol\n频响");
-  await expect(
-    page.getByRole("button", { name: "Find a helper…" }),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "查找助手…" })).toBeVisible();
   await page.keyboard.press("Control+Space");
-  await expect(
-    page.getByRole("dialog", { name: "Insert / Helper" }),
-  ).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "插入 / 助手" })).toBeVisible();
   await page.keyboard.press("Escape");
   await editor.fill("* test\ncontrol\nanalysis ac1 ac ");
   await expect(page.locator(".simulation-parameter-ghost")).toBeVisible();
@@ -230,7 +226,7 @@ test.beforeEach(async ({ page }) => {
   );
   await page.goto("/code-component-check");
   await expect(
-    page.getByRole("textbox", { name: "Simulation source editor" }),
+    page.getByRole("textbox", { name: "仿真源代码编辑器" }),
   ).toBeVisible();
 });
 
@@ -238,23 +234,23 @@ test("Explorer opens sideways, configuration is advanced, and results maximize/r
   page,
 }) => {
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   const before = await editor.boundingBox();
   await expect(page.getByRole("tab", { name: "Configuration" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Explorer", exact: true }).click();
+  await page.getByRole("button", { name: "资源管理器", exact: true }).click();
   await expect(
-    page.getByRole("complementary", { name: "Simulation files" }),
+    page.getByRole("complementary", { name: "仿真文件" }),
   ).toBeVisible();
   const after = await editor.boundingBox();
   expect(after!.y).toBe(before!.y);
   expect(after!.x - before!.x).toBeGreaterThan(100);
   if (
     (await page
-      .getByRole("button", { name: "Explorer", exact: true })
+      .getByRole("button", { name: "资源管理器", exact: true })
       .getAttribute("aria-expanded")) !== "true"
   )
-    await page.getByRole("button", { name: "Explorer", exact: true }).click();
+    await page.getByRole("button", { name: "资源管理器", exact: true }).click();
   await page
     .getByRole("treeitem", { name: "experiment.json", exact: true })
     .first()
@@ -270,7 +266,7 @@ test("Explorer opens sideways, configuration is advanced, and results maximize/r
   await page.getByRole("button", { name: "Restore results" }).click();
   await expect(editor).toBeVisible();
   await expect(
-    page.getByRole("complementary", { name: "Simulation files" }),
+    page.getByRole("complementary", { name: "仿真文件" }),
   ).toBeVisible();
 });
 
@@ -278,7 +274,7 @@ test("edits, saves and undoes exact source bytes while keeping a save boundary a
   page,
 }) => {
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   const original = JSON.parse(
     (await page.getByTestId("draft-source").textContent())!,
@@ -316,7 +312,7 @@ test("Save source button and Ctrl+S apply the same current-project source", asyn
   page,
 }) => {
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   const save = page.getByRole("button", { name: "Save source" });
   await editor.fill("* saved by button\ncontrol\nendc\n");
@@ -346,7 +342,7 @@ test("invalid text stays editable and saveable and known command errors are inli
   page,
 }) => {
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   await editor.fill("* test\ncontrol\nanalysis\nendc\n");
   await expect(page.locator(".cm-lintRange-error")).toHaveCount(1);
@@ -361,7 +357,7 @@ test("invalid text stays editable and saveable and known command errors are inli
 test("Helper trigger toggles closed and stays compact", async ({ page }) => {
   const trigger = page.getByRole("button", { name: /Helper/ }).first();
   await trigger.click();
-  const popup = page.getByRole("dialog", { name: "Insert / Helper" });
+  const popup = page.getByRole("dialog", { name: "插入 / 助手" });
   await expect(popup).toBeVisible();
   expect((await popup.boundingBox())!.width).toBeLessThanOrEqual(400);
   await trigger.click();
@@ -375,7 +371,7 @@ test("file switching preserves caret, selection, scroll and local Undo history",
   page,
 }) => {
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   const long =
     "* file navigation\n" +
@@ -401,10 +397,10 @@ test("file switching preserves caret, selection, scroll and local Undo history",
   expect(scroll).toBeGreaterThan(100);
   if (
     (await page
-      .getByRole("button", { name: "Explorer", exact: true })
+      .getByRole("button", { name: "资源管理器", exact: true })
       .getAttribute("aria-expanded")) !== "true"
   )
-    await page.getByRole("button", { name: "Explorer", exact: true }).click();
+    await page.getByRole("button", { name: "资源管理器", exact: true }).click();
   await page
     .getByRole("treeitem", { name: "experiment.json", exact: true })
     .first()

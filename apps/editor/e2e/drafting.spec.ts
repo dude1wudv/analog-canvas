@@ -294,10 +294,10 @@ test("adds formatted drafting text and undo/redo restores it", async ({
     alignRightTop,
   ] = await Promise.all([
     controlTop(page.getByRole("button", { name: "粗体" })),
-    controlTop(page.getByRole("button", { name: "Decrease text size" })),
-    controlTop(page.getByRole("button", { name: "Increase text size" })),
+    controlTop(page.getByRole("button", { name: "减小字号" })),
+    controlTop(page.getByRole("button", { name: "增大字号" })),
     controlTop(page.getByRole("button", { name: "应用文本更改" })),
-    controlTop(page.getByRole("button", { name: "Cancel text changes" })),
+    controlTop(page.getByRole("button", { name: "取消文本更改" })),
     controlTop(page.getByRole("button", { name: "Delete text" })),
     controlTop(page.getByRole("button", { name: "Align left" })),
     controlTop(page.getByRole("button", { name: "Align right" })),
@@ -327,8 +327,8 @@ test("adds formatted drafting text and undo/redo restores it", async ({
     .poll(async () => {
       const [boldTop, decreaseTop, increaseTop] = await Promise.all([
         controlTop(page.getByRole("button", { name: "粗体" })),
-        controlTop(page.getByRole("button", { name: "Decrease text size" })),
-        controlTop(page.getByRole("button", { name: "Increase text size" })),
+        controlTop(page.getByRole("button", { name: "减小字号" })),
+        controlTop(page.getByRole("button", { name: "增大字号" })),
       ]);
       return Math.max(
         Math.abs(increaseTop - decreaseTop),
@@ -337,13 +337,13 @@ test("adds formatted drafting text and undo/redo restores it", async ({
     })
     .toBeLessThan(1);
   const narrowSizeTop = await controlTop(
-    page.getByRole("button", { name: "Increase text size" }),
+    page.getByRole("button", { name: "增大字号" }),
   );
   await expect
     .poll(async () => {
       const [applyTop, cancelTop] = await Promise.all([
         controlTop(page.getByRole("button", { name: "应用文本更改" })),
-        controlTop(page.getByRole("button", { name: "Cancel text changes" })),
+        controlTop(page.getByRole("button", { name: "取消文本更改" })),
       ]);
       return Math.abs(cancelTop - applyTop);
     })
@@ -381,7 +381,7 @@ test("adds formatted drafting text and undo/redo restores it", async ({
   const initialFontSize = await draftInput.evaluate((element) =>
     Number.parseFloat(getComputedStyle(element).fontSize),
   );
-  await page.getByRole("button", { name: "Increase text size" }).click();
+  await page.getByRole("button", { name: "增大字号" }).click();
   const previewFontSize = await draftInput.evaluate((element) =>
     Number.parseFloat(getComputedStyle(element).fontSize),
   );
@@ -448,7 +448,7 @@ test("opens the text editor beside a docked panel instead of under it", async ({
   });
   if (await netlist.isVisible()) await netlist.click();
   const canvas = page.getByTestId("schematic-canvas");
-  const rail = page.getByRole("complementary", { name: "Properties" });
+  const rail = page.getByRole("complementary", { name: "属性" });
   await expect(rail).toBeVisible();
   const [canvasBounds, railBounds] = await Promise.all([
     canvas.boundingBox(),
@@ -529,9 +529,9 @@ test("drafting text owns an independent color override with Auto inheritance", a
   await expect(text).toHaveAttribute("fill", "#000");
   expect(JSON.parse(await readComponentPropertyCode(page)).color).toBe("auto");
 
-  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await page.getByRole("button", { name: "撤销", exact: true }).click();
   await expect(text).toHaveAttribute("fill", "#2563eb");
-  await page.getByRole("button", { name: "Redo", exact: true }).click();
+  await page.getByRole("button", { name: "重做", exact: true }).click();
   await expect(text).toHaveAttribute("fill", "#000");
 });
 
@@ -542,10 +542,10 @@ test("authors one validated formula through the canonical text editor", async ({
   await awaitEditorReady(page);
   await placeText(page);
 
-  const latexButton = page.getByRole("button", { name: "Insert formula" });
+  const latexButton = page.getByRole("button", { name: "插入公式" });
   await expect(latexButton).toHaveText("LaTeX");
   await latexButton.click();
-  await expect(page.getByRole("dialog", { name: "Formula" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "公式" })).toBeVisible();
   await expect(
     page.locator('math-field[aria-label="Formula editor"]'),
   ).toBeVisible();
@@ -590,7 +590,7 @@ test("authors one validated formula through the canonical text editor", async ({
   expect(editorLayout.virtualKeyboardVisible).toBe(false);
 
   const formulaKeyboard = page.getByRole("toolbar", {
-    name: "Formula keyboard",
+    name: "公式键盘",
   });
   await expect(formulaKeyboard.getByRole("button")).toHaveCount(20);
   const keyRowCount = await formulaKeyboard
@@ -675,7 +675,7 @@ test("authors one validated formula through the canonical text editor", async ({
   await expect(source).toHaveValue(normalizedDifferential);
   await page.getByRole("button", { name: "Display" }).click();
   await page
-    .getByRole("dialog", { name: "Formula" })
+    .getByRole("dialog", { name: "公式" })
     .getByRole("button", { name: "Insert", exact: true })
     .click();
   await expect(
@@ -734,22 +734,18 @@ for (const zoomedOut of [false, true]) {
           (await page.getByLabel("当前缩放比例").textContent())!,
         ) > 20
       ) {
-        await page
-          .getByRole("button", { name: "Zoom out", exact: true })
-          .click();
+        await page.getByRole("button", { name: "缩小", exact: true }).click();
       }
     }
     const canvas = page.getByTestId("schematic-canvas");
     const viewBox = await canvas.getAttribute("viewBox");
     await placeText(page, { x: 560, y: 280 });
     const frame = page.getByTestId("canvas-text-editor");
-    const dialog = page.getByRole("dialog", { name: "Formula", exact: true });
+    const dialog = page.getByRole("dialog", { name: "公式", exact: true });
     const source = page.getByRole("textbox", { name: "Formula LaTeX source" });
     const latex = String.raw`NTF=\frac{\left(1-z^{-1}\right)\left(1-0.75z^{-1}\right)^2}{\left(1-p_1z^{-1}\right)\left(1-p_2z^{-1}\right)}`;
     const openFormula = async () => {
-      await page
-        .getByRole("button", { name: "Insert formula", exact: true })
-        .click();
+      await page.getByRole("button", { name: "插入公式", exact: true }).click();
       await expect(dialog.locator("math-field")).toBeVisible();
     };
     const checkFrame = async () => {
@@ -816,9 +812,9 @@ for (const zoomedOut of [false, true]) {
     await expect(source).toHaveValue(revised);
     await checkFrame();
     // Both the dialog's close control and the outer cancel remain reachable.
-    await dialog.getByRole("button", { name: "Close formula editor" }).click();
+    await dialog.getByRole("button", { name: "关闭公式编辑器" }).click();
     await expect(dialog).toHaveCount(0);
-    await page.getByRole("button", { name: "Cancel text changes" }).click();
+    await page.getByRole("button", { name: "取消文本更改" }).click();
     await expect(frame).toHaveCount(0);
   });
 }
@@ -835,14 +831,14 @@ test("edits an unrestricted device formula in the same visual annotation", async
   await page.keyboard.press("Escape");
   await page.getByTestId("annotation-hit-instance-label-R1").dblclick();
   await page.getByRole("checkbox", { name: "Use display alias" }).check();
-  await page.getByRole("button", { name: "Insert formula" }).click();
+  await page.getByRole("button", { name: "插入公式" }).click();
   const latex = String.raw`R_1=\frac{1}{g_m}`;
   await page.getByRole("textbox", { name: "Formula LaTeX source" }).fill(latex);
   await page
-    .getByRole("dialog", { name: "Formula" })
+    .getByRole("dialog", { name: "公式" })
     .getByRole("button", { name: "Insert", exact: true })
     .click();
-  await expect(page.getByRole("dialog", { name: "Formula" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "公式" })).toHaveCount(0);
   await expect(page.getByTestId("formula-conversion-confirmation")).toHaveCount(
     0,
   );
@@ -867,7 +863,7 @@ test("edits an unrestricted device formula in the same visual annotation", async
   });
   expect(labels[0]).not.toHaveProperty("binding");
   await page.getByTestId("annotation-hit-instance-label-R1").dblclick();
-  await page.getByRole("button", { name: "Insert formula" }).click();
+  await page.getByRole("button", { name: "插入公式" }).click();
   await expect(
     page.getByRole("textbox", { name: "Formula LaTeX source" }),
   ).toHaveValue(latex);
@@ -877,19 +873,19 @@ test("keeps unsafe formula source out of the Project", async ({ page }) => {
   await page.goto("/editor");
   await awaitEditorReady(page);
   await placeText(page);
-  await page.getByRole("button", { name: "Insert formula" }).click();
+  await page.getByRole("button", { name: "插入公式" }).click();
   await page
     .getByRole("textbox", { name: "Formula LaTeX source" })
     .fill(String.raw`\href{https://example.com}{V}`);
   await page
-    .getByRole("dialog", { name: "Formula" })
+    .getByRole("dialog", { name: "公式" })
     .getByRole("button", { name: "Insert", exact: true })
     .click();
 
   await expect(page.getByRole("alert")).toContainText(
     "command is not available",
   );
-  await expect(page.getByRole("dialog", { name: "Formula" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "公式" })).toBeVisible();
   await expect(page.locator('[data-role="formula"]')).toHaveCount(0);
 });
 
@@ -1310,9 +1306,7 @@ test("existing text drag commits once and undoes atomically", async ({
 }) => {
   await page.goto("/editor");
   await placeText(page);
-  await page
-    .getByRole("textbox", { name: "画布文本编辑器" })
-    .press("Escape");
+  await page.getByRole("textbox", { name: "画布文本编辑器" }).press("Escape");
   await expect(page.getByTestId("revision")).toHaveText("1");
 
   const before = parseSavedProject(
@@ -1347,9 +1341,7 @@ test("Escape cancels an existing text drag without a revision", async ({
 }) => {
   await page.goto("/editor");
   await placeText(page);
-  await page
-    .getByRole("textbox", { name: "画布文本编辑器" })
-    .press("Escape");
+  await page.getByRole("textbox", { name: "画布文本编辑器" }).press("Escape");
   const hit = page.getByTestId(/^drafting-hit-note-/);
   const box = await hit.boundingBox();
   if (!box) throw new Error("Drafting hit target is not measurable");
@@ -1897,7 +1889,7 @@ test("Properties renders an arrow line-style override", async ({ page }) => {
   await clickCreate(page, { x: 200, y: 200 }, { x: 420, y: 200 });
   await page.getByTestId(/^drafting-hit-arrow-/).click({ force: true });
   await page.keyboard.press("q");
-  const commandBar = page.getByRole("navigation", { name: "Editor commands" });
+  const commandBar = page.getByRole("navigation", { name: "编辑器命令" });
   const commandBarBefore = await commandBar.boundingBox();
   await editComponentPropertyCode(page, (code) => {
     code.appearance.lineStyle = "dotted";
@@ -2865,21 +2857,19 @@ for (const kind of ["rectangle", "circle"] as const) {
         '[data-drafting-layer="background"] [data-object-id="shape"]',
       ),
     ).toHaveCount(1);
-    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.getByRole("button", { name: "撤销", exact: true }).click();
     expect(JSON.parse(await readComponentPropertyCode(page))).toEqual(before);
     await expect(shape).toHaveAttribute("fill", "none");
-    await page.getByRole("button", { name: "Redo", exact: true }).click();
+    await page.getByRole("button", { name: "重做", exact: true }).click();
     const valid = await readComponentPropertyCode(page);
     const bad = JSON.parse(valid);
     bad.appearance.fillColor = [999, 0, 0];
     bad.geometry[kind === "rectangle" ? "width" : "radius"] = 200;
     await editor.fill(JSON.stringify(bad));
-    await expect(
-      page.getByRole("button", { name: "Discard draft" }),
-    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "丢弃草稿" })).toBeVisible();
     await expect(shape).toHaveAttribute("fill", "#e1eeff");
     const lastRevision = await page.getByTestId("revision").textContent();
-    await page.getByRole("button", { name: "Discard draft" }).click();
+    await page.getByRole("button", { name: "丢弃草稿" }).click();
     expect(JSON.parse(await readComponentPropertyCode(page))).toEqual(
       JSON.parse(valid),
     );
@@ -2976,9 +2966,7 @@ test("text and voltage/polarity annotations expose their own live code without l
         "#dc2626",
       );
     await editor.fill('{ "placement":');
-    await expect(
-      page.getByRole("button", { name: "Discard draft" }),
-    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "丢弃草稿" })).toBeVisible();
   }
 });
 
@@ -3056,9 +3044,7 @@ test("annotation dropdowns use typed values and disable locked or incompatible c
   await weight.selectOption("bold");
   const revision = await page.getByTestId("revision").textContent();
   await page.getByLabel("Editable Canvas property code").fill('{"placement":');
-  await page
-    .getByRole("button", { name: "Discard draft", exact: true })
-    .click();
+  await page.getByRole("button", { name: "丢弃草稿", exact: true }).click();
   await expect(page.getByTestId("revision")).toHaveText(revision!);
   await expect(weight).toHaveValue("bold");
 
@@ -3192,9 +3178,9 @@ for (const shape of ["line", "outline"] as const) {
         );
     }
     await end.selectOption("large-arrow");
-    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await page.getByRole("button", { name: "撤销", exact: true }).click();
     await expect(end).toHaveValue("open-arrow");
-    await page.getByRole("button", { name: "Redo", exact: true }).click();
+    await page.getByRole("button", { name: "重做", exact: true }).click();
     await expect(end).toHaveValue("large-arrow");
     await page
       .getByRole("combobox", { name: "Rotation options", exact: true })

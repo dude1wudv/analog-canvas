@@ -327,7 +327,7 @@ test("blocks destructive browser refresh shortcuts and uses the stronger grid", 
   );
   await clickCommand(page, "File", "New Project");
   await expect(
-    page.getByRole("dialog", { name: "Unsaved changes" }),
+    page.getByRole("dialog", { name: "有未保存的更改" }),
   ).toHaveCount(0);
   await expect(page.locator('[data-canvas-hit-kind="instance"]')).toHaveCount(
     0,
@@ -466,9 +466,7 @@ test("keeps the Placement Tray out of the manual component workflow", async ({
   await expect(
     page.getByRole("button", { name: "Return component to Placement Tray" }),
   ).toHaveCount(0);
-  await expect(
-    page.getByRole("region", { name: "Placement Tray" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "待放置区" })).toHaveCount(0);
   await expect(page.getByTestId("hit-R1")).toBeVisible();
   await expect(page.getByTestId("revision")).toHaveText("1");
 });
@@ -1528,7 +1526,7 @@ test("carries a default and manual Value through placement and Q property editin
   // Electrical renaming and the shared visual editor are distinct actions;
   // there is no second, plain-text Label field or heavyweight Identity card.
   await expect(page.getByText("Identity", { exact: true })).toHaveCount(0);
-  await expect(page.getByLabel("Component controls")).toHaveCount(0);
+  await expect(page.getByLabel("元件控件")).toHaveCount(0);
   const componentCode = page.locator(
     '[aria-label="Component properties"] > :last-child',
   );

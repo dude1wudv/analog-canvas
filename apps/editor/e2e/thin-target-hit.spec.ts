@@ -140,7 +140,7 @@ test("FD Amp blank space does not capture clicks; body and pins remain usable", 
   // A one-symbol import auto-fits tightly. Leave room for the whole drag so
   // this checks object movement rather than edge-triggered canvas scrolling.
   for (let step = 0; step < 3; step += 1)
-    await page.getByRole("button", { name: "Zoom out" }).click();
+    await page.getByRole("button", { name: "缩小" }).click();
   const hit = page.getByTestId("hit-U1");
   const drag = async (
     fromX: number,

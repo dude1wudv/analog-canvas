@@ -398,7 +398,7 @@ test("keeps a chosen simulation Cell independent of later default Top changes", 
     buffer: Buffer.from(JSON.stringify(project)),
   });
   await page.getByTestId("open-analog-simulation").click();
-  const panel = page.getByRole("region", { name: "Analog simulation" });
+  const panel = page.getByRole("region", { name: "模拟仿真" });
   await panel
     .getByRole("button", { name: "Set up manually", exact: true })
     .click();
@@ -412,7 +412,7 @@ test("keeps a chosen simulation Cell independent of later default Top changes", 
   await name.press("Enter");
   await expect(
     panel.getByRole("treeitem", {
-      name: "Folder Child experiment",
+      name: "文件夹 Child experiment",
       exact: true,
     }),
   ).toBeVisible();
@@ -1179,9 +1179,7 @@ test("declares and places a Cell Pin on a new local Net", async ({ page }) => {
   await expect(page.getByLabel("Cell Pin direction")).toHaveCount(0);
   await page.getByTestId("annotation-hit-instance-label-P1").dblclick();
   const nameEditor = page.getByRole("textbox", { name: "画布文本编辑器" });
-  await expect(
-    page.getByRole("toolbar", { name: "Text formatting" }),
-  ).toBeVisible();
+  await expect(page.getByRole("toolbar", { name: "文本格式" })).toBeVisible();
   await page.getByRole("button", { name: "粗体" }).click();
   await page.getByRole("button", { name: "应用文本更改" }).click();
   await page.getByTestId("hit-P1").click();
@@ -1459,9 +1457,7 @@ test("edits a Cell Pin name and RichText presentation in place", async ({
   ).toHaveText("BIAS");
 
   await page.getByTestId("annotation-hit-instance-label-P1").dblclick();
-  await page
-    .getByRole("textbox", { name: "画布文本编辑器" })
-    .fill("vINPUT");
+  await page.getByRole("textbox", { name: "画布文本编辑器" }).fill("vINPUT");
   await page.getByRole("button", { name: "应用文本更改" }).click();
   const renamedLabel = page.locator('[data-object-id="instance-label-P1"]');
   await expect(renamedLabel).toHaveText("vINPUT");
@@ -1517,9 +1513,7 @@ test("keeps the Placement Tray out of the manually authored Cell Pin workflow", 
   await expect(
     page.getByRole("button", { name: "Return component to Placement Tray" }),
   ).toHaveCount(0);
-  await expect(
-    page.getByRole("region", { name: "Placement Tray" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "待放置区" })).toHaveCount(0);
   await expect(page.getByTestId("hit-P1")).toBeVisible();
   await expect(page.getByLabel("Cell Pin properties")).toHaveCount(0);
 });

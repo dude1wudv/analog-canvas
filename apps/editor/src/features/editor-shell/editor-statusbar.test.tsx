@@ -36,7 +36,7 @@ describe("editor statusbar", () => {
     expect(markup).toContain('aria-label="当前缩放比例"');
     expect(markup).toContain('data-testid="statusbar-change-log"');
     expect(markup).toContain(
-      'href="https://github.com/cascode-ai/analog-canvas/commits/main"',
+      'href="https://github.com/dude1wudv/analog-canvas/commits/main"',
     );
     expect(markup).not.toContain('aria-label="Annotation grid"');
     expect(markup).not.toContain('aria-label="Draw angle"');

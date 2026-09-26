@@ -193,11 +193,11 @@ describe("editor shell", () => {
     expect(markup).toContain('data-testid="editor-repository-link"');
     expect(markup).toContain('aria-label="GitHub repository"');
     expect(markup).toContain(
-      'href="https://github.com/cascode-ai/analog-canvas"',
+      'href="https://github.com/dude1wudv/analog-canvas"',
     );
     expect(markup).toContain('data-testid="statusbar-change-log"');
     expect(markup).toContain(
-      'href="https://github.com/cascode-ai/analog-canvas/commits/main"',
+      'href="https://github.com/dude1wudv/analog-canvas/commits/main"',
     );
     expect(markup).toContain('data-testid="statusbar-shortcut-hints"');
     expect(markup).toContain("Hints</button>");

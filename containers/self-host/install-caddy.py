@@ -7,14 +7,14 @@ import time
 
 config = Path("/etc/caddy/Caddyfile")
 content = config.read_text()
-domain = "analog.sunmmyapi.xyz"
+domain = "analog.microedulab.com"
 if domain in content:
     raise SystemExit("Analog route already exists; inspect it before changing it.")
 backup = config.with_name(f"Caddyfile.before-analog-{int(time.time())}")
 candidate = config.with_name("Caddyfile.analog-candidate")
 block = """
 
-analog.sunmmyapi.xyz {
+analog.microedulab.com {
     encode zstd gzip
     reverse_proxy 127.0.0.1:8787 {
         header_up CF-Connecting-IP {http.request.remote.host}

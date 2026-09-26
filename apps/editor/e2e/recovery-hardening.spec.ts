@@ -41,14 +41,14 @@ async function restoreThroughDialog(
 ): Promise<void> {
   const fileMenu = await page
     .locator("summary")
-    .filter({ hasText: "File" })
-    .filter({ hasText: /^File$/u })
+    .filter({ hasText: "文件" })
+    .filter({ hasText: /^文件$/u })
     .locator("..");
   if ((await fileMenu.getAttribute("open")) === null) {
     await fileMenu.locator("summary").click();
   }
   await fileMenu.getByRole("button", { name: "Recover Unsaved Work…" }).click();
-  const dialog = page.getByRole("dialog", { name: "Recover recent work" });
+  const dialog = page.getByRole("dialog", { name: "恢复最近工作" });
   await expect(dialog).toBeVisible();
   const card = dialog
     .getByTestId("recovery-session-card")

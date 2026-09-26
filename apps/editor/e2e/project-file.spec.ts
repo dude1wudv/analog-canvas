@@ -297,11 +297,9 @@ for (const duringSave of ["edit", "replace"] as const) {
       ).toBeDisabled();
     } else {
       const fileMenu = await openMenu(page, "File");
-      await fileMenu.getByRole("button", { name: "New Project" }).click();
+      await fileMenu.getByRole("button", { name: "新建项目" }).click();
       await expect(page.getByTestId("hit-R1")).toHaveCount(0);
-      await expect(page.getByTestId("statusbar-issues")).toHaveText(
-        "Not checked",
-      );
+      await expect(page.getByTestId("statusbar-issues")).toHaveText("尚未检查");
     }
     releaseSave();
     await expect(check).toBeEnabled();
@@ -311,9 +309,7 @@ for (const duringSave of ["edit", "replace"] as const) {
       );
       await expect(page.getByTestId("project-unsaved-indicator")).toBeVisible();
     } else {
-      await expect(page.getByTestId("statusbar-issues")).toHaveText(
-        "Not checked",
-      );
+      await expect(page.getByTestId("statusbar-issues")).toHaveText("尚未检查");
       expect(
         await page.evaluate(() =>
           sessionStorage.getItem("analog-canvas.recent-cloud-project.v1"),
@@ -353,7 +349,7 @@ test("Cloud Save updates one binding while local export stays interchange", asyn
     "Saved New Circuit to Cloud",
   );
   await expect(page.getByTestId("project-unsaved-indicator")).toHaveCount(0);
-  await expect(page.getByTestId("statusbar-issues")).toHaveText("Not checked");
+  await expect(page.getByTestId("statusbar-issues")).toHaveText("尚未检查");
   await chooseComponent(page, "resistor");
   await page
     .getByTestId("schematic-canvas")
@@ -387,7 +383,7 @@ test("Cloud Save updates one binding while local export stays interchange", asyn
   expect(timeBounds!.x + timeBounds!.width).toBeLessThanOrEqual(
     buttonBounds!.x + buttonBounds!.width,
   );
-  await page.getByRole("link", { name: "Back to the gallery" }).click();
+  await page.getByRole("link", { name: "返回画廊" }).click();
   await expect(page).toHaveURL(/\/$/u);
   await page.goto("/editor");
   await expect(page.getByTestId("status")).toContainText(
@@ -397,7 +393,7 @@ test("Cloud Save updates one binding while local export stays interchange", asyn
   await expect(page.getByTestId("hit-R1")).toHaveCount(1);
   await expect(page.getByTestId("hit-R2")).toHaveCount(1);
 
-  await page.getByRole("link", { name: "Back to the gallery" }).click();
+  await page.getByRole("link", { name: "返回画廊" }).click();
   await page.getByTestId("gallery-new-circuit").click();
   await expect(page).toHaveURL(/\/editor\?new=1$/u);
   await expect(page.getByTestId("hit-R1")).toHaveCount(0);
@@ -427,7 +423,7 @@ test("paired refresh and Gallery return preserve the saved Cloud binding", async
   const { claimCode } = JSON.parse(handoff.match(/Claim: (.+)/u)![1]!);
   const client = new AgentHttpClient({ baseUrl: baseURL! });
   const session = await client.claim(claimCode);
-  await expect(panel.getByTestId("agent-status")).toHaveText("Connected");
+  await expect(panel.getByTestId("agent-status")).toHaveText("已连接");
   await expectAgentRecoveryAlongsideWorkingCopy(page, session.sessionId);
   await page.reload();
   await expect(page.getByTestId("active-instance-count")).toHaveText("1", {
@@ -492,7 +488,7 @@ test("paired refresh and Gallery return preserve the saved Cloud binding", async
     "Saved New Circuit to Cloud",
   );
   await expect(page.getByTestId("project-unsaved-indicator")).toHaveCount(0);
-  await page.getByRole("link", { name: "Back to the gallery" }).click();
+  await page.getByRole("link", { name: "返回画廊" }).click();
   await expect(page.getByTestId("gallery-agent-return")).toHaveCount(0);
   const agentReturn = page.getByTestId("gallery-editor-link");
   await expect(agentReturn).toBeVisible({ timeout: 15_000 });
@@ -520,15 +516,15 @@ test("Gallery navigation uses the replacement decision without a second browser 
       .click({ position: { x, y: 230 } });
     await page.keyboard.press("Escape");
   }
-  await page.getByRole("link", { name: "Back to the gallery" }).click();
+  await page.getByRole("link", { name: "返回画廊" }).click();
   const guard = page.getByRole("dialog", {
-    name: "Unsaved changes",
+    name: "有未保存的更改",
   });
   await expect(guard).toBeVisible();
-  await guard.getByRole("button", { name: "Stay" }).click();
+  await guard.getByRole("button", { name: "留在此处" }).click();
   await expect(page).toHaveURL(/\/editor/u);
 
-  await page.getByRole("link", { name: "Back to the gallery" }).click();
+  await page.getByRole("link", { name: "返回画廊" }).click();
   await guard.getByRole("button", { name: "不保存并继续" }).click();
   await expect(page).toHaveURL(/\/$/u);
   await page.goto("/editor");
@@ -849,19 +845,17 @@ test("replacement guard offers cancel, discard, and Cloud Save", async ({
   );
   await input.setInputFiles(replacement);
   const dialog = page.getByRole("dialog", {
-    name: "Unsaved changes",
+    name: "有未保存的更改",
   });
   await expect(dialog).toContainText(
     `Cloud Projects (up to ${CLOUD_PROJECT_LIMIT})`,
   );
-  await dialog.getByRole("button", { name: "Stay" }).click();
+  await dialog.getByRole("button", { name: "留在此处" }).click();
   await expect(page.getByTestId("revision")).toHaveText("3");
 
   await input.evaluate((element) => ((element as HTMLInputElement).value = ""));
   await input.setInputFiles(replacement);
-  await dialog
-    .getByRole("button", { name: "Save to Cloud and continue" })
-    .click();
+  await dialog.getByRole("button", { name: "保存到云端并继续" }).click();
   await expect(dialog).toBeHidden();
   expect(cloud.stored()?.projectText).toContain("resistor");
   await expect(page.getByTestId("active-document-name")).toHaveText(
@@ -882,9 +876,9 @@ test("discarding a dirty replacement does not leave a second project stack", asy
     await page.keyboard.press("Escape");
   }
   let fileMenu = await openMenu(page, "File");
-  await fileMenu.getByRole("button", { name: "New Project" }).click();
+  await fileMenu.getByRole("button", { name: "新建项目" }).click();
   const dialog = page.getByRole("dialog", {
-    name: "Unsaved changes",
+    name: "有未保存的更改",
   });
   await dialog.getByRole("button", { name: "不保存并继续" }).click();
   await expect(page.getByTestId("hit-R1")).toHaveCount(0);
@@ -921,7 +915,7 @@ test("reverts to the last acknowledged Cloud revision", async ({ page }) => {
   fileMenu = await openMenu(page, "File");
   await fileMenu.getByRole("button", { name: "Revert to Last Saved" }).click();
   await page
-    .getByRole("dialog", { name: "Unsaved changes" })
+    .getByRole("dialog", { name: "有未保存的更改" })
     .getByRole("button", { name: "不保存并继续" })
     .click();
   await expect(page.getByTestId("hit-R1")).toHaveCount(1);

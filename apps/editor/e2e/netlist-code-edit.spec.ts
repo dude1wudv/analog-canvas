@@ -265,7 +265,7 @@ test("explicit inspectors yield to Netlist for a replacement while ordinary edit
   });
   await page.getByTestId("hit-R1").dblclick();
   await expect(
-    page.getByRole("complementary", { name: "Properties", exact: true }),
+    page.getByRole("complementary", { name: "属性", exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("Editable Canvas property code")).toContainText(
     '"netlistName": "R1"',
@@ -447,9 +447,7 @@ test("keeps explicit display aliases while renaming netlist and restores the liv
   await page.getByTestId("annotation-hit-label-R1").dblclick();
   const alias = page.getByRole("checkbox", { name: "Use display alias" });
   await expect(alias).not.toBeChecked();
-  await page
-    .getByRole("textbox", { name: "画布文本编辑器" })
-    .fill("R_source");
+  await page.getByRole("textbox", { name: "画布文本编辑器" }).fill("R_source");
   await page.getByRole("button", { name: "应用文本更改" }).click();
   const code = page.getByLabel("Netlist code", { exact: true });
   await expect(code).toContainText("R_source");
@@ -494,9 +492,7 @@ test("rejects duplicate names atomically and retains a draft when the canvas cha
   ).toContainText("Edit rejected");
   await expect(label(page)).toContainText("R1");
   await page.getByTestId("annotation-hit-label-R1").dblclick();
-  await page
-    .getByRole("textbox", { name: "画布文本编辑器" })
-    .fill("R_canvas");
+  await page.getByRole("textbox", { name: "画布文本编辑器" }).fill("R_canvas");
   await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(
     page.getByRole("region", { name: "Live netlist" }).getByRole("alert"),
@@ -631,7 +627,7 @@ test("bound labels retain typography on rename and support manual scripts withou
     ),
   ).toBe(true);
   await page.getByTestId("annotation-hit-label-R1").dblclick();
-  await page.getByRole("button", { name: "Cancel text changes" }).click();
+  await page.getByRole("button", { name: "取消文本更改" }).click();
   await page.getByTestId("project-file").setInputFiles({
     name: "label-format-reopened.icproj.json",
     mimeType: "application/json",
@@ -803,9 +799,7 @@ test("drawing label rules immediately update formatted names and amplifier body 
   );
   await expect(body).toHaveText("A");
   await page.getByTestId("hit-amp").dblclick();
-  await page
-    .getByRole("textbox", { name: "画布文本编辑器" })
-    .fill("A_gain");
+  await page.getByRole("textbox", { name: "画布文本编辑器" }).fill("A_gain");
   await page.getByRole("button", { name: "应用文本更改" }).click();
   await page.keyboard.press("Escape");
   await expect(body.locator('[data-text-run="subscript"]')).toHaveText("gain");

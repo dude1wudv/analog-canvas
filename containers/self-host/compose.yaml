@@ -18,7 +18,7 @@ services:
     cpus: 2
     ports: ["127.0.0.1:8787:8787"]
     environment:
-      PUBLIC_ORIGIN: https://analog.sunmmyapi.xyz
+      PUBLIC_ORIGIN: https://analog.microedulab.com
       LOCAL_ADMIN_USERNAME: sun
     volumes:
       - ${ANALOG_STATE_DIR:?Set state directory}/data:/data

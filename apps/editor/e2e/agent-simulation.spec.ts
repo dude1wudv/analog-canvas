@@ -424,7 +424,7 @@ test("HTTP Kit alone authors native objects and hands off a Project-folder run",
   ).toBeEnabled();
   await records.getByRole("button", { name: "Open result" }).click();
   await expect(
-    page.getByRole("region", { name: "Analog simulation" }).getByRole("status"),
+    page.getByRole("region", { name: "模拟仿真" }).getByRole("status"),
   ).toHaveText("completed");
   expect(executions).toBe(1);
   expect(
@@ -814,9 +814,9 @@ for (const sourceKind of ["workspace", "project-folder"] as const)
     if (sourceKind === "project-folder") {
       // No Agent read: the project handoff must finish and archive autonomously.
       await page.getByRole("button", { name: "Close Agent dialog" }).click();
-      await expect(
-        page.getByRole("region", { name: "Analog simulation" }),
-      ).toHaveCount(0);
+      await expect(page.getByRole("region", { name: "模拟仿真" })).toHaveCount(
+        0,
+      );
       await clickNetlistWorkflowCommand(page, "open-analog-simulation");
       await page.locator(".simulation-run-history > summary").click();
       const records = page.getByRole("region", {
@@ -829,12 +829,10 @@ for (const sourceKind of ["workspace", "project-folder"] as const)
       ).toBeEnabled();
       await records.getByRole("button", { name: "Open result" }).click();
       await expect(
-        page
-          .getByRole("region", { name: "Analog simulation" })
-          .getByRole("status"),
+        page.getByRole("region", { name: "模拟仿真" }).getByRole("status"),
       ).toHaveText("completed");
       await page
-        .getByRole("treeitem", { name: "Folder Divider", exact: true })
+        .getByRole("treeitem", { name: "文件夹 Divider", exact: true })
         .click({ button: "right" });
       await expect(
         page.getByRole("menuitem", { name: "Download project + results…" }),
@@ -922,9 +920,7 @@ for (const sourceKind of ["workspace", "project-folder"] as const)
       await expect(saved).toContainText("Agent");
       await saved.getByRole("button", { name: "Open result" }).click();
       await expect(
-        page
-          .getByRole("region", { name: "Analog simulation" })
-          .getByRole("status"),
+        page.getByRole("region", { name: "模拟仿真" }).getByRole("status"),
       ).toHaveText("completed");
       expect(executions).toBe(1);
     }

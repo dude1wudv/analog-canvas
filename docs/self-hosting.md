@@ -6,11 +6,11 @@ commit，独立于上游的 Cloudflare Wrangler 工作流，也不会自动同�
 
 ## 访问和组件
 
-目标入口是 `https://analog.sunmmyapi.xyz/editor`。公网 HTTPS 入口由 Caddy
+目标入口是 `https://analog.microedulab.com/editor`。公网 HTTPS 入口由 Caddy
 终止 TLS，并反向代理到本机的 `127.0.0.1:8787`：
 
 ```caddyfile
-analog.sunmmyapi.xyz {
+analog.microedulab.com {
     reverse_proxy 127.0.0.1:8787 {
         header_up CF-Connecting-IP {http.request.remote.host}
     }

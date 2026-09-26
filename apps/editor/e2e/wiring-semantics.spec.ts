@@ -436,7 +436,7 @@ test("dragging a wire's end onto another wire joins them into one net", async ({
   await page.keyboard.press("Enter");
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-canvas-hit-kind="route"]')).toHaveCount(2);
-  await expect(page.getByTestId("statusbar-issues")).toHaveText("Not checked");
+  await expect(page.getByTestId("statusbar-issues")).toHaveText("尚未检查");
   await clickNetlistWorkflowCommand(page, "check-and-save");
   await expect(page.getByTestId("statusbar-issues")).toHaveText(
     "No issues found",

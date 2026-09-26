@@ -116,7 +116,7 @@ test("startup recovery without a saved workspace restores into a new working cop
   await page.goto("/editor?recovery=meaningful");
   await expect(banner).toBeVisible();
   await expect(banner).toContainText("New Circuit");
-  await banner.getByRole("button", { name: "Restore" }).click();
+  await banner.getByRole("button", { name: "恢复" }).click();
   await expect(banner).toBeHidden();
   await expect(page.getByTestId("revision")).toHaveText("3");
   await expect(page.getByTestId("status")).toContainText(
@@ -176,7 +176,7 @@ test("a damaged latest copy restores the previous generation", async ({
 
   await page.goto("/editor?recovery=damaged");
   await clickCommand(page, "File", "Recover Unsaved Work…");
-  const dialog = page.getByRole("dialog", { name: "Recover recent work" });
+  const dialog = page.getByRole("dialog", { name: "恢复最近工作" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByTestId("recovery-session-card")).toContainText(
     "Damaged",
@@ -208,7 +208,7 @@ test("a newer-schema copy is downloadable but not restorable", async ({
   ]);
   await page.reload();
   await clickCommand(page, "File", "Recover Unsaved Work…");
-  const dialog = page.getByRole("dialog", { name: "Recover recent work" });
+  const dialog = page.getByRole("dialog", { name: "恢复最近工作" });
   await expect(dialog).toBeVisible();
   const card = dialog.getByTestId("recovery-session-card").filter({
     hasText: "Future Project",
@@ -259,7 +259,7 @@ test("explicit discard removes outgoing recovery and hides a clean replacement",
     buffer: Buffer.from(serializeProject(replacement)),
   });
   await page
-    .getByRole("dialog", { name: "Unsaved changes" })
+    .getByRole("dialog", { name: "有未保存的更改" })
     .getByRole("button", { name: "不保存并继续" })
     .click();
   await expect(page.getByTestId("active-document-name")).toHaveText(
@@ -295,10 +295,10 @@ test("dialog closes with Escape and keeps focus labels", async ({ page }) => {
   await page.reload();
 
   await clickCommand(page, "File", "Recover Unsaved Work…");
-  const dialog = page.getByRole("dialog", { name: "Recover recent work" });
+  const dialog = page.getByRole("dialog", { name: "恢复最近工作" });
   await expect(dialog).toBeVisible();
   await expect(
-    dialog.getByRole("button", { name: "Close recent work recovery" }),
+    dialog.getByRole("button", { name: "关闭最近工作恢复" }),
   ).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
@@ -338,7 +338,7 @@ test("storage failure offers a backup without acknowledging Cloud Save", async (
   // warning until the user explicitly dismisses it.
   await expect(warning).toBeVisible();
   await expect(page.getByTestId("project-unsaved-indicator")).toBeVisible();
-  await warning.getByRole("button", { name: "Dismiss warning" }).click();
+  await warning.getByRole("button", { name: "关闭警告" }).click();
   await expect(warning).toBeHidden();
   await expect(page.getByTestId("project-unsaved-indicator")).toBeVisible();
 });

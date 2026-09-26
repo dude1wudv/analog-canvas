@@ -12,7 +12,7 @@ await writeFile(
     schemaPath: "/app/workerd.capnp",
     secretDir: "/secrets",
     dataDir: "/data",
-    origin: process.env.PUBLIC_ORIGIN ?? "https://analog.sunmmyapi.xyz",
+    origin: process.env.PUBLIC_ORIGIN ?? "https://analog.microedulab.com",
     revision: process.env.SOURCE_REVISION ?? "codex/image-spice-import",
     adminUsername: process.env.LOCAL_ADMIN_USERNAME ?? "sun",
   }),

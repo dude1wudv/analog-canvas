@@ -77,7 +77,7 @@ test("canvas edits one visual annotation without changing the Netlist Reference"
   expect(increaseControl.x).toBeGreaterThan(decreaseControl.x);
   expect(actionControls[0]!.y).toBeGreaterThan(increaseControl.y);
   const toolbarBounds = await page
-    .getByRole("toolbar", { name: "Text formatting" })
+    .getByRole("toolbar", { name: "文本格式" })
     .boundingBox();
   if (!toolbarBounds) throw new Error("Text toolbar is not measurable");
   for (const control of [decreaseControl, increaseControl, ...actionControls]) {
@@ -135,7 +135,7 @@ test("Properties renames the electrical identity explicitly; restore is an in-pl
   await page.getByRole("button", { name: "应用文本更改" }).click();
   await page.getByTestId("hit-R1").click();
   await page.keyboard.press("q");
-  const properties = page.getByRole("complementary", { name: "Properties" });
+  const properties = page.getByRole("complementary", { name: "属性" });
   await expectComponentCodeField(page, "name", "load");
   await expectComponentCodeField(page, "netlistName", "R1");
   await expect(properties.getByLabel("Component label")).toHaveCount(0);
@@ -155,7 +155,7 @@ test("Properties renames the electrical identity explicitly; restore is an in-pl
     code.netlistName = "gm";
   });
   await expect(properties).toContainText("Canvas property code was rejected");
-  await properties.getByRole("button", { name: "Discard draft" }).click();
+  await properties.getByRole("button", { name: "丢弃草稿" }).click();
   await expectComponentCodeField(page, "netlistName", "R7");
   await editComponentPropertyCode(page, (value) => {
     value.display.visualAnnotation = false;

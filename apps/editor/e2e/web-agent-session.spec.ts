@@ -990,7 +990,7 @@ test("restores the same paired working copy through refresh and Gallery without 
   const { claimCode } = JSON.parse(handoff.match(/Claim: (.+)/u)![1]!);
   const client = new AgentHttpClient({ baseUrl: baseURL! });
   const session = await client.claim(claimCode);
-  await expect(panel.getByTestId("agent-status")).toHaveText("Connected");
+  await expect(panel.getByTestId("agent-status")).toHaveText("已连接");
   const documentId = session.documentIds[0]!;
   await client.circuit(session.sessionId, session.agentToken, {
     apiVersion: "3.0",
@@ -1079,7 +1079,7 @@ test("keeps pairing across Project tabs, rejects old writes and copies through t
   const { claimCode } = JSON.parse(handoff.match(/Claim: (.+)/u)![1]!);
   const client = new AgentHttpClient({ baseUrl: baseURL! });
   const session = await client.claim(claimCode);
-  await expect(panel.getByTestId("agent-status")).toHaveText("Connected");
+  await expect(panel.getByTestId("agent-status")).toHaveText("已连接");
   const originalContext = client.contextRevision;
   const write = {
     apiVersion: "3.0" as const,
@@ -1293,7 +1293,7 @@ test("rebinds circuit reads and writes after an already-used Claim opens another
   const { claimCode } = JSON.parse(handoff.match(/Claim: (.+)/u)![1]!);
   const client = new AgentHttpClient({ baseUrl: baseURL! });
   const session = await client.claim(claimCode);
-  await expect(panel.getByTestId("agent-status")).toHaveText("Connected");
+  await expect(panel.getByTestId("agent-status")).toHaveText("已连接");
   const firstContext = client.contextRevision;
   const firstDocumentId = session.documentIds[0]!;
   const snapshot = (requestId: string, documentId: string) =>
@@ -1462,7 +1462,7 @@ test("opens an Agent-staged SPICE Project without browser confirmation or a new 
   const { claimCode } = JSON.parse(handoff.match(/Claim: (.+)/u)![1]!);
   const client = new AgentHttpClient({ baseUrl: baseURL! });
   const session = await client.claim(claimCode);
-  await expect(panel.getByTestId("agent-status")).toHaveText("Connected");
+  await expect(panel.getByTestId("agent-status")).toHaveText("已连接");
   const originalProjectId = session.projectId;
   expect(
     await client.circuit(session.sessionId, session.agentToken, {
@@ -1503,7 +1503,7 @@ test("opens an Agent-staged SPICE Project without browser confirmation or a new 
   });
   if (!opened.ok || opened.operation !== "open")
     throw new Error(JSON.stringify(opened));
-  await expect(panel.getByTestId("agent-status")).toHaveText("Connected");
+  await expect(panel.getByTestId("agent-status")).toHaveText("已连接");
   await expect(page.getByTestId("agent-file-approval")).toHaveCount(0);
   expect(
     (await client.status(session.sessionId, session.agentToken)).projectId,
@@ -1648,7 +1648,7 @@ test("workspace Cloud operations reuse GUI open validation, save conflicts and S
   const { claimCode } = JSON.parse(handoff.match(/Claim: (.+)/u)![1]!);
   const client = new AgentHttpClient({ baseUrl: baseURL! });
   const session = await client.claim(claimCode);
-  await expect(panel.getByTestId("agent-status")).toHaveText("Connected");
+  await expect(panel.getByTestId("agent-status")).toHaveText("已连接");
   await panel.getByRole("button", { name: "Close Agent dialog" }).click();
   let requestNumber = 0;
   const workspace = (
@@ -1751,7 +1751,7 @@ test("keeps one Project session through Cell switches and preserves an acknowled
   const client = new AgentHttpClient({ baseUrl: baseURL! });
   const session = await client.claim(claimCode);
   const topDocumentId = session.documentIds[0]!;
-  await expect(panel.getByTestId("agent-status")).toHaveText("Connected");
+  await expect(panel.getByTestId("agent-status")).toHaveText("已连接");
   await panel.getByRole("button", { name: "Close Agent dialog" }).click();
 
   await page.getByTestId("hierarchy-entry").click();
@@ -1948,7 +1948,7 @@ test("copies a working handoff through the normal local dev relay", async ({
         { timeout: 8_000 },
       )
       .toBe(true);
-    await expect(panel.getByTestId("agent-status")).toHaveText("Connected");
+    await expect(panel.getByTestId("agent-status")).toHaveText("已连接");
   }
   const transaction = await client.circuit(
     session.sessionId,
@@ -2213,7 +2213,7 @@ test("keeps browser recovery on the renewed idle deadline and expires after inac
     );
   await page.goto("/editor");
   await page.getByTestId("open-agent").click();
-  await expect(page.getByTestId("agent-status")).toHaveText("Connected");
+  await expect(page.getByTestId("agent-status")).toHaveText("已连接");
   await expect(page.getByTestId("agent-idle-policy")).toContainText(
     "30 minutes",
   );
@@ -2221,7 +2221,7 @@ test("keeps browser recovery on the renewed idle deadline and expires after inac
   await page.clock.setFixedTime(start + 120_000);
   await page.evaluate(() => document.dispatchEvent(new Event("resume")));
   await page.clock.runFor(6_000);
-  await expect(page.getByTestId("agent-status")).toHaveText("Connected");
+  await expect(page.getByTestId("agent-status")).toHaveText("已连接");
   expect(attachments).toBe(1);
   await page.clock.setFixedTime(start + 29 * 60_000);
   deadline = start + 59 * 60_000;
@@ -2230,7 +2230,7 @@ test("keeps browser recovery on the renewed idle deadline and expires after inac
   // Crossing the initial deadline must not close the session or erase recovery.
   await page.clock.setFixedTime(start + 31 * 60_000);
   await page.clock.runFor(1_100);
-  await expect(page.getByTestId("agent-status")).toHaveText("Connected");
+  await expect(page.getByTestId("agent-status")).toHaveText("已连接");
   // A saved local deadline can lag a lease renewed by the Agent.
   await page.evaluate(() => {
     const key = "icm.agent-session-recovery.v1";
@@ -2240,7 +2240,7 @@ test("keeps browser recovery on the renewed idle deadline and expires after inac
   });
   await page.reload();
   await page.getByTestId("open-agent").click();
-  await expect(page.getByTestId("agent-status")).toHaveText("Connected");
+  await expect(page.getByTestId("agent-status")).toHaveText("已连接");
   expect(creates).toBe(1);
   await expect.poll(async () => (await recovery())?.expiresAt).toBe(deadline);
   // Passive heartbeats must not extend the deadline on the browser.

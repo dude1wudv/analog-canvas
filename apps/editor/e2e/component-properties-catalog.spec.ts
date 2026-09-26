@@ -81,7 +81,7 @@ for (const symbolId of componentSymbolIds) {
     await expect(properties.locator(":scope > *")).toHaveCount(1);
     await expect(properties.locator(":scope > :only-child")).toHaveAttribute(
       "aria-label",
-      "Canvas property code",
+      "画布属性代码",
     );
   });
 }
