@@ -4445,7 +4445,7 @@ test("the Examples panel guards dirty work before opening an entry", async ({
   await expect(page.getByTestId("hit-R1")).toHaveCount(1);
 
   await card.click();
-  await dialog.getByRole("button", { name: "Continue without saving" }).click();
+  await dialog.getByRole("button", { name: "不保存并继续" }).click();
   await awaitEditorReady(page);
   await expect(page.getByTestId("status")).toContainText(
     `Opened gallery circuit: ${ENTRY.name}`,

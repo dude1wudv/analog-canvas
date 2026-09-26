@@ -205,9 +205,11 @@ export async function editComponentPropertyCode(
 export async function readComponentPropertyCode(page: Page): Promise<string> {
   await expect(page.getByLabel("Editable Canvas property code")).toBeVisible();
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.getByRole("button", { name: "复制 JSON", exact: true }).click();
+  await page
+    .getByRole("button", { name: /^(?:复制 JSON|Copy JSON)$/u, exact: true })
+    .click();
   await expect(
-    page.getByText("已复制 JSON", {
+    page.getByText(/^(?:已复制 JSON|JSON copied)$/u, {
       exact: true,
     }),
   ).toBeVisible();

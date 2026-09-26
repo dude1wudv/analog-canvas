@@ -241,7 +241,7 @@ test("opens a built-in formatted device name with alias off and follows netlist 
   await expect(
     page.getByRole("checkbox", { name: "Use display alias" }),
   ).not.toBeChecked();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   const code = page.getByLabel("Netlist code", { exact: true });
   await expect(code).toHaveAttribute("contenteditable", "true");
   await code.fill((await code.innerText()).replace(/^CGS /mu, "C_input "));
@@ -448,17 +448,17 @@ test("keeps explicit display aliases while renaming netlist and restores the liv
   const alias = page.getByRole("checkbox", { name: "Use display alias" });
   await expect(alias).not.toBeChecked();
   await page
-    .getByRole("textbox", { name: "Canvas text editor" })
+    .getByRole("textbox", { name: "画布文本编辑器" })
     .fill("R_source");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   const code = page.getByLabel("Netlist code", { exact: true });
   await expect(code).toContainText("R_source");
   await page.getByTestId("annotation-hit-label-R1").dblclick();
   await alias.check();
   await page
-    .getByRole("textbox", { name: "Canvas text editor" })
+    .getByRole("textbox", { name: "画布文本编辑器" })
     .fill("Load resistor");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(label(page)).toContainText("Load resistor");
   await code.fill((await code.innerText()).replace("R_source ", "R_new "));
   await code.press("Enter");
@@ -469,9 +469,9 @@ test("keeps explicit display aliases while renaming netlist and restores the liv
   await alias.uncheck();
   await expect(label(page)).toContainText("Rnew");
   await expect(
-    page.getByRole("textbox", { name: "Canvas text editor" }),
+    page.getByRole("textbox", { name: "画布文本编辑器" }),
   ).toHaveText("Rnew");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await page.screenshot({ path: "plan/netlist-edit-preview.png" });
 });
 
@@ -495,9 +495,9 @@ test("rejects duplicate names atomically and retains a draft when the canvas cha
   await expect(label(page)).toContainText("R1");
   await page.getByTestId("annotation-hit-label-R1").dblclick();
   await page
-    .getByRole("textbox", { name: "Canvas text editor" })
+    .getByRole("textbox", { name: "画布文本编辑器" })
     .fill("R_canvas");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(
     page.getByRole("region", { name: "Live netlist" }).getByRole("alert"),
   ).toContainText("canvas or Agent changed");
@@ -552,14 +552,14 @@ test("bound labels retain typography on rename and support manual scripts withou
     buffer: Buffer.from(JSON.stringify(fixture())),
   });
   await page.getByTestId("annotation-hit-label-R1").dblclick();
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   const alias = page.getByRole("checkbox", { name: "Use display alias" });
   await expect(alias).not.toBeChecked();
   for (const name of ["Bold", "Italic", "Subscript", "Superscript"])
     await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
   await expect(editor).toHaveAttribute("contenteditable", "true");
   await editor.fill("R7");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(label(page)).toHaveText("R7");
   const typefaces = () =>
     label(page)
@@ -577,8 +577,8 @@ test("bound labels retain typography on rename and support manual scripts withou
   await editor.click();
   await page.keyboard.press("End");
   await page.keyboard.press("Shift+ArrowLeft");
-  await page.getByRole("button", { name: "Subscript", exact: true }).click();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "下标", exact: true }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(),
   );
@@ -609,9 +609,9 @@ test("bound labels retain typography on rename and support manual scripts withou
   await expect(editor.locator("sub")).toHaveText("8");
   await page.screenshot({ path: "plan/label-format-restored.png" });
   await editor.press("ControlOrMeta+a");
-  await page.getByRole("button", { name: "Bold", exact: true }).click();
-  await page.getByRole("button", { name: "Italic", exact: true }).click();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "粗体", exact: true }).click();
+  await page.getByRole("button", { name: "斜体", exact: true }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(code).toContainText("R8");
   expect(
     (await typefaces()).every(
@@ -658,9 +658,9 @@ test("a name another part already has, or no part can have, becomes a display al
     buffer: Buffer.from(JSON.stringify(fixture())),
   });
   await page.getByTestId("annotation-hit-label-R1").dblclick();
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await editor.fill("R2");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(page.getByTestId("status")).toContainText(
     "Showing R2 as a display alias; the netlist name stays R1",
   );
@@ -671,7 +671,7 @@ test("a name another part already has, or no part can have, becomes a display al
     page.getByRole("checkbox", { name: "Use display alias" }),
   ).toBeChecked();
   await editor.fill("Φ2");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(label(page)).toHaveText("Φ2");
   const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(),
@@ -804,9 +804,9 @@ test("drawing label rules immediately update formatted names and amplifier body 
   await expect(body).toHaveText("A");
   await page.getByTestId("hit-amp").dblclick();
   await page
-    .getByRole("textbox", { name: "Canvas text editor" })
+    .getByRole("textbox", { name: "画布文本编辑器" })
     .fill("A_gain");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await page.keyboard.press("Escape");
   await expect(body.locator('[data-text-run="subscript"]')).toHaveText("gain");
   await page.getByTestId("draw-tool-document-style").click();
@@ -873,7 +873,7 @@ test("drawing label rules immediately update formatted names and amplifier body 
     buffer: Buffer.from(JSON.stringify(saved)),
   });
   const discard = page.getByRole("button", {
-    name: "Continue without saving",
+    name: "不保存并继续",
     exact: true,
   });
   await discard.click();
@@ -957,7 +957,7 @@ test("opening and reopening a PDK BJT adds X only to SPICE, never its canvas nam
   await expect(code).not.toContainText("XQ1");
   await page.getByTestId("annotation-hit-label-Q1").dblclick();
   await expect(
-    page.getByRole("textbox", { name: "Canvas text editor" }),
+    page.getByRole("textbox", { name: "画布文本编辑器" }),
   ).toHaveText("Q1");
 });
 
@@ -1005,10 +1005,10 @@ test("Cell Pin overbars are the label's look and keep the exported name", async 
     '[data-layer="annotations"] [data-object-id="label-output"]',
   );
   await hit.dblclick();
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await editor.press("ControlOrMeta+a");
-  await page.getByRole("button", { name: "Overbar", exact: true }).click();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "上划线", exact: true }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(editor).toHaveCount(0);
   await expect(label).toHaveText("F");
   await expect(

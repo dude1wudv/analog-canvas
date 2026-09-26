@@ -204,7 +204,7 @@ test("keeps every line of a multi-line note on its own line", async ({
   await page.goto("/editor");
   await revealPropertiesShelf(page);
   await placeText(page, { x: 400, y: 220 });
-  const editable = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editable = page.getByRole("textbox", { name: "画布文本编辑器" });
   await editable.click();
   await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.type("Bias network");
@@ -225,7 +225,7 @@ test("keeps every line of a multi-line note on its own line", async ({
     )
     .toBe("Bias network\nsecond line\nthird line");
 
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   const note = page.locator('[data-kind="draft-text"]').first();
   await expect(note).toBeVisible();
   // Three lines: each break resets x and steps the baseline down by one line.
@@ -237,7 +237,7 @@ test("keeps every line of a multi-line note on its own line", async ({
 
   // Reopening edits the same three lines rather than one run of joined text.
   await note.dblclick({ force: true });
-  const reopened = page.getByRole("textbox", { name: "Canvas text editor" });
+  const reopened = page.getByRole("textbox", { name: "画布文本编辑器" });
   await expect(reopened).toBeVisible();
   await expect(reopened.locator("br")).toHaveCount(2);
 });
@@ -250,7 +250,7 @@ test("adds formatted drafting text and undo/redo restores it", async ({
 
   await placeText(page);
   const draftInput = page.getByRole("textbox", {
-    name: "Canvas text editor",
+    name: "画布文本编辑器",
   });
   await expect(draftInput).toBeVisible();
   await expect(
@@ -293,10 +293,10 @@ test("adds formatted drafting text and undo/redo restores it", async ({
     alignLeftTop,
     alignRightTop,
   ] = await Promise.all([
-    controlTop(page.getByRole("button", { name: "Bold" })),
+    controlTop(page.getByRole("button", { name: "粗体" })),
     controlTop(page.getByRole("button", { name: "Decrease text size" })),
     controlTop(page.getByRole("button", { name: "Increase text size" })),
-    controlTop(page.getByRole("button", { name: "Apply text changes" })),
+    controlTop(page.getByRole("button", { name: "应用文本更改" })),
     controlTop(page.getByRole("button", { name: "Cancel text changes" })),
     controlTop(page.getByRole("button", { name: "Delete text" })),
     controlTop(page.getByRole("button", { name: "Align left" })),
@@ -326,7 +326,7 @@ test("adds formatted drafting text and undo/redo restores it", async ({
   await expect
     .poll(async () => {
       const [boldTop, decreaseTop, increaseTop] = await Promise.all([
-        controlTop(page.getByRole("button", { name: "Bold" })),
+        controlTop(page.getByRole("button", { name: "粗体" })),
         controlTop(page.getByRole("button", { name: "Decrease text size" })),
         controlTop(page.getByRole("button", { name: "Increase text size" })),
       ]);
@@ -342,14 +342,14 @@ test("adds formatted drafting text and undo/redo restores it", async ({
   await expect
     .poll(async () => {
       const [applyTop, cancelTop] = await Promise.all([
-        controlTop(page.getByRole("button", { name: "Apply text changes" })),
+        controlTop(page.getByRole("button", { name: "应用文本更改" })),
         controlTop(page.getByRole("button", { name: "Cancel text changes" })),
       ]);
       return Math.abs(cancelTop - applyTop);
     })
     .toBeLessThan(8);
   const narrowApplyTop = await controlTop(
-    page.getByRole("button", { name: "Apply text changes" }),
+    page.getByRole("button", { name: "应用文本更改" }),
   );
   expect(narrowApplyTop).toBeGreaterThan(narrowSizeTop);
   await page.getByLabel("Insert circuit symbol").click();
@@ -392,8 +392,8 @@ test("adds formatted drafting text and undo/redo restores it", async ({
   );
   await draftInput.fill("Vin");
   await draftInput.press("ControlOrMeta+A");
-  await page.getByRole("button", { name: "Subscript" }).click();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "下标" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   await expect(page.locator('[data-layer="drafting"]')).toContainText("Vin");
   await expect(page.locator('[data-kind="draft-text"]')).toHaveCSS(
@@ -496,10 +496,10 @@ test("drafting text owns an independent color override with Auto inheritance", a
   await page.goto("/editor");
   await placeText(page);
   const draftInput = page.getByRole("textbox", {
-    name: "Canvas text editor",
+    name: "画布文本编辑器",
   });
   await draftInput.fill("Colored note");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   const hit = page.getByTestId(/^drafting-hit-note-/);
   const text = page.locator('[data-kind="draft-text"]');
@@ -681,7 +681,7 @@ test("authors one validated formula through the canonical text editor", async ({
   await expect(
     page.getByTestId("canvas-text-editor").locator("[data-rich-text-math]"),
   ).toHaveAttribute("data-latex", normalizedDifferential);
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   const formula = page.locator(
     '[data-kind="draft-text"] [data-role="formula"]',
@@ -731,7 +731,7 @@ for (const zoomedOut of [false, true]) {
     if (zoomedOut) {
       while (
         Number.parseInt(
-          (await page.getByLabel("Current zoom").textContent())!,
+          (await page.getByLabel("当前缩放比例").textContent())!,
         ) > 20
       ) {
         await page
@@ -783,7 +783,7 @@ for (const zoomedOut of [false, true]) {
         expectedLatex,
       );
       await checkFrame();
-      await page.getByRole("button", { name: "Apply text changes" }).click();
+      await page.getByRole("button", { name: "应用文本更改" }).click();
       await expect(frame).toHaveCount(0);
       await expect(
         page.locator('[data-kind="draft-text"] [data-role="formula"]'),
@@ -846,7 +846,7 @@ test("edits an unrestricted device formula in the same visual annotation", async
   await expect(page.getByTestId("formula-conversion-confirmation")).toHaveCount(
     0,
   );
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(
     page.locator('[data-object-id="instance-label-R1"] [data-role="formula"]'),
   ).toHaveCount(1);
@@ -1043,10 +1043,10 @@ test("places Text at its preview after zoom and pan, then edits and undoes it", 
   expect(placedBounds.y).toBeCloseTo(previewBounds!.y, 1);
   expect(placedBounds.width).toBeCloseTo(previewBounds!.width, 1);
   expect(placedBounds.height).toBeCloseTo(previewBounds!.height, 1);
-  const input = page.getByRole("textbox", { name: "Canvas text editor" });
+  const input = page.getByRole("textbox", { name: "画布文本编辑器" });
   await expect(input).toBeVisible();
   await input.fill("Custom text");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(texts).toHaveText("Custom text");
   await expect(page.getByTestId("revision")).toHaveText("2");
 
@@ -1082,9 +1082,9 @@ test("previews copied text upright and commits its pose atomically", async ({
   const canvas = page.getByTestId("schematic-canvas");
 
   await placeText(page);
-  const draftInput = page.getByRole("textbox", { name: "Canvas text editor" });
+  const draftInput = page.getByRole("textbox", { name: "画布文本编辑器" });
   await draftInput.fill("Design note");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await page.keyboard.press("Escape");
 
   const texts = page.locator('[data-kind="draft-text"]');
@@ -1164,10 +1164,10 @@ test("fits drafting text with F using an integer grid camera", async ({
   await page.goto("/editor");
   await placeText(page);
   const draftInput = page.getByRole("textbox", {
-    name: "Canvas text editor",
+    name: "画布文本编辑器",
   });
   await draftInput.fill("Vout");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   const canvas = page.getByTestId("schematic-canvas");
   await page.keyboard.press("f");
@@ -1203,7 +1203,7 @@ test("types Greek letters by LaTeX name and from the symbol menu", async ({
 }) => {
   await page.goto("/editor");
   await placeText(page);
-  const editable = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editable = page.getByRole("textbox", { name: "画布文本编辑器" });
   await editable.click();
   await page.keyboard.press("ControlOrMeta+A");
   // A LaTeX name then Space spells the letter, lowercase or capital, and the
@@ -1239,7 +1239,7 @@ test("types Greek letters by LaTeX name and from the symbol menu", async ({
   await expect(page.getByTestId("canvas-text-editor")).toBeVisible();
   await expect.poll(typed).toBe("φ1 Ω\\foo Σψ");
 
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(menu).toHaveCount(0);
   await expect(page.locator('[data-kind="draft-text"]').first()).toHaveText(
     /^φ1\sΩ\\foo\sΣψ$/u,
@@ -1311,7 +1311,7 @@ test("existing text drag commits once and undoes atomically", async ({
   await page.goto("/editor");
   await placeText(page);
   await page
-    .getByRole("textbox", { name: "Canvas text editor" })
+    .getByRole("textbox", { name: "画布文本编辑器" })
     .press("Escape");
   await expect(page.getByTestId("revision")).toHaveText("1");
 
@@ -1348,7 +1348,7 @@ test("Escape cancels an existing text drag without a revision", async ({
   await page.goto("/editor");
   await placeText(page);
   await page
-    .getByRole("textbox", { name: "Canvas text editor" })
+    .getByRole("textbox", { name: "画布文本编辑器" })
     .press("Escape");
   const hit = page.getByTestId(/^drafting-hit-note-/);
   const box = await hit.boundingBox();
@@ -1557,16 +1557,16 @@ test("unedited Apply does not add a revision", async ({ page }) => {
   await page.goto("/editor");
   await placeText(page);
   const draftInput = page.getByRole("textbox", {
-    name: "Canvas text editor",
+    name: "画布文本编辑器",
   });
   await draftInput.fill("Vin");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(page.getByTestId("revision")).toHaveText("2");
 
   const handle = page.getByTestId(/^drafting-hit-note-/);
   await handle.dblclick();
   await expect(draftInput).toBeVisible();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await page.waitForTimeout(200);
   await expect(page.getByTestId("revision")).toHaveText("2");
 });
@@ -1579,12 +1579,12 @@ test("drafting content and anchor survive save and reopen", async ({
   await page.goto("/editor");
   await placeText(page);
   const draftInput = page.getByRole("textbox", {
-    name: "Canvas text editor",
+    name: "画布文本编辑器",
   });
   await draftInput.fill("Vref");
   await draftInput.press("ControlOrMeta+A");
-  await page.getByRole("button", { name: "Italic" }).click();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "斜体" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(page.getByTestId("revision")).toHaveText("2");
 
   const projectBytes = await downloadBytes(
@@ -2020,7 +2020,7 @@ test("a label too long for its box wraps inside it", async ({ page }) => {
   if (!box) throw new Error("rectangle is not measurable");
   await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
   await expect(
-    page.getByRole("textbox", { name: "Canvas text editor" }),
+    page.getByRole("textbox", { name: "画布文本编辑器" }),
   ).toBeVisible();
   await page.keyboard.type("A very long bias network label indeed");
   await page.keyboard.press("Escape");
@@ -2082,7 +2082,7 @@ test("double-click inside a rectangle writes a centered, anchored label", async 
 
   const center = await screenCenter();
   await page.mouse.dblclick(center.x, center.y);
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await expect(editor).toBeVisible();
   await expect(editor).toHaveCSS("font-weight", "700");
   await page.keyboard.type("PFD");
@@ -2367,7 +2367,7 @@ test("authors inline fractions alongside styled text and preserves them through 
     .getByTestId("schematic-canvas")
     .click({ position: { x: 450, y: 340 } });
   const editor = page.getByRole("textbox", {
-    name: "Canvas text editor",
+    name: "画布文本编辑器",
     exact: true,
   });
   await editor.fill("R = ");
@@ -2390,13 +2390,13 @@ test("authors inline fractions alongside styled text and preserves them through 
     selection.addRange(range);
     element.dispatchEvent(new Event("pointerup", { bubbles: true }));
   });
-  await page.getByRole("button", { name: "Subscript", exact: true }).click();
+  await page.getByRole("button", { name: "下标", exact: true }).click();
   await expect(denominator.locator("sub")).toHaveText("mN");
   await page.keyboard.press("Tab");
   await page.keyboard.insertText(" + R1");
   await expect(editor).toHaveText("R = 1gmN + R1");
   await page.keyboard.press("Shift+ArrowLeft");
-  await page.getByRole("button", { name: "Subscript", exact: true }).click();
+  await page.getByRole("button", { name: "下标", exact: true }).click();
   await expect(editor.locator("sub")).toHaveCount(2);
   const alignment = await editor.evaluate((element) => {
     const prefix = document
@@ -2414,7 +2414,7 @@ test("authors inline fractions alongside styled text and preserves them through 
     };
   });
   expect(alignment.gap).toBeLessThan(alignment.fontSize * 0.35);
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   const note = page.locator('[data-kind="draft-text"]');
   await expect(note.locator('[data-role="fraction-bar"]')).toHaveCount(1);
   await expect(note).toContainText("R = ");
@@ -2435,7 +2435,7 @@ test("authors inline fractions alongside styled text and preserves them through 
   await expect(
     editor.locator('[data-fraction-part="denominator"] sub'),
   ).toHaveText("mN");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(page.getByTestId("revision")).toHaveText(revision!);
 
   expect(await note.getAttribute("transform")).toBeNull();
@@ -2466,7 +2466,7 @@ test("converts a selected slash fraction and mixes multiple fractions in one not
   await page.goto("/editor");
   await placeText(page);
   const editor = page.getByRole("textbox", {
-    name: "Canvas text editor",
+    name: "画布文本编辑器",
     exact: true,
   });
   await editor.fill("1u/150n");
@@ -2500,8 +2500,8 @@ test("converts a selected slash fraction and mixes multiple fractions in one not
   await page.keyboard.insertText(" = x");
   await editor.focus();
   await editor.press("ControlOrMeta+A");
-  await page.getByRole("button", { name: "Bold", exact: true }).click();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "粗体", exact: true }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   const note = page.locator('[data-kind="draft-text"]');
   await expect(note.locator('[data-role="fraction-bar"]')).toHaveCount(2);
   await expect(note).toContainText(" = x");
@@ -2526,7 +2526,7 @@ test("places a mixed fraction in a device visual annotation without changing its
   await page.getByTestId("annotation-hit-instance-label-R1").dblclick();
   await page.getByRole("checkbox", { name: "Use display alias" }).check();
   const editor = page.getByRole("textbox", {
-    name: "Canvas text editor",
+    name: "画布文本编辑器",
     exact: true,
   });
   await editor.fill("1/gmN + R1");
@@ -2545,7 +2545,7 @@ test("places a mixed fraction in a device visual annotation without changing its
   await page
     .getByRole("button", { name: "Insert fraction", exact: true })
     .click();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   const label = page.locator('[data-object-id="instance-label-R1"]');
   await expect(label.locator('[data-role="fraction-bar"]')).toHaveCount(1);
   await expect(label).toContainText(" + R1");
@@ -2579,7 +2579,7 @@ test("centers fraction parts on a content-sized bar and defaults notes to bold",
   await page.goto("/editor");
   await placeText(page);
   const editor = page.getByRole("textbox", {
-    name: "Canvas text editor",
+    name: "画布文本编辑器",
     exact: true,
   });
   await expect(editor).toHaveCSS("font-weight", "700");
@@ -2592,14 +2592,14 @@ test("centers fraction parts on a content-sized bar and defaults notes to bold",
   await page.keyboard.press("Tab");
   await page.keyboard.insertText("Gm");
   await page.keyboard.press("Shift+ArrowLeft");
-  await page.getByRole("button", { name: "Subscript", exact: true }).click();
+  await page.getByRole("button", { name: "下标", exact: true }).click();
   await page.keyboard.press("ArrowRight");
-  await page.getByRole("button", { name: "Subscript", exact: true }).click();
+  await page.getByRole("button", { name: "下标", exact: true }).click();
   await page.keyboard.insertText("R");
   const part = (name: string) =>
     editor.locator(`[data-fraction-part="${name}"]`);
   const apply = () =>
-    page.getByRole("button", { name: "Apply text changes" }).click();
+    page.getByRole("button", { name: "应用文本更改" }).click();
   const note = page.locator('[data-kind="draft-text"]');
   const reopen = () => page.getByTestId(/^drafting-hit-note-/).dblclick();
   const measure = async (target: Locator) =>
@@ -2701,14 +2701,14 @@ test("centers fraction parts on a content-sized bar and defaults notes to bold",
   await reopen();
   await editor.focus();
   await editor.press("ControlOrMeta+A");
-  await page.getByRole("button", { name: "Bold", exact: true }).click();
+  await page.getByRole("button", { name: "粗体", exact: true }).click();
   await apply();
   expect((await weights()).every((weight) => weight === "400")).toBe(true);
   await reopen();
   await expect(editor).toHaveCSS("font-weight", "400");
   await editor.focus();
   await editor.press("ControlOrMeta+A");
-  await page.getByRole("button", { name: "Bold", exact: true }).click();
+  await page.getByRole("button", { name: "粗体", exact: true }).click();
   await apply();
   expect((await weights()).every((weight) => weight === "700")).toBe(true);
   await check(note);
@@ -2720,15 +2720,15 @@ test("persists normal weight selected inside an otherwise bold text box", async 
   await page.goto("/editor");
   await placeText(page);
   const editor = page.getByRole("textbox", {
-    name: "Canvas text editor",
+    name: "画布文本编辑器",
     exact: true,
   });
   await editor.fill("Bold Plain");
   await editor.press("End");
   for (let index = 0; index < 5; index++)
     await page.keyboard.press("Shift+ArrowLeft");
-  await page.getByRole("button", { name: "Bold", exact: true }).click();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "粗体", exact: true }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   const note = page.locator('[data-kind="draft-text"]');
   const renderedWeights = () =>
     note.evaluate((element) => {
@@ -2758,7 +2758,7 @@ test("persists normal weight selected inside an otherwise bold text box", async 
   await page.getByTestId(/^drafting-hit-note-/).dblclick();
   await expect(editor.locator("strong")).toHaveText("Bold ");
   const revision = await page.getByTestId("revision").textContent();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(page.getByTestId("revision")).toHaveText(revision!);
 });
 

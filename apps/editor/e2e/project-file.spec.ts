@@ -529,7 +529,7 @@ test("Gallery navigation uses the replacement decision without a second browser 
   await expect(page).toHaveURL(/\/editor/u);
 
   await page.getByRole("link", { name: "Back to the gallery" }).click();
-  await guard.getByRole("button", { name: "Continue without saving" }).click();
+  await guard.getByRole("button", { name: "不保存并继续" }).click();
   await expect(page).toHaveURL(/\/$/u);
   await page.goto("/editor");
   await expect(page.getByTestId("startup-recovery-banner")).toHaveCount(0);
@@ -886,7 +886,7 @@ test("discarding a dirty replacement does not leave a second project stack", asy
   const dialog = page.getByRole("dialog", {
     name: "Unsaved changes",
   });
-  await dialog.getByRole("button", { name: "Continue without saving" }).click();
+  await dialog.getByRole("button", { name: "不保存并继续" }).click();
   await expect(page.getByTestId("hit-R1")).toHaveCount(0);
   fileMenu = await openMenu(page, "File");
   await expect(
@@ -922,7 +922,7 @@ test("reverts to the last acknowledged Cloud revision", async ({ page }) => {
   await fileMenu.getByRole("button", { name: "Revert to Last Saved" }).click();
   await page
     .getByRole("dialog", { name: "Unsaved changes" })
-    .getByRole("button", { name: "Continue without saving" })
+    .getByRole("button", { name: "不保存并继续" })
     .click();
   await expect(page.getByTestId("hit-R1")).toHaveCount(1);
   await expect(page.getByTestId("hit-R2")).toHaveCount(0);

@@ -220,7 +220,7 @@ test("simulation examples confirm whole-Project replacement and protect existing
   await confirmation
     .getByRole("button", { name: "Open example", exact: true })
     .click();
-  await guard.getByRole("button", { name: "Continue without saving" }).click();
+  await guard.getByRole("button", { name: "不保存并继续" }).click();
   await expect(cards).toHaveCount(0);
   await expect(
     panel.getByRole("button", { name: "Run", exact: true }),

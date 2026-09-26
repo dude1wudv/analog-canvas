@@ -87,9 +87,9 @@ async function placeCellPin(
   await page.keyboard.press("Escape");
   await labels.nth(existingLabelCount).dblclick();
   await page
-    .getByRole("textbox", { name: "Canvas text editor" })
+    .getByRole("textbox", { name: "画布文本编辑器" })
     .fill(options.name);
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   if (options.direction) {
     await runCellCommand(page, "Hierarchy");
     const manager = page.getByRole("dialog", { name: "Cell Manager" });
@@ -111,8 +111,8 @@ async function renameCellPinOnCanvas(
   await page
     .getByTestId(`annotation-hit-instance-label-${instanceId}`)
     .dblclick();
-  await page.getByRole("textbox", { name: "Canvas text editor" }).fill(name);
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("textbox", { name: "画布文本编辑器" }).fill(name);
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 }
 
 async function setCellTerminalDirection(
@@ -927,12 +927,12 @@ test("keeps a Port Name when its subscript is removed, and projects that look", 
     "out",
   );
   await page.getByTestId("annotation-hit-instance-label-P1").dblclick();
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await editor.press("Home");
   await editor.press("ArrowRight");
   await editor.press("Shift+End");
-  await page.getByRole("button", { name: "Subscript", exact: true }).click();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "下标", exact: true }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   // Removing the subscript is styling: the Port keeps its name V_out, and the
   // underscore it hid is shown again.
   await expect(
@@ -1178,19 +1178,19 @@ test("declares and places a Cell Pin on a new local Net", async ({ page }) => {
   await expect(page.getByLabel("Cell Pin name")).toHaveCount(0);
   await expect(page.getByLabel("Cell Pin direction")).toHaveCount(0);
   await page.getByTestId("annotation-hit-instance-label-P1").dblclick();
-  const nameEditor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const nameEditor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await expect(
     page.getByRole("toolbar", { name: "Text formatting" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Bold" }).click();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "粗体" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await page.getByTestId("hit-P1").click();
   await expect(
     page.locator('[data-object-id="instance-label-P1"]'),
   ).toContainText("Vout");
   await page.getByTestId("annotation-hit-instance-label-P1").dblclick();
   await nameEditor.fill("OUT");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(page.getByTestId("status")).toContainText(
     "Renamed Cell Pin to OUT",
   );
@@ -1460,9 +1460,9 @@ test("edits a Cell Pin name and RichText presentation in place", async ({
 
   await page.getByTestId("annotation-hit-instance-label-P1").dblclick();
   await page
-    .getByRole("textbox", { name: "Canvas text editor" })
+    .getByRole("textbox", { name: "画布文本编辑器" })
     .fill("vINPUT");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   const renamedLabel = page.locator('[data-object-id="instance-label-P1"]');
   await expect(renamedLabel).toHaveText("vINPUT");
   await expect(renamedLabel.locator('[data-text-run="subscript"]')).toHaveText(
@@ -1470,16 +1470,16 @@ test("edits a Cell Pin name and RichText presentation in place", async ({
   );
 
   await page.getByTestId("annotation-hit-instance-label-P1").dblclick();
-  await page.getByRole("button", { name: "Bold" }).click();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "粗体" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await page.getByTestId("hit-P1").click();
   await expect(
     page.locator('[data-object-id="instance-label-P1"]'),
   ).toContainText("vINPUT");
 
   await page.getByTestId("annotation-hit-instance-label-P1").dblclick();
-  await page.getByRole("textbox", { name: "Canvas text editor" }).fill("VINP");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("textbox", { name: "画布文本编辑器" }).fill("VINP");
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await page.getByTestId("hit-P1").click();
   await expect(
     page.locator('[data-object-id="instance-label-P1"]'),

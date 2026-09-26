@@ -404,7 +404,7 @@ export function FileCommandMenu({
               </button>
               <button
                 type="button"
-                aria-label="Export PDF"
+                aria-label="导出 PDF"
                 onClick={() => onExportRaster("pdf")}
               >
                 Drawing as PDF

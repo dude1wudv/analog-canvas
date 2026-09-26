@@ -260,7 +260,7 @@ test("explicit discard removes outgoing recovery and hides a clean replacement",
   });
   await page
     .getByRole("dialog", { name: "Unsaved changes" })
-    .getByRole("button", { name: "Continue without saving" })
+    .getByRole("button", { name: "不保存并继续" })
     .click();
   await expect(page.getByTestId("active-document-name")).toHaveText(
     "Clean Replacement Cell",

@@ -257,9 +257,9 @@ test("drafting text shares device additive selection and context alignment", asy
   await page.goto("/editor");
   await placeComponent(page, "resistor", { x: 300, y: 220 });
   await placeText(page);
-  const input = page.getByRole("textbox", { name: "Canvas text editor" });
+  const input = page.getByRole("textbox", { name: "画布文本编辑器" });
   await input.fill("BIAS");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   const instance = page.locator('[data-canvas-hit-kind="instance"]').first();
   const text = page.locator('[data-canvas-hit-kind="drafting"]').first();
@@ -295,9 +295,9 @@ test("dragging drafting text carries its mixed component selection as one body",
   await page.goto("/editor");
   await placeComponent(page, "resistor", { x: 300, y: 220 });
   await placeText(page);
-  const input = page.getByRole("textbox", { name: "Canvas text editor" });
+  const input = page.getByRole("textbox", { name: "画布文本编辑器" });
   await input.fill("BIAS");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   const instance = page.locator('[data-canvas-hit-kind="instance"]').first();
   const text = page.locator('[data-canvas-hit-kind="drafting"]').first();
@@ -354,8 +354,8 @@ test("Ctrl+A and a marquee both move drafting texts as one selection", async ({
 }) => {
   await page.goto("/editor");
   const canvas = page.getByTestId("schematic-canvas");
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
-  const apply = page.getByRole("button", { name: "Apply text changes" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
+  const apply = page.getByRole("button", { name: "应用文本更改" });
 
   await placeText(page);
   await editor.fill("LEFT");
@@ -602,8 +602,8 @@ test("visual clipboard preserves mixed selection and exports only its formal SVG
   await placeComponent(page, "resistor", { x: 280, y: 220 });
   await placeComponent(page, "capacitor", { x: 540, y: 320 });
   await placeText(page);
-  await page.getByRole("textbox", { name: "Canvas text editor" }).fill("BIAS");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("textbox", { name: "画布文本编辑器" }).fill("BIAS");
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   const resistor = page.locator('[data-canvas-hit-kind="instance"]').first();
   const text = page.locator('[data-canvas-hit-kind="drafting"]').first();
   await resistor.click();

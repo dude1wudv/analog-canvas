@@ -44,12 +44,12 @@ test("canvas edits one visual annotation without changing the Netlist Reference"
     page.getByRole("checkbox", { name: "Use display alias" }),
   ).not.toBeChecked();
   await page.getByRole("checkbox", { name: "Use display alias" }).check();
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await expect(
-    page.getByRole("button", { name: "Bold", exact: true }),
+    page.getByRole("button", { name: "粗体", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Subscript", exact: true }),
+    page.getByRole("button", { name: "下标", exact: true }),
   ).toBeVisible();
   const controlBounds = async (name: string) => {
     const bounds = await page.getByRole("button", { name }).boundingBox();
@@ -90,7 +90,7 @@ test("canvas edits one visual annotation without changing the Netlist Reference"
   await editor.press("End");
   await editor.press("Shift+Enter");
   await page.keyboard.type("input pair");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(page.getByTestId("canvas-text-editor")).toHaveCount(0);
   await expect(visual(page)).toContainText("input pair");
   await expect(page.getByTestId("reference-label-offer")).toHaveCount(0);
@@ -131,8 +131,8 @@ test("Properties renames the electrical identity explicitly; restore is an in-pl
   await placeResistor(page);
   await page.getByTestId("annotation-hit-instance-label-R1").dblclick();
   await page.getByRole("checkbox", { name: "Use display alias" }).check();
-  await page.getByRole("textbox", { name: "Canvas text editor" }).fill("load");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("textbox", { name: "画布文本编辑器" }).fill("load");
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await page.getByTestId("hit-R1").click();
   await page.keyboard.press("q");
   const properties = page.getByRole("complementary", { name: "Properties" });
@@ -175,9 +175,9 @@ test("Properties renames the electrical identity explicitly; restore is an in-pl
   await restore.uncheck();
   await expect(visual(page)).toContainText("R7");
   await expect(
-    page.getByRole("textbox", { name: "Canvas text editor" }),
+    page.getByRole("textbox", { name: "画布文本编辑器" }),
   ).toHaveText("R7");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(visual(page)).toContainText("R7");
   const saved = await projectFile(page);
   const labels = saved.documents[0].annotations.filter(

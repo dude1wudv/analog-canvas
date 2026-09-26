@@ -63,7 +63,7 @@ test("double-clicking a Symbol's body text edits it on the canvas", async ({
   await expect(bodyText(page)).toContainText("DAC");
 
   await page.getByTestId("hit-X1").dblclick();
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await expect(editor).toBeVisible();
   await expect(editor).toHaveText("DAC");
 
@@ -77,7 +77,7 @@ test("double-clicking a Symbol's body text edits it on the canvas", async ({
   ).toBe(true);
 
   await editor.fill("8-bit DAC");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   await expect(bodyText(page)).toContainText("8-bit DAC");
 });
@@ -90,9 +90,9 @@ test("the Properties field shows what the canvas edit committed", async ({
 
   await page.getByTestId("hit-X1").dblclick();
   await page
-    .getByRole("textbox", { name: "Canvas text editor" })
+    .getByRole("textbox", { name: "画布文本编辑器" })
     .fill("current steering");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   await page.getByTestId("hit-X1").click();
   await revealPropertiesShelf(page);
@@ -125,7 +125,7 @@ test("formats a Symbol's body text like any label", async ({ page }) => {
   await placeSymbol(page, "adc");
 
   await page.getByTestId("hit-X1").dblclick();
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await expect(editor).toHaveText("ADC");
   for (const name of ["Bold", "Italic", "Subscript", "Insert formula"])
     await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
@@ -134,12 +134,12 @@ test("formats a Symbol's body text like any label", async ({ page }) => {
   // A slanted ADC — a look its text alone cannot ask for — then a subscript.
   await editor.click();
   await page.keyboard.press("ControlOrMeta+A");
-  await page.getByRole("button", { name: "Italic", exact: true }).click();
+  await page.getByRole("button", { name: "斜体", exact: true }).click();
   await page.keyboard.press("End");
   await page.keyboard.type("1");
   await page.keyboard.press("Shift+ArrowLeft");
-  await page.getByRole("button", { name: "Subscript", exact: true }).click();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "下标", exact: true }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   const drawn = bodyText(page);
   await expect(drawn).toHaveAttribute("data-formatted", "true");
@@ -211,12 +211,12 @@ for (const symbolId of [
     await placeBodyTextSymbol(page, symbolId);
 
     await page.getByTestId("hit-X1").dblclick();
-    const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+    const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
     await expect(editor).toBeVisible();
     await expect(editor).not.toHaveText("");
 
     await editor.fill("Zz");
-    await page.getByRole("button", { name: "Apply text changes" }).click();
+    await page.getByRole("button", { name: "应用文本更改" }).click();
     await expect(bodyText(page)).toContainText("Zz");
   });
 }
@@ -251,10 +251,10 @@ test("the swapped-input op-amp edits its body text too", async ({ page }) => {
   await setComponentCodeField(page, "symbol", "opamp-lettered-inputs-swapped");
 
   await page.getByTestId("hit-X1").dblclick();
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await expect(editor).toBeVisible();
   await editor.fill("Zz");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   await expect(bodyText(page)).toContainText("Zz");
 });

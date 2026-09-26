@@ -1223,8 +1223,8 @@ test("Cell Pin deletion releases its interface and Base Net lifecycle", async ({
     await canvas.click({ position });
     await page.keyboard.press("Escape");
     await page.getByTestId("annotation-hit-instance-label-P1").dblclick();
-    await page.getByRole("textbox", { name: "Canvas text editor" }).fill(name);
-    await page.getByRole("button", { name: "Apply text changes" }).click();
+    await page.getByRole("textbox", { name: "画布文本编辑器" }).fill(name);
+    await page.getByRole("button", { name: "应用文本更改" }).click();
   };
 
   await placeNamedPort("BUS", { x: 260, y: 180 });
@@ -3090,9 +3090,9 @@ test("moves floating text after it is created", async ({ page }) => {
   await page.goto("/editor");
   await placeText(page);
   await page
-    .getByRole("textbox", { name: "Canvas text editor" })
+    .getByRole("textbox", { name: "画布文本编辑器" })
     .fill("Floating note");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   const note = page.locator('[data-testid^="drafting-hit-note-"]');
   await expect(note).toHaveCount(1);
@@ -3194,11 +3194,11 @@ test("edits instance, electrical Net, and free text with bounded label handles",
   await page.getByTestId("annotation-hit-instance-label-R1").dblclick();
   await page.getByRole("checkbox", { name: "Use display alias" }).check();
   const referenceEditor = page.getByRole("textbox", {
-    name: "Canvas text editor",
+    name: "画布文本编辑器",
   });
   await expect(referenceEditor).toHaveAttribute("contenteditable", "true");
   await referenceEditor.fill("R_LOAD");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   // The user-owned schematic name changes without touching the hidden SPICE
   // reference, so its RichText spelling is displayed exactly as authored.
   await expect(page.locator('[data-layer="annotations"]')).toContainText(
@@ -3218,13 +3218,13 @@ test("edits instance, electrical Net, and free text with bounded label handles",
   ).toBeVisible();
   await page.getByTestId("annotation-hit-net-label-route-ui-1").dblclick();
   const annotationEditor = page.getByRole("textbox", {
-    name: "Canvas text editor",
+    name: "画布文本编辑器",
   });
   await expect(annotationEditor).toHaveAttribute("contenteditable", "true");
   await annotationEditor.fill("Vref");
-  await expect(page.getByRole("button", { name: "Italic" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Subscript" })).toBeVisible();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await expect(page.getByRole("button", { name: "斜体" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "下标" })).toBeVisible();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(page.locator('[data-layer="annotations"]')).toContainText(
     "Vref",
   );
@@ -3250,10 +3250,10 @@ test("edits instance, electrical Net, and free text with bounded label handles",
 
   await placeText(page);
   const textInput = page.getByRole("textbox", {
-    name: "Canvas text editor",
+    name: "画布文本编辑器",
   });
   await textInput.fill("Matched pair");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(page.locator('[data-layer="drafting"]')).toContainText(
     "Matched pair",
   );
@@ -3292,12 +3292,12 @@ test("starts a V-led Net Label subscripted and lets the author turn it off witho
   );
   const label = page.getByTestId("annotation-hit-net-label-route-ui-1");
   await label.dblclick();
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await expect(editor).toHaveAttribute("contenteditable", "true");
   await expect(editor).toHaveText("VB");
-  await expect(page.getByRole("button", { name: "Italic" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Subscript" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Superscript" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "斜体" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "下标" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "上标" })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Insert formula" }),
   ).toBeVisible();
@@ -3307,9 +3307,9 @@ test("starts a V-led Net Label subscripted and lets the author turn it off witho
 
   // Turning the subscript off is the author's own look.
   await selectRichTextOffsets(editor, 1, 2);
-  await page.getByRole("button", { name: "Subscript" }).click();
+  await page.getByRole("button", { name: "下标" }).click();
   await expect(editor.locator("sub")).toHaveCount(0);
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(
     renderedLabel.locator('[data-text-run="subscript"]'),
   ).toHaveCount(0);
@@ -3367,9 +3367,9 @@ test("draws a new subscript upright, lights the looks it has, and keeps one the 
   });
   const hit = page.getByTestId("annotation-hit-net-label-route-ui-1");
   const rendered = page.locator('[data-object-id="net-label-route-ui-1"]');
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
-  const italic = page.getByRole("button", { name: "Italic" });
-  const subscriptButton = page.getByRole("button", { name: "Subscript" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
+  const italic = page.getByRole("button", { name: "斜体" });
+  const subscriptButton = page.getByRole("button", { name: "下标" });
 
   // Opening the bold italic label lights Italic for its first letter.
   await hit.dblclick();
@@ -3386,7 +3386,7 @@ test("draws a new subscript upright, lights the looks it has, and keeps one the 
   await selectRichTextOffsets(editor, 0, 1);
   await expect(italic).toHaveAttribute("aria-pressed", "true");
   await expect(subscriptButton).toHaveAttribute("aria-pressed", "false");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   const subscript = rendered.locator('[data-text-run="subscript"]');
   await expect(subscript).toHaveText("E");
   await expect(subscript).toHaveCSS("font-style", "normal");
@@ -3400,7 +3400,7 @@ test("draws a new subscript upright, lights the looks it has, and keeps one the 
   await italic.click();
   await expect(italic).toHaveAttribute("aria-pressed", "true");
   await expect(subscriptButton).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(subscript.locator('[data-text-run="span"]').first()).toHaveCSS(
     "font-style",
     "italic",
@@ -3413,25 +3413,25 @@ test("keeps literal text line breaks and overbars visible while editing", async 
 }) => {
   await page.goto("/editor");
   await placeText(page);
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await editor.fill("Vx");
   await editor.press("ControlOrMeta+A");
-  await page.getByRole("button", { name: "Overbar" }).click();
+  await page.getByRole("button", { name: "上划线" }).click();
   await expect(editor.locator('[data-rich-text-style="overbar"]')).toHaveCSS(
     "border-top-style",
     "solid",
   );
-  await page.getByRole("button", { name: "Overbar" }).click();
+  await page.getByRole("button", { name: "上划线" }).click();
   await expect(editor.locator('[data-rich-text-style="overbar"]')).toHaveCount(
     0,
   );
   await editor.press("ControlOrMeta+A");
-  await page.getByRole("button", { name: "Overbar" }).click();
+  await page.getByRole("button", { name: "上划线" }).click();
   await editor.press("End");
   // Enter finishes the text everywhere; a deliberate modifier asks for a line.
   await editor.press("Shift+Enter");
   await editor.type("bias");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(
     page.locator('[data-layer="drafting"] [data-text-run="line-break"]'),
   ).toHaveCount(1);
@@ -3442,16 +3442,16 @@ test("keeps an overbar from widening a narrow glyph", async ({ page }) => {
   await page.goto("/editor");
 
   await placeText(page, { x: 360, y: 300 });
-  let editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  let editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await editor.fill("f");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   await placeText(page, { x: 560, y: 300 });
-  editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await editor.fill("f");
   await editor.press("ControlOrMeta+A");
-  await page.getByRole("button", { name: "Overbar" }).click();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "上划线" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   const textObjects = page.locator(
     '[data-layer="drafting"] text[data-kind="draft-text"]',
@@ -3479,15 +3479,15 @@ test("stacks complementary scripts under one uninterrupted overbar", async ({
 }) => {
   await page.goto("/editor");
   await placeText(page);
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await editor.fill("In22");
 
   await selectRichTextOffsets(editor, 1, 3);
-  await page.getByRole("button", { name: "Subscript" }).click();
+  await page.getByRole("button", { name: "下标" }).click();
   await selectRichTextOffsets(editor, 3, 4);
-  await page.getByRole("button", { name: "Superscript" }).click();
+  await page.getByRole("button", { name: "上标" }).click();
   await selectRichTextOffsets(editor, 0, 4);
-  await page.getByRole("button", { name: "Overbar" }).click();
+  await page.getByRole("button", { name: "上划线" }).click();
 
   const editableOverbar = editor.locator('[data-rich-text-style="overbar"]');
   const editableStack = editableOverbar.locator(
@@ -3534,7 +3534,7 @@ test("stacks complementary scripts under one uninterrupted overbar", async ({
   ).toBeLessThan(1);
   await expect(editableOverbar).toHaveCSS("border-top-style", "solid");
 
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   const formalSvg = (await downloadBytes(page, "File", "Export SVG")).toString(
     "utf8",
   );
@@ -3776,14 +3776,14 @@ test("L labels a selected wire or snaps near an unselectable wire", async ({
   });
   expect(editorLayerOrder.hitTargetCount).toBeGreaterThan(0);
   expect(editorLayerOrder.followsEveryHitTarget).toBe(true);
-  await expect(editor.getByRole("button", { name: "Italic" })).toBeVisible();
+  await expect(editor.getByRole("button", { name: "斜体" })).toBeVisible();
   const richEditor = editor.getByRole("textbox", {
-    name: "Canvas text editor",
+    name: "画布文本编辑器",
   });
   await richEditor.fill("SIGNAL");
   await selectRichTextOffsets(richEditor, 1, 6);
-  await editor.getByRole("button", { name: "Subscript" }).click();
-  await editor.getByRole("button", { name: "Apply text changes" }).click();
+  await editor.getByRole("button", { name: "下标" }).click();
+  await editor.getByRole("button", { name: "应用文本更改" }).click();
   const preview = page.getByTestId("net-label-placement-preview");
   await expect(preview).toHaveCount(0);
   await expect(page.locator('[data-layer="annotations"]')).toContainText(
@@ -3809,7 +3809,7 @@ test("L labels a selected wire or snaps near an unselectable wire", async ({
 
   await page.keyboard.press("l");
   await richEditor.fill("VREF");
-  await editor.getByRole("button", { name: "Apply text changes" }).click();
+  await editor.getByRole("button", { name: "应用文本更改" }).click();
   await expect(preview).toContainText("VREF");
   const routePoint = await page
     .getByTestId("route-hit-route-ui-1")
@@ -3849,7 +3849,7 @@ test("L labels a selected wire or snaps near an unselectable wire", async ({
 
   await page.keyboard.press("l");
   await richEditor.fill("");
-  await editor.getByRole("button", { name: "Apply text changes" }).click();
+  await editor.getByRole("button", { name: "应用文本更改" }).click();
   await expect(editor).toBeVisible();
   await expect(page.getByTestId("status")).toContainText(
     "name cannot be empty",
@@ -3903,9 +3903,9 @@ test("a dragged Net label moves freely while retaining its Net tether", async ({
   await page.keyboard.press("l");
   const editor = page.getByTestId("net-label-editor");
   await editor
-    .getByRole("textbox", { name: "Canvas text editor" })
+    .getByRole("textbox", { name: "画布文本编辑器" })
     .fill("NETA");
-  await editor.getByRole("button", { name: "Apply text changes" }).click();
+  await editor.getByRole("button", { name: "应用文本更改" }).click();
   await clickRoute(page, "route-ui-1", 0.5, 0);
 
   const label = page.getByTestId("annotation-hit-net-label-route-ui-1");
@@ -3966,8 +3966,8 @@ test("L puts a vertical wire's label on its right, and a selected name points at
   await clickRoute(page, "route-ui-1", 0.5, 0);
   await page.keyboard.press("l");
   const editor = page.getByTestId("net-label-editor");
-  await editor.getByRole("textbox", { name: "Canvas text editor" }).fill("MID");
-  await editor.getByRole("button", { name: "Apply text changes" }).click();
+  await editor.getByRole("textbox", { name: "画布文本编辑器" }).fill("MID");
+  await editor.getByRole("button", { name: "应用文本更改" }).click();
   const label = page.locator('[data-object-id="net-label-route-ui-1"]');
   await expect(label).toContainText("MID");
   const wire = await page.getByTestId("route-hit-route-ui-1").boundingBox();
@@ -4115,9 +4115,9 @@ test("C/V copies as fresh: the name label follows a unique new reference and uns
   await page.getByTestId("annotation-hit-instance-label-R1").dblclick();
   await page.getByRole("checkbox", { name: "Use display alias" }).check();
   await page
-    .getByRole("textbox", { name: "Canvas text editor" })
+    .getByRole("textbox", { name: "画布文本编辑器" })
     .fill("Old_alias");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await page.getByTestId("hit-R1").click();
   await pasteSelectionAt(page, { x: 560, y: 420 });
   await expect(page.getByTestId("instance-count")).toHaveText("3");
@@ -4948,7 +4948,7 @@ test("retains recovery across export but honors explicit discard on replacement"
     );
   await page
     .getByRole("dialog", { name: "Unsaved changes" })
-    .getByRole("button", { name: "Continue without saving" })
+    .getByRole("button", { name: "不保存并继续" })
     .click();
   await expect(page.getByTestId("active-document-name")).toHaveText(
     "Manual Editor Demo",
@@ -6947,13 +6947,13 @@ test("Net Label overbars stay the label's look through source edits, undo and re
   );
   const bar = label.locator("..").locator('[data-text-decoration="overbar"]');
   await hit.dblclick();
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await editor.press("ControlOrMeta+a");
-  await page.getByRole("button", { name: "Overbar", exact: true }).click();
+  await page.getByRole("button", { name: "上划线", exact: true }).click();
   await expect(editor.locator('[data-rich-text-style="overbar"]')).toHaveCount(
     1,
   );
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(bar).toHaveCount(1);
   await expect(label).toHaveText("F");
   const saved = await downloadBytes(page, "File", "Export Project File…");
@@ -6972,7 +6972,7 @@ test("Net Label overbars stay the label's look through source edits, undo and re
     buffer: saved,
   });
   const discard = page.getByRole("button", {
-    name: "Continue without saving",
+    name: "不保存并继续",
     exact: true,
   });
   await discard.click();
@@ -7003,8 +7003,8 @@ test("Net Label overbars stay the label's look through source edits, undo and re
   await expect(bar).toHaveCount(1);
   await hit.dblclick();
   await editor.press("ControlOrMeta+a");
-  await page.getByRole("button", { name: "Overbar", exact: true }).click();
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "上划线", exact: true }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   await expect(bar).toHaveCount(0);
   await clickRoute(page, "route-ui-1", 0.5, 0);
   await openSelectionShelf(page);

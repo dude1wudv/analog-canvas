@@ -670,7 +670,7 @@ test("Properties offers no dead Reference controls for a schematic-only block", 
   await placeComponent(page, "resistor", { x: 520, y: 200 });
   await openSelectionShelf(page);
   const properties = page.getByRole("complementary", { name: "Properties" });
-  const referenceField = properties.getByLabel("Netlist Reference");
+  const referenceField = properties.getByLabel("网表位号");
   const parametersCard = properties.getByLabel(
     "Component parameters and display",
   );
