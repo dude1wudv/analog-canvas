@@ -237,7 +237,7 @@ test("Explorer opens sideways, configuration is advanced, and results maximize/r
     name: "仿真源代码编辑器",
   });
   const before = await editor.boundingBox();
-  await expect(page.getByRole("tab", { name: "Configuration" })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "配置" })).toHaveCount(0);
   await page.getByRole("button", { name: "资源管理器", exact: true }).click();
   await expect(
     page.getByRole("complementary", { name: "仿真文件" }),
@@ -256,7 +256,7 @@ test("Explorer opens sideways, configuration is advanced, and results maximize/r
     .first()
     .click();
   await expect(
-    page.getByRole("tab", { name: "Configuration" }),
+    page.getByRole("tab", { name: "配置" }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(editor).toContainText('"version"');
   await page.getByRole("tab", { name: "Specs", exact: true }).click();
@@ -355,7 +355,7 @@ test("invalid text stays editable and saveable and known command errors are inli
 });
 
 test("Helper trigger toggles closed and stays compact", async ({ page }) => {
-  const trigger = page.getByRole("button", { name: /Helper/ }).first();
+  const trigger = page.getByRole("button", { name: /助手/ }).first();
   await trigger.click();
   const popup = page.getByRole("dialog", { name: "插入 / 助手" });
   await expect(popup).toBeVisible();
