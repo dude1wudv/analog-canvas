@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useCallback, useId, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { EditorTool } from "../../interaction/interaction-state";
 import { ToolIcon } from "./tool-icon";
@@ -21,7 +21,6 @@ export interface DrawingToolbarProps {
   documentSettingsOpen: boolean;
   undo: ToolbarCommand;
   redo: ToolbarCommand;
-  simulation?: { open: boolean; onToggle: () => void };
   onToggleExamples: () => void;
   onToggleLibrary: () => void;
   onToggleNetlist: () => void;
@@ -35,6 +34,7 @@ function ImmediatePanelButton({
   testId,
   label,
   tooltip,
+  shortcut,
   pressed,
   controls,
   disabled,
@@ -44,6 +44,7 @@ function ImmediatePanelButton({
   testId: string;
   label: string;
   tooltip: string;
+  shortcut?: string;
   pressed: boolean;
   controls?: string;
   disabled?: boolean;
@@ -55,6 +56,28 @@ function ImmediatePanelButton({
     left: number;
     top: number;
   } | null>(null);
+  const keepTooltipInViewport = useCallback(
+    (tooltipElement: HTMLSpanElement | null): void => {
+      if (!tooltipElement || typeof window === "undefined") return;
+      const margin = 8;
+      // The measured box and CSS translate can round to opposite subpixels in
+      // Chromium. Keep a fractional guard so the rendered edge stays inside
+      // the promised viewport margin after both calculations are applied.
+      const transformRoundingGuard = 0.5;
+      const halfWidth = tooltipElement.getBoundingClientRect().width / 2;
+      const minimumLeft = margin + halfWidth + transformRoundingGuard;
+      const maximumLeft = Math.max(
+        minimumLeft,
+        window.innerWidth - margin - halfWidth - transformRoundingGuard,
+      );
+      setPosition((current) => {
+        if (!current) return current;
+        const left = Math.min(maximumLeft, Math.max(minimumLeft, current.left));
+        return left === current.left ? current : { ...current, left };
+      });
+    },
+    [],
+  );
   const show = (target: HTMLElement): void => {
     const bounds = target.getBoundingClientRect();
     setPosition({
@@ -72,6 +95,7 @@ function ImmediatePanelButton({
         aria-pressed={pressed}
         aria-expanded={pressed}
         aria-controls={controls}
+        aria-keyshortcuts={shortcut}
         data-testid={testId}
         disabled={disabled}
         onClick={onClick}
@@ -85,12 +109,14 @@ function ImmediatePanelButton({
       {position && typeof document !== "undefined"
         ? createPortal(
             <span
+              ref={keepTooltipInViewport}
               id={tooltipId}
               role="tooltip"
               className="instant-toolbar-tooltip"
               style={position}
             >
               {tooltip}
+              {shortcut ? ` (${shortcut})` : ""}
             </span>,
             document.body,
           )
@@ -117,7 +143,6 @@ export function DrawingToolbar({
   onActivateTool,
   onAddText,
   onOpenDocumentSettings,
-  simulation,
 }: DrawingToolbarProps) {
   const examplesOpen = leftPanelMode === "examples" && libraryPanelOpen;
   const libraryOpen = leftPanelMode === "library" && libraryPanelOpen;
@@ -128,62 +153,55 @@ export function DrawingToolbar({
       aria-label="绘图工具"
       data-testid="draw-toolbar"
     >
-      <div className="draw-toolbar-panels" role="group" aria-label="Panels">
+      <div className="draw-toolbar-panels" role="group" aria-label="面板">
         <ImmediatePanelButton
           testId="examples-toggle"
-          label="Circuit gallery"
-          tooltip={
-            examplesOpen
-              ? "Hide the circuit gallery"
-              : "Show the circuit gallery"
-          }
+          label="电路画廊"
+          shortcut="G"
+          tooltip={examplesOpen ? "隐藏电路画廊" : "显示电路画廊"}
           pressed={examplesOpen}
           controls="examples-panel"
           disabled={leftPanelsDisabled}
           onClick={onToggleExamples}
         >
           <ToolIcon name="examples" />
-          <span>Gallery</span>
+          <span>画廊</span>
         </ImmediatePanelButton>
         <ImmediatePanelButton
           testId="library-toggle"
-          label="Component library"
-          tooltip={
-            libraryPanelOpen
-              ? "Hide component library"
-              : "Show component library"
-          }
+          label="元件库"
+          shortcut="B"
+          tooltip={libraryPanelOpen ? "隐藏元件库" : "显示元件库"}
           pressed={libraryOpen}
           controls="shapes-library-panel"
           disabled={leftPanelsDisabled}
           onClick={onToggleLibrary}
         >
           <ToolIcon name="library" />
-          <span>Library</span>
+          <span>元件库</span>
         </ImmediatePanelButton>
         <ImmediatePanelButton
           testId="netlist-panel-toggle"
-          label="Netlist"
-          tooltip={projectPanel === "netlist" ? "Hide Netlist" : "Show Netlist"}
+          label="网表"
+          shortcut="N"
+          tooltip={projectPanel === "netlist" ? "隐藏网表" : "显示网表"}
           pressed={projectPanel === "netlist"}
           onClick={onToggleNetlist}
         >
           <ToolIcon name="netlist" />
-          <span>Netlist</span>
+          <span>网表</span>
         </ImmediatePanelButton>
         <ImmediatePanelButton
           testId="project-code-toggle"
-          label="Project Code"
+          label="项目代码"
           tooltip={
-            projectPanel === "project-code"
-              ? "Hide Project Code"
-              : "Show Project Code"
+            projectPanel === "project-code" ? "隐藏项目代码" : "显示项目代码"
           }
           pressed={projectPanel === "project-code"}
           onClick={onToggleProjectCode}
         >
           <ToolIcon name="project-code" />
-          <span>Project Code</span>
+          <span>项目代码</span>
         </ImmediatePanelButton>
       </div>
       <span className="draw-toolbar-divider" aria-hidden="true" />
@@ -242,25 +260,12 @@ export function DrawingToolbar({
         className="draw-tool"
         data-testid="draw-tool-document-style"
         aria-pressed={documentSettingsOpen}
-        title="文档设置"
+        title="属性：端口、画布与所选对象"
         onClick={onOpenDocumentSettings}
       >
         <ToolIcon name="style" />
-        <span>样式</span>
+        <span>属性</span>
       </button>
-      {simulation ? (
-        <button
-          type="button"
-          className="draw-tool"
-          data-testid="digital-simulation-toggle"
-          aria-pressed={simulation.open}
-          title="数字仿真"
-          onClick={simulation.onToggle}
-        >
-          <ToolIcon name="simulation" />
-          <span>仿真</span>
-        </button>
-      ) : null}
     </div>
   );
 }

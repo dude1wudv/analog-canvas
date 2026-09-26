@@ -1,5 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createEmptyProject } from "@icm/model";
 import { describe, expect, it } from "vitest";
 
 import { PublishGalleryDialog } from "./publish-gallery-dialog";
@@ -31,6 +32,7 @@ describe("PublishGalleryDialog", () => {
         defaultName: "Ring Oscillator",
         session: { displayName: "Visitor", isAdmin: false, role: "user" },
         gateReport: { ok: true, failures: [] },
+        topologyProject: createEmptyProject("current", "Current Cell"),
         publish: () => Promise.resolve({ status: "unauthorized" as const }),
         onPublished: () => undefined,
         onClose: () => undefined,
@@ -39,8 +41,14 @@ describe("PublishGalleryDialog", () => {
     expect(markup).toContain('value="Ring Oscillator"');
     expect(markup).toContain('class="publish-gallery-fields"');
     expect(markup).toContain('class="publish-gallery-primary"');
-    expect(markup).toContain("Publishing as Visitor");
-    expect(markup).toContain("goes up straight away");
+    expect(markup).toContain("以 Visitor 的身份发布");
+    expect(markup).toContain("作品将立即公开");
+    expect(markup).toContain('data-testid="gallery-topology-check"');
+    expect(markup).toContain(">Check Duplicate</button>");
+    expect(markup).not.toContain("Check current topology");
+    expect(markup.indexOf("Check Duplicate")).toBeLessThan(
+      markup.indexOf(">发布</button>"),
+    );
     // No queue to wait in, and no passphrase to guess.
     expect(markup).not.toContain("review");
     expect(markup).not.toContain("passphrase");
@@ -71,6 +79,34 @@ describe("PublishGalleryDialog", () => {
     expect(markup).toContain("cmos");
   });
 
+  it("keeps a pasted description whole and says when it is too long", () => {
+    // A textarea maxLength clipped a pasted citation without a word, and the
+    // clipped text was published. The limit is shown instead.
+    const render = (description: string) =>
+      renderToStaticMarkup(
+        createElement(PublishGalleryDialog, {
+          defaultName: "Ring Oscillator",
+          session: { displayName: "Visitor", isAdmin: false, role: "user" },
+          gateReport: { ok: true, failures: [] },
+          draft: { name: "Ring Oscillator", description, tags: [] },
+          publish: () => Promise.resolve({ status: "unauthorized" as const }),
+          onPublished: () => undefined,
+          onClose: () => undefined,
+        }),
+      );
+    const fits = render("x".repeat(1000));
+    expect(fits).not.toMatch(/<textarea[^>]*maxLength/iu);
+    expect(fits).toContain("1000 / 1000");
+    expect(fits).toMatch(/class="publish-gallery-primary"(?![^>]*disabled)/u);
+    const over = render("x".repeat(1200));
+    expect(over).toContain("x".repeat(1200));
+    expect(over).toContain("1200 / 1000 字符 · 请缩短描述后发布");
+    expect(over).toContain('data-over="true"');
+    expect(over).toMatch(
+      /<button[^>]*disabled=""[^>]*class="publish-gallery-primary"|class="publish-gallery-primary"[^>]*disabled=""/u,
+    );
+  });
+
   it("never asks for the byline: the account supplies it", () => {
     const markup = renderToStaticMarkup(
       createElement(PublishGalleryDialog, {
@@ -83,7 +119,7 @@ describe("PublishGalleryDialog", () => {
     );
     expect(markup).not.toContain('aria-label="Author"');
     expect(markup).not.toContain("Shown on your tile");
-    expect(markup).toContain("Publishing as Token Zhang");
+    expect(markup).toContain("以 Token Zhang 的身份发布");
   });
 
   it("keeps Publish open for an ordinary member and lists gate findings", () => {

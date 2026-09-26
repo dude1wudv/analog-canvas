@@ -49,7 +49,7 @@ describe("netlist authoring", () => {
     expect(instanceIdPrefix("inductor")).toBe("L");
   });
 
-  it("allocates hollow and filled Cell Pin names from separate sequences", () => {
+  it("allocates Cell Pin and Bias Voltage Port names from separate sequences", () => {
     const document = createEmptyDocument("main", "Main");
     document.netlist = {
       name: "Main",
@@ -57,25 +57,63 @@ describe("netlist authoring", () => {
       terminals: [],
     };
 
-    expect(nextCellPinName(document)).toBe("Vin");
+    expect(nextCellPinName(document)).toBe("Vinp");
     document.netlist.terminals.push({
       id: "terminal-in",
-      name: "Vin",
+      name: "Vinp",
       netId: "net-in",
       direction: "input",
       interfaceInstanceIds: ["P1"],
     });
-    expect(nextCellPinName(document)).toBe("Vout");
+    expect(nextCellPinName(document)).toBe("Vinn");
     document.netlist.terminals.push({
-      id: "terminal-out",
-      name: "Vout",
-      netId: "net-out",
-      direction: "output",
+      id: "terminal-in-n",
+      name: "Vinn",
+      netId: "net-in-n",
+      direction: "input",
       interfaceInstanceIds: ["P2"],
     });
-    expect(nextCellPinName(document)).toBe("Vin2");
+    expect(nextCellPinName(document)).toBe("Voutp");
+    document.netlist.terminals.push({
+      id: "terminal-out",
+      name: "Voutp",
+      netId: "net-out",
+      direction: "output",
+      interfaceInstanceIds: ["P3"],
+    });
+    expect(nextCellPinName(document)).toBe("Voutn");
+    document.netlist.terminals.push({
+      id: "terminal-out-n",
+      name: "Voutn",
+      netId: "net-out-n",
+      direction: "output",
+      interfaceInstanceIds: ["P5"],
+    });
+    expect(nextCellPinName(document)).toBe("Vin2p");
+    expect(
+      nextCellPinName(document, new Set(["vin2p", "vin2n", "vout2p"])),
+    ).toBe("Vout2n");
     expect(nextCellPinName(document, new Set(), "filled")).toBe("VB1");
     expect(nextCellPinName(document, new Set(["vb1"]), "filled")).toBe("VB2");
+
+    document.netlist.terminals = [
+      {
+        id: "terminal-formatted-in",
+        name: "V_inp",
+        netId: "net-formatted-in",
+        direction: "input",
+        interfaceInstanceIds: ["P4"],
+      },
+      {
+        id: "terminal-formatted-bias",
+        name: "V_B1",
+        netId: "net-formatted-bias",
+        direction: "inout",
+        interfaceInstanceIds: ["P5"],
+      },
+    ];
+    expect(nextCellPinName(document)).toBe("Vinn");
+    expect(nextCellPinName(document, new Set(), "filled")).toBe("VB2");
   });
 
   it("creates typed netlist facts without duplicating Reference", () => {

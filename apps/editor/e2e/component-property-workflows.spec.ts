@@ -1,13 +1,12 @@
 import { parseSavedProject } from "./editor-fixtures";
 import type { SchematicDocument } from "@icm/model";
 import { razaviProductSymbols } from "@icm/symbols";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { createEmptyProject } from "@icm/model";
 import { serializeProject } from "@icm/project-protocol";
 import {
   revealPropertiesShelf,
   awaitEditorReady,
-  clickCommand,
   clickDrawTool,
   downloadBytes,
   editComponentPropertyCode,
@@ -20,6 +19,65 @@ import {
   placeComponent,
   openSelectionShelf,
 } from "./manual-editor-fixtures.js";
+
+test("Cell Pin Properties edits the formal name even without a canvas label", async ({
+  page,
+}) => {
+  const project = createEmptyProject("pin-name", "Pin name");
+  const document = project.documents[0]!;
+  document.instances.push({
+    id: "P2-copy-1",
+    symbolId: "port",
+    placement: {
+      position: { x: 300, y: 200 },
+      rotation: 0,
+      mirror: "none",
+    },
+  });
+  document.nets.push({
+    id: "net-voc",
+    terminals: [{ instanceId: "P2-copy-1", pinName: "P" }],
+  });
+  document.netlist = {
+    name: document.name,
+    formalParameters: [],
+    terminals: [
+      {
+        id: "terminal-voc",
+        name: "Voc",
+        netId: "net-voc",
+        direction: "passive",
+        interfaceInstanceIds: ["P2-copy-1"],
+      },
+    ],
+  };
+  await page.goto("/editor");
+  await awaitEditorReady(page);
+  await page.getByTestId("project-file").setInputFiles({
+    name: "pin-name.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(serializeProject(project)),
+  });
+  await page.getByTestId("hit-P2-copy-1").click();
+  await openSelectionShelf(page);
+  await expect(page.getByTestId("selection-shelf")).toContainText("Voc · port");
+  await expectComponentCodeField(page, "name", "Voc");
+  await editComponentPropertyCode(page, (code) => {
+    code.name = "Vcm";
+  });
+  await expectComponentCodeField(page, "name", "Vcm");
+  const saved = parseSavedProject(
+    (await downloadBytes(page, "File", "Export Project File…")).toString(
+      "utf8",
+    ),
+  );
+  expect(saved.documents[0]!.netlist!.terminals[0]).toMatchObject({
+    id: "terminal-voc",
+    name: "Vcm",
+    netId: "net-voc",
+  });
+  expect(saved.documents[0]!.instances[0]!.id).toBe("P2-copy-1");
+});
 
 test("property inspection and remounts keep canvas keyboard ownership", async ({
   page,
@@ -73,19 +131,20 @@ test("live JSON properties update controls immediately and round-trip raw parame
   await page.goto("/editor");
   await placeComponent(page, "nmos", { x: 360, y: 220 });
   await openSelectionShelf(page);
-  const panel = page.getByRole("complementary", { name: "Properties" });
+  const panel = page.getByRole("complementary", { name: "属性" });
   await expect(
     panel.getByLabel("Component parameters and display"),
   ).toHaveCount(0);
   await expect(panel.getByLabel("Component actions")).toHaveCount(0);
-  await expect(panel.getByLabel("Netlist target", { exact: true })).toHaveCount(
-    0,
-  );
+  await expect(panel.getByLabel("网表目标", { exact: true })).toHaveCount(0);
   const revision = await page.getByTestId("revision").textContent();
   await expect(panel.getByRole("button", { name: "Apply code" })).toHaveCount(
     0,
   );
-  await expect(panel.locator(".cm-property-unit")).toHaveCount(2);
+  await expect(panel.locator(".cm-property-unit")).toHaveCount(0);
+  await expect(
+    panel.getByRole("button", { name: /Use Cell parameter/ }),
+  ).toHaveCount(0);
   await expect(panel.getByLabel("Target netlist options")).toBeVisible();
   await editComponentPropertyCode(page, (code) => {
     code.rotation = 90;
@@ -134,9 +193,9 @@ test("live JSON properties update controls immediately and round-trip raw parame
     styleOverride: { foreground: "#dc2626" },
     placement: { rotation: 90 },
   });
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expectComponentCodeField(page, "parameters.w", "1u");
-  await clickCommand(page, "Edit", "Redo");
+  await page.getByTestId("draw-tool-redo").click();
   await expectComponentCodeField(page, "parameters.w", "EV");
   await page.getByTestId("project-file").setInputFiles({
     name: "raw.icproj.json",
@@ -156,12 +215,12 @@ test("live Defaults are undoable and invalid drafts never change the canvas", as
   await openSelectionShelf(page);
   await setComponentParameter(page, "w", "7u");
   const revision = await page.getByTestId("revision").textContent();
-  await page.getByRole("button", { name: "Defaults", exact: true }).click();
+  await page.getByRole("button", { name: "默认值", exact: true }).click();
   await expectComponentCodeField(page, "parameters.w", "1u");
   await expect(page.getByTestId("revision")).toHaveText(
     String(Number(revision) + 1),
   );
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expectComponentCodeField(page, "parameters.w", "7u");
   const code = page.getByLabel("Editable Canvas property code");
   const invalid = JSON.parse(await readComponentPropertyCode(page));
@@ -193,7 +252,9 @@ test("live Defaults are undoable and invalid drafts never change the canvas", as
     page.getByRole("button", { name: "Mirror top to bottom" }),
   ).toBeDisabled();
   await expect(page.getByLabel("Target netlist options")).toBeDisabled();
-  await page.getByRole("button", { name: "Discard draft" }).click();
+  await page
+    .getByRole("button", { name: /^(?:丢弃草稿|Discard draft)$/u })
+    .click();
   await expectComponentCodeField(page, "parameters.w", "7u");
   await expect(page.locator(".cm-json-key").first()).toBeVisible();
   await expect(page.locator(".cm-json-string").first()).toBeVisible();
@@ -213,85 +274,105 @@ test("one live JSON edit combines model, dimensions and appearance in one undo b
   await expectComponentCodeField(page, "netlistName", "M1");
   await expectComponentCodeField(page, "parameters.w", "5u");
   await expectComponentCodeField(page, "color", [20, 30, 40]);
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expectComponentCodeField(page, "netlistName", "M1");
   await expectComponentCodeField(page, "parameters.w", "1u");
   await expectComponentCodeField(page, "color", "auto");
-  await clickCommand(page, "Edit", "Redo");
+  await page.getByTestId("draw-tool-redo").click();
   await expectComponentCodeField(page, "netlistName", "M1");
   await expectComponentCodeField(page, "parameters.w", "5u");
 });
 
-for (const platform of ["native", "Win32", "Linux x86_64"])
-  test(`live typing preserves the caret, local undo and incomplete JSON (${platform})`, async ({
-    page,
-  }) => {
-    if (platform !== "native")
-      await page.addInitScript(
-        (name) =>
-          Object.defineProperty(navigator, "platform", { get: () => name }),
-        platform,
-      );
-    const modifier = platform === "native" ? "ControlOrMeta" : "Control";
-    await page.goto("/editor");
-    await placeComponent(page, "nmos", { x: 360, y: 220 });
-    await openSelectionShelf(page);
-    const code = page.getByLabel("Editable Canvas property code");
-    await editComponentPropertyCode(page, (value) => {
-      value.display.value = true;
+async function selectWidthValue(code: Locator) {
+  // Locate the width string through the actual editable DOM, then type normally.
+  await code
+    .locator(".cm-line")
+    .filter({ hasText: '"w":' })
+    .evaluate((line) => {
+      const token = line.querySelector(".cm-json-string")!;
+      const text = document
+        .createTreeWalker(token, NodeFilter.SHOW_TEXT)
+        .nextNode()!;
+      const range = document.createRange();
+      range.setStart(text, 1);
+      range.setEnd(text, 3);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      (line.closest('[contenteditable="true"]') as HTMLElement).focus();
     });
-    // Locate the width string through the actual editable DOM, then type normally.
-    await code
-      .locator(".cm-line")
-      .filter({ hasText: '"w":' })
-      .evaluate((line) => {
-        const token = line.querySelector(".cm-json-string")!;
-        const text = document
-          .createTreeWalker(token, NodeFilter.SHOW_TEXT)
-          .nextNode()!;
-        const range = document.createRange();
-        range.setStart(text, 1);
-        range.setEnd(text, 3);
-        const selection = window.getSelection()!;
-        selection.removeAllRanges();
-        selection.addRange(range);
-        (line.closest('[contenteditable="true"]') as HTMLElement).focus();
-      });
-    await page.keyboard.type("EV", { delay: 80 });
-    const value = page.locator(
-      '[data-layer="formal"] [data-object-id="instance-value-M1"]',
-    );
-    await expect(value).toContainText("EV");
-    await page.keyboard.type("x", { delay: 80 });
-    await expect(value).toContainText("EVx");
-    await code.press(`${modifier}+z`);
-    await expect(value).toContainText("1u");
-    // Emit the actual shifted letter, not lowercase z with Shift held: the
-    // latter is a synthetic layout event that CodeMirror interprets as Undo.
-    await code.press(`${modifier}+Shift+Z`);
-    await expect(value).toContainText("EVx");
-    const raw = await readComponentPropertyCode(page);
-    const revision = await page.getByTestId("revision").textContent();
-    await code.fill(raw.slice(0, -1));
-    await expect(
-      page.getByText(/Canvas keeps the last valid edit/u),
-    ).toBeVisible();
-    await expect(value).toContainText("EVx");
-    await expect(page.getByTestId("revision")).toHaveText(revision!);
-    await code.press("Escape");
-    await expect(code).not.toBeFocused();
-    await expect(
-      page.getByText(/Canvas keeps the last valid edit/u),
-    ).toBeVisible();
-    await expect(page.getByTestId("revision")).toHaveText(revision!);
-    await code.press(`${modifier}+End`);
-    await code.press("}");
-    await expect(
-      page.getByText(/Canvas keeps the last valid edit/u),
-    ).toHaveCount(0);
-    await expect(page.getByText("Live", { exact: true })).toHaveCount(0);
-    await expect(page.getByTestId("revision")).toHaveText(revision!);
+}
+
+test("live typing preserves the caret, local undo and incomplete JSON", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await placeComponent(page, "nmos", { x: 360, y: 220 });
+  await openSelectionShelf(page);
+  const code = page.getByLabel("Editable Canvas property code");
+  await editComponentPropertyCode(page, (value) => {
+    value.display.value = true;
   });
+  await selectWidthValue(code);
+  // These keystrokes form one typing burst. Keep the transaction clock fixed
+  // so waiting for live rendering on a busy runner cannot split CodeMirror's
+  // 500 ms undo group between "EV" and "x". Browser timers still run normally.
+  await page.clock.setFixedTime(new Date());
+  await page.keyboard.type("EV", { delay: 80 });
+  const value = page.locator(
+    '[data-layer="formal"] [data-object-id="instance-value-M1"]',
+  );
+  await expect(value).toContainText("EV");
+  await page.keyboard.type("x", { delay: 80 });
+  await expect(value).toContainText("EVx");
+  await code.press("ControlOrMeta+z");
+  await expect(value).toContainText("1u");
+  // Emit the actual shifted letter, not lowercase z with Shift held: the
+  // latter is a synthetic layout event that CodeMirror interprets as Undo.
+  await code.press("ControlOrMeta+Shift+Z");
+  await expect(value).toContainText("EVx");
+  const raw = await readComponentPropertyCode(page);
+  const revision = await page.getByTestId("revision").textContent();
+  await code.fill(raw.slice(0, -1));
+  await expect(
+    page.getByText(/Canvas keeps the last valid edit/u),
+  ).toBeVisible();
+  await expect(value).toContainText("EVx");
+  await expect(page.getByTestId("revision")).toHaveText(revision!);
+  await code.press("Escape");
+  await expect(code).not.toBeFocused();
+  await expect(
+    page.getByText(/Canvas keeps the last valid edit/u),
+  ).toBeVisible();
+  await expect(page.getByTestId("revision")).toHaveText(revision!);
+  await code.press("ControlOrMeta+End");
+  await code.press("}");
+  await expect(page.getByText(/Canvas keeps the last valid edit/u)).toHaveCount(
+    0,
+  );
+  await expect(page.getByText("Live", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("revision")).toHaveText(revision!);
+});
+
+// Native Linux CI covers the full editing journey above. Exercise the Windows
+// CodeMirror keymap separately without repeating malformed JSON and focus flows.
+test("property code undo and redo use Control on Windows", async ({ page }) => {
+  await page.addInitScript(() =>
+    Object.defineProperty(navigator, "platform", { get: () => "Win32" }),
+  );
+  await page.goto("/editor");
+  await placeComponent(page, "nmos", { x: 360, y: 220 });
+  await openSelectionShelf(page);
+  const code = page.getByLabel("Editable Canvas property code");
+  await selectWidthValue(code);
+  await page.keyboard.insertText("5u");
+  await expectComponentCodeField(page, "parameters.w", "5u");
+  await code.press("Control+z");
+  await expectComponentCodeField(page, "parameters.w", "1u");
+  await code.press("Control+Shift+Z");
+  await expectComponentCodeField(page, "parameters.w", "5u");
+  await expect(page.getByTestId("hit-M1")).toHaveCount(1);
+});
 
 for (const width of [300, 540]) {
   test(`plain selectable property code and inline controls at ${width}px`, async ({
@@ -515,7 +596,7 @@ test("a black-box part exposes its generated Reference", async ({ page }) => {
   // X reference is part of the same contract as their netlist instance.
   await placeComponent(page, "voltage-amplifier", { x: 300, y: 200 });
   await openSelectionShelf(page);
-  const properties = page.getByRole("complementary", { name: "Properties" });
+  const properties = page.getByRole("complementary", { name: "属性" });
   await expect(properties).toContainText("voltage-amplifier");
   const code = properties.getByLabel("Editable Canvas property code");
   await expect(code).toContainText(/"visualAnnotation": true/u);
@@ -544,7 +625,10 @@ test("Q opens a text-first Properties editor with one-click exact draft copy", a
   const raw = JSON.stringify(draft, null, 2) + "\n\n";
   await code.fill(raw);
   await code.press("ControlOrMeta+End");
-  const copy = page.getByRole("button", { name: "Copy JSON", exact: true });
+  const copy = page.getByRole("button", {
+    name: /^(?:复制 JSON|Copy JSON)$/u,
+    exact: true,
+  });
   await expect(copy).toHaveCount(1);
   await expect(copy.locator("svg")).toBeVisible();
   await copy.click();
@@ -555,7 +639,7 @@ test("Q opens a text-first Properties editor with one-click exact draft copy", a
     ),
   ).toBe(raw);
   await expect(
-    page.getByText("JSON copied", {
+    page.getByText(/^(?:已复制 JSON|JSON copied)$/u, {
       exact: true,
     }),
   ).toBeVisible();
@@ -577,7 +661,7 @@ test("Q opens a text-first Properties editor with one-click exact draft copy", a
     });
   expect(positions.copyBottom).toBeGreaterThan(0);
   expect(positions.editorHeight).toBeGreaterThan(240);
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expectComponentCodeField(page, "parameters.w", "1u");
 });
 
@@ -588,8 +672,8 @@ test("Properties offers no dead Reference controls for a schematic-only block", 
   await placeComponent(page, "adder", { x: 300, y: 200 });
   await placeComponent(page, "resistor", { x: 520, y: 200 });
   await openSelectionShelf(page);
-  const properties = page.getByRole("complementary", { name: "Properties" });
-  const referenceField = properties.getByLabel("Netlist Reference");
+  const properties = page.getByRole("complementary", { name: "属性" });
+  const referenceField = properties.getByLabel("网表位号");
   const parametersCard = properties.getByLabel(
     "Component parameters and display",
   );
@@ -627,7 +711,7 @@ test("resizes Properties and applies component presentation as editable code", a
   await placeComponent(page, "resistor", { x: 360, y: 240 });
   await openSelectionShelf(page);
 
-  const properties = page.getByRole("complementary", { name: "Properties" });
+  const properties = page.getByRole("complementary", { name: "属性" });
   const resize = page.getByTestId("properties-resize-handle");
   const code = properties.getByLabel("Editable Canvas property code");
   await expect(resize).toBeVisible();
@@ -722,21 +806,21 @@ test("Properties toggles reference label visibility for one or many components",
 
   await page.getByTestId("hit-R1").click();
   await openSelectionShelf(page);
-  const properties = page.getByRole("complementary", { name: "Properties" });
+  const properties = page.getByRole("complementary", { name: "属性" });
   for (const sectionName of ["Parameters", "Netlist overrides", "Actions"]) {
     await expect(
       properties.getByText(sectionName, { exact: true }),
     ).toHaveCount(0);
   }
   const componentProperties = properties.getByRole("region", {
-    name: "Component properties",
+    name: "器件属性",
   });
   await expect(
     componentProperties.locator(":scope > .property-disclosure"),
   ).toHaveCount(0);
   await expect(
     componentProperties.locator(":scope > :last-child"),
-  ).toHaveAttribute("aria-label", "Canvas property code");
+  ).toHaveAttribute("aria-label", "画布属性代码");
   await expect(
     componentProperties.locator(
       ':scope > details[aria-label="Component appearance"]',
@@ -750,9 +834,7 @@ test("Properties toggles reference label visibility for one or many components",
   await expect(
     componentProperties.getByText("Netlist target", { exact: true }),
   ).toHaveCount(0);
-  await expect(
-    componentProperties.getByLabel("Component model target"),
-  ).toHaveCount(0);
+  await expect(componentProperties.getByLabel("元件模型目标")).toHaveCount(0);
   await expectComponentCodeField(page, "netlistTarget", "");
   await editComponentPropertyCode(page, (value) => {
     value.display.visualAnnotation = false;
@@ -836,7 +918,7 @@ test("Select All shows one batch code surface instead of object-specific forms",
   await page.keyboard.press("ControlOrMeta+a");
   await openSelectionShelf(page);
 
-  const properties = page.getByRole("complementary", { name: "Properties" });
+  const properties = page.getByRole("complementary", { name: "属性" });
   const batch = properties.getByTestId("group-property-code-editor");
   await expect(batch).toBeVisible();
   await expect(batch.getByText("2 selected", { exact: true })).toBeVisible();
@@ -884,7 +966,7 @@ test("Properties keeps component and Annotation text colors independent", async 
   await page.getByTestId("hit-R1").click();
   await openSelectionShelf(page);
 
-  const properties = page.getByRole("complementary", { name: "Properties" });
+  const properties = page.getByRole("complementary", { name: "属性" });
   const component = page.locator('[data-object-id="R1"]');
   const symbol = component.locator('[data-role="instance-symbol"]');
   const label = page.locator('[data-object-id="instance-label-R1"]');
@@ -904,7 +986,7 @@ test("Properties keeps component and Annotation text colors independent", async 
     .click({ force: true });
   await openSelectionShelf(page);
   await expect(
-    properties.getByRole("region", { name: "Text properties" }),
+    properties.getByRole("region", { name: "文本属性" }),
   ).toBeVisible();
   expect(JSON.parse(await readComponentPropertyCode(page)).color).toBe("auto");
   await properties.getByRole("button", { name: "Edit text color" }).click();
@@ -932,12 +1014,12 @@ test("Properties keeps component and Annotation text colors independent", async 
     code.color = "auto";
   });
   await expect(label).toHaveAttribute("fill", "#dc2626");
-  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await page.getByRole("button", { name: "撤销", exact: true }).click();
   await expect(label).toHaveAttribute("fill", "#2563eb");
   expect(JSON.parse(await readComponentPropertyCode(page)).color).toEqual([
     37, 99, 235,
   ]);
-  await page.getByRole("button", { name: "Redo", exact: true }).click();
+  await page.getByRole("button", { name: "重做", exact: true }).click();
   await expect(label).toHaveAttribute("fill", "#dc2626");
   expect(JSON.parse(await readComponentPropertyCode(page)).color).toBe("auto");
 
@@ -966,16 +1048,16 @@ test("keeps fixed and variable capacitor Properties on the shared code surface",
 
   await page.getByTestId("hit-C1").click();
   await openSelectionShelf(page);
-  const properties = page.getByRole("complementary", { name: "Properties" });
+  const properties = page.getByRole("complementary", { name: "属性" });
   const componentProperties = properties.getByRole("region", {
-    name: "Component properties",
+    name: "器件属性",
   });
   await expect(
     componentProperties.getByLabel("Editable Canvas property code"),
   ).toBeVisible();
   await expect(componentProperties.locator(":scope > *")).toHaveCount(1);
   await expect(
-    properties.getByRole("group", { name: "Capacitor plate terminals" }),
+    properties.getByRole("group", { name: "电容极板端子" }),
   ).toHaveCount(0);
 
   await page.getByTestId("hit-C2").click();
@@ -985,7 +1067,7 @@ test("keeps fixed and variable capacitor Properties on the shared code surface",
   ).toBeVisible();
   await expect(componentProperties.locator(":scope > *")).toHaveCount(1);
   await expect(
-    properties.getByRole("group", { name: "Capacitor plate terminals" }),
+    properties.getByRole("group", { name: "电容极板端子" }),
   ).toHaveCount(0);
 });
 
@@ -995,8 +1077,8 @@ test("value display projects MOS W/L and passive values beside the reference", a
   await page.goto("/editor");
   await awaitEditorReady(page);
   await page.keyboard.press("i");
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
-  await dialog.getByLabel("Component search").fill("nmos");
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
+  await dialog.getByLabel("搜索元件").fill("nmos");
   await dialog.getByTestId("insert-component-nmos").click();
   const canvas = page.getByTestId("schematic-canvas");
   await canvas.click({ position: { x: 360, y: 240 } });
@@ -1083,7 +1165,7 @@ test("value display projects MOS W/L and passive values beside the reference", a
 
   // A passive value projects the same way through Properties.
   await page.keyboard.press("i");
-  await dialog.getByLabel("Component search").fill("resistor");
+  await dialog.getByLabel("搜索元件").fill("resistor");
   await dialog.getByTestId("insert-component-resistor").click();
   await canvas.click({ position: { x: 560, y: 240 } });
   await page.keyboard.press("Escape");
@@ -1122,7 +1204,7 @@ test("reference and value code refreshes content after parameter edits", async (
   // pending code becomes applicable as soon as the value is restored.
   await page.getByTestId("hit-R1").click();
   await openSelectionShelf(page);
-  const properties = page.getByRole("complementary", { name: "Properties" });
+  const properties = page.getByRole("complementary", { name: "属性" });
   const propertyCode = properties.getByLabel("Editable Canvas property code");
   const missingValueCode = JSON.parse(await readComponentPropertyCode(page));
   delete missingValueCode.parameters.value;
@@ -1358,10 +1440,8 @@ test("edits the transconductance trapezoid from gm to -gmL", async ({
   await page.goto("/editor");
   await placeComponent(page, "transconductance", { x: 360, y: 240 });
   await openSelectionShelf(page);
-  const properties = page.getByRole("complementary", { name: "Properties" });
-  const componentProperties = properties.locator(
-    '[aria-label="Component properties"]',
-  );
+  const properties = page.getByRole("complementary", { name: "属性" });
+  const componentProperties = properties.locator('[aria-label="器件属性"]');
   const formalScene = page.locator('[data-layer="formal"]');
   const frame = formalScene.locator('[data-role="signal-flow-frame"]');
 
@@ -1370,7 +1450,7 @@ test("edits the transconductance trapezoid from gm to -gmL", async ({
   );
   await expect(
     componentProperties.locator(":scope > :last-child"),
-  ).toHaveAttribute("aria-label", "Canvas property code");
+  ).toHaveAttribute("aria-label", "画布属性代码");
   await expectComponentCodeField(page, "signalFlow", {});
   await expect(frame).toHaveCount(1);
   await expect(frame).toHaveAttribute(
@@ -1386,9 +1466,9 @@ test("edits the transconductance trapezoid from gm to -gmL", async ({
     formalScene.locator('[data-role="formula-subscript"]'),
   ).toHaveText("mL");
 
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expectComponentCodeField(page, "signalFlow", {});
-  await clickCommand(page, "Edit", "Redo");
+  await page.getByTestId("draw-tool-redo").click();
   await expectComponentCodeField(page, "signalFlow.formula", "−gₘL");
 });
 
@@ -1412,7 +1492,7 @@ test("edits a formula-capable Signal Flow block with undo, redo, and Reset defau
   await page.goto("/editor");
   await placeComponent(page, symbol.id, { x: 360, y: 240 });
   await openSelectionShelf(page);
-  const properties = page.getByRole("complementary", { name: "Properties" });
+  const properties = page.getByRole("complementary", { name: "属性" });
   // Empty presentation code inherits the canonical symbol's own formula.
   await expectComponentCodeField(page, "signalFlow", {});
 
@@ -1449,14 +1529,12 @@ test("edits a formula-capable Signal Flow block with undo, redo, and Reset defau
   await expect(frame).toHaveAttribute("width", "160");
   await expect(frame).toHaveAttribute("height", "80");
 
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expect(frame).toHaveAttribute("height", "50");
-  await clickCommand(page, "Edit", "Redo");
+  await page.getByTestId("draw-tool-redo").click();
   await expect(frame).toHaveAttribute("height", "80");
 
-  await properties
-    .getByRole("button", { name: "Defaults", exact: true })
-    .click();
+  await properties.getByRole("button", { name: "默认值", exact: true }).click();
   // Reset restores the Symbol's own formula as editable text, not an empty
   // box: the default is the starting point for the next edit.
   await expectComponentCodeField(page, "signalFlow", {});
@@ -1471,7 +1549,7 @@ test("selects a reviewed SKY130 MOS through the inline Target netlist field", as
   await page.goto("/editor");
   await placeComponent(page, "nmos", { x: 360, y: 220 });
   await openSelectionShelf(page);
-  const properties = page.getByRole("complementary", { name: "Properties" });
+  const properties = page.getByRole("complementary", { name: "属性" });
 
   await expect(
     properties.getByRole("button", { name: "Need help?", exact: true }),
@@ -1523,7 +1601,7 @@ test("selects a reviewed SKY130 MOS through the inline Target netlist field", as
   expect(saved.documents[0].instances[0]).toMatchObject({
     id: "M1",
     symbolId: "nmos",
-    reference: "XM1",
+    reference: "M1",
     netlist: {
       parameters: { w: "1u", l: "150n", nf: "1", m: "1" },
       binding: { kind: "external-subcircuit" },
@@ -1538,7 +1616,7 @@ test("keeps the exact SKY130 PNP on its three-terminal model interface", async (
   await placeComponent(page, "pnp", { x: 360, y: 220 });
   await openSelectionShelf(page);
   const properties = page.getByRole("complementary", {
-    name: "Properties",
+    name: "属性",
   });
 
   await expect(properties.getByLabel("Substrate Net")).toHaveCount(0);
@@ -1570,7 +1648,7 @@ test("derives NPN substrate from its exact Model", async ({ page }) => {
   await placeComponent(page, "npn", { x: 360, y: 220 });
   await openSelectionShelf(page);
   const properties = page.getByRole("complementary", {
-    name: "Properties",
+    name: "属性",
   });
 
   await expect(properties.getByLabel("Substrate Net")).toHaveCount(0);
@@ -1658,6 +1736,90 @@ for (const fixture of [
 }
 
 for (const symbol of ["xfmr", "tcoil"] as const) {
+  test(`${symbol} parameter label editing commits, escapes invalid input and closes when hidden`, async ({
+    page,
+  }) => {
+    await page.goto("/editor");
+    await placeComponent(page, symbol, { x: 360, y: 220 });
+    await openSelectionShelf(page);
+    const winding = symbol === "xfmr" ? "lp" : "l1";
+    const windingLabel = symbol === "xfmr" ? "Lp" : "L1";
+    await editComponentPropertyCode(page, (code) => {
+      code.display.parameters[winding] = true;
+      code.rotation = 270;
+    });
+    const label = page.locator(
+      '[data-layer="formal"] [data-kind="instance-value"]',
+    );
+    const id = await label.getAttribute("data-object-id");
+    const hit = page.getByTestId(`annotation-hit-${id}`);
+    const editor = page.getByLabel("画布文本编辑器", { exact: true });
+    await hit.dblclick();
+    await editor.fill(`${windingLabel} = 2.5n`);
+    await editor.press("Enter");
+    await expect(editor).toHaveCount(0);
+    await expect(label).toContainText(`${windingLabel} = 2.5n`);
+    await page.getByTestId("draw-tool-undo").click();
+    await expect(label).toContainText(`${windingLabel} = 1n`);
+    await page.getByTestId("draw-tool-redo").click();
+    await expect(label).toContainText(`${windingLabel} = 2.5n`);
+    await hit.dblclick();
+    await editor.fill(`${windingLabel} =`);
+    await editor.press("Enter");
+    await expect(editor).toBeVisible();
+    await editor.press("Escape");
+    await expect(editor).toHaveCount(0);
+    await expect(label).toContainText(`${windingLabel} = 2.5n`);
+
+    await hit.dblclick();
+    await editor.fill(windingLabel);
+    await editor.press("Enter");
+    await expect(editor).toHaveCount(0);
+    await expect(label).toHaveText(windingLabel);
+    const labelOnlySaved = parseSavedProject(
+      (await downloadBytes(page, "File", "Export Project File…")).toString(
+        "utf8",
+      ),
+    );
+    expect(
+      labelOnlySaved.documents[0].annotations.find(
+        (annotation: { id: string }) => annotation.id === id,
+      )?.binding,
+    ).toEqual({
+      kind: "instance-value",
+      instanceId: labelOnlySaved.documents[0].instances[0].id,
+      parameter: winding,
+      showValue: false,
+    });
+    expect(
+      labelOnlySaved.documents[0].instances[0].netlist.parameters[winding],
+    ).toBe("2.5n");
+
+    await hit.dblclick();
+    await editor.fill("");
+    await editor.press("Enter");
+    await expect(editor).toHaveCount(0);
+    await expect(label).toHaveCount(0);
+    await page.getByTestId("draw-tool-undo").click();
+    await expect(label).toHaveText(windingLabel);
+
+    await hit.dblclick();
+    await editor.fill("");
+    await page.getByTestId("schematic-canvas").click({
+      position: { x: 80, y: 80 },
+    });
+    await expect(label).toHaveCount(0);
+    await expect(editor).toHaveCount(0);
+    const saved = parseSavedProject(
+      (await downloadBytes(page, "File", "Export Project File…")).toString(
+        "utf8",
+      ),
+    );
+    expect(saved.documents[0].instances[0].netlist.parameters[winding]).toBe(
+      "2.5n",
+    );
+  });
+
   test(`${symbol} independently displays magnetic parameters and preserves them through history and files`, async ({
     page,
   }) => {
@@ -1684,9 +1846,9 @@ for (const symbol of ["xfmr", "tcoil"] as const) {
     });
     await expect(formalLabels).toHaveCount(1);
     await expect(formalLabels).toContainText(`${windingLabel} = 2.5n`);
-    await clickCommand(page, "Edit", "Undo");
+    await page.getByTestId("draw-tool-undo").click();
     await expect(formalLabels).toContainText("K = 1");
-    await clickCommand(page, "Edit", "Redo");
+    await page.getByTestId("draw-tool-redo").click();
     await expect(formalLabels).toContainText(`${windingLabel} = 2.5n`);
     await editComponentPropertyCode(page, (code) => {
       code.display.parameters.k = true;
@@ -1792,9 +1954,9 @@ test("batch Code edits common resistor values and colors atomically and reopens 
       page.locator(`[data-object-id="instance-value-${id}"]`),
     ).toContainText("10k");
   }
-  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await page.getByRole("button", { name: "撤销", exact: true }).click();
   expect(JSON.parse(await readComponentPropertyCode(page))).toEqual(code);
-  await page.getByRole("button", { name: "Redo", exact: true }).click();
+  await page.getByRole("button", { name: "重做", exact: true }).click();
   const saved = await downloadBytes(page, "File", "Export Project File…");
   expect(
     parseSavedProject(saved.toString("utf8")).documents[0].instances,
@@ -1858,11 +2020,14 @@ test("batch Code colors different component types while rejecting incompatible v
     }),
   );
   await expect(
-    page.getByRole("button", { name: "Discard draft", exact: true }),
+    page.getByRole("button", {
+      name: /^(?:丢弃草稿|Discard draft)$/u,
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(page.getByTestId("revision")).toHaveText(revision!);
   await page
-    .getByRole("button", { name: "Discard draft", exact: true })
+    .getByRole("button", { name: /^(?:丢弃草稿|Discard draft)$/u, exact: true })
     .click();
   await page
     .getByRole("button", { name: "Edit line color", exact: true })
@@ -1883,7 +2048,7 @@ test("batch Code colors different component types while rejecting incompatible v
     { id: "R1", netlist: { parameters: { value: "1k" } } },
     { id: "C1", netlist: { parameters: { value: "1p" } } },
   ]);
-  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await page.getByRole("button", { name: "撤销", exact: true }).click();
   expect(JSON.parse(await readComponentPropertyCode(page)).color).toBe("");
 });
 
@@ -1902,7 +2067,10 @@ test("batch Code drafts follow selection identity even when common values are id
     .fill('{ "appearance":');
   await page.getByTestId("hit-R3").click({ modifiers: ["Shift"] });
   await expect(
-    page.getByRole("button", { name: "Discard draft", exact: true }),
+    page.getByRole("button", {
+      name: /^(?:丢弃草稿|Discard draft)$/u,
+      exact: true,
+    }),
   ).toHaveCount(0);
   expect(
     JSON.parse(await readComponentPropertyCode(page)).parameters.value,
@@ -1950,6 +2118,6 @@ test("common item fields start with type and name and preserve reference binding
     ).binding,
   ).toEqual({ kind: "instance-reference", instanceId: "R1" });
   await page.screenshot({ path: "plan/common-item-properties.png" });
-  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await page.getByRole("button", { name: "撤销", exact: true }).click();
   await expectComponentCodeField(page, "name", "R1");
 });

@@ -2,7 +2,7 @@ import { resolveDocumentRoutingGeometry, sha256Hex } from "@icm/derived";
 import {
   executeTransaction,
   executeProjectTransaction,
-  proposeWireIntent,
+  planWireBatch,
   SchematicEditSchema,
 } from "@icm/edit-engine";
 import type { SchematicEdit } from "@icm/edit-engine";
@@ -21,6 +21,7 @@ import {
   agentVisualDiagnostics,
 } from "./diagnostics.js";
 import type { AgentOperationHost } from "./host.js";
+import { AgentCommandPlanningError } from "./host.js";
 import { parseAgentCircuitRequest } from "./request-contract.js";
 import {
   AGENT_API_VERSION,
@@ -41,47 +42,16 @@ import type {
 } from "./schema.js";
 import { AgentAuthoringCommandSchema } from "./authoring-command.js";
 import { buildProjectConnectivityIndex, traceHierarchyNet } from "@icm/derived";
-import { buildAgentSessionSnapshot } from "./snapshot.js";
+import {
+  buildAgentBootstrapSnapshot,
+  buildAgentSessionSnapshot,
+  selectAgentGeometry,
+  selectAgentInstances,
+} from "./snapshot.js";
 import { terminalConnectivity } from "./terminal-connectivity.js";
 
 const OPERATIONS = ["capabilities", "snapshot", "transact", "render"] as const;
 
-/** Plan on private evolving state, then dispatch the combined edits once. */
-function planWireBatch(
-  document: SchematicDocument,
-  resolver: SymbolResolver,
-  input:
-    | Parameters<typeof proposeWireIntent>[2]
-    | Parameters<typeof proposeWireIntent>[2][],
-  limit: number,
-): { edits: SchematicEdit[] } | string {
-  if (!Array.isArray(input))
-    return proposeWireIntent(document, resolver, input);
-  let working = document;
-  const edits: SchematicEdit[] = [];
-  for (const [index, intent] of input.entries()) {
-    const planned = proposeWireIntent(working, resolver, intent);
-    if (typeof planned === "string") return `Wire ${index + 1}: ${planned}`;
-    edits.push(...planned.edits);
-    if (edits.length > limit)
-      return `Wire batch exceeds the ${limit}-edit transaction limit`;
-    const preview = executeTransaction(
-      working,
-      {
-        transactionId: `wire-batch-preview-${index}`,
-        documentId: working.id,
-        expectedRevision: working.revision,
-        actor: { kind: "agent", id: "wire-planner" },
-        dryRun: true,
-        edits: planned.edits,
-      },
-      { symbolResolver: resolver },
-    );
-    if (!preview.ok) return `Wire ${index + 1}: ${preview.error.message}`;
-    working = preview.document;
-  }
-  return { edits };
-}
 /**
  * The Edit Engine schema is the sole list of typed edit kinds. `wire` is the
  * one deliberate extra capability: it advertises the mutually-exclusive
@@ -299,6 +269,45 @@ export function createAgentCircuitService(
         snapshot: AgentSessionSnapshot;
       }
     | undefined;
+  let bootstrapSnapshotCache:
+    | {
+        project: CircuitProject | undefined;
+        document: SchematicDocument;
+        context: ReturnType<typeof buildAgentBootstrapSnapshot>;
+      }
+    | undefined;
+  let diagnosticsCache:
+    | {
+        project: CircuitProject | undefined;
+        document: SchematicDocument;
+        resolver: SymbolResolver;
+        diagnostics: AgentDiagnostic[];
+      }
+    | undefined;
+  const diagnosticsFor = (
+    project: CircuitProject | undefined,
+    document: SchematicDocument,
+    resolver: SymbolResolver,
+  ): AgentDiagnostic[] => {
+    const cached = diagnosticsCache;
+    if (
+      cached &&
+      cached.project === project &&
+      cached.document === document &&
+      cached.resolver === resolver
+    )
+      return cached.diagnostics;
+    const diagnostics = project
+      ? agentProjectDiagnostics(
+          project,
+          resolver,
+          document.id,
+          document.revision,
+        )
+      : agentVisualDiagnostics(document, resolver);
+    diagnosticsCache = { project, document, resolver, diagnostics };
+    return diagnostics;
+  };
   const response = (input: unknown): AgentCircuitResponse =>
     AgentCircuitResponseSchema.parse(input);
   const useHost = "host" in options;
@@ -422,6 +431,173 @@ export function createAgentCircuitService(
             document.revision,
           );
         }
+        if (
+          ["bootstrap", "state", "folder-directory"].includes(
+            request.projection ?? "full",
+          ) &&
+          (request.includeSourceSpans === true ||
+            request.traceNet !== undefined)
+        ) {
+          return fail(
+            "snapshot",
+            "INVALID_REQUEST",
+            "Lightweight Snapshot projections cannot include source spans or a Net trace; request the full projection",
+            document.revision,
+          );
+        }
+        if (
+          request.diagnosticDetail !== undefined &&
+          request.projection !== "state"
+        ) {
+          return fail(
+            "snapshot",
+            "INVALID_REQUEST",
+            "diagnosticDetail applies only to the state projection",
+            document.revision,
+          );
+        }
+        if (
+          (request.projection === "geometry") !==
+            (request.geometryIds !== undefined) ||
+          (request.projection === "geometry" &&
+            (request.includeSourceSpans === true ||
+              request.traceNet !== undefined))
+        ) {
+          return fail(
+            "snapshot",
+            "INVALID_REQUEST",
+            "Geometry Snapshot requires geometryIds and cannot include source spans or a Net trace",
+            document.revision,
+          );
+        }
+        if (
+          (request.projection === "pins") !==
+            (request.instanceIds !== undefined) ||
+          (request.projection === "pins" &&
+            (request.includeSourceSpans || request.traceNet))
+        )
+          return fail(
+            "snapshot",
+            "INVALID_REQUEST",
+            "Pins Snapshot requires instanceIds and cannot include source spans or a Net trace",
+            document.revision,
+          );
+        if (request.projection === "pins") {
+          const instances = selectAgentInstances(
+            { document, resolver, ...(project ? { project } : {}) },
+            request.instanceIds!,
+          );
+          const found = new Set(instances.map((instance) => instance.id));
+          const result = {
+            apiVersion: request.apiVersion,
+            requestId: request.requestId,
+            operation: "snapshot" as const,
+            ok: true as const,
+            projection: "pins" as const,
+            projectId: project?.id ?? `project-${document.id}`,
+            structureRevision: project?.structureRevision ?? 0,
+            documentId: document.id,
+            revision: document.revision,
+            instances,
+            ...(document.mosBulkDefaults
+              ? { mosBulkDefaults: document.mosBulkDefaults }
+              : {}),
+            missingInstanceIds: [...new Set(request.instanceIds!)].filter(
+              (id) => !found.has(id),
+            ),
+          };
+          if (utf8ByteLength(JSON.stringify(result)) > limits.maxSnapshotBytes)
+            return fail(
+              "snapshot",
+              "SNAPSHOT_TOO_LARGE",
+              "Pins Snapshot exceeds the response budget",
+              document.revision,
+            );
+          return response(result);
+        }
+        if (request.projection === "geometry") {
+          const selected = selectAgentGeometry(document, request.geometryIds!);
+          const result = {
+            apiVersion: request.apiVersion,
+            requestId: request.requestId,
+            operation: "snapshot" as const,
+            ok: true as const,
+            projection: "geometry" as const,
+            projectId: project?.id ?? `project-${document.id}`,
+            structureRevision: project?.structureRevision ?? 0,
+            documentId: document.id,
+            revision: document.revision,
+            ...selected,
+          };
+          if (utf8ByteLength(JSON.stringify(result)) > limits.maxSnapshotBytes)
+            return fail(
+              "snapshot",
+              "SNAPSHOT_TOO_LARGE",
+              `Geometry Snapshot content exceeds ${limits.maxSnapshotBytes} bytes`,
+              document.revision,
+            );
+          return response(result);
+        }
+        if (request.projection === "state") {
+          const diagnostics = diagnosticsFor(project, document, resolver);
+          const errors = diagnostics.filter(
+            (item) => item.severity === "error",
+          ).length;
+          const warnings = diagnostics.filter(
+            (item) => item.severity === "warning",
+          ).length;
+          const result = {
+            apiVersion: request.apiVersion,
+            requestId: request.requestId,
+            operation: "snapshot" as const,
+            ok: true as const,
+            projection: "state" as const,
+            projectId: project?.id ?? `project-${document.id}`,
+            structureRevision: project?.structureRevision ?? 0,
+            documentId: document.id,
+            documentName: document.name,
+            revision: document.revision,
+            instanceCount: document.instances.length,
+            netCount: document.nets.length,
+            counts: { errors, warnings, total: diagnostics.length },
+            ...(request.diagnosticDetail === "items" ? { diagnostics } : {}),
+          };
+          if (utf8ByteLength(JSON.stringify(result)) > limits.maxSnapshotBytes)
+            return fail(
+              "snapshot",
+              "SNAPSHOT_TOO_LARGE",
+              `State Snapshot content exceeds ${limits.maxSnapshotBytes} bytes`,
+              document.revision,
+            );
+          return response(result);
+        }
+        if (request.projection === "folder-directory") {
+          const result = {
+            apiVersion: request.apiVersion,
+            requestId: request.requestId,
+            operation: "snapshot" as const,
+            ok: true as const,
+            projection: "folder-directory" as const,
+            projectId: project?.id ?? `project-${document.id}`,
+            structureRevision: project?.structureRevision ?? 0,
+            documentId: document.id,
+            revision: document.revision,
+            folders: (project?.simulationFolders ?? []).map((folder) => ({
+              id: folder.id,
+              name: folder.name,
+              entry: folder.input.entry,
+              circuitBindings: folder.input.circuitBindings,
+            })),
+          };
+          if (utf8ByteLength(JSON.stringify(result)) > limits.maxSnapshotBytes)
+            return fail(
+              "snapshot",
+              "SNAPSHOT_TOO_LARGE",
+              `Folder directory exceeds ${limits.maxSnapshotBytes} bytes`,
+              document.revision,
+            );
+          return response(result);
+        }
         const includeSourceSpans = request.includeSourceSpans === true;
         if (includeSourceSpans && !options.permissions.sourceSpans) {
           return fail(
@@ -430,6 +606,36 @@ export function createAgentCircuitService(
             "Source-span permission is not granted",
             document.revision,
           );
+        }
+        if (request.projection === "bootstrap") {
+          const cachedBootstrap = bootstrapSnapshotCache;
+          const context =
+            cachedBootstrap !== undefined &&
+            cachedBootstrap.project === project &&
+            cachedBootstrap.document === document
+              ? cachedBootstrap.context
+              : buildAgentBootstrapSnapshot({
+                  ...(project ? { project } : {}),
+                  document,
+                });
+          bootstrapSnapshotCache = { project, document, context };
+          if (context.byteLength > limits.maxSnapshotBytes) {
+            return fail(
+              "snapshot",
+              "SNAPSHOT_TOO_LARGE",
+              `Bootstrap Snapshot content exceeds ${limits.maxSnapshotBytes} bytes`,
+              document.revision,
+            );
+          }
+          return response({
+            apiVersion: request.apiVersion,
+            requestId: request.requestId,
+            operation: "snapshot",
+            ok: true,
+            projection: "bootstrap",
+            revision: document.revision,
+            context,
+          });
         }
         const cachedSnapshot = snapshotCache;
         const snapshot =
@@ -451,6 +657,12 @@ export function createAgentCircuitService(
           resolver,
           includeSourceSpans,
           snapshot,
+        };
+        diagnosticsCache = {
+          project,
+          document,
+          resolver,
+          diagnostics: snapshot.document.diagnostics,
         };
         if (snapshot.byteLength > limits.maxSnapshotBytes) {
           return fail(
@@ -508,6 +720,11 @@ export function createAgentCircuitService(
       }
 
       if (request.operation === "transact") {
+        let commandSourceActions: readonly number[] | undefined;
+        const placedInstanceIds =
+          request.command?.kind === "place-components"
+            ? request.command.instances.map((instance) => instance.id)
+            : null;
         if (request.command) {
           if (request.expectedRevision !== document.revision)
             return fail(
@@ -527,7 +744,9 @@ export function createAgentCircuitService(
             const planned = host.planAuthoringCommand(
               documentId,
               request.command,
+              limits.maxTransactionEdits,
             );
+            commandSourceActions = planned.sourceActions;
             const { command: _command, ...base } = request;
             if ("structureEdits" in planned) {
               if (request.expectedStructureRevision === undefined)
@@ -541,11 +760,38 @@ export function createAgentCircuitService(
                 ? { ...base, structureEdits: [...planned.structureEdits] }
                 : { ...base, edits: [{ kind: "noop" }] };
             } else {
+              // A completed convenience plan may have nothing left to do.
+              // Do not synthesize a persisted noop/Undo entry for a repeat.
+              if (planned.edits.length === 0) {
+                return response({
+                  apiVersion: request.apiVersion,
+                  requestId: request.requestId,
+                  operation: "transact",
+                  ok: true,
+                  applied: false,
+                  revision: document.revision,
+                  proposedRevision: document.revision,
+                  diff: {
+                    documentId,
+                    fromRevision: document.revision,
+                    toRevision: document.revision,
+                    editKinds: [],
+                    changedObjectIds: [],
+                  },
+                  terminalConnectivityChanged: false,
+                  diagnostics: diagnosticsFor(project, document, resolver),
+                  diagnosticDelta: {
+                    added: [],
+                    removed: [],
+                    ...(request.diagnosticDeltaDetail === "compact"
+                      ? { removedIds: [] }
+                      : {}),
+                  },
+                });
+              }
               request = {
                 ...base,
-                edits: planned.edits.length
-                  ? [...planned.edits]
-                  : [{ kind: "noop" }],
+                edits: [...planned.edits],
               };
             }
           } catch (error) {
@@ -554,6 +800,17 @@ export function createAgentCircuitService(
               "EDIT_PRECONDITION",
               error instanceof Error ? error.message : String(error),
               document.revision,
+              error instanceof AgentCommandPlanningError
+                ? [
+                    {
+                      code: "EDIT_PRECONDITION",
+                      severity: "error",
+                      message: error.message,
+                      path: ["actions", error.actionIndex],
+                      parameters: { actionIndex: error.actionIndex },
+                    },
+                  ]
+                : [],
             );
           }
         }
@@ -617,14 +874,7 @@ export function createAgentCircuitService(
               document.revision,
             );
           }
-          const diagnostics = project
-            ? agentProjectDiagnostics(
-                project,
-                resolver,
-                document.id,
-                document.revision,
-              )
-            : agentVisualDiagnostics(document, resolver);
+          const diagnostics = diagnosticsFor(project, document, resolver);
           return response({
             apiVersion: request.apiVersion,
             requestId: request.requestId,
@@ -724,13 +974,44 @@ export function createAgentCircuitService(
               result.error.code,
               result.error.message,
               document.revision,
-              result.diagnostics.map((item) => ({
-                code: item.code,
-                severity: item.severity,
-                message: item.message,
-                ...(item.objectIds ? { objectIds: [...item.objectIds] } : {}),
-                ...(item.path ? { path: [...item.path] } : {}),
-              })),
+              result.diagnostics.map((item) => {
+                const projectEditIndex = item.parameters?.projectEditIndex;
+                const outer =
+                  typeof projectEditIndex === "number"
+                    ? transaction.edits?.[projectEditIndex]
+                    : undefined;
+                const innerIndex =
+                  item.path?.[0] === "edits" && typeof item.path[1] === "number"
+                    ? item.path[1]
+                    : undefined;
+                const inner =
+                  outer?.kind === "transact_document" &&
+                  innerIndex !== undefined
+                    ? outer.edits[innerIndex]
+                    : undefined;
+                const instanceIndex =
+                  inner?.kind === "add_instance"
+                    ? placedInstanceIds?.indexOf(inner.instance.id)
+                    : undefined;
+                const actionIndex =
+                  typeof projectEditIndex === "number"
+                    ? commandSourceActions?.[projectEditIndex]
+                    : undefined;
+                return {
+                  code: item.code,
+                  severity: item.severity,
+                  message: item.message,
+                  ...(item.objectIds ? { objectIds: [...item.objectIds] } : {}),
+                  ...(item.path ? { path: [...item.path] } : {}),
+                  parameters: {
+                    ...item.parameters,
+                    ...(instanceIndex !== undefined && instanceIndex >= 0
+                      ? { instanceIndex }
+                      : {}),
+                    ...(actionIndex !== undefined ? { actionIndex } : {}),
+                  },
+                };
+              }),
             );
           }
           if (result.applied && !useHost) {
@@ -764,11 +1045,10 @@ export function createAgentCircuitService(
             result.proposedProject,
             builtInSymbols,
           );
-          const diagnostics = agentProjectDiagnostics(
+          const diagnostics = diagnosticsFor(
             result.proposedProject,
+            proposedDocument,
             effectiveResolver,
-            proposedDocument.id,
-            proposedDocument.revision,
           );
           return response({
             apiVersion: request.apiVersion,
@@ -884,10 +1164,30 @@ export function createAgentCircuitService(
               { symbolResolver: resolver },
             );
         if (!result.ok) {
+          const instanceIndexForPath = (
+            path: readonly (string | number)[] | undefined,
+          ): number | undefined => {
+            const editIndex =
+              path?.[0] === "edits" && typeof path[1] === "number"
+                ? path[1]
+                : undefined;
+            const edit = editIndex === undefined ? undefined : edits[editIndex];
+            const index =
+              edit?.kind === "add_instance"
+                ? placedInstanceIds?.indexOf(edit.instance.id)
+                : undefined;
+            return index !== undefined && index >= 0 ? index : undefined;
+          };
+          const placementOrigin = result.diagnostics.flatMap((item) => {
+            const index = instanceIndexForPath(item.path);
+            return index === undefined ? [] : [index];
+          })[0];
           return fail(
             "transact",
             result.error.code,
-            result.error.message,
+            placementOrigin === undefined
+              ? result.error.message
+              : `instances[${placementOrigin}]: ${result.error.message}`,
             result.revision,
             result.diagnostics.map((item) => ({
               code: item.code,
@@ -896,8 +1196,22 @@ export function createAgentCircuitService(
               revision: result.revision,
               ...(item.objectIds ? { objectIds: [...item.objectIds] } : {}),
               ...(item.path ? { path: [...item.path] } : {}),
-              ...(item.parameters
-                ? { parameters: { ...item.parameters } }
+              ...(item.parameters ||
+              commandSourceActions ||
+              instanceIndexForPath(item.path) !== undefined
+                ? {
+                    parameters: {
+                      ...item.parameters,
+                      ...(item.path?.[0] === "edits" &&
+                      typeof item.path[1] === "number" &&
+                      commandSourceActions?.[item.path[1]] !== undefined
+                        ? { actionIndex: commandSourceActions[item.path[1]]! }
+                        : {}),
+                      ...(instanceIndexForPath(item.path) === undefined
+                        ? {}
+                        : { instanceIndex: instanceIndexForPath(item.path)! }),
+                    },
+                  }
                 : {}),
             })),
           );
@@ -941,22 +1255,12 @@ export function createAgentCircuitService(
                 ),
               }
             : undefined);
-        const diagnostics = proposedProject
-          ? agentProjectDiagnostics(
-              proposedProject,
-              committedResolver,
-              result.document.id,
-              result.proposedRevision,
-            )
-          : agentVisualDiagnostics(result.document, committedResolver);
-        const beforeDiagnostics = project
-          ? agentProjectDiagnostics(
-              project,
-              resolver,
-              document.id,
-              document.revision,
-            )
-          : agentVisualDiagnostics(document, resolver);
+        const beforeDiagnostics = diagnosticsFor(project, document, resolver);
+        const diagnostics = diagnosticsFor(
+          proposedProject,
+          result.document,
+          committedResolver,
+        );
         const beforeIds = new Set(
           beforeDiagnostics.map(agentDiagnosticIdentity),
         );
@@ -1000,10 +1304,23 @@ export function createAgentCircuitService(
               (diagnostic) =>
                 !beforeIds.has(agentDiagnosticIdentity(diagnostic)),
             ),
-            removed: beforeDiagnostics.filter(
-              (diagnostic) =>
-                !afterIds.has(agentDiagnosticIdentity(diagnostic)),
-            ),
+            removed:
+              request.diagnosticDeltaDetail === "compact"
+                ? []
+                : beforeDiagnostics.filter(
+                    (diagnostic) =>
+                      !afterIds.has(agentDiagnosticIdentity(diagnostic)),
+                  ),
+            ...(request.diagnosticDeltaDetail === "compact"
+              ? {
+                  removedIds: beforeDiagnostics
+                    .filter(
+                      (diagnostic) =>
+                        !afterIds.has(agentDiagnosticIdentity(diagnostic)),
+                    )
+                    .map(agentDiagnosticIdentity),
+                }
+              : {}),
           },
           ...(resolvedRoutes.length === 0 ? {} : { resolvedRoutes }),
         });
@@ -1022,14 +1339,7 @@ export function createAgentCircuitService(
           request,
           document,
           resolver,
-          project
-            ? agentProjectDiagnostics(
-                project,
-                resolver,
-                document.id,
-                document.revision,
-              )
-            : agentVisualDiagnostics(document, resolver),
+          diagnosticsFor(project, document, resolver),
         );
         const byteLength = utf8ByteLength(rendered.svg);
         if (byteLength > limits.maxRenderBytes) {

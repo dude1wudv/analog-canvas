@@ -12,7 +12,7 @@ import {
   readSimulationExperimentConfig,
   replaceSimulationExperimentConfig,
 } from "@icm/model";
-import { parseProject } from "@icm/project-protocol";
+import { parseProject, serializeProject } from "@icm/project-protocol";
 import {
   generateCircuitSource,
   simulationSignals,
@@ -37,6 +37,12 @@ test("simulation Agent entry is passive and reuses the existing connection panel
     "**/api/agent/sessions/sim-guide/editor",
     (route) => {
       socket = route;
+      route.onMessage((message) => {
+        const control = JSON.parse(String(message));
+        if (control.kind === "heartbeat") {
+          route.send(JSON.stringify({ ...control, kind: "heartbeat-ack" }));
+        }
+      });
     },
   );
   await page.route("**/api/agent/sessions", async (route) => {
@@ -74,7 +80,7 @@ test("simulation Agent entry is passive and reuses the existing connection panel
     guide.getByRole("button", { name: "Set up manually", exact: true }),
   ).toBeVisible();
   const initialSurface = await page
-    .getByRole("region", { name: "Analog simulation" })
+    .getByRole("region", { name: "模拟仿真" })
     .boundingBox();
   const connectBounds = await guide
     .getByRole("button", { name: "Connect Agent", exact: true })
@@ -83,7 +89,7 @@ test("simulation Agent entry is passive and reuses the existing connection panel
     initialSurface!.y + initialSurface!.height,
   );
   await page
-    .getByRole("region", { name: "Analog simulation" })
+    .getByRole("region", { name: "模拟仿真" })
     .screenshot({ path: test.info().outputPath("agent-start.png") });
   await expect(page.getByTestId("connect-agent-panel")).toHaveCount(0);
   expect(creates).toBe(0);
@@ -95,11 +101,13 @@ test("simulation Agent entry is passive and reuses the existing connection panel
   await expect(panel.getByTestId("agent-copy-text")).toHaveValue(
     /sim-guide.claim/,
   );
+  // The native dialog correctly removes the background guide from the
+  // accessibility tree. Inspect the passive guide after closing the dialog.
+  await panel.getByRole("button", { name: "Close Agent dialog" }).click();
   await expect(
     guide.getByRole("button", { name: "View connection info", exact: true }),
   ).toBeVisible();
   expect(creates).toBe(1);
-  await panel.getByRole("button", { name: "Close Agent dialog" }).click();
   await expect.poll(() => socket !== null).toBe(true);
   socket!.send(
     JSON.stringify({
@@ -165,12 +173,13 @@ test("simulation examples confirm whole-Project replacement and protect existing
     mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify(project)),
   });
+  await page.getByTestId("project-menu-toggle").click();
   await page
-    .getByRole("textbox", { name: "Circuit name" })
+    .getByRole("textbox", { name: "项目名称" })
     .fill("My unsaved circuit");
-  await page.getByRole("textbox", { name: "Circuit name" }).press("Enter");
+  await page.getByRole("textbox", { name: "项目名称" }).press("Enter");
   await page.getByTestId("open-analog-simulation").click();
-  const panel = page.getByRole("region", { name: "Analog simulation" });
+  const panel = page.getByRole("region", { name: "模拟仿真" });
   const cards = panel.getByRole("group", { name: "Simulation examples" });
   await expect(cards).not.toBeVisible();
   await panel.getByText("Explore examples", { exact: true }).click();
@@ -184,9 +193,7 @@ test("simulation examples confirm whole-Project replacement and protect existing
     .click();
   const confirmation = page.getByRole("dialog", { name: "Open RC Filters?" });
   await expect(confirmation).toContainText("entire Project");
-  await confirmation
-    .getByRole("button", { name: "Cancel", exact: true })
-    .click();
+  await confirmation.getByRole("button", { name: "取消", exact: true }).click();
   await expect(cards).toBeVisible();
   await expect
     .poll(async () =>
@@ -201,9 +208,9 @@ test("simulation examples confirm whole-Project replacement and protect existing
   await confirmation
     .getByRole("button", { name: "Open example", exact: true })
     .click();
-  const guard = page.getByRole("dialog", { name: "Unsaved changes" });
+  const guard = page.getByRole("dialog", { name: "有未保存的更改" });
   await expect(guard).toBeVisible();
-  await guard.getByRole("button", { name: "Stay", exact: true }).click();
+  await guard.getByRole("button", { name: "留在此处", exact: true }).click();
   await expect(cards).toBeVisible();
   await cards
     .getByRole("button", { name: "RC Filters Low-pass & high-pass" })
@@ -211,7 +218,7 @@ test("simulation examples confirm whole-Project replacement and protect existing
   await confirmation
     .getByRole("button", { name: "Open example", exact: true })
     .click();
-  await guard.getByRole("button", { name: "Continue without saving" }).click();
+  await guard.getByRole("button", { name: "不保存并继续" }).click();
   await expect(cards).toHaveCount(0);
   await expect(
     panel.getByRole("button", { name: "Run", exact: true }),
@@ -220,7 +227,7 @@ test("simulation examples confirm whole-Project replacement and protect existing
     "Canvas source:",
   );
   await expect(
-    panel.getByRole("textbox", { name: "Simulation source editor" }),
+    panel.getByRole("textbox", { name: "仿真源代码编辑器" }),
   ).toContainText("Click Run");
 });
 test("native metadata is hidden per folder while damaged configuration stays repairable", async ({
@@ -258,23 +265,23 @@ test("native metadata is hidden per folder while damaged configuration stays rep
     buffer: Buffer.from(JSON.stringify(project)),
   });
   await page.getByTestId("open-analog-simulation").click();
-  const panel = page.getByRole("region", { name: "Analog simulation" });
+  const panel = page.getByRole("region", { name: "模拟仿真" });
   await expect(
     panel.locator(
       '[data-folder-id="native"][data-file-path="experiment.json"]',
     ),
   ).toHaveCount(0);
   await panel
-    .getByRole("treeitem", { name: "Folder Repair", exact: true })
+    .getByRole("treeitem", { name: "文件夹 Repair", exact: true })
     .click();
   await panel
-    .getByRole("button", { name: "Toggle Repair", exact: true })
+    .getByRole("button", { name: "展开或折叠 Repair", exact: true })
     .click();
   await panel
     .getByRole("treeitem", { name: "experiment.json", exact: true })
     .click();
   const editor = panel.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   await expect(editor).toHaveText("{");
   await editor.fill(original);
@@ -325,7 +332,7 @@ test("native Circuit source edits persist source fields and distinguish mega fro
   await page.getByTestId("open-analog-simulation").click();
   await page.getByRole("tab", { name: /circuit\.spice/ }).click();
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   const generated = generateCircuitSource(
     project,
@@ -397,7 +404,7 @@ test("Code edits native AC fields and routes parameter declarations to authored 
   await page.getByTestId("open-analog-simulation").click();
   await page.getByRole("tab", { name: /circuit\.spice/ }).click();
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   const generated = generateCircuitSource(
     project,
@@ -446,7 +453,7 @@ test("Code edits native AC fields and routes parameter declarations to authored 
       ' type="dc" dc=(VBIAS)' +
       applied.source.text.slice(appliedBody.endOffset),
   );
-  await page.getByRole("button", { name: "Helper", exact: true }).click();
+  await page.getByRole("button", { name: "助手", exact: true }).click();
   await page
     .getByRole("option", { name: "Design variable (parameters)…", exact: true })
     .click();
@@ -545,7 +552,7 @@ test("new experiments explicitly bind the selected Cell without requiring a Test
   await page.getByRole("heading", { name: "Simulate with an Agent" }).click();
   await expect(name).toHaveCount(0);
   await expect(
-    page.getByRole("treeitem", { name: "Folder OTA direct", exact: true }),
+    page.getByRole("treeitem", { name: "文件夹 OTA direct", exact: true }),
   ).toHaveCount(0);
   await page
     .getByRole("button", { name: "Set up manually", exact: true })
@@ -568,14 +575,14 @@ test("new experiments explicitly bind the selected Cell without requiring a Test
     .getByRole("button", { name: "Restore simulation panel", exact: true })
     .click();
   const folderRow = page.getByRole("treeitem", {
-    name: "Folder OTA direct",
+    name: "文件夹 OTA direct",
     exact: true,
   });
   await expect(folderRow).toHaveText("OTA direct");
   await expect(folderRow).toHaveAttribute("title", "Cell: ota_5t");
   await expect(folderRow).toHaveAttribute("aria-description", "Cell: ota_5t");
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   await expect(editor).toContainText('include "circuit.spice"');
   await expect(editor).toContainText("op");
@@ -607,7 +614,9 @@ test("new experiments explicitly bind the selected Cell without requiring a Test
     "experiment.json",
   ]);
   expect(saved.topDocumentId).toBe(project.topDocumentId);
-  expect(saved.documents).toEqual(project.documents);
+  expect(saved.documents).toEqual(
+    parseProject(serializeProject(project)).documents,
+  );
   const generated = generateCircuitSource(
     saved,
     folder.input.circuitBindings[0]!,
@@ -617,16 +626,24 @@ test("new experiments explicitly bind the selected Cell without requiring a Test
   expect((await editor.innerText()).trim()).toBe(generated.source.text.trim());
 
   // The next default follows Canvas, not the existing experiment's root.
-  await page.getByTestId("document-selector").selectOption(dut.id);
+  await page.getByTestId("hierarchy-entry").click();
+  let manager = page.getByRole("dialog", { name: "Cell 管理器" });
+  await manager
+    .locator(".cell-manager-list-item")
+    .filter({ hasText: dut.name })
+    .dblclick();
   await page
     .getByRole("button", { name: "+ New experiment", exact: true })
     .click();
   await expect(cell).toHaveValue(dut.id);
   await cell.press("Escape");
   await expect(name).toHaveCount(0);
-  await page
-    .getByTestId("document-selector")
-    .selectOption(project.topDocumentId);
+  await page.getByTestId("hierarchy-entry").click();
+  manager = page.getByRole("dialog", { name: "Cell 管理器" });
+  await manager
+    .locator(".cell-manager-list-item")
+    .filter({ hasText: /顶层/u })
+    .dblclick();
   await page
     .getByRole("button", { name: "+ New experiment", exact: true })
     .click();
@@ -671,12 +688,12 @@ test("tab context menus replace workspace more actions without discarding source
     buffer: Buffer.from(JSON.stringify(project)),
   });
   await page.getByTestId("open-analog-simulation").click();
-  const panel = page.getByRole("region", { name: "Analog simulation" });
+  const panel = page.getByRole("region", { name: "模拟仿真" });
   await expect(
     panel.getByRole("button", { name: "More code actions" }),
   ).toHaveCount(0);
   const editor = panel.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   const runTab = panel.getByRole("tab", { name: /run\.cir/ });
   const circuitTab = panel.getByRole("tab", { name: /circuit\.spice/ });
@@ -701,9 +718,7 @@ test("tab context menus replace workspace more actions without discarding source
     .getByRole("menuitem", { name: "Close others", exact: true })
     .click();
   await expect(
-    panel
-      .getByRole("tablist", { name: "Open simulation files" })
-      .getByRole("tab"),
+    panel.getByRole("tablist", { name: "已打开的仿真文件" }).getByRole("tab"),
   ).toHaveCount(1);
   await expect(circuitTab).toHaveAttribute("aria-selected", "true");
   await panel.getByRole("treeitem", { name: "run.cir", exact: true }).click();
@@ -712,14 +727,10 @@ test("tab context menus replace workspace more actions without discarding source
   await runTab.press("Shift+F10");
   await page.getByRole("menuitem", { name: "Close all", exact: true }).click();
   await expect(
-    panel
-      .getByRole("tablist", { name: "Open simulation files" })
-      .getByRole("tab"),
+    panel.getByRole("tablist", { name: "已打开的仿真文件" }).getByRole("tab"),
   ).toHaveCount(0);
   await expect(
-    panel.getByText(
-      "Select a file to edit. Closing tabs does not delete files.",
-    ),
+    panel.getByText("请选择要编辑的文件。关闭标签页不会删除文件。"),
   ).toBeVisible();
   await panel.getByRole("treeitem", { name: "run.cir", exact: true }).click();
   await expect(editor).toHaveText(draft);
@@ -760,7 +771,7 @@ test("source save applies locally while signed out and leaves File Save cloud-ow
   });
   await page.getByTestId("open-analog-simulation").click();
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   const save = page.getByRole("button", { name: "Save source", exact: true });
   const source = folder.input.files.find(
@@ -795,7 +806,7 @@ test("source save applies locally while signed out and leaves File Save cloud-ow
   ).toContain("* local keyboard save");
   await page
     .locator("summary")
-    .filter({ hasText: /^File$/ })
+    .filter({ hasText: /^文件$/ })
     .click();
   await page.getByTestId("save-cloud-project").click();
   await expect(page.getByTestId("status")).toContainText("Sign in to save");
@@ -827,11 +838,11 @@ test("Helper keeps signal selection continuous and shares the file row without s
     buffer: Buffer.from(JSON.stringify(project)),
   });
   await page.getByTestId("open-analog-simulation").click();
-  await page.getByRole("button", { name: "Explorer", exact: true }).click();
+  await page.getByRole("button", { name: "资源管理器", exact: true }).click();
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
-  const helper = page.getByRole("button", { name: "Helper", exact: true });
+  const helper = page.getByRole("button", { name: "助手", exact: true });
   const tab = page.getByRole("tab", { name: /run.cir/ });
   const helperBox = (await helper.boundingBox())!;
   const tabBox = (await tab.boundingBox())!;
@@ -841,12 +852,12 @@ test("Helper keeps signal selection continuous and shares the file row without s
     page.getByText("Try another analysis", { exact: true }),
   ).toHaveCount(0);
   await helper.click();
-  const helperPopup = page.getByRole("dialog", { name: "Insert / Helper" });
+  const helperPopup = page.getByRole("dialog", { name: "插入 / 助手" });
   const popupBox = (await helperPopup.boundingBox())!;
   await page
     .getByRole("option", { name: "Save voltage…", exact: true })
     .click();
-  const picker = page.getByRole("dialog", { name: "Save signal" });
+  const picker = page.getByRole("dialog", { name: "保存信号" });
   const search = picker.getByRole("textbox", { name: "Search signal" });
   await expect(search).toBeFocused();
   const pickerBox = (await picker.boundingBox())!;
@@ -884,7 +895,7 @@ test("Helper keeps signal selection continuous and shares the file row without s
   await expect(editor).toContainText("save v(vinp) v(vout)");
   await expect(canvas).toHaveClass(/simulation-net-pick-active/);
   await expect(editor).not.toBeFocused();
-  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("button", { name: "完成", exact: true }).click();
   await expect(canvas).not.toHaveClass(/simulation-net-pick-active/);
   // An incomplete source must remain repairable, not falsely acknowledge an
   // acquisition that the editor refused to insert.
@@ -946,10 +957,10 @@ endc
   });
   await page.getByTestId("open-analog-simulation").click();
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
-  const helper = page.getByRole("button", { name: "Helper", exact: true });
-  const picker = page.getByRole("dialog", { name: "Save signal" });
+  const helper = page.getByRole("button", { name: "助手", exact: true });
+  const picker = page.getByRole("dialog", { name: "保存信号" });
   await helper.click();
   await page
     .getByRole("option", { name: "Save terminal current…", exact: true })
@@ -1002,13 +1013,13 @@ test("native device OP Helper inserts inspectable model-native saves without SPI
   });
   await page.getByTestId("open-analog-simulation").click();
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
-  await page.getByRole("button", { name: "Helper", exact: true }).click();
+  await page.getByRole("button", { name: "助手", exact: true }).click();
   await page
     .getByRole("option", { name: "Save device operating point…", exact: true })
     .click();
-  const picker = page.getByRole("dialog", { name: "Save signal" });
+  const picker = page.getByRole("dialog", { name: "保存信号" });
   const save = `p('${device.reference}:Inner',gm)`;
   const choice = picker.getByRole("button", {
     name: `${device.reference}:Inner · gm (model-native) — ${save}`,
@@ -1063,7 +1074,7 @@ test("native save completion previews its mapped Net on the real Canvas", async 
   });
   await page.getByTestId("open-analog-simulation").click();
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   const source = folder.input.files.find(
     (file) => file.path === folder.input.entry,
@@ -1125,10 +1136,10 @@ test("incomplete circuit opens Code and saves invalid parameter drafts across re
     buffer: Buffer.from(JSON.stringify(project)),
   });
   await page.getByTestId("open-analog-simulation").click();
-  const panel = page.getByRole("region", { name: "Analog simulation" });
+  const panel = page.getByRole("region", { name: "模拟仿真" });
   await panel.getByRole("tab", { name: "circuit.spice", exact: false }).click();
   const editor = panel.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   await expect(editor).toContainText("<value>");
   await expect(editor).toContainText("<model>");
@@ -1174,13 +1185,13 @@ test("incomplete circuit opens Code and saves invalid parameter drafts across re
   await panel.getByRole("tab", { name: "circuit.spice", exact: false }).click();
   await expect(editor).toContainText("bad-value+");
   await panel
-    .getByRole("treeitem", { name: "Folder Draft", exact: true })
+    .getByRole("treeitem", { name: "文件夹 Draft", exact: true })
     .click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Duplicate…" }).click();
+  await page.getByRole("menuitem", { name: "创建副本…" }).click();
   await panel.getByLabel("New simulation folder name").fill("Draft copy");
   await panel.getByLabel("New simulation folder name").press("Enter");
   await expect(
-    panel.getByRole("treeitem", { name: "Folder Draft copy", exact: true }),
+    panel.getByRole("treeitem", { name: "文件夹 Draft copy", exact: true }),
   ).toBeVisible();
 });
 
@@ -1381,12 +1392,10 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
   await expect(page.getByTestId("schematic-canvas")).toBeVisible();
   expect(calls).toBe(0);
   await clickNetlistWorkflowCommand(page, "open-analog-simulation");
-  const panel = page.getByRole("region", { name: "Analog simulation" });
+  const panel = page.getByRole("region", { name: "模拟仿真" });
   await panel.getByRole("button", { name: "Run", exact: true }).click();
   await panel.getByRole("tab", { name: "Console", exact: true }).click();
-  await expect(panel.getByLabel("Simulation results")).toContainText(
-    /PROBE|probe/,
-  );
+  await expect(panel.getByLabel("仿真结果")).toContainText(/PROBE|probe/);
   expect(executions).toBe(0);
   config.outputs[0] = {
     id: "out",
@@ -1444,15 +1453,15 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
   await panel.getByLabel("New simulation folder name").press("Enter");
   await expect(panel.getByRole("status")).not.toHaveText("completed");
   await expect(
-    panel.getByRole("button", { name: "Toggle E2E folder" }),
+    panel.getByRole("button", { name: "展开或折叠 E2E folder" }),
   ).toHaveAttribute("aria-expanded", "true");
   await expect(
-    panel.getByRole("button", { name: "Toggle Second folder" }),
+    panel.getByRole("button", { name: "展开或折叠 Second folder" }),
   ).toHaveAttribute("aria-expanded", "true");
   await panel
-    .getByRole("treeitem", { name: "Folder Second folder", exact: true })
+    .getByRole("treeitem", { name: "文件夹 Second folder", exact: true })
     .click({ button: "right" });
-  await page.getByRole("menuitem", { name: "New file…", exact: true }).click();
+  await page.getByRole("menuitem", { name: "新建文件…", exact: true }).click();
   await panel
     .getByRole("textbox", { name: "Relative file path" })
     .fill("bias.spice");
@@ -1460,7 +1469,7 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
     .getByRole("textbox", { name: "Relative file path" })
     .press("Enter");
   await expect(panel.getByRole("tab", { name: /bias.spice/ })).toBeVisible();
-  await panel.getByRole("button", { name: "Helper", exact: true }).click();
+  await panel.getByRole("button", { name: "助手", exact: true }).click();
   await panel
     .getByRole("textbox", { name: "Search commands or purpose" })
     .fill("Save voltage");
@@ -1470,10 +1479,10 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
     .getByRole("button", { name: "Use native vector: v(out)" })
     .click();
   await expect(
-    panel.getByRole("textbox", { name: "Simulation source editor" }),
+    panel.getByRole("textbox", { name: "仿真源代码编辑器" }),
   ).toContainText(".save v(out)");
   await panel
-    .getByRole("treeitem", { name: "Folder E2E folder", exact: true })
+    .getByRole("treeitem", { name: "文件夹 E2E folder", exact: true })
     .locator("..")
     .locator("..")
     .getByRole("treeitem", { name: "run.cir", exact: true })
@@ -1511,16 +1520,16 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
   await expect(
     panel.getByRole("tab", { name: /^(Plot|Operating Point|Compare)$/ }),
   ).toHaveCount(0);
-  await panel.getByRole("button", { name: "Maximize results" }).click();
+  await panel.getByRole("button", { name: "最大化结果区" }).click();
   await expect(specs).toBeVisible();
-  await panel.getByRole("button", { name: "Restore results" }).click();
+  await panel.getByRole("button", { name: "还原结果区" }).click();
   const runFiles = panel.getByLabel("Run temporary files");
   await expect(panel.getByLabel("Prepare temporary files")).toHaveCount(0);
   await runFiles
-    .getByRole("button", { name: "Toggle Run", exact: true })
+    .getByRole("button", { name: "展开或折叠 Run", exact: true })
     .click();
   await runFiles
-    .getByRole("button", { name: "Toggle Results", exact: true })
+    .getByRole("button", { name: "展开或折叠 Results", exact: true })
     .click();
   await expect(
     runFiles.getByRole("treeitem", { name: "Logs", exact: true }),
@@ -1537,8 +1546,8 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
   const download = page.waitForEvent("download");
   await csvFile.click();
   await panel
-    .getByLabel("File preview")
-    .getByRole("button", { name: "Download", exact: true })
+    .getByLabel("文件预览")
+    .getByRole("button", { name: "下载", exact: true })
     .click();
   expect((await download).suggestedFilename()).toMatch(/[.]csv$/);
   const rawFile = runFiles.getByRole("treeitem", {
@@ -1555,12 +1564,12 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
     for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
     return unzipSync(Buffer.concat(chunks));
   };
-  const selectedEntries = await menuZip("Download selected (2)…");
+  const selectedEntries = await menuZip("下载所选项（2）…");
   expect(Object.keys(selectedEntries)).toHaveLength(2);
   await runFiles
     .getByRole("treeitem", { name: "Run", exact: true })
     .click({ button: "right" });
-  const visibleEntries = await menuZip("Download…");
+  const visibleEntries = await menuZip("下载…");
   expect(
     Object.keys(visibleEntries).some((path) => path.startsWith("run/logs/")),
   ).toBe(true);
@@ -1597,7 +1606,7 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
     panel.getByRole("tab", { name: /executed[.]cir/ }),
   ).toBeVisible();
   const executedBeforeEdit = await panel
-    .getByLabel("File preview")
+    .getByLabel("文件预览")
     .locator("pre")
     .innerText();
   const executedTab = panel.getByRole("tab", { name: /executed[.]cir/ });
@@ -1606,13 +1615,11 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
     .getByRole("menuitem", { name: "Close others", exact: true })
     .click();
   await expect(
-    panel
-      .getByRole("tablist", { name: "Open simulation files" })
-      .getByRole("tab"),
+    panel.getByRole("tablist", { name: "已打开的仿真文件" }).getByRole("tab"),
   ).toHaveCount(1);
   await executedTab.focus();
   await executedTab.press("ControlOrMeta+w");
-  await expect(panel.getByLabel("File preview")).toHaveCount(0);
+  await expect(panel.getByLabel("文件预览")).toHaveCount(0);
   await panel
     .getByRole("treeitem", { name: folder.input.entry, exact: true })
     .and(panel.locator(`[data-folder-id="${folder.id}"]`))
@@ -1631,20 +1638,20 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
   );
   await downloadBytes(page, "File", "Export Project File…");
   await expect(panel.locator(".simulation-code-status")).toContainText(
-    "earlier Project revision",
+    "较早的项目版本",
   );
   await panel
     .getByRole("treeitem", { name: "Run", exact: true })
     .click({ button: "right" });
   await page.getByRole("menuitem", { name: "Preview input netlist…" }).click();
-  await expect(panel.getByLabel("File preview").locator("pre")).toContainText(
+  await expect(panel.getByLabel("文件预览").locator("pre")).toContainText(
     ".temp 30",
   );
   await panel
     .getByRole("treeitem", { name: "Run", exact: true })
     .click({ button: "right" });
   await page.getByRole("menuitem", { name: "View executed netlist…" }).click();
-  await expect(panel.getByLabel("File preview").locator("pre")).toHaveText(
+  await expect(panel.getByLabel("文件预览").locator("pre")).toHaveText(
     executedBeforeEdit,
   );
   await runFiles
@@ -1664,7 +1671,10 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
     .getByRole("treeitem", { name: "Run", exact: true })
     .click({ button: "right" });
   await page
-    .getByRole("menuitem", { name: "Archive current run", exact: true })
+    .getByRole("menuitem", {
+      name: "Archive current run (latest 30 saved)",
+      exact: true,
+    })
     .click();
   pending = new Promise<void>((r) => {
     release = r;
@@ -1695,9 +1705,9 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
   });
   await clickNetlistWorkflowCommand(page, "open-analog-simulation");
   await expect(
-    panel.getByRole("textbox", { name: "Simulation source editor" }),
+    panel.getByRole("textbox", { name: "仿真源代码编辑器" }),
   ).toContainText(".temp 30");
-  await expect(panel.getByRole("status")).toHaveText("No run yet");
+  await expect(panel.getByRole("status")).toHaveText("尚未运行");
   await panel.locator(".simulation-run-history > summary").click();
   const savedArchives = panel.getByRole("region", {
     name: "Saved folder results",
@@ -1719,25 +1729,19 @@ test("Simulation defaults a new experiment to an ordinary authored Cell", async 
   page,
 }) => {
   await page.goto("/editor");
+  await page.getByTestId("hierarchy-entry").click();
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
+  await manager.getByRole("button", { name: "新建 Cell" }).click();
+  const newCell = page.getByRole("dialog", { name: "新建 Cell" });
+  await newCell.getByLabel("Cell 名称").fill("Testbench");
+  await newCell.getByRole("button", { name: "创建" }).click();
   await page
     .locator(".command-menu > summary")
-    .filter({ hasText: "Edit" })
+    .filter({ hasText: "编辑" })
     .click();
-  await page.getByRole("button", { name: "Manage Cells…" }).click();
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
-  await manager.getByRole("button", { name: "New Cell" }).click();
-  const newCell = page.getByRole("dialog", { name: "New Cell" });
-  await newCell.getByLabel("Cell name").fill("Testbench");
-  await newCell.getByRole("button", { name: "Create" }).click();
+  await page.getByRole("button", { name: "从此项目放置 Cell…" }).click();
   await page
-    .locator(".command-menu > summary")
-    .filter({ hasText: "Edit" })
-    .click();
-  await page
-    .getByRole("button", { name: "Place Cell from this Project…" })
-    .click();
-  await page
-    .getByRole("dialog", { name: "Place Hierarchical Cell" })
+    .getByRole("dialog", { name: "放置层次化 Cell" })
     .getByRole("option", { name: /dut/u })
     .click();
   await page
@@ -1781,7 +1785,7 @@ test("Simulation defaults a new experiment to an ordinary authored Cell", async 
   expect(statusBox!.x).toBeGreaterThanOrEqual(runBox!.x + runBox!.width);
   expect(Math.abs(statusBox!.y - runBox!.y)).toBeLessThanOrEqual(2);
   await expect(taskbar).toHaveCount(1);
-  for (const name of ["Explorer", "Save source"]) {
+  for (const name of ["资源管理器", "Save source"]) {
     const box = await taskbar
       .getByRole("button", { name, exact: true })
       .boundingBox();
@@ -1847,7 +1851,7 @@ test("Simulation defaults a new experiment to an ordinary authored Cell", async 
   expect(maximizedBounds!.width).toBe(page.viewportSize()!.width);
   await expect(page.getByTestId("simulation-resize-handle")).toHaveCount(0);
   await expect(
-    page.getByRole("region", { name: "Simulation Code workspace" }),
+    page.getByRole("region", { name: "仿真代码工作区" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Restore simulation panel" }).click();
   await expect(page.locator(".app-workspace")).not.toHaveClass(
@@ -1861,7 +1865,7 @@ test("Simulation defaults a new experiment to an ordinary authored Cell", async 
   await page.getByRole("button", { name: "Minimize simulation" }).click();
   await expect(page.getByTestId("library-toggle")).toBeEnabled();
   await expect(page.getByTestId("open-analog-simulation")).toContainText(
-    "Minimized",
+    "已最小化",
   );
   await clickNetlistWorkflowCommand(page, "open-analog-simulation");
   await page.getByRole("button", { name: "Exit simulation" }).click();
@@ -1869,18 +1873,14 @@ test("Simulation defaults a new experiment to an ordinary authored Cell", async 
     name: "Exit Simulation?",
   });
   await expect(exitConfirmation).toContainText("temporary run files");
-  await exitConfirmation.getByRole("button", { name: "Cancel" }).click();
-  await expect(
-    page.getByRole("region", { name: "Analog simulation" }),
-  ).toBeVisible();
+  await exitConfirmation.getByRole("button", { name: "取消" }).click();
+  await expect(page.getByRole("region", { name: "模拟仿真" })).toBeVisible();
   await page.getByRole("button", { name: "Exit simulation" }).click();
   await page
     .getByRole("dialog", { name: "Exit Simulation?" })
     .getByRole("button", { name: "Exit Simulation" })
     .click();
-  await expect(
-    page.getByRole("region", { name: "Analog simulation" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "模拟仿真" })).toHaveCount(0);
   await expect(page.getByTestId("library-toggle")).toBeEnabled();
 });
 
@@ -1905,7 +1905,7 @@ async function openWorkspace(
     buffer: Buffer.from(JSON.stringify(project)),
   });
   await page.getByTestId("open-analog-simulation").click();
-  return page.getByRole("region", { name: "Simulation Code workspace" });
+  return page.getByRole("region", { name: "仿真代码工作区" });
 }
 
 test("Simulation and Properties remain independent through minimization", async ({
@@ -1914,7 +1914,7 @@ test("Simulation and Properties remain independent through minimization", async 
   await page.setViewportSize({ width: 1600, height: 900 });
   const workspace = await openWorkspace(page);
   const editor = workspace.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   await editor.fill("* independent draft\n");
   await revealPropertiesShelf(page);
@@ -1925,7 +1925,7 @@ test("Simulation and Properties remain independent through minimization", async 
   await expect(shelf).toHaveAttribute("aria-expanded", "true");
   const codeBox = await page.locator(".editor-simulation-dock").boundingBox();
   const propsBox = await page
-    .getByRole("complementary", { name: "Properties", exact: true })
+    .getByRole("complementary", { name: "属性", exact: true })
     .boundingBox();
   expect(codeBox!.x).toBeGreaterThanOrEqual(propsBox!.x + propsBox!.width - 1);
   await page
@@ -1942,7 +1942,7 @@ test("maximized simulation reclaims chrome at narrow width and minimizes without
   await page.setViewportSize({ width: 900, height: 700 });
   const workspace = await openWorkspace(page);
   const editor = workspace.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   await editor.fill("* retained maximized draft\n");
   const docked = await workspace.boundingBox();
@@ -2032,11 +2032,11 @@ test("folder activation exposes the run target independently of expansion and se
   const workspace = await openWorkspace(page, "ngspice");
   const run = page.getByRole("button", { name: "Run", exact: true });
   const alpha = workspace.getByRole("treeitem", {
-    name: "Folder Alpha",
+    name: "文件夹 Alpha",
     exact: true,
   });
   const beta = workspace.getByRole("treeitem", {
-    name: "Folder Beta",
+    name: "文件夹 Beta",
     exact: true,
   });
   await expect(run).toHaveText("Alpha");
@@ -2047,7 +2047,7 @@ test("folder activation exposes the run target independently of expansion and se
   await expect(beta).toHaveAttribute("aria-current", "page");
   await expect(beta).toHaveAttribute("aria-expanded", expanded!);
   await workspace
-    .getByRole("button", { name: "Toggle Alpha", exact: true })
+    .getByRole("button", { name: "展开或折叠 Alpha", exact: true })
     .click();
   await expect(run).toHaveText("Beta");
   await alpha.click({ button: "right" });
@@ -2085,14 +2085,14 @@ test("workspace menus, selection, empty editors and resizing share non-destructi
 }) => {
   const workspace = await openWorkspace(page);
   const files = workspace.getByRole("complementary", {
-    name: "Simulation files",
+    name: "仿真文件",
   });
   const alpha = files.getByRole("treeitem", {
-    name: "Folder Alpha",
+    name: "文件夹 Alpha",
     exact: true,
   });
   const beta = files.getByRole("treeitem", {
-    name: "Folder Beta",
+    name: "文件夹 Beta",
     exact: true,
   });
   await expect(
@@ -2104,7 +2104,7 @@ test("workspace menus, selection, empty editors and resizing share non-destructi
     .first()
     .click({ button: "right" });
   await expect(
-    page.getByRole("menu", { name: "Actions for circuit.spice" }),
+    page.getByRole("menu", { name: "circuit.spice 的操作" }),
   ).toBeVisible();
   await expect(
     workspace.getByRole("tab", { name: "run.cir", exact: true }),
@@ -2118,7 +2118,7 @@ test("workspace menus, selection, empty editors and resizing share non-destructi
     page.getByRole("button", { name: "Run", exact: true }),
   ).toHaveAttribute("title", "Run Beta / run.cir");
   await files
-    .getByRole("button", { name: "Toggle Alpha", exact: true })
+    .getByRole("button", { name: "展开或折叠 Alpha", exact: true })
     .click();
   await expect(alpha).toBeVisible();
   await expect(
@@ -2132,11 +2132,13 @@ test("workspace menus, selection, empty editors and resizing share non-destructi
     .click();
   await expect(
     workspace
-      .getByRole("tablist", { name: "Open simulation files" })
+      .getByRole("tablist", { name: "已打开的仿真文件" })
       .getByRole("tab"),
   ).toHaveCount(0);
   await expect(
-    workspace.getByText("Select a file to edit.", { exact: false }),
+    workspace.getByText("请选择要编辑的文件。关闭标签页不会删除文件。", {
+      exact: true,
+    }),
   ).toBeVisible();
   await alpha.press("ArrowRight");
   await files
@@ -2144,10 +2146,10 @@ test("workspace menus, selection, empty editors and resizing share non-destructi
     .first()
     .click();
   await expect(
-    workspace.getByRole("textbox", { name: "Simulation source editor" }),
+    workspace.getByRole("textbox", { name: "仿真源代码编辑器" }),
   ).toBeVisible();
   const handle = workspace.getByRole("separator", {
-    name: "Resize simulation files",
+    name: "调整仿真文件区大小",
   });
   const original = Number(await handle.getAttribute("aria-valuenow"));
   await handle.focus();
@@ -2188,12 +2190,12 @@ test("Explorer context downloads preserve multi-selection and directory contents
   page,
 }) => {
   const workspace = await openWorkspace(page);
-  const tree = workspace.getByRole("tree", { name: "Simulation folders" });
+  const tree = workspace.getByRole("tree", { name: "仿真文件夹" });
   const alpha = tree.getByRole("treeitem", {
-    name: "Folder Alpha",
+    name: "文件夹 Alpha",
     exact: true,
   });
-  const beta = tree.getByRole("treeitem", { name: "Folder Beta", exact: true });
+  const beta = tree.getByRole("treeitem", { name: "文件夹 Beta", exact: true });
   const alphaFiles = alpha.locator("../..");
   const circuit = alphaFiles.getByRole("treeitem", {
     name: "circuit.spice",
@@ -2204,10 +2206,10 @@ test("Explorer context downloads preserve multi-selection and directory contents
     exact: true,
   });
   await expect(
-    workspace.getByRole("button", { name: "Explorer", exact: true }),
+    workspace.getByRole("button", { name: "资源管理器", exact: true }),
   ).toHaveCount(1);
   await expect(
-    workspace.getByRole("button", { name: /Download selected/ }),
+    workspace.getByRole("button", { name: /下载所选项/ }),
   ).toHaveCount(0);
   await expect(
     alphaFiles.getByRole("treeitem", { name: "Source", exact: true }),
@@ -2226,7 +2228,7 @@ test("Explorer context downloads preserve multi-selection and directory contents
   ).toHaveAttribute("aria-selected", "true");
   await run.click({ button: "right" });
   const pending = page.waitForEvent("download");
-  await page.getByRole("menuitem", { name: "Download selected (2)…" }).click();
+  await page.getByRole("menuitem", { name: "下载所选项（2）…" }).click();
   const stream = await (await pending).createReadStream();
   const chunks: Buffer[] = [];
   for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
@@ -2244,7 +2246,7 @@ test("Explorer context downloads preserve multi-selection and directory contents
   ).toHaveAttribute("aria-selected", "true");
   await beta.click({ button: "right" });
   await expect(
-    page.getByRole("menuitem", { name: "Download…", exact: true }),
+    page.getByRole("menuitem", { name: "下载…", exact: true }),
   ).toBeVisible();
   await expect(run).toHaveAttribute("aria-selected", "false");
   await page.keyboard.press("Escape");
@@ -2257,7 +2259,7 @@ test("Explorer context downloads preserve multi-selection and directory contents
   expect(editingBounds!.width).toBe(bounds!.width);
   await name.press("Escape");
   await alpha.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "New file…", exact: true }).click();
+  await page.getByRole("menuitem", { name: "新建文件…", exact: true }).click();
   await name.fill("models/bias/local.cir");
   await name.press("Enter");
   const models = alphaFiles.getByRole("treeitem", {
@@ -2274,13 +2276,13 @@ test("Explorer context downloads preserve multi-selection and directory contents
   ).toHaveCount(0);
   await models.click({ button: "right" });
   const nestedDownload = page.waitForEvent("download");
-  await page.getByRole("menuitem", { name: "Download…", exact: true }).click();
+  await page.getByRole("menuitem", { name: "下载…", exact: true }).click();
   expect((await nestedDownload).suggestedFilename()).toMatch(/\.zip$/);
   // Selecting the parent and one descendant must not duplicate ZIP entries.
   await alpha.click({ modifiers: ["ControlOrMeta"] });
   await alpha.click({ button: "right" });
   const folderDownload = page.waitForEvent("download");
-  await page.getByRole("menuitem", { name: "Download selected (2)…" }).click();
+  await page.getByRole("menuitem", { name: "下载所选项（2）…" }).click();
   const folderStream = await (await folderDownload).createReadStream();
   const folderChunks: Buffer[] = [];
   for await (const chunk of folderStream!)
@@ -2323,13 +2325,14 @@ test("inline naming commits once on blur, cancels on Escape, and deletion uses a
   const input = workspace.getByRole("textbox", {
     name: "New simulation folder name",
   });
+  await expect(input).toHaveAttribute("autocomplete", "off");
   await input.fill("Gamma");
   // Switching selection must not implicitly create an experiment.
   await workspace
-    .getByRole("treeitem", { name: "Folder Beta", exact: true })
+    .getByRole("treeitem", { name: "文件夹 Beta", exact: true })
     .click();
   await expect(
-    workspace.getByRole("treeitem", { name: "Folder Gamma", exact: true }),
+    workspace.getByRole("treeitem", { name: "文件夹 Gamma", exact: true }),
   ).toHaveCount(0);
   await expect(input).toHaveCount(0);
   await workspace
@@ -2338,10 +2341,10 @@ test("inline naming commits once on blur, cancels on Escape, and deletion uses a
   await input.fill("Gamma");
   await workspace.getByRole("button", { name: "Create", exact: true }).click();
   await expect(
-    workspace.getByRole("treeitem", { name: "Folder Gamma", exact: true }),
+    workspace.getByRole("treeitem", { name: "文件夹 Gamma", exact: true }),
   ).toHaveCount(1);
   await expect(
-    workspace.getByRole("textbox", { name: "Simulation source editor" }),
+    workspace.getByRole("textbox", { name: "仿真源代码编辑器" }),
   ).toContainText("op");
   await workspace
     .getByRole("button", { name: "+ New experiment", exact: true })
@@ -2351,10 +2354,10 @@ test("inline naming commits once on blur, cancels on Escape, and deletion uses a
     .fill("Cancelled");
   await page.keyboard.press("Escape");
   await expect(
-    workspace.getByRole("treeitem", { name: "Folder Cancelled", exact: true }),
+    workspace.getByRole("treeitem", { name: "文件夹 Cancelled", exact: true }),
   ).toHaveCount(0);
   const gamma = workspace.getByRole("treeitem", {
-    name: "Folder Gamma",
+    name: "文件夹 Gamma",
     exact: true,
   });
   await gamma.focus();
@@ -2364,17 +2367,18 @@ test("inline naming commits once on blur, cancels on Escape, and deletion uses a
     .fill("Renamed");
   // Renaming existing folders still commits on blur.
   await workspace
-    .getByRole("treeitem", { name: "Folder Beta", exact: true })
+    .getByRole("treeitem", { name: "文件夹 Beta", exact: true })
     .click();
   const renamed = workspace.getByRole("treeitem", {
-    name: "Folder Renamed",
+    name: "文件夹 Renamed",
     exact: true,
   });
   await renamed.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "New file…", exact: true }).click();
+  await page.getByRole("menuitem", { name: "新建文件…", exact: true }).click();
   const fileName = workspace.getByRole("textbox", {
     name: "Relative file path",
   });
+  await expect(fileName).toHaveAttribute("autocomplete", "off");
   await fileName.fill("run.cir");
   await fileName.press("Enter");
   await expect(fileName).toHaveAttribute("aria-invalid", "true");
@@ -2384,7 +2388,7 @@ test("inline naming commits once on blur, cancels on Escape, and deletion uses a
     workspace.getByRole("tab", { name: /stimulus\.cir/u }),
   ).toBeVisible();
   const editor = workspace.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   await editor.click();
   await editor.press("Control+End");
@@ -2395,7 +2399,7 @@ test("inline naming commits once on blur, cancels on Escape, and deletion uses a
   const dialog = page.getByRole("dialog", { name: "Delete folder Renamed?" });
   await expect(dialog).toBeVisible();
   await expect(
-    dialog.getByRole("button", { name: "Cancel", exact: true }),
+    dialog.getByRole("button", { name: "取消", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(renamed).toBeVisible();
@@ -2403,7 +2407,7 @@ test("inline naming commits once on blur, cancels on Escape, and deletion uses a
   await renamed.press("Delete");
   await dialog.getByRole("button", { name: "Delete", exact: true }).click();
   await expect(renamed).toHaveCount(0);
-  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await page.getByRole("button", { name: "撤销", exact: true }).click();
   await expect(renamed).toBeVisible();
   await renamed
     .locator("..")

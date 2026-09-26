@@ -9,8 +9,6 @@ describe("FileCommandMenu", () => {
   it("presents one Cloud Save protocol and explicit local interchange", () => {
     const markup = renderToStaticMarkup(
       <FileCommandMenu
-        projectStoreLabel="云项目"
-        projectStoreItemLabel="云项目"
         cloudProjects={[
           {
             id: "cloud-1",
@@ -23,13 +21,13 @@ describe("FileCommandMenu", () => {
         activeCloudProjectId={null}
         canRevert
         hasRecoverySessions
+        checkAndSave={{ enabled: true, execute: vi.fn() }}
         projectInputRef={createRef<HTMLInputElement>()}
         onNewProject={vi.fn()}
         onSave={vi.fn()}
         onRefreshCloudProjects={vi.fn()}
         onOpenCloudProject={vi.fn()}
         onDeleteCloudProject={vi.fn()}
-        onRefresh={vi.fn()}
         onImportProject={vi.fn()}
         onImportSpice={vi.fn()}
         onExportProject={vi.fn()}
@@ -42,48 +40,24 @@ describe("FileCommandMenu", () => {
 
     expect(markup).not.toContain("Save as Cloud Copy");
     expect(markup).toContain(`云项目 (1/${CLOUD_PROJECT_LIMIT})`);
+    expect(markup).toContain('data-testid="file-cloud-project-list"');
+    expect(markup).toContain('aria-labelledby="file-cloud-projects-label"');
     expect(markup).toContain("Saved Circuit");
     expect(markup).toContain('class="cloud-project-time"');
     expect(markup).toContain("cloud-project-cloud-1");
-    expect(markup).toContain("导入项目文件…");
-    expect(markup).toContain("Import SPICE / SCS…");
-    expect(markup).toContain("导入 Cadence SPICE（`!` 全局网络）…");
+    expect(markup).toContain(">导入<");
+    expect(markup).toContain("项目文件…");
+    expect(markup).toContain("SPICE / SCS 文件…");
+    expect(markup).toContain("Cadence SPICE（`!` 全局节点）…");
     expect(markup).toContain('data-testid="cadence-spice-files"');
-    expect(markup).toContain("导出项目文件…");
+    expect(markup).toContain(">导出<");
+    expect(markup).toContain("图纸为 SVG");
+    expect(markup).toContain("恢复未保存的内容…");
+    expect(markup).not.toContain("Refresh app");
     expect(markup).not.toContain("Copy SPICE netlist");
     expect(markup).not.toContain("Copy Spectre netlist");
     expect(markup).not.toContain("Download Backup");
     expect(markup).not.toContain("Previous Project");
     expect(markup).not.toContain("cloud snapshot");
-  });
-
-  it("keeps the production Cloud Project store as the only configured store", () => {
-    const markup = renderToStaticMarkup(
-      <FileCommandMenu
-        projectStoreLabel="云项目"
-        projectStoreItemLabel="云项目"
-        cloudProjects={[]}
-        activeCloudProjectId={null}
-        canRevert={false}
-        hasRecoverySessions={false}
-        projectInputRef={createRef<HTMLInputElement>()}
-        onNewProject={vi.fn()}
-        onSave={vi.fn()}
-        onRefreshCloudProjects={vi.fn()}
-        onOpenCloudProject={vi.fn()}
-        onDeleteCloudProject={vi.fn()}
-        onRefresh={vi.fn()}
-        onImportProject={vi.fn()}
-        onImportSpice={vi.fn()}
-        onExportProject={vi.fn()}
-        onExportSvg={vi.fn()}
-        onExportRaster={vi.fn()}
-        onRevert={vi.fn()}
-        onOpenRecovery={vi.fn()}
-      />,
-    );
-
-    expect(markup).toContain(`云项目 (0/${CLOUD_PROJECT_LIMIT})`);
-    expect(markup).not.toContain("预览项目");
   });
 });

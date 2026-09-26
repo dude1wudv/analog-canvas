@@ -4,10 +4,7 @@ import { builtInSymbols, createProjectSymbolResolver } from "@icm/symbols";
 
 import { normalizeImportedProject } from "../../document/project-import-normalization";
 import type { ReplaceProjectOptions } from "../../document/use-project-file-lifecycle";
-import {
-  createLibraryExampleProject,
-  type LibraryProjectExample,
-} from "../../examples/library-examples";
+import type { LibraryProjectExample } from "../../examples/library-examples";
 import {
   clipboardPlacementAnchor,
   type SchematicClipboard,
@@ -114,6 +111,10 @@ export function createGalleryExampleCommands({
       const response = await fetchImpl(`/api/gallery/${entryId}`, {
         credentials: "same-origin",
       });
+      if (response.status === 401) {
+        setStatus("Sign in to open Community Gallery circuits");
+        return;
+      }
       if (!response.ok) {
         setStatus("此画廊条目不可用");
         return;
@@ -149,11 +150,7 @@ export function createGalleryExampleCommands({
   };
 
   const openLibraryExample = (example: LibraryProjectExample): void => {
-    const source = createLibraryExampleProject(example.id);
-    if (!source) {
-      setStatus(`Example is unavailable: ${example.name}`);
-      return;
-    }
+    const source = structuredClone(example.project);
     const exampleProject = prepareLibraryExample(source);
     if (beginProjectImportPlacement(exampleProject, example.name)) return;
     void guardDirtyReplacement(`Open ${example.name} example`, () => {
@@ -167,6 +164,10 @@ export function createGalleryExampleCommands({
       const response = await fetchImpl(`/api/gallery/${entryId}`, {
         credentials: "same-origin",
       });
+      if (response.status === 401) {
+        setStatus("Sign in to insert Community Gallery circuits");
+        return;
+      }
       const payload = response.ok
         ? ((await response.json()) as GalleryEntryPayload)
         : null;

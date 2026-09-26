@@ -1,111 +1,80 @@
 # MCP simulation tools
 
-## Simulation
+## Normal task
 
-Connecting from the editor includes `simulation.run`; there is no per-run
-approval or mandatory helper-reading gate. GUI and MCP use the same source,
-File and Run resources.
+Use the focused tool's displayed arguments directly. Query `describe_tool` for
+an unfamiliar field only; no full-contract or authoring-help prerequisite.
 
-Authoring helpers are optional. Agents retain direct native source editing and
-execution within existing authorization; helper use does not restrict parameters,
-analyses or code. Basic OP/DC/AC/TRAN code needs no dedicated helper call.
+1. Discover `simulation_run` capabilities once; choose an advertised Profile
+   and its engine. Read `netlist_code`/the relevant Cell interface for a drawn DUT,
+   not the entire drawing. Profile-managed model loads need no duplicate `.lib`.
+   Full capabilities (optionally `profileId`) are for detailed model facts.
+2. Create a saved `simulation_folder`, or reuse the current folder.
+   Creation returns its source owner, revision and paths. Use `simulation_edit`
+   for native code; `simulation_source` read `detail:"text"` reads code without
+   generated parameter mappings. Use `detail:"mapped"` for mapped Circuit edits.
+   Reuse successful update revisions/digests without a confirmation reread.
+3. Normally call `simulation_run` with `request:{operation:"run",source:...}`
+   and optional outer `waitMs:20000`. Use a project-folder source with `folderId`
+   and `expectedStructureRevision` from the latest source update (or a workspace
+   source with `workspaceId` and `expectedRevision`). This captures input before
+   network waits, prepares and submits once. Keep the same request ID and payload
+   on uncertain retries. Explicit `prepare` → `start` remains optional when you
+   want to inspect or reuse a frozen input; it is not a normal prerequisite.
+   The normal path holds the run submission within one bounded Agent relay
+   request; a still-running receipt can be continued with a bounded read.
+   This wait never starts another run.
+   Continue a running result with `read` and the same run ID, never another start.
+   Preserve an uncertain start's request ID. One hosted slot means sequential
+   starts or `simulation_batch`.
+4. For a graph, call `simulation_plot` `prepare-plot` directly with `runId`,
+   a new `name`, and `panels:[{analysisIndex:0,signals:[{signal:"v(out)"}]}]`
+   or a DC/AC/TRAN/Noise preset. Choose indices from `run.details.analyses`;
+   full signal/file mappings remain in the catalog when needed. Axis labels
+   omit units (the template appends them). It fetches selected tables itself:
+   **no preceding sync is needed**. Check Python >=3.10 and matplotlib once per
+   local environment, execute the returned argument vector, and inspect the image.
+   `dataStatus`, `scriptStatus`, `imageStatus` distinguish downloaded data,
+   prepared code and actual rendering. Nothing installs or executes automatically.
+5. For custom analysis use `simulation_data` `sync`, selecting `analysisIndex`
+   and `roles:["table"]` if appropriate. Omit selectors when a complete evidence
+   archive is requested; `fileIds:[]` updates only the directory. Local files are reused.
+   The default receipt keeps current-task counts and up to 16 file paths/timings;
+   larger selections use `filesOmitted` and the local index. Outer `detail:"full"`
+   retains every file and history. Explicit `workspace` lists local runs.
+   Full identities, units and dataset mapping remain in the returned local index.
+   `simulation_results` `catalog` is the explicit full remote directory, not
+   a mandatory extra step. Read data locally rather than paging waveform previews.
 
-1. `simulation` / `capabilities` discovers the Profile, qualified analyses,
-   parser support, declared rawfile collection and resource limits without
-   starting an execution. Read the actual engine and language, not a remembered
-   ngspice default. Follow the [shared engine rules](../shared/simulation.md).
-2. `simulation_folder` lists, gets, creates, clones, renames and removes saved
-   source experiments. Omit the root Cell to create a graphless experiment.
-   A saved setup v4 owns authored files, its entry/config paths, generated
-   Circuit bindings and declared dependencies. It does not contain another
-   structured analyses list. Ordinary Project edits own DUTs, formal ports,
-   independent sources and wiring.
-3. Use `simulation_files` to read and edit source/config. For code-authoritative
-   experiment config version 2, native code owns analyses, saves, parameters,
-   options and measurement logic. `simulation` / `authoring-help` exposes the
-   current native syntax and Python reporting helpers. Config owns environment
-   and collection; an MCP tool name does not select a simulator dialect.
-   JSON output/measurement/device-OP helpers are for legacy config version 1
-   only. Inspect the actual version before choosing a helper. Warnings and
-   invalid drafts remain repairable; they are not session revocations.
-4. `prepare` with
-   `source:{kind:"project-folder",folderId,expectedStructureRevision}` freezes the
-   input and returns `prepared.id`, `digest`, vectors and artifacts.
-   On a successful preparation, proceed to start. Read input artifacts and source
-   maps when investigating a discrepancy, not as a mandatory second check.
-   Use returned references rather than inventing artifact names or extensions.
-5. `start` uses `preparedId` and `digest`, returning `run.id` immediately.
-   Reuse the same outer request ID and payload for a transport retry.
-   `read` / `cancel` use `runId`; each new poll has a new request ID.
-   `inputStatus` reports later edits without rewriting that run's evidence.
-6. Use complete `result.data` directly. Run receipts already carry artifact
-   references; `export` is only needed to obtain a missing or refreshed inventory.
-   `simulation_files` with
-   `request:{action:"artifact",artifactId}` reads paged content; `outputPath`
-   saves complete bytes after length/SHA-256 verification. Deck, rawfile,
-   JSON, log and CSV share this File Resource. Large receipts set
-   `resultPreview`; full result/output artifacts remain available.
-   For result fields, measurement verdicts and canonical output files, read
-   [Spec rules](../simulation-specs.md). Browser visibility, archival limits
-   and durable delivery follow [result handoff](../simulation-result-handoff.md).
-   `resultPreview` means the receipt is shortened, not that the underlying data
-   was truncated. Read a complete artifact when needed; do not download a second
-   copy of data already returned in full. Poll only while a run is active, with
-   bounded backoff. After interruption, resume reading the same run.
+Iteration: edit → run/wait → plot or selected sync. Do not repeat
+connection, discovery, folder creation, environment checks or full archive
+downloads when their inputs have not changed. Select the final files needed
+for the requested handoff; a complete archive is optional.
+For styling-only iterations, edit and execute the existing local plot script;
+no connection, sync or new plot preparation is needed.
 
-### Device facts and numerical results
+## Results and freshness
 
-Use `prepared.deviceOperatingPoints` to match `documentId`, `instanceId` and
-`occurrence`. For each acquisition expression in `values`, join its
-`acquisitionId` to `prepared.vectors[].probeId` to obtain the exact vector.
-The value record supplies the parameter and unit. Multiple primitive records
-are separate candidates, not quantities to sum. This is the known mapping,
-not a complete inventory of every model parameter. Missing entries do not prove
-a parameter is unsupported: inspect model/engine facts before authoring it.
-Do not guess an internal path from a display reference.
+Check execution, collection, per-analysis diagnostics and requested measurements
+independently; completion does not prove every analysis produced data.
+`run.details` summarizes collection/Specs and separates executor wait, result
+materialization and catalog-save time. Managed runs additionally report server
+queue/execution, result fetch and client polling. Simulator-only time remains
+`result.durationMs`; do not treat it as end-to-end latency. Registered files hold
+complete evidence.
+Run summaries reference the catalog instead of repeating its file list; outer
+`detail:"full"` retains the complete run metadata response.
+`export` retries failed evidence saving on the same run without executing again.
 
-Execution completion alone does not promise waveform capture. For ngspice,
-an informational diagnostic identifies a completed run without requested rawfile
-capture; log-only and scalar-measurement runs remain valid. Requested but missing,
-unreadable or truncated rawfiles are explained by existing result diagnostics.
-Use raw/result JSON/analysis CSV for arrays, rather than parsing printed log tables.
-Keep full vector names, original axes, complex values and unknown units intact.
+History deletion/retention, cache freshness and transfer details are in
+[detailed contracts](simulation-reference.md); they are not steps in an ordinary run.
 
-### File ownership and editing
+Prepare's default summary points to complete `preparation.json`; outer
+`detail:"full"` exposes it inline. OP mappings describe available vectors, not
+captured values; explicitly save needed device parameters (`save all` is not
+every parameter). Native source remains authoritative.
 
-For saved experiments use `owner:{kind:"project-folder",folderId}`. Updates use
-the Project structure revision and ordinary undoable transactions. `read`
-returns exact text, a SHA-256 `textDigest`, and generated instance/parameter
-spans when applicable. `update` accepts writes/removes or UTF-16 range patches
-with that digest. `circuitEdits:[{path,textDigest,text}]` maps only reported
-editable numeric fields to normal parameter transactions; topology edits go
-through Canvas APIs. Project file writes require `project.import`; mapped
-circuit changes additionally require connectivity editing authority.
-
-For an expiring graphless session workspace, call File `create`, then
-`update` with `owner:{kind:"session-workspace",workspaceId}`,
-`expectedRevision`, `entry`, and authored files including a valid config.
-Prepare using `source:{kind:"workspace",workspaceId,expectedRevision}`.
-Environment belongs to the config, not a second prepare argument. Use
-`simulation_folder` instead when this work must survive Project save/reload.
-
-Files and dependencies are virtual-root-relative. Environment owners resolve
-declared dependency identities/digests; arbitrary host paths and startup
-configuration are not writable. Complete user code owns its analyses and
-capture statements. ngspice ASCII/appendwrite snippets are not VACASK syntax.
-Use the actual native helper and collection contract. Native repeated plots stay
-separate records, never an implicit managed Batch.
-
-### Batch and evidence
-
-`prepare-batch` freezes 1–16 saved-setup items at one structure revision.
-`prepare-sweep` uses saved Run Plan axes or explicit corner, temperature,
-variable or exact-parameter axes. Nominal values come from source; point
-projections do not mutate the Project. Both become an ordinary sequential
-batch consumed by `start-batch`, `read-batch`, `cancel-batch` and per-run
-`read`/`export`. Reuse start request identity after an uncertain response.
-
-Read `error.code`, `stage`, `recovery` and located diagnostics, repair input,
-and continue. Missing models, busy executors, timeouts and failed simulations
-do not revoke the session. An uncertain accepted execution is `lost`, never
-automatically resubmitted.
+Read [detailed contracts](simulation-reference.md) only for native Noise capture,
+OP mappings, patch semantics, Batch, plot units/cursors or recovery.
+`simulation` and `simulation_files` remain compatible broad entries sharing
+the same implementation. There is no new protocol or permission gate.

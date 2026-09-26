@@ -1,12 +1,12 @@
+import { identifierTextDocument } from "./identifier-text.js";
 import type { RichTextDocument, RichTextRun, RichTextStyle } from "./schema.js";
 
 /**
  * Semantic text emitted by current authoring for standardized schematic names.
  *
- * This is deliberately not a markup parser. Every input character remains in
- * the RichText projection; this helper only assigns the initial Razavi house
- * style. Callers use an explicit RichText AST for later formatting and the
- * explicit Formula editor for LaTeX syntax.
+ * An underscore starts a visible subscript; the underlying bound name retains
+ * that separator. Electrical readers must read the binding, not flatten this
+ * presentation. RichText carries later formatting independently of the name.
  */
 export type SemanticTextKind =
   | "default-instance"
@@ -26,6 +26,16 @@ function mathBase(value: string): RichTextRun {
 
 function uprightMathSubscript(value: string): RichTextRun {
   return span([span([{ kind: "text", value }], "bold")], "subscript");
+}
+
+function uprightMathSuffix(
+  value: string,
+  placement: PortLabelSuffixPlacement,
+  suffixCase: PortLabelSuffixCase,
+): RichTextRun {
+  const bold = span([{ kind: "text", value }], "bold");
+  const cased = suffixCase === "preserve" ? bold : span([bold], suffixCase);
+  return placement === "subscript" ? span([cased], "subscript") : cased;
 }
 
 /**
@@ -113,22 +123,65 @@ export function voltageNodeTextDocument(value: string): RichTextDocument {
 }
 
 /**
+ * Presentation for a current's name such as Iout, IREF or I1, read the way a
+ * voltage node's is: a bold italic leading I over a smaller bold upright
+ * subscript, with letter case kept exactly.
+ */
+export function currentNodeTextDocument(value: string): RichTextDocument {
+  const head = value.slice(0, 1);
+  const tail = value.slice(1);
+  if (head.toLowerCase() !== "i" || tail.length === 0 || /\s/u.test(value))
+    return { runs: [{ kind: "text", value }] };
+  return { runs: [mathBase(head), uprightMathSubscript(tail)] };
+}
+
+/**
+ * Presentation for a device Reference written as letters followed by an
+ * index, such as M1 or R12: bold italic letters over a smaller bold upright
+ * index subscript. Any other spelling stays the name itself.
+ */
+export function deviceReferenceTextDocument(value: string): RichTextDocument {
+  const match = /^(\p{L}+)(\p{N}+)$/u.exec(value);
+  if (!match) return { runs: [{ kind: "text", value }] };
+  return { runs: [mathBase(match[1]!), uprightMathSubscript(match[2]!)] };
+}
+
+export type PortLabelSuffixCase = "preserve" | "uppercase" | "lowercase";
+export type PortLabelSuffixPlacement = "subscript" | "baseline";
+
+export interface PortLabelFormatOptions {
+  suffixCase: PortLabelSuffixCase;
+  suffixPlacement: PortLabelSuffixPlacement;
+}
+
+export const DEFAULT_PORT_LABEL_FORMAT: PortLabelFormatOptions = {
+  suffixCase: "preserve",
+  suffixPlacement: "subscript",
+};
+
+/**
  * Canonical presentation applied by the explicit "format all Ports" action.
  *
  * Unlike the automatic formal-Port default, this applies to every Port name:
  * its first character uses the established bold italic face, while the
- * remaining characters use the same bold face upright and subscripted. Letter
- * case is authored content and stays visible exactly as entered, along with
- * the electrical identity and netlist spelling.
+ * remaining characters use the same bold upright face. The default preserves
+ * authored case and uses a subscript; an explicit batch-format choice may
+ * project the suffix in upper/lower case or at the baseline without changing
+ * the electrical identity or netlist spelling.
  */
-export function canonicalPortTextDocument(value: string): RichTextDocument {
+export function canonicalPortTextDocument(
+  value: string,
+  options: PortLabelFormatOptions = DEFAULT_PORT_LABEL_FORMAT,
+): RichTextDocument {
   if (value.length === 0) return { runs: [{ kind: "line-break" }] };
   const [head, ...tailCharacters] = Array.from(value);
   const tail = tailCharacters.join("");
   return {
     runs: [
       mathBase(head!),
-      ...(tail.length > 0 ? [uprightMathSubscript(tail)] : []),
+      ...(tail.length > 0
+        ? [uprightMathSuffix(tail, options.suffixPlacement, options.suffixCase)]
+        : []),
     ],
   };
 }
@@ -139,34 +192,6 @@ export function semanticTextDocument(
   kind: SemanticTextKind,
 ): RichTextDocument {
   if (value.length === 0) return { runs: [{ kind: "line-break" }] };
-  // A Net Label or formal Port is a complete authored name, not a designator or a
-  // symbolic variable with an implicit index. Keep the Razavi bold-italic
-  // face, but require an explicit RichText edit for subscript semantics.
-  // A trailing polarity sign still qualifies the whole name.
-  const signed = /^(.+?)([+-])$/u.exec(value);
-  if (kind === "formal-port" && value.slice(0, 1).toLowerCase() === "v") {
-    if (!signed) return voltageNodeTextDocument(value);
-    return {
-      runs: [
-        ...voltageNodeTextDocument(signed[1]!).runs,
-        { kind: "text", value: signed[2]! },
-      ],
-    };
-  }
-  if (kind === "net-label" || kind === "formal-port") {
-    return {
-      runs: signed
-        ? [mathBase(signed[1]!), { kind: "text", value: signed[2]! }]
-        : [mathBase(value)],
-    };
-  }
-  // Other semantic identifiers retain the established leading-symbol and
-  // subscript convention.
-  if (!signed) return { runs: symbolRuns(value) };
-  return {
-    runs: [
-      ...symbolRuns(signed[1]!),
-      { kind: "text" as const, value: signed[2]! },
-    ],
-  };
+  if (kind === "route-marker") return { runs: symbolRuns(value) };
+  return identifierTextDocument(value);
 }

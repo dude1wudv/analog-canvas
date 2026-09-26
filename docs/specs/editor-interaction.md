@@ -17,8 +17,10 @@ state as a Symbol; its commit factory alone differs, creating one typed
 subcircuit Instance through a Project structural transaction. `Xn` remains its
 sole Netlist Reference and is emitted, but an internal Cell shows only its
 Cell/master name in the normal Reference slot by default. That attached text
-has no identity or hierarchy authority. Both `port` and
-`port-filled` remain manually reachable artwork for one concept: **Cell Pin**.
+has no identity or hierarchy authority. The hollow `port` is the visible
+**Cell Pin**; the filled `port-filled` is the **Bias Voltage Port** used for
+VB-style bias entries. Both remain manually reachable, independently authored
+formal-interface objects in the current model.
 Terminal `P` participates in ordinary snap, wire, move/stretch, and selection
 behavior. Placement atomically creates the Instance, Base Net membership, and
 one stable ordered Cell terminal through a Project structural transaction. It
@@ -35,10 +37,14 @@ existing component, Cell, Cell-Pin, external-master, or VDD-rail planner. This i
 an editor interaction boundary only: it does not add a persisted project type,
 an Edit Engine operation, or an Agent API endpoint.
 
-**Port** and **Filled Port** are hollow and filled visual variants of Cell Pin.
-`P`, the Library, and full Insert all enter the same placement planner. An
-isolated Pin receives the first unused `Vin`, `Vin2`, … interface name and the
-`passive` direction; a named contact or explicit text takes precedence.
+**Cell Pin** and **Bias Voltage Port** have distinct visible meanings: the
+hollow marker is the ordinary Pin, while the solid marker denotes a bias
+voltage entry. Both use the same formal-terminal storage and placement planner.
+`P`, the Library, and full Insert all enter the same placement planner. New
+hollow Pins allocate `Vinp`, `Vinn`, `Voutp`, `Voutn`, then numbered groups
+(`Vin2p` … `Vout2n`), each drawn as V over an upright lowercase subscript; solid Bias
+Voltage Ports allocate `VB1`, `VB2`, and so on. A named contact or explicit
+text takes precedence, and the initial direction is `passive`.
 Duplicate Port Names are valid. Placement and rename always create or update
 only the selected Cell Pin; a matching name never attaches markers, merges
 Nets, or synchronizes directions. The bound name is edited in place and its
@@ -130,7 +136,8 @@ project format or parallel netlist authority is introduced.
 
 The optional `symbol` enum exposes only the existing pin-compatible input,
 output, or switch-contact variants. `signalFlow` owns formula presentation
-overrides. Setting `placement` to null uses the retained-instance unplacement
+overrides; the body text's authored look is edited on the canvas and is kept
+while the JSON leaves its characters unchanged. Setting `placement` to null uses the retained-instance unplacement
 planner; coordinates re-place the retained instance. Electrical connectivity
 and Cell-level interface/layout operations retain their existing typed
 authoring surfaces; removing a component remains an explicit Delete action.
@@ -279,6 +286,16 @@ commit. A rail explicitly drawn onto an existing Global supply retains that
 electrical connection. Deleting the rail also deletes its power label and rail-only Junctions;
 an otherwise-unused local Net follows the ordinary orphan lifecycle.
 
+Both VDD Power and Power Rail store their label's standard supply look when
+they are placed: an italic leading `V` over an upright subscript, as V_DD. The
+look is the label's own `formatOverride`, so drawing label settings and later
+rule changes never redraw it, and the electrical name keeps its exact spelling
+(`VDD`). While the label still carries that default, typing on it renames the
+supply exactly as typed and keeps the look for any `V`-led spelling such as
+`VDDA` or `VCC`; another spelling such as `AVDD` returns to the ordinary label
+rules. Restyling never renames the supply, and a restyled label keeps the
+author's formatting through later renames.
+
 ## Interaction states
 
 The canonical reducer owns exactly one exclusive canvas interaction:
@@ -300,6 +317,23 @@ commits one free text object at that preview position and opens its text editor.
 Before that click, neither the document nor undo history changes; Escape or
 choosing another tool discards the preview. Fixed catalog text presets keep their
 existing placement behavior.
+
+**Annotation → Polyline**, also available in the Library, draws a solid open
+path with any number of vertices. Click each vertex, then double-click or press
+Enter to finish; Escape cancels the unfinished drawing. Click the first vertex
+after placing at least three distinct vertices to close a polygon. Drawing
+angle constraints apply to each leg from its preceding vertex.
+
+Select the path to drag its round vertex handles independently. The four square
+handles outside its bounding box stretch it horizontally and vertically with
+the opposite corner fixed. A closed path's first/last vertex moves as one seam.
+Double-click a segment to add another vertex. In Q Properties, `geometry.points`
+edits the ordered coordinates and `geometry.closed` adds/removes the closing
+edge. `appearance.startStyle` and `appearance.endStyle` independently select
+no head, small/medium/large arrow, open arrow, or dot; color, stroke and line
+style use the same Properties code. These are visual annotations and introduce
+no electrical instances or nets. Project files retain the existing free-arrow
+path representation, including an explicit final edge for a closed polygon.
 
 Drawn objects place on the annotation pitch (1, 5 or 10; Canvas settings, 5 by
 default), which is deliberately free of the Document's electrical grid so a
@@ -366,10 +400,10 @@ source selection remains unchanged. The status bar's grid button, beside the
 zoom controls, shows and hides the background grid dots in one click; it reads
 **Grid On** / **Grid Off** in wide windows and collapses to its icon at
 half-window widths (1100px and below). It is the same editor-local state as
-`canvas.showGrid` in Style settings and changes only the canvas paint. Instance reference labels use the first active Document grid line one interval beyond
-the drawn symbol ink. The padded interaction envelope never contributes to
-that clearance, and placement uses nearest-grid normalization for calibrated
-finite-decimal ink edges rather than directional outward snapping. A 45-degree
+`canvas.showGrid` in Style settings and changes only the canvas paint. Instance reference labels keep a fixed four-unit clearance between their ink
+and the drawn symbol ink, on every side and for every family, at whole-unit
+coordinates rather than on the Document grid. The padded interaction envelope
+never contributes to that clearance. A 45-degree
 turn reflows a canonical label from its local side at that fixed spacing; eight
 such turns return its position and alignment to the initial values. Opening
 I cancels the current canvas interaction before showing the dialog.
@@ -559,6 +593,12 @@ hover and preview are not electrical mutations.
 Internal `C`, Gallery canvas insertion, and the existing Agent copy command
 use the same Project-aware copy planner. C retains its pointer-following ghost,
 rotation/reflection shortcuts, repeated click placement, and Escape cancellation.
+A copy in hand stays in hand across project tabs: activating or opening another
+tab prepares the same capsule against that tab's Project and keeps its turns and
+flips, so `C` in one tab and a click in another places it there. `Ctrl/Cmd+C`
+then `V` or `Ctrl/Cmd+V` places exactly what `C` places, with the same contact
+planning and Reference rules; no copy path brings a name from outside the
+selection.
 Gallery selects the source top Cell body; referenced child Cells remain hierarchy
 and are imported as dependencies. Inserting a nonempty hierarchical Gallery entry
 does not replace the current Project.
@@ -566,10 +606,24 @@ does not replace the current Project.
 A transient copy capsule carries the selected objects, Cell parameter context,
 referenced external interfaces, child-Cell closure, symbol-library identity, and
 referenced source-file records. It is not persisted or added to the Agent API.
-Source-file records are provenance, not bundled PDK model contents. Simulation
-folders, simulator configuration, run results and unrelated Cells are not copied.
+Source-file records are provenance, not bundled PDK model contents. Complete
+Cell composition also carries source folders bound within that Cell closure,
+including authored files and dependency declarations; partial selections do
+not carry an entire testbench. Run results, external model bytes and unrelated
+Cells are not copied. Authored simulation text is preserved, so references
+affected by composition may require repair before preparation.
 
-Every placement allocates new canvas object IDs and collision-free References.
+Every placement allocates new canvas object IDs and collision-free component
+instance References: a copy keeps its Reference where that name is still free
+and otherwise takes the next free one. Net names and Cell Pin names remain exactly as authored on
+all copy paths (C, Ctrl/Cmd+C/V, project tabs, and Gallery insertion), including
+when the destination already has the same name. No `_copy` suffix is added.
+Copied electrical labels retain their RichText, overbars, subscripts, typography,
+color and host-relative offsets; moving a copy changes its position only.
+Equal explicit Net/Pin names resolve to the same Logical Net while their drawn
+routes and individual markers remain independently editable. Voltage expressions
+keep their unchanged node names; behavioral references to renamed component
+instances still reject rather than silently target a different device.
 Compatible external definitions are reused by validated interface and presentation,
 not by coincident source IDs. Incompatible same-name definitions or Cell parameter
 defaults reject before placement. Child imports share one immutable source snapshot;
@@ -616,9 +670,15 @@ The canvas exposes **Visual annotation**. Instance labels follow
 Reference through the same prefix and uniqueness validation as Properties and
 the editable netlist; its Annotation ID, anchor and presentation stay intact.
 
-**Use display alias** is an explicit checkbox in the floating label editor.
+**Use display alias** is a checkbox in the floating label editor.
 Checking it keeps literal RichText on the same Annotation, independent of the
-netlist name. Existing literal annotations open with it checked. Alias mode
+netlist name. Existing literal annotations open with it checked. Applying text
+that cannot become the part's netlist name — not a portable identifier (a Greek
+letter, a space), the wrong device letter, or another part's Reference — checks
+it by itself: the label shows the typed text, the Reference is unchanged, and
+the status bar names the netlist name that stays. Such an alias typed without a
+look of its own is drawn in the Reference style (`Φ2` as Φ over a subscript 2).
+An unchanged name always stays bound, even when only its look was edited. Alias mode
 supports bold, italic, scripts, overbar, symbols, alignment, Shift+Enter and
 formulas. Plain synchronized names do not accept arbitrary formatted aliases.
 Unchecking immediately restores the live Reference binding and default content
@@ -659,10 +719,48 @@ visual anchor. A resolved anchor drives both the glyph and every text
 hit/marquee surface; its fallback is only for an orphaned target, never an
 editor-local alternate position. Dragging a route-anchored Net label re-anchors
 it along its own Route (segment, t, and a generous normal-offset band) instead
-of moving a fallback position. Selecting a `power-rail` together with its power
+of moving a fallback position. A new Net Label, placed with `L` or by naming a
+selected Wire, takes its Wire's standard side, whichever way the Wire was drawn.
+On a horizontal segment it sits above the Wire. On a vertical segment it sits to
+the right and starts at the Wire, so it never covers it. Each selected label
+draws a glowing tether to what it belongs to, and so do the labels of a lone
+selected part:
+
+- a Net Label to its Wire tap;
+- a pin's name to the pin;
+- a part's name or value to the part, whose outline lights.
+
+A part's labels can end up nearer another part once parts move; the tether
+still shows which part owns them. It stretches with whichever end a drag moves.
+Selecting a `power-rail` together with its power
 label is one visual deletion: the label removal is planned once, so the atomic
 transaction cannot reject a duplicated annotation removal. Drafting text has
 no electrical meaning.
+
+### Text authority and formatting rules
+
+The RichText document is one presentation format, not one shared identity
+field. The following distinctions are intentional and apply equally after
+save/reopen and when the same Project is entered through Project Code:
+
+| Text on canvas           | Authoritative source              | Ordinary text edit                                   | Formatting-only edit                                                  |
+| ------------------------ | --------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------- |
+| Following instance label | `Instance.reference`              | Renames the Reference with its electrical validation | Stores a same-name `formatOverride`; the binding stays live           |
+| Instance display alias   | Annotation `content`              | Edits only the alias                                 | Edits only the alias; the Reference is unchanged                      |
+| Cell Pin label           | Formal terminal name              | Renames that declaration and reconciles callers      | Stores a same-name `formatOverride` and projects it to the parent pin |
+| Net or power label       | Its name claim or formal terminal | Uses the owning Net/terminal rename path             | Retains the name and stores its presentation                          |
+| Free drafting text       | Drafting `content`                | Edits only the drawing                               | Edits only the drawing                                                |
+
+Automatic name typography, an authored override, and an explicit drawing-wide
+formatting action are different operations; [names and labels](names-and-labels.md)
+owns their rules. An ordinary text edit renames exactly as typed, and a style
+change never renames the electrical object. The explicit whole-drawing naming
+action may change names and is undoable. Newly created free drafting text uses the
+Razavi default, while a Cell/master name remains a whole word rather than a
+symbol with an index. The explicit **Format all Ports** command may change the
+visible suffix case or placement without changing any Port Name. These are
+separate policies over the same RichText representation, not alternative
+storage protocols.
 
 The standalone `+` and `−` entries in **Annotations** are fixed polarity
 marks, not editable text. Their vector-stroke center is the placement anchor,
@@ -691,6 +789,17 @@ The existing W/L projection retains its established geometry. Source-only fields
 and bound electrical names do not gain arbitrary fraction formatting, and an
 atomic Formula continues to use its existing editor.
 
+A Symbol's body text (a converter's ADC, a transfer function, a lettered
+amplifier's A) is a label like any other: double-clicking it opens the same
+floating RichText editor, on the text exactly as it draws, with every format a
+label offers. As in textbook notation, a body word or abbreviation such as
+ADC or DAC stands upright by default, while a single-letter quantity such as
+an amplifier's A (or A_v) slants. A look that differs from the Symbol's own is
+stored beside the text; returning to the Symbol's own text and look removes
+the override. Text
+without a stored look keeps drawing as before, including the compact syntax
+(`z^-1`, `g_m`, `1/(1-z)`) that Agents and the Properties JSON write.
+
 The floating RichText editor has one formula action for editable text content.
 It opens a MathLive math field plus the exact LaTeX source, lets the author
 choose inline or display intent, validates against the bounded Analog Canvas
@@ -708,18 +817,26 @@ Net and Cell terminal names refuse a non-equivalent formula in
 the Formula panel. Ordinary character edits and formatting commands do not use
 this formula-only decision path.
 
+The symbol menu (Ω) inserts a Greek letter or circuit symbol at the caret:
+every lowercase Greek letter, the capitals LaTeX names (Γ Δ Θ Λ Ξ Π Σ Υ Φ Ψ
+Ω), and ± ≈ ≤ ≥ ∞ ° · →. It floats above the page yet belongs to the editor,
+so choosing from it keeps the text open for further input. In any RichText
+editor, a LaTeX Greek name such as `\phi` or `\Omega` followed by Space is
+replaced by its letter, consuming the Space; an unknown name stays as typed.
+
 ## Project sessions
 
-New, Open, SPICE import, Gallery/built-in example open, and recovery restore are
-Project-session transitions rather than Document edits. A dirty current Project
-always requires an explicit discard or cancel decision before one of these
-transitions commits; a successful browser-recovery write is safety evidence,
-not authorization to replace the foreground Project. Candidate files and
-gallery/recovery payloads are parsed and validated before that decision.
+Opening an independent project tab, activating an existing tab and replacing
+the current Project are distinct session operations, not Document edits.
+Tab activation retains the other tabs' controllers, content and Undo histories;
+pending code edits must first be applied or discarded. Closing dirty work or
+replacing it requires an explicit decision. A successful recovery write is
+safety evidence, not permission to discard. Candidate files and Gallery/recovery
+payloads are parsed and validated before installation.
 
-The editor has no Previous Project stack: replacing a live session does not
-retain the outgoing Project in memory for a later swap, and the File menu
-offers no **Previous Project** command.
+The [persistence contract](persistence-and-recovery.md#browser-window-workspace)
+owns refresh restoration and its limits. Tabs are explicit open sessions, not
+a hidden Previous Project stack for a replaced Project.
 
 Project dirty detection covers `structureRevision` and every Document revision,
 not only the active Cell, and compares the content with the last acknowledged
@@ -758,12 +875,14 @@ planner before the transaction is submitted.
 
 ## Files, recovery, and replacement
 
-Open, example load, restore, and human-approved staged import replace the entire
-Project through one replacement boundary; they are not Edit Engine
-transactions. Replacement cancels pending recovery for the outgoing Project
-and terminates its Agent session. A complete Project covered by the schema
-24→57 upgrade chain may be upgraded at the read boundary and then enters the
-editor only as schema-58; migrated files are marked as needing save.
+When Open, example load, restore or human-approved staged import replaces the
+current tab, it uses one Project replacement boundary, not an Edit Engine
+transaction. Opening a separate tab does not discard the current one.
+Replacement cancels pending recovery for the outgoing Project and terminates
+its Agent session. A Project supported by the
+[file-format contract](project-file-format.md) is decoded/upgraded before
+installation into the normalized editor model; migrated files are marked as
+needing save.
 
 Selection, viewport, active tool, previews, Agent tokens, and approval UI are
 transient and never enter Project JSON. Recovery is scheduled only after a
@@ -804,8 +923,8 @@ topology hash, history, recovery, or formal export.
 - component placement and ordinary terminal connectivity for both
   interface-marker assets;
 - VDD rail picker/Library preview, cancellation at both phases, creation with no
-  VDD Instance or annotation-owned stub, bold italic subscript label, default
-  exit, selection, and complete visual deletion;
+  VDD Instance or annotation-owned stub, stored italic-V / upright-subscript
+  label, default exit, selection, and complete visual deletion;
 - canonical MOS default-variant and explicit bulk behavior;
 - move/stretch, segment tap, crossing non-connectivity, cancel, delete, and
   undo/redo tests;

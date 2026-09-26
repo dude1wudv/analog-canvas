@@ -22,9 +22,10 @@ published folder schema. Save setup v4 source/config files through File Resource
 `simulation-input` / `update` with a `project-folder` owner (MCP
 `simulation_files`). Read the actual input revision before writing.
 
-Use the sibling Simulation resource: `capabilities`, `prepare` with the
-folder and current structure revision, `start` with the returned prepared ID
-and digest, then `read` to completion. Preserve returned IDs; do not invent
+Use the sibling Simulation resource: discover `capabilities` as needed, submit
+`run` with the folder and current structure revision, then `read` to completion.
+Explicit `prepare`/`start` remains available for input inspection or frozen-input
+reuse, not a mandatory extra round trip. Preserve returned IDs; do not invent
 profiles, analysis records, output IDs or revisions. Preparation is not execution,
 and a started run is not a successful result. Read diagnostics and outputs, then
 perform the requested measurements. For code-authoritative experiment config
@@ -47,9 +48,20 @@ merely because a run started or source Project was exported.
 
 Helpers are optional authoring assistance, never an execution prerequisite or a
 restriction on authorized native source edits. A successful prepare can go straight
-to start. Use complete returned data or existing artifact references; export is
-an optional inventory lookup. `resultPreview` shortens the receipt only; actual
-file truncation is reported separately in diagnostics.
+to start. Run reads always return sample-free receipts; `resultPreview` means
+file-backed details regardless of result size. `run.details` gives execution,
+collection, Spec counts and diagnostic counts when known; missing counts on a
+restored historical run mean unknown, not zero. Complete diagnostics and samples
+are in the registered files. Actual file truncation is reported separately.
+`catalog` lists datasets, units and representations. Use `section:"files"` or
+`section:"datasets"` with `offset`/`limit` for a large directory; follow
+`page.nextOffset` to null. A section page omits other sections and signalTargets;
+the unfiltered catalog remains complete. Download chosen files for local analysis.
+`capabilities` accepts `detail:"summary"` and optional `profileId`; its
+`discovery.fullRequest` retrieves complete model facts. Default HTTP capabilities
+remain full for existing clients; MCP requests summary automatically.
+`export` is an optional inventory lookup and retries retained evidence publication
+after a storage failure. It never starts another simulation.
 
 For ngspice, `save` selects vectors, `print` produces log text, and `write`
 creates the rawfile consumed by the existing JSON/CSV pipeline. A DC device
@@ -69,7 +81,9 @@ write out.raw all
 
 `V1` is an example source, not a discovered Project identity. `save all` alone
 does not request every internal device parameter. Add resolved device expressions
-explicitly. Write after each analysis that should be collected; the current
+explicitly for OP as well as sweeps. A preparation's device/vector mapping is
+discovery, not proof of acquisition; the collected dataset's signals show what
+was actually saved. Write after each analysis that should be collected; the current
 ngspice collector supports one literal relative path, with appendwrite for
 multiple plots. No write is valid for a log-only task. The executor does not
 silently insert capture commands. This fragment is not VACASK syntax.

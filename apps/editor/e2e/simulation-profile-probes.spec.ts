@@ -65,11 +65,11 @@ test("Profile-backed OP picker discovers an implicit library without writing its
     buffer: Buffer.from(JSON.stringify(project)),
   });
   await page.getByTestId("open-analog-simulation").click();
-  await page.getByRole("button", { name: "Helper", exact: true }).click();
+  await page.getByRole("button", { name: "助手", exact: true }).click();
   await page
     .getByRole("option", { name: "Save device operating point…", exact: true })
     .click();
-  const picker = page.getByRole("dialog", { name: "Save signal" });
+  const picker = page.getByRole("dialog", { name: "保存信号" });
   const device = nativeSimulationDevices(project, folder.input).find(
     (d) => d.instanceId === "M1",
   )!;
@@ -82,13 +82,13 @@ test("Profile-backed OP picker discovers an implicit library without writing its
   await choice.click();
   await expect(choice).toContainText("Added");
   const editor = page.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   await expect(editor).toContainText(gm.save);
   await expect(editor).not.toContainText("icm-models");
   await expect(picker.getByRole("status")).toHaveCount(0);
   await picker.getByRole("button", { name: "Done", exact: true }).click();
-  await page.getByRole("button", { name: "Helper", exact: true }).click();
+  await page.getByRole("button", { name: "助手", exact: true }).click();
   await page
     .getByRole("option", { name: "Save terminal current…", exact: true })
     .click();

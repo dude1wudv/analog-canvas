@@ -69,8 +69,9 @@ export function SourceProbePicker({
         autoFocus
         value={query}
         onChange={(e) => setQuery(e.currentTarget.value)}
-        aria-label="搜索信号"
-        placeholder="搜索信号或输入准确的原生向量…"
+        aria-label="Search signal"
+        autoComplete="off"
+        placeholder="Search signal or enter an exact native vector…"
       />
       <div className="simulation-helper-options">
         {filtered.map((choice, index) => (

@@ -11,10 +11,11 @@ import {
   deriveStableId,
   foldNetName,
   projectCellInterface,
-  rewriteRichTextPlainText,
+  renamedLabelFormat,
   routeEnd,
   semanticTextDocument,
 } from "@icm/model";
+import type { PortLabelFormatOptions } from "@icm/model";
 import {
   deviceDescriptor,
   resolveReviewedExternalBinding,
@@ -1321,19 +1322,20 @@ export function planRenameCellTerminal(
         const automaticFormat =
           JSON.stringify(annotation.formatOverride) ===
           JSON.stringify(semanticTextDocument(terminal.name, "formal-port"));
+        const format = automaticFormat
+          ? undefined
+          : renamedLabelFormat(
+              annotation,
+              terminal.name,
+              newName,
+              child.presentation,
+            );
         return [
           {
             kind: "upsert_schematic_annotation" as const,
             annotation: {
               ...rest,
-              ...(!automaticFormat
-                ? {
-                    formatOverride: rewriteRichTextPlainText(
-                      annotation.formatOverride,
-                      newName,
-                    ),
-                  }
-                : {}),
+              ...(format ? { formatOverride: format } : {}),
             },
           },
         ];
@@ -1438,6 +1440,7 @@ export function planRenameCellTerminal(
 export function planFormatCellTerminalAnnotations(
   project: CircuitProject,
   documentId: string,
+  options?: PortLabelFormatOptions,
 ): ProjectStructureEdit[] {
   const document = requireDocument(project, documentId);
   if (!document.netlist) throw new Error(`Cell does not exist: ${documentId}`);
@@ -1449,7 +1452,7 @@ export function planFormatCellTerminalAnnotations(
     if (binding?.kind !== "cell-terminal-name") return [];
     const terminal = terminalById.get(binding.terminalId);
     if (!terminal) return [];
-    const formatOverride = canonicalPortTextDocument(terminal.name);
+    const formatOverride = canonicalPortTextDocument(terminal.name, options);
     if (
       annotation.formatOverride &&
       JSON.stringify(annotation.formatOverride) ===

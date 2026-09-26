@@ -7,8 +7,10 @@ import { AgentSessionClient, AgentSessionError } from "@icm/agent-client";
 import {
   capabilitiesResponse,
   FakeAgentHttp,
+  folderDirectoryResponse,
   renderResponse,
   snapshotResponse,
+  stateSnapshotResponse,
   transactSuccessResponse,
 } from "../../../packages/agent-client/src/test-support/fake-relay.js";
 import { testSnapshot } from "../../../packages/agent-client/src/test-support/snapshot-fixture.js";
@@ -33,6 +35,190 @@ function parseText(result: {
 }
 
 describe("mcp tool surface", () => {
+  it("reads context, diagnostics and folder names through lightweight server projections", async () => {
+    const { session, http } = await toolSession();
+    await callTool("connect", { claimCode: "session-1.code" }, session);
+    const snapshot = testSnapshot();
+    snapshot.project.simulationFolders = [
+      createSimulationFolder({
+        id: "small-op",
+        name: "OP",
+        profileId: "test",
+        documentId: "main",
+      }),
+    ];
+    snapshot.project.simulationFolders[0]!.input.files[0]!.text =
+      "private-source-body";
+    http.circuitHandler = async ({ request }) => {
+      if (request.operation === "snapshot" && request.projection === "state")
+        return stateSnapshotResponse(
+          request.requestId,
+          snapshot,
+          request.diagnosticDetail === "items",
+        );
+      if (
+        request.operation === "snapshot" &&
+        request.projection === "folder-directory"
+      )
+        return folderDirectoryResponse(request.requestId, snapshot);
+      if (request.operation === "snapshot")
+        return snapshotResponse(request.requestId, snapshot);
+      return capabilitiesResponse(request.requestId);
+    };
+    expect(parseText(await callTool("get_context", {}, session))).toMatchObject(
+      {
+        revision: 5,
+        instanceCount: snapshot.document.instances.length,
+      },
+    );
+    expect(
+      parseText(
+        await callTool("inspect", { target: { kind: "diagnostics" } }, session),
+      ),
+    ).toMatchObject({
+      revision: 5,
+      counts: { total: 1, warnings: 1 },
+      items: [{ code: "VISUAL_SPACING" }],
+    });
+    const folders = parseText(
+      await callTool("simulation_folder", { action: "list" }, session),
+    );
+    expect(folders).toMatchObject({
+      ok: true,
+      folders: [{ id: "small-op", name: "OP" }],
+    });
+    expect(JSON.stringify(folders)).not.toContain("private-source-body");
+    expect(
+      http.circuitCalls
+        .filter((call) => call.request.operation === "snapshot")
+        .map((call) =>
+          call.request.operation === "snapshot"
+            ? call.request.projection
+            : undefined,
+        ),
+    ).toEqual(["bootstrap", "state", "state", "folder-directory"]);
+  });
+
+  it("classifies invalid arguments without dispatching or echoing submitted values", async () => {
+    const { session, http } = await toolSession();
+    const result = await callTool(
+      "simulation",
+      {
+        request: { operation: "capabilities" },
+        waitMs: "private-invalid-value",
+      },
+      session,
+    );
+    expect(result.isError).toBe(true);
+    expect(parseText(result)).toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_TOOL_INPUT",
+        recovery: "fix-input",
+        issues: [{ path: ["waitMs"], code: "invalid_type" }],
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("private-invalid-value");
+    expect(http.circuitCalls).toHaveLength(0);
+  });
+  it.each(["ngspice", "vacask"] as const)(
+    "creates a %s template from the selected Profile",
+    async (engine) => {
+      const http = new FakeAgentHttp();
+      const { session } = await toolSession(http);
+      await callTool("connect", { claimCode: "session-1.code" }, session);
+      vi.spyOn(session.client, "simulationResource").mockResolvedValue({
+        apiVersion: "3.0",
+        requestId: "caps",
+        operation: "capabilities",
+        ok: true,
+        capabilities: {
+          configured: true,
+          inputs: ["source"],
+          analyses: ["op"],
+          parsedAnalyses: ["op"],
+          profiles: [{ id: "selected", engine, corners: [] }],
+          maxTimeoutMs: 1000,
+          maxInputBytes: 10000,
+          maxOutputBytes: 10000,
+          cancel: false,
+        },
+      });
+      const writes: unknown[] = [];
+      let snapshots = 0;
+      http.circuitHandler = async ({ request }) => {
+        if (request.operation === "snapshot") {
+          snapshots++;
+          return snapshotResponse(request.requestId);
+        }
+        if (request.operation === "transact") {
+          writes.push(request);
+          return transactSuccessResponse(
+            request.requestId,
+            request.expectedRevision,
+          );
+        }
+        return capabilitiesResponse(request.requestId);
+      };
+      expect(
+        parseText(
+          await callTool(
+            "simulation_folder",
+            {
+              action: "create",
+              name: "Bias",
+              profileId: "selected",
+              rootDocumentId: "main",
+              dut: { name: "amp", ports: ["VDD", "VSS", "IN", "OUT"] },
+            },
+            session,
+          ),
+        ),
+      ).toMatchObject({ ok: true });
+      expect(snapshots).toBe(1);
+      expect(writes).toEqual([
+        expect.objectContaining({
+          structureEdits: [
+            expect.objectContaining({
+              folder: expect.objectContaining({
+                input: expect.objectContaining({
+                  files: expect.arrayContaining([
+                    expect.objectContaining({
+                      path: "run.cir",
+                      text: expect.stringContaining(
+                        engine === "ngspice" ? ".control\n" : "\ncontrol\n",
+                      ),
+                    }),
+                    expect.objectContaining({
+                      path: "testbench.spice",
+                      text: expect.stringContaining(
+                        engine === "ngspice"
+                          ? "XDUT VDD VSS IN OUT amp"
+                          : "XDUT ('VDD' 'VSS' 'IN' 'OUT') 'amp'",
+                      ),
+                    }),
+                  ]),
+                }),
+              }),
+            }),
+          ],
+        }),
+      ]);
+      expect(
+        parseText(
+          await callTool(
+            "simulation_folder",
+            { action: "create", name: "Unknown", profileId: "unknown" },
+            session,
+          ),
+        ),
+      ).toMatchObject({
+        ok: false,
+        error: { code: "SIMULATION_PROFILE_UNAVAILABLE" },
+      });
+      expect(writes).toHaveLength(1);
+    },
+  );
   it.each([500, 502, 429, 408, 400])(
     "classifies HTTP %s without changing the retry identity",
     async (httpStatus) => {
@@ -106,7 +292,7 @@ describe("mcp tool surface", () => {
   it("advertises raw and captured Specs rather than a retired result renderer", () => {
     const tools = listToolDefinitions();
     expect(tools.find((t) => t.name === "simulation")?.description).toContain(
-      "outputData.specs",
+      "run.details",
     );
     const download = tools.find((t) => t.name === "export_file")!;
     expect(download.description).toContain("simulation_files");
@@ -116,10 +302,14 @@ describe("mcp tool surface", () => {
   it("exposes compact Circuit, File and Simulation tools with JSON-schema inputs", () => {
     const tools = listToolDefinitions();
     expect(tools.map((tool) => tool.name)).toEqual([
+      "describe_tool",
       "connect",
       "disconnect",
       "connection_status",
       "project_cells",
+      "gallery_circuits",
+      "project_code",
+      "netlist_code",
       "simulation",
       "simulation_folder",
       "simulation_output",
@@ -135,6 +325,19 @@ describe("mcp tool surface", () => {
       "advanced_transact",
       "verify",
       "render",
+      "simulation_source",
+      "simulation_edit",
+      "simulation_data",
+      "simulation_plot",
+      "simulation_results",
+      "simulation_run",
+      "simulation_batch",
+      "circuit_place",
+      "circuit_wire",
+      "circuit_transform",
+      "circuit_selection",
+      "circuit_text",
+      "circuit_properties",
     ]);
     for (const tool of tools) {
       expect(tool.description.length).toBeGreaterThan(10);
@@ -184,6 +387,85 @@ describe("mcp tool surface", () => {
     expect(http.projectCalls).toHaveLength(1);
   });
 
+  it("exposes Gallery, Project Code and Netlist as direct Agent tools", async () => {
+    const { session } = await toolSession();
+    await callTool("connect", { claimCode: "session-1.code" }, session);
+    const projectResource = vi
+      .spyOn(session.client, "projectResource")
+      .mockImplementation(async (request) =>
+        request.operation === "list-gallery"
+          ? {
+              apiVersion: "3.0",
+              requestId: request.requestId,
+              operation: request.operation,
+              ok: true,
+              entries: [],
+              nextCursor: null,
+              total: 0,
+            }
+          : request.operation === "read-gallery-entries"
+            ? {
+                apiVersion: "3.0",
+                requestId: request.requestId,
+                operation: request.operation,
+                ok: true,
+                entries: [],
+                remainingEntryIds: [],
+              }
+            : request.operation === "read-project-code"
+              ? {
+                  apiVersion: "3.0",
+                  requestId: request.requestId,
+                  operation: request.operation,
+                  ok: true,
+                  projectCode: "{}",
+                  structureRevision: 5,
+                }
+              : {
+                  apiVersion: "3.0",
+                  requestId: request.requestId,
+                  operation: "read-netlist",
+                  ok: true,
+                  structureRevision: 5,
+                  netlist: {
+                    format: "spice",
+                    status: "ready",
+                    text: ".end\n",
+                    diagnostics: [],
+                  },
+                },
+      );
+
+    expect(
+      parseText(
+        await callTool("gallery_circuits", { action: "list" }, session),
+      ),
+    ).toMatchObject({ ok: true, total: 0 });
+    expect(
+      parseText(
+        await callTool(
+          "gallery_circuits",
+          { action: "read-many", galleryEntryIds: ["g1", "g2"] },
+          session,
+        ),
+      ),
+    ).toMatchObject({ ok: true, remainingEntryIds: [] });
+    expect(
+      parseText(await callTool("project_code", { action: "read" }, session)),
+    ).toMatchObject({ ok: true, projectCode: "{}" });
+    expect(
+      parseText(await callTool("netlist_code", { action: "read" }, session)),
+    ).toMatchObject({ ok: true, netlist: { text: ".end\n" } });
+    expect(
+      projectResource.mock.calls.map(([request]) => request.operation),
+    ).toEqual([
+      "list-gallery",
+      "read-gallery-entries",
+      "read-project-code",
+      "read-netlist",
+    ]);
+  });
+
   it("get_context returns the compact context document", async () => {
     const { session } = await toolSession();
     await callTool("connect", { claimCode: "session-1.code" }, session);
@@ -207,6 +489,23 @@ describe("mcp tool surface", () => {
     const http = new FakeAgentHttp(),
       { session } = await toolSession(http);
     await callTool("connect", { claimCode: "session-1.code" }, session);
+    vi.spyOn(session.client, "simulationResource").mockResolvedValue({
+      apiVersion: "3.0",
+      requestId: "caps",
+      operation: "capabilities",
+      ok: true,
+      capabilities: {
+        configured: true,
+        inputs: ["source"],
+        analyses: ["op"],
+        parsedAnalyses: ["op"],
+        profiles: [{ id: "test", engine: "vacask", corners: [] }],
+        maxTimeoutMs: 1000,
+        maxInputBytes: 10000,
+        maxOutputBytes: 10000,
+        cancel: false,
+      },
+    });
     const snapshot = testSnapshot();
     const folder = createSimulationFolder({
       id: "s",
@@ -581,7 +880,7 @@ describe("mcp tool surface", () => {
     });
   });
 
-  it("inspect and search refresh by default so human edits are visible", async () => {
+  it("loads inspection state once, reuses it, and honors explicit refresh", async () => {
     const { session, http } = await toolSession();
     await callTool("connect", { claimCode: "session-1.code" }, session);
     const after = testSnapshot();
@@ -610,7 +909,64 @@ describe("mcp tool surface", () => {
     expect(hits.hits.some((hit) => hit.id === "net-vout")).toBe(true);
     expect(
       http.circuitCalls.filter((call) => call.request.operation === "snapshot"),
+    ).toHaveLength(2);
+    await callTool(
+      "inspect",
+      { target: { kind: "document" }, refresh: true },
+      session,
+    );
+    expect(
+      http.circuitCalls.filter((call) => call.request.operation === "snapshot"),
     ).toHaveLength(3);
+  });
+
+  it("inspects selected geometry without requesting a full Snapshot", async () => {
+    const { session, http } = await toolSession();
+    await callTool("connect", { claimCode: "session-1.code" }, session);
+    http.circuitHandler = async ({ request }) => {
+      if (request.operation !== "snapshot" || request.projection !== "geometry")
+        throw new Error(`unexpected ${request.operation} request`);
+      return {
+        apiVersion: "3.0",
+        requestId: request.requestId,
+        operation: "snapshot",
+        ok: true,
+        projection: "geometry",
+        projectId: "project-1",
+        structureRevision: 0,
+        documentId: "main",
+        revision: 5,
+        objects: [
+          {
+            kind: "instance",
+            id: "instance-1",
+            placement: {
+              position: { x: 100, y: 200 },
+              rotation: 0,
+              mirror: "none",
+            },
+          },
+        ],
+        missingObjectIds: [],
+      };
+    };
+    const result = parseText(
+      await callTool(
+        "inspect",
+        { target: { kind: "geometry", objectIds: ["instance-1"] } },
+        session,
+      ),
+    );
+    expect(result).toMatchObject({
+      projection: "geometry",
+      revision: 5,
+      objects: [{ kind: "instance", id: "instance-1" }],
+    });
+    expect(
+      http.circuitCalls.flatMap(({ request }) =>
+        request.operation === "snapshot" ? [request.projection] : [],
+      ),
+    ).toEqual(["bootstrap", "geometry"]);
   });
 
   it("apply_actions rejects a hidden multi-transaction batch before committing", async () => {
@@ -670,75 +1026,78 @@ describe("mcp tool surface", () => {
     expect(transacts).toEqual([]);
   });
 
-  it("creates visible wire geometry for a pin-to-pin connect", async () => {
-    const http = new FakeAgentHttp();
-    const { session } = await toolSession(http);
-    await callTool("connect", { claimCode: "session-1.code" }, session);
-    const transacts: Extract<
-      (typeof http.circuitCalls)[number]["request"],
-      { operation: "transact" }
-    >[] = [];
-    http.circuitHandler = async ({ request }) => {
-      switch (request.operation) {
-        case "transact":
-          transacts.push(request);
-          return transactSuccessResponse(
-            request.requestId,
-            request.expectedRevision,
-            ["route-new"],
-          );
-        case "snapshot": {
-          const after = testSnapshot();
-          after.document.revision = 6;
-          return snapshotResponse(request.requestId, after, 6);
+  it.each(["apply_actions", "circuit_wire"])(
+    "%s creates visible wire geometry for a pin-to-pin connect",
+    async (tool) => {
+      const http = new FakeAgentHttp();
+      const { session } = await toolSession(http);
+      await callTool("connect", { claimCode: "session-1.code" }, session);
+      const transacts: Extract<
+        (typeof http.circuitCalls)[number]["request"],
+        { operation: "transact" }
+      >[] = [];
+      http.circuitHandler = async ({ request }) => {
+        switch (request.operation) {
+          case "transact":
+            transacts.push(request);
+            return transactSuccessResponse(
+              request.requestId,
+              request.expectedRevision,
+              ["route-new"],
+            );
+          case "snapshot": {
+            const after = testSnapshot();
+            after.document.revision = 6;
+            return snapshotResponse(request.requestId, after, 6);
+          }
+          default:
+            return capabilitiesResponse(request.requestId);
         }
-        default:
-          return capabilitiesResponse(request.requestId);
+      };
+
+      const result = await callTool(
+        tool,
+        {
+          actions: [
+            {
+              kind: "connect",
+              from: { kind: "pin", instance: "M1", pin: "G" },
+              to: { kind: "pin", instance: "R1", pin: "2" },
+              via: [{ x: 360, y: 240 }],
+            },
+          ],
+        },
+        session,
+      );
+
+      expect(parseText(result)).toMatchObject({ ok: true, transactions: 1 });
+      // One relayed request: the commit carries the wireIntent and validates
+      // atomically, with no client-side dry-run pass ahead of it.
+      expect(transacts).toHaveLength(1);
+      for (const request of transacts) {
+        expect(request.edits).toBeUndefined();
+        expect(request.wireIntent).toMatchObject({
+          from: {
+            kind: "endpoint",
+            endpoint: {
+              kind: "terminal",
+              instanceId: "instance-1",
+              pinName: "G",
+            },
+          },
+          to: {
+            kind: "endpoint",
+            endpoint: {
+              kind: "terminal",
+              instanceId: "instance-2",
+              pinName: "2",
+            },
+          },
+          waypoints: [{ x: 360, y: 240 }],
+        });
       }
-    };
-
-    const result = await callTool(
-      "apply_actions",
-      {
-        actions: [
-          {
-            kind: "connect",
-            from: { kind: "pin", instance: "M1", pin: "G" },
-            to: { kind: "pin", instance: "R1", pin: "2" },
-            via: [{ x: 360, y: 240 }],
-          },
-        ],
-      },
-      session,
-    );
-
-    expect(parseText(result)).toMatchObject({ ok: true, transactions: 1 });
-    // One relayed request: the commit carries the wireIntent and validates
-    // atomically, with no client-side dry-run pass ahead of it.
-    expect(transacts).toHaveLength(1);
-    for (const request of transacts) {
-      expect(request.edits).toBeUndefined();
-      expect(request.wireIntent).toMatchObject({
-        from: {
-          kind: "endpoint",
-          endpoint: {
-            kind: "terminal",
-            instanceId: "instance-1",
-            pinName: "G",
-          },
-        },
-        to: {
-          kind: "endpoint",
-          endpoint: {
-            kind: "terminal",
-            instanceId: "instance-2",
-            pinName: "2",
-          },
-        },
-        waypoints: [{ x: 360, y: 240 }],
-      });
-    }
-  });
+    },
+  );
 
   it("apply_actions surfaces compile failures without sending", async () => {
     const { session, http } = await toolSession();
@@ -802,6 +1161,7 @@ describe("mcp tool surface", () => {
     const http = new FakeAgentHttp();
     const { session } = await toolSession(http);
     await callTool("connect", { claimCode: "session-1.code" }, session);
+    await session.client.refreshSnapshot();
     http.circuitHandler = async ({ request }) => {
       if (request.operation === "snapshot") {
         const count = http.circuitCalls.filter(
@@ -827,6 +1187,7 @@ describe("mcp tool surface", () => {
     expect(value.revision).toBe(6);
     expect(value.changedObjectIds).toContain("net-vout");
     expect(value.warnings).toBe(1);
+    expect(http.projectCalls).toHaveLength(0);
   });
 
   it("render returns an svg image block plus a compact summary", async () => {

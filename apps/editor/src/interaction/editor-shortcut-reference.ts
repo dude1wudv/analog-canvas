@@ -1,26 +1,32 @@
 /**
  * User-facing index of every editor command chord owned by
- * `resolveEditorShortcut`. Browser-safety interceptions such as blocking F5
+ * `resolveEditorShortcut` or the native circuit clipboard handler. Browser-safety interceptions such as blocking F5
  * while work is unsaved are deliberately absent: they protect the document,
  * but they are not commands a user can invoke.
  *
  * Keep this beside the resolver so adding a keyboard command and documenting
- * it are one change. Quick Start renders the complete list rather than a
+ * it are one change. Canvas Hints renders the complete list rather than a
  * separately curated subset.
  */
 export const EDITOR_SHORTCUT_REFERENCE = [
-  { keys: ["Ctrl/Cmd", "F"], action: "Selection filter" },
-  { keys: ["Ctrl/Cmd", "Shift", "F"], action: "Search circuit" },
+  { keys: ["Ctrl/Cmd", "F"], action: "Find in circuit" },
+  { keys: ["Ctrl/Cmd", "Shift", "F"], action: "Choose selectable objects" },
   { keys: ["F"], action: "Fit view" },
   { keys: ["Home"], action: "Fit view" },
   { keys: ["Arrow keys"], action: "Pan view" },
+  { keys: ["G"], action: "Toggle Gallery" },
+  { keys: ["B"], action: "Toggle Component Library" },
+  { keys: ["N"], action: "Toggle Netlist" },
   { keys: ["I"], action: "Insert component" },
   { keys: ["P"], action: "Place Cell Pin" },
   { keys: ["W"], action: "Draw wire" },
   { keys: ["F3"], action: "Wire options" },
   { keys: ["T"], action: "Add text" },
   { keys: ["O"], action: "Display settings" },
-  { keys: ["C"], action: "Copy and place selection" },
+  { keys: ["C"], action: "Copy circuit selection" },
+  { keys: ["V"], action: "Paste circuit selection" },
+  { keys: ["Ctrl/Cmd", "C"], action: "Copy circuit selection across tabs" },
+  { keys: ["Ctrl/Cmd", "V"], action: "Paste circuit selection" },
   { keys: ["M"], action: "Move selection" },
   { keys: ["Shift", "M"], action: "Move without wires" },
   { keys: ["R"], action: "Rotate selection / next object" },

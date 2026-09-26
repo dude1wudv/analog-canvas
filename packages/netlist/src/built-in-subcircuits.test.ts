@@ -73,6 +73,78 @@ function analogBlockProject(
 }
 
 describe("built-in Analog Block subcircuits", () => {
+  it.each(["and", "nand", "or", "nor", "xor", "xnor"])(
+    "exports every four-input %s terminal in its declared electrical order",
+    (family) => {
+      const project = analogBlockProject(
+        [`${family}-gate-4`],
+        [
+          ["A", "a"],
+          ["B", "b"],
+          ["C", "c"],
+          ["D", "d"],
+          ["Y", "y"],
+        ],
+      );
+      const result = createDesignNetlistExport(project);
+      expect(result.status).toBe("ready");
+      if (result.status !== "ready") return;
+      expect(result.file.text).toContain(
+        `X1 VDD VSS a b c d y ${family}_gate_4`,
+      );
+    },
+  );
+  for (const family of ["opamp", "opamp-differential"])
+    for (const state of [
+      "",
+      "-lettered",
+      "-inputs-swapped",
+      "-lettered-inputs-swapped",
+      ...(family === "opamp-differential"
+        ? [
+            "-crossed",
+            "-crossed-lettered",
+            "-crossed-inputs-swapped",
+            "-crossed-lettered-inputs-swapped",
+          ]
+        : []),
+    ])
+      it.each(["spice", "spectre"] as const)(
+        `exports ${family}-wide${state} identically to compact in %s`,
+        (format) => {
+          const compactId = `${family}${state}`;
+          const wideId = `${family}-wide${state}`;
+          const connections =
+            family === "opamp"
+              ? [...differentialNets.slice(0, 2), ["OUT", "output"] as const]
+              : differentialNets;
+          const compact = analogBlockProject([compactId], connections);
+          const wide = analogBlockProject([wideId], connections);
+          for (const project of [compact, wide]) {
+            const block = project.documents[0]!.instances.find(
+              (instance) => instance.id === "block-1",
+            )!;
+            block.netlist!.parameters = { gain: "100", bandwidth: "10Meg" };
+            block.netlist!.binding = {
+              kind: "unresolved-subcircuit",
+              name: "user_amplifier",
+            };
+          }
+          const original = createDesignNetlistExport(compact, { format });
+          const result = createDesignNetlistExport(wide, { format });
+          expect(original.status).toBe("ready");
+          expect(result.status).toBe("ready");
+          if (result.status !== "ready" || original.status !== "ready") return;
+          expect(result.file.text).toBe(original.file.text);
+          expect(subcircuitDescriptor(wideId)!.target).toBe(
+            subcircuitDescriptor(compactId)!.target,
+          );
+          expect(subcircuitDescriptor(wideId)!.ports).toEqual(
+            subcircuitDescriptor(compactId)!.ports,
+          );
+        },
+      );
+
   it("declares an undrawn block supply as a global without synthesizing interfaces", () => {
     // A Block used at the abstract level with nothing above it yet: its
     // library interface states that it needs these nodes, so the netlist
@@ -316,7 +388,7 @@ describe("built-in Analog Block subcircuits", () => {
   it("deduplicates one external master across visual variants", () => {
     const result = createDesignNetlistExport(
       analogBlockProject(
-        ["opamp-differential", "opamp-differential-crossed"],
+        ["opamp-differential", "opamp-differential-wide-crossed"],
         differentialNets,
       ),
       {
@@ -350,38 +422,44 @@ describe("built-in Analog Block subcircuits", () => {
     );
   });
 
-  it("applies the selected case to authored signal ports as one interface", () => {
-    const project = createEmptyProject("port-case", "Port Case", "dut");
-    const document = project.documents[0]!;
-    document.netlist!.name = "dut";
-    document.instances.push({
-      id: "P1",
-      symbolId: "port",
-      placement: null,
-    });
-    document.nets.push({
-      id: "net-vin",
-      terminals: [{ instanceId: "P1", pinName: "P" }],
-    });
-    document.netlist!.terminals.push({
-      id: "terminal-vin",
-      name: "Vin",
-      netId: "net-vin",
-      direction: "input",
-      interfaceInstanceIds: ["P1"],
-    });
+  it.each([
+    ["Vin", "VIN", "vin"],
+    ["F_in_bar", "F_IN_bar", "f_in_bar"],
+  ])(
+    "applies the selected case to %s without changing its overbar marker",
+    (name, uppercase, lowercase) => {
+      const project = createEmptyProject("port-case", "Port Case", "dut");
+      const document = project.documents[0]!;
+      document.netlist!.name = "dut";
+      document.instances.push({
+        id: "P1",
+        symbolId: "port",
+        placement: null,
+      });
+      document.nets.push({
+        id: "net-vin",
+        terminals: [{ instanceId: "P1", pinName: "P" }],
+      });
+      document.netlist!.terminals.push({
+        id: "terminal-vin",
+        name,
+        netId: "net-vin",
+        direction: "input",
+        interfaceInstanceIds: ["P1"],
+      });
 
-    const upper = createDesignNetlistExport(project, {
-      portCase: "upper",
-    });
-    const lower = createDesignNetlistExport(project, {
-      portCase: "lower",
-    });
+      const upper = createDesignNetlistExport(project, {
+        portCase: "upper",
+      });
+      const lower = createDesignNetlistExport(project, {
+        portCase: "lower",
+      });
 
-    expect(upper.status).toBe("ready");
-    expect(lower.status).toBe("ready");
-    if (upper.status !== "ready" || lower.status !== "ready") return;
-    expect(upper.file.text).toContain(".subckt dut VIN\n");
-    expect(lower.file.text).toContain(".subckt dut vin\n");
-  });
+      expect(upper.status).toBe("ready");
+      expect(lower.status).toBe("ready");
+      if (upper.status !== "ready" || lower.status !== "ready") return;
+      expect(upper.file.text).toContain(`.subckt dut ${uppercase}\n`);
+      expect(lower.file.text).toContain(`.subckt dut ${lowercase}\n`);
+    },
+  );
 });

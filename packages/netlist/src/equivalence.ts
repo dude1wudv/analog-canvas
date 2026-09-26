@@ -1,14 +1,30 @@
-import { deviceDescriptor } from "@icm/devices";
+import { deviceDescriptor, resolveReviewedExternalBinding } from "@icm/devices";
 import type { CircuitProject } from "@icm/model";
 import { parseSpiceNumber } from "@icm/spice";
 import { analyzeDesignNetlistForAuthoring } from "./extract.js";
-import type { DesignNetlistIR, DesignNetlistParameter } from "./ir.js";
+import type {
+  DesignNetlistIR,
+  DesignNetlistInstance,
+  DesignNetlistParameter,
+} from "./ir.js";
+
+/** An occurrence, not just a Cell-local ID: repeated child Cells remain distinct. */
+export interface ElectricalDeviceOrigin {
+  vertex: number;
+  documentId: string;
+  instanceId: string;
+  path: string[];
+  referencePath: string[];
+}
 
 export interface ElectricalGraph {
   labels: string[];
   edges: number[][];
   /** Candidate index only. Equality is NEVER evidence of equivalence. */
   bucket: string;
+  /** Semantic identities for topology search only; exact duplicate labels stay intact. */
+  topologyLabels?: string[];
+  deviceOrigins?: ElectricalDeviceOrigin[];
 }
 
 export type ElectricalGraphResult =
@@ -69,16 +85,20 @@ function parameters(values: DesignNetlistParameter[]): string {
 /** Layout-free graph of the emitted devices, with paramless hierarchy expanded. */
 export function electricalGraphFromIR(
   ir: DesignNetlistIR,
+  sourceSymbols: ReadonlyMap<DesignNetlistInstance, string> = new Map(),
 ): ElectricalGraphResult {
   try {
     const labels: string[] = [];
+    const topologyLabels: string[] = [];
+    const deviceOrigins: ElectricalDeviceOrigin[] = [];
     const adjacency: Set<number>[] = [];
     const parent: number[] = [];
-    const vertex = (label: string) => {
+    const vertex = (label: string, topology = topologyLabel(label)) => {
       if (labels.length >= 3000)
         throw new Error("Circuit exceeds the comparison size limit");
       const id = labels.length;
       labels.push(label);
+      topologyLabels.push(topology);
       adjacency.push(new Set());
       parent.push(id);
       return id;
@@ -103,6 +123,8 @@ export function electricalGraphFromIR(
       cell: DesignNetlistIR["cells"][number],
       ports: number[] | null,
       ancestors: Set<string>,
+      instancePath: string[] = [],
+      referencePath: string[] = [],
     ) => {
       if (ancestors.has(cell.id) || ancestors.size > 32)
         throw new Error("Recursive hierarchy needs manual comparison");
@@ -157,9 +179,27 @@ export function electricalGraphFromIR(
               return net(node.netName);
             }),
             path,
+            [...instancePath, instance.id],
+            [...referencePath, instance.reference],
           );
           continue;
         }
+        const reviewed =
+          instance.invocationKind === "subcircuit" && instance.target
+            ? resolveReviewedExternalBinding(
+                instance.target,
+                instance.nodes.map((node) => node.pinName),
+              )
+            : undefined;
+        const symbol = reviewed?.symbolId ?? sourceSymbols.get(instance);
+        const descriptor = symbol ? deviceDescriptor(symbol) : undefined;
+        const topologyClass = reviewed?.deviceClass ?? instance.deviceClass;
+        const topologyTarget =
+          topologyClass === "mos" && descriptor?.mosBulkClass
+            ? descriptor.mosBulkClass
+            : topologyClass === "bjt" && (symbol === "npn" || symbol === "pnp")
+              ? symbol
+              : instance.target;
         const device = vertex(
           JSON.stringify([
             "device",
@@ -184,7 +224,22 @@ export function electricalGraphFromIR(
                   .sort() ?? [])
               : [],
           ]),
+          topologyLabel(
+            JSON.stringify([
+              "device",
+              topologyClass,
+              reviewed ? "primitive" : instance.invocationKind,
+              topologyTarget,
+            ]),
+          ),
         );
+        deviceOrigins.push({
+          vertex: device,
+          documentId: cell.id,
+          instanceId: instance.id,
+          path: [...instancePath, instance.id],
+          referencePath: [...referencePath, instance.reference],
+        });
         const symmetric =
           instance.invocationKind === "primitive" &&
           ["resistor", "capacitor", "inductor"].includes(instance.deviceClass);
@@ -192,6 +247,11 @@ export function electricalGraphFromIR(
           // External black boxes bind by position; MOS D/G/S/B are distinct.
           const pin = vertex(
             `pin:${symmetric ? "passive" : instance.invocationKind === "subcircuit" ? index : node.pinName}`,
+            reviewed
+              ? topologyLabel(`pin:${reviewed.terminals[index]!.pinName}`)
+              : topologyLabel(
+                  `pin:${symmetric ? "passive" : instance.invocationKind === "subcircuit" ? index : node.pinName}`,
+                ),
           );
           edge(device, pin);
           edge(pin, net(node.netName));
@@ -215,6 +275,11 @@ export function electricalGraphFromIR(
       status: "ready",
       graph: {
         labels: compactLabels,
+        deviceOrigins: deviceOrigins.map((origin) => ({
+          ...origin,
+          vertex: indices.get(origin.vertex)!,
+        })),
+        topologyLabels: roots.map((id) => topologyLabels[id]!),
         edges: edges.map((neighbors) => [...neighbors].sort((a, b) => a - b)),
         bucket: JSON.stringify(
           compactLabels
@@ -255,12 +320,14 @@ export function projectElectricalGraph(
       status: "uncheckable",
       reason: errors[0]?.message ?? "No usable netlist",
     };
+  const sourceSymbols = new Map<DesignNetlistInstance, string>();
   for (const cell of result.ir.cells) {
     const document = project.documents.find((item) => item.id === cell.id);
     for (const instance of cell.instances) {
       const source = document?.instances.find(
         (item) => item.id === instance.id,
       );
+      if (source) sourceSymbols.set(instance, source.symbolId);
       if (!instance.target && source) {
         const descriptor = deviceDescriptor(source.symbolId);
         if (descriptor?.targetPolicy === "required-model") {
@@ -270,16 +337,20 @@ export function projectElectricalGraph(
       }
     }
   }
-  return electricalGraphFromIR(result.ir);
+  return electricalGraphFromIR(result.ir, sourceSymbols);
 }
 
 /** Exact colored-graph bijection. A budget exhaustion is explicitly unknown. */
-export function compareElectricalGraphs(
+export type ElectricalGraphMatch =
+  { status: "equal"; mapping: number[] } | { status: "different" | "unknown" };
+
+export function matchElectricalGraphs(
   a: ElectricalGraph,
   b: ElectricalGraph,
   maxSteps = 100_000,
-): "equal" | "different" | "unknown" {
-  if (a.bucket !== b.bucket) return "different";
+  preference?: (source: number, target: number) => number,
+): ElectricalGraphMatch {
+  if (a.bucket !== b.bucket) return { status: "different" };
   const n = a.labels.length;
   const palette = (values: string[]) => {
     const sorted = [...new Set(values)].sort();
@@ -307,10 +378,16 @@ export function compareElectricalGraphs(
   const histogram = (items: number[]) =>
     JSON.stringify([...items].sort((x, y) => x - y));
   if (histogram(colors.slice(0, n)) !== histogram(colors.slice(n)))
-    return "different";
+    return { status: "different" };
   const candidates = a.labels.map((_, i) =>
     b.labels.flatMap((_, j) => (colors[i] === colors[n + j] ? [j] : [])),
   );
+  if (preference)
+    candidates.forEach((choices, source) =>
+      choices.sort(
+        (a, b) => preference(source, b) - preference(source, a) || a - b,
+      ),
+    );
   const mapped = new Map<number, number>();
   const used = new Set<number>();
   const neighbors = b.edges.map((items) => new Set(items));
@@ -352,5 +429,177 @@ export function compareElectricalGraphs(
     return false;
   };
   const result = search();
-  return result === null ? "unknown" : result ? "equal" : "different";
+  return result === null
+    ? { status: "unknown" }
+    : result
+      ? {
+          status: "equal",
+          mapping: a.labels.map((_, index) => mapped.get(index)!),
+        }
+      : { status: "different" };
+}
+
+export function compareElectricalGraphs(
+  a: ElectricalGraph,
+  b: ElectricalGraph,
+  maxSteps = 100_000,
+): "equal" | "different" | "unknown" {
+  return matchElectricalGraphs(a, b, maxSteps).status;
+}
+
+export function matchElectricalTopologies(
+  a: ElectricalGraph,
+  b: ElectricalGraph,
+  maxSteps = 100_000,
+  preference?: (source: number, target: number) => number,
+): ElectricalGraphMatch {
+  return matchElectricalGraphs(
+    topologyGraph(a),
+    topologyGraph(b),
+    maxSteps,
+    preference,
+  );
+}
+
+function topologyLabel(label: string): string {
+  // A topology search asks where the circuit reaches the outside world, not
+  // what an author called that boundary or whether they drew it as a Port,
+  // VDD/VSS power symbol, or another global rail. Exact duplicate checking
+  // deliberately keeps those interface contracts; topology matching does not.
+  if (label.startsWith("port:") || label.startsWith("global:"))
+    return "terminal";
+  if (label.startsWith("pin:")) {
+    const pin = label.slice("pin:".length).toLowerCase();
+    const aliases: Record<string, string> = {
+      drain: "d",
+      gate: "g",
+      source: "s",
+      bulk: "b",
+      body: "b",
+      collector: "c",
+      base: "b",
+      emitter: "e",
+    };
+    return `pin:${aliases[pin] ?? pin}`;
+  }
+  if (!label.startsWith('["device"')) return label;
+  try {
+    const value = JSON.parse(label) as unknown[];
+    const deviceClass = String(value[1] ?? "");
+    const target = String(value[3] ?? "").toLowerCase();
+    const polarity =
+      deviceClass === "mos"
+        ? /(?:^|[^a-z])(?:pmos|pfet|p-fet)|unset:pmos/u.test(target)
+          ? "p"
+          : /(?:^|[^a-z])(?:nmos|nfet|n-fet)|unset:nmos/u.test(target)
+            ? "n"
+            : `model:${target}`
+        : deviceClass === "bjt"
+          ? target.includes("pnp")
+            ? "pnp"
+            : target.includes("npn")
+              ? "npn"
+              : `model:${target}`
+          : deviceClass === "hierarchical"
+            ? value[3]
+            : null;
+    // Models and values are exact-duplicate evidence, but not topology. Keep
+    // the emitted device class, invocation kind and recognizable transistor
+    // polarity so differently sized/modelled NMOS stages remain close without
+    // making a complementary PMOS stage identical.
+    return JSON.stringify(["device", deviceClass, value[2], polarity]);
+  } catch {
+    return label;
+  }
+}
+
+export function topologyGraph(graph: ElectricalGraph): ElectricalGraph {
+  const labels = graph.topologyLabels ?? graph.labels.map(topologyLabel);
+  return {
+    labels,
+    edges: graph.edges,
+    bucket: JSON.stringify(
+      labels.map((label, index) => [label, graph.edges[index]!.length]).sort(),
+    ),
+  };
+}
+
+/**
+ * Exact graph isomorphism after removing author-facing names and interface
+ * representation. Device classes, transistor polarity, pin roles and actual
+ * connectivity remain structural evidence.
+ */
+export function compareElectricalTopologies(
+  a: ElectricalGraph,
+  b: ElectricalGraph,
+  maxSteps = 100_000,
+): "equal" | "different" | "unknown" {
+  return compareElectricalGraphs(topologyGraph(a), topologyGraph(b), maxSteps);
+}
+
+function multisetDice(
+  left: readonly number[],
+  right: readonly number[],
+): number {
+  if (left.length + right.length === 0) return 1;
+  const counts = new Map<number, number>();
+  for (const item of left) counts.set(item, (counts.get(item) ?? 0) + 1);
+  let shared = 0;
+  for (const item of right) {
+    const remaining = counts.get(item) ?? 0;
+    if (remaining === 0) continue;
+    shared++;
+    counts.set(item, remaining - 1);
+  }
+  return (2 * shared) / (left.length + right.length);
+}
+
+/**
+ * Layout/name/interface-independent topology closeness in [0, 1].
+ *
+ * This is ranking evidence, never equivalence evidence. Exact duplicate
+ * decisions belong to compareElectricalTopologies. The score compares
+ * device/pin/external-terminal populations and two rounds of their electrical
+ * neighborhoods, while deliberately ignoring model and parameter values,
+ * names, top-level port order, and port-versus-global representation.
+ */
+export function electricalGraphTopologySimilarity(
+  a: ElectricalGraph,
+  b: ElectricalGraph,
+): number {
+  const leftSize = a.labels.length;
+  const labels = [...topologyGraph(a).labels, ...topologyGraph(b).labels];
+  const edges = [
+    ...a.edges,
+    ...b.edges.map((neighbors) =>
+      neighbors.map((neighbor) => neighbor + leftSize),
+    ),
+  ];
+  const palette = (values: readonly string[]) => {
+    const sorted = [...new Set(values)].sort();
+    const ids = new Map(sorted.map((value, index) => [value, index]));
+    return values.map((value) => ids.get(value)!);
+  };
+  let colors = palette(
+    labels.map((label, index) => JSON.stringify([label, edges[index]!.length])),
+  );
+  const scores = [
+    multisetDice(colors.slice(0, leftSize), colors.slice(leftSize)),
+  ];
+  for (let round = 0; round < 2; round++) {
+    colors = palette(
+      colors.map((color, index) =>
+        JSON.stringify([
+          color,
+          edges[index]!.map((neighbor) => colors[neighbor]!).sort(
+            (x, y) => x - y,
+          ),
+        ]),
+      ),
+    );
+    scores.push(
+      multisetDice(colors.slice(0, leftSize), colors.slice(leftSize)),
+    );
+  }
+  return scores[0]! * 0.2 + scores[1]! * 0.3 + scores[2]! * 0.5;
 }

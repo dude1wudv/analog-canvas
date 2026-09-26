@@ -75,6 +75,16 @@ export const PresentationIntentSchema = z.strictObject({
   grid: z.number().int().positive(),
   compactness: z.enum(["loose", "normal", "compact"]),
   styleOverrides: StyleOverridesSchema.optional(),
+  /** Current-Cell label naming preference; never a browser-wide setting. */
+  labelSubscriptCase: z.enum(["preserve", "uppercase", "lowercase"]).optional(),
+  /** Default for generated label subscripts; explicit RichText stays editable. */
+  labelSubscriptItalic: z.boolean().optional(),
+  /** Whether an underscore introduces a subscript or remains literal text. */
+  labelUnderscoreSubscript: z.boolean().optional(),
+  /** Apply the leading-letter / subscript convention to unseparated names. */
+  labelSubscriptAfterFirst: z.boolean().optional(),
+  /** Slant of the leading character, independent of the subscript. */
+  labelFirstLetterItalic: z.boolean().optional(),
   flow: z
     .strictObject({
       power: z.literal("top").optional(),

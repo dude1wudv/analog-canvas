@@ -1,3 +1,10 @@
+import {
+  formatPresentingName,
+  rewriteRichTextIdentifier,
+  labelTypography,
+  labelTextDocument,
+} from "@icm/model";
+import { resolveAnnotationName } from "@icm/derived";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -7,10 +14,9 @@ import {
 } from "@icm/edit-engine";
 import {
   flattenRichText,
-  rewriteRichTextPlainText,
+  roleLabelFormat,
   semanticTextDocument,
 } from "@icm/model";
-import { resolveAnnotationText } from "@icm/derived";
 import type {
   Annotation,
   DraftingObject,
@@ -20,7 +26,7 @@ import type {
   Rotation,
   SchematicDocument,
 } from "@icm/model";
-import type { SymbolResolver } from "@icm/symbols";
+import type { SymbolFormulaPresentation, SymbolResolver } from "@icm/symbols";
 
 import {
   componentParameters,
@@ -34,7 +40,10 @@ import {
 import type { AdditionalParameterDraft } from "./additional-parameters";
 import {
   createTextEditingSession,
+  editedBoundAnnotationName,
+  editedRoleLabelFormat,
   proposeTextEditingCommit,
+  resolveTextEditingTarget,
   textDeletionEdit,
   updateTextEditingSession,
 } from "../text-editing/text-editing";
@@ -177,6 +186,10 @@ export function usePropertiesEditor(options: UsePropertiesEditorOptions) {
   const [textEditing, setTextEditing] = useState<TextEditingSession | null>(
     null,
   );
+  useEffect(() => {
+    if (textEditing && !resolveTextEditingTarget(options.document, textEditing))
+      setTextEditing(null);
+  }, [options.document, textEditing]);
   const netLabelDraftRouteRef = useRef<string | null>(null);
   const netLabelDraftDirtyRef = useRef(false);
   const lastSelectedInstanceKeyRef = useRef<string | null>(null);
@@ -260,9 +273,7 @@ export function usePropertiesEditor(options: UsePropertiesEditorOptions) {
     const existing = options.netLabelForRoute(route);
     const draftName = netLabelDraft.trim();
     const currentName = existing
-      ? flattenRichText(
-          resolveAnnotationText(options.document, existing),
-        ).trim()
+      ? resolveAnnotationName(options.document, existing).trim()
       : "";
     if (existing ? draftName === currentName : draftName === "") return;
     const edits = options.netLabelEditsForRoute(route, netLabelDraft);
@@ -282,12 +293,7 @@ export function usePropertiesEditor(options: UsePropertiesEditorOptions) {
     }
     setNetLabelDraft(
       options.selectedRouteNetLabel
-        ? flattenRichText(
-            resolveAnnotationText(
-              options.document,
-              options.selectedRouteNetLabel,
-            ),
-          )
+        ? resolveAnnotationName(options.document, options.selectedRouteNetLabel)
         : "",
     );
     netLabelDraftDirtyRef.current = false;
@@ -422,7 +428,7 @@ export function usePropertiesEditor(options: UsePropertiesEditorOptions) {
     if (!name) {
       options.replaceSelectionKind("annotation", []);
       options.setStatus(
-        `Deleted Net Label ${flattenRichText(resolveAnnotationText(options.document, existingLabel!))}`,
+        `Deleted Net Label ${resolveAnnotationName(options.document, existingLabel!)}`,
       );
       return;
     }
@@ -443,9 +449,7 @@ export function usePropertiesEditor(options: UsePropertiesEditorOptions) {
     const existing = options.netLabelForRoute(route);
     const nextName = draft.trim();
     const currentName = existing
-      ? flattenRichText(
-          resolveAnnotationText(options.document, existing),
-        ).trim()
+      ? resolveAnnotationName(options.document, existing).trim()
       : "";
     if (nextName === currentName || (!nextName && !existing)) {
       netLabelDraftDirtyRef.current = false;
@@ -479,7 +483,7 @@ export function usePropertiesEditor(options: UsePropertiesEditorOptions) {
       setNetLabelDraft("");
       netLabelDraftDirtyRef.current = false;
       options.setStatus(
-        `Deleted Net Label ${flattenRichText(resolveAnnotationText(options.document, label))}`,
+        `Deleted Net Label ${resolveAnnotationName(options.document, label)}`,
       );
     }
   };
@@ -492,7 +496,7 @@ export function usePropertiesEditor(options: UsePropertiesEditorOptions) {
     if (!edits || edits.length === 0) return;
     if (transactNamedNet(edits)) {
       options.setStatus(
-        `Net Label ${flattenRichText(resolveAnnotationText(options.document, annotation))} is now ${scope}`,
+        `Net Label ${resolveAnnotationName(options.document, annotation)} is now ${scope}`,
       );
     }
   };
@@ -717,20 +721,29 @@ export function usePropertiesEditor(options: UsePropertiesEditorOptions) {
     content: RichTextDocument;
     formatOverride?: RichTextDocument;
   } => {
+    // The Net's name is the characters typed; styling them (a subscript,
+    // an overbar) is the label's look and never inserts an underscore.
     const plainText = flattenRichText(placement.content);
+    const typography = labelTypography(options.document.presentation);
     const name = plainText.trim();
     const content =
-      plainText === name
+      plainText === name && !plainText.includes("_")
         ? placement.content
-        : rewriteRichTextPlainText(placement.content, name);
-    const semanticContent = semanticTextDocument(name, "net-label");
-    return {
+        : rewriteRichTextIdentifier(placement.content, name, {
+            underscoreSubscript:
+              typography.subscriptAfterFirst || typography.underscoreSubscript,
+          });
+    const semanticContent = labelTextDocument(
       name,
-      content,
-      ...(JSON.stringify(content) === JSON.stringify(semanticContent)
-        ? {}
-        : { formatOverride: content }),
-    };
+      options.document.presentation,
+    );
+    if (JSON.stringify(content) !== JSON.stringify(semanticContent))
+      return { name, content, formatOverride: content };
+    // Typed without styling: a V-led name takes its voltage-node look.
+    const standard = roleLabelFormat("voltage-node", name);
+    return standard
+      ? { name, content: standard, formatOverride: standard }
+      : { name, content };
   };
 
   const commitNetLabelAtTarget = (
@@ -747,7 +760,7 @@ export function usePropertiesEditor(options: UsePropertiesEditorOptions) {
     const prepared = preparedNetLabelPlacement(placement);
     const existingLabel = options.netLabelForRoute(route);
     const edits = options.netLabelEditsForRoute(route, prepared.name, {
-      alignment: placement.alignment,
+      alignment: target.alignment ?? placement.alignment,
       sizeScale: placement.sizeScale,
       ...(prepared.formatOverride
         ? { formatOverride: prepared.formatOverride }
@@ -850,14 +863,13 @@ export function usePropertiesEditor(options: UsePropertiesEditorOptions) {
    */
   const beginInstanceFormulaEditing = (
     instance: Instance,
-    defaultFormula: string,
+    presentation: SymbolFormulaPresentation,
   ): void => {
     setTextEditing(
-      createTextEditingSession({
-        owner: "instance-formula",
-        object: instance,
-        defaultFormula,
-      }),
+      createTextEditingSession(
+        { owner: "instance-formula", object: instance, presentation },
+        options.document,
+      ),
     );
   };
 
@@ -894,6 +906,10 @@ export function usePropertiesEditor(options: UsePropertiesEditorOptions) {
 
   const commitTextEditing = (): void => {
     if (!textEditing) return;
+    if (!resolveTextEditingTarget(options.document, textEditing)) {
+      setTextEditing(null);
+      return;
+    }
     const boundAnnotation =
       textEditing.owner === "annotation"
         ? options.document.annotations.find(
@@ -902,11 +918,25 @@ export function usePropertiesEditor(options: UsePropertiesEditorOptions) {
         : undefined;
     if (
       boundAnnotation?.binding &&
-      boundAnnotation.binding.kind !== "instance-reference"
+      boundAnnotation.binding.kind !== "instance-reference" &&
+      boundAnnotation.binding.kind !== "instance-value"
     ) {
-      const name = flattenRichText(textEditing.content).trim();
-      const currentName = flattenRichText(
-        resolveAnnotationText(options.document, boundAnnotation),
+      const typography = labelTypography(options.document.presentation);
+      const name = editedBoundAnnotationName(
+        options.document,
+        boundAnnotation,
+        textEditing,
+        resolveAnnotationName(options.document, boundAnnotation),
+      );
+      const roleFormat = editedRoleLabelFormat(
+        options.document,
+        boundAnnotation,
+        textEditing,
+        name,
+      );
+      const currentName = resolveAnnotationName(
+        options.document,
+        boundAnnotation,
       ).trim();
       const presentationChanged =
         (boundAnnotation.sizeScale ?? 1) !== textEditing.sizeScale ||
@@ -916,29 +946,28 @@ export function usePropertiesEditor(options: UsePropertiesEditorOptions) {
         boundAnnotation.binding.kind === "cell-terminal-name";
       const { formatOverride: _currentOverride, ...annotationWithoutOverride } =
         boundAnnotation;
-      const semanticContent =
-        boundAnnotation.binding.kind === "cell-terminal-name"
-          ? semanticTextDocument(name, "formal-port")
-          : boundAnnotation.binding.kind === "net-name"
-            ? semanticTextDocument(
-                name,
-                boundAnnotation.kind === "power-label"
-                  ? "power-label"
-                  : "net-label",
-              )
-            : resolveAnnotationText(
-                options.document,
-                annotationWithoutOverride,
-              );
-      const editedPresentation =
-        boundAnnotation.binding.kind === "cell-terminal-name" &&
-        !textEditing.formatEdited
+      const semanticContent = labelTextDocument(
+        name,
+        options.document.presentation,
+      );
+      const editedPresentation = roleFormat
+        ? (roleFormat.format ?? semanticContent)
+        : boundAnnotation.binding.kind === "cell-terminal-name" &&
+            !textEditing.formatEdited
           ? semanticContent
-          : textEditing.content;
+          : flattenRichText(textEditing.content).includes("_") ||
+              (typography.subscriptAfterFirst && !textEditing.formatEdited)
+            ? rewriteRichTextIdentifier(textEditing.content, name, {
+                underscoreSubscript:
+                  typography.subscriptAfterFirst ||
+                  typography.underscoreSubscript,
+              })
+            : textEditing.content;
+      const presentedFormat = formatPresentingName(editedPresentation, name);
       const nextFormatOverride = formatOverrideAllowed
-        ? JSON.stringify(semanticContent) === JSON.stringify(editedPresentation)
+        ? JSON.stringify(semanticContent) === JSON.stringify(presentedFormat)
           ? undefined
-          : editedPresentation
+          : presentedFormat
         : boundAnnotation.formatOverride;
       const presentationEdit: SchematicEdit = {
         kind: "upsert_schematic_annotation",
@@ -1037,17 +1066,15 @@ export function usePropertiesEditor(options: UsePropertiesEditorOptions) {
             setTextEditing(null);
           }
           return;
-        case "instance-value":
-          options.setStatus("Edit component values in Properties");
-          return;
       }
     }
     const proposal = proposeTextEditingCommit(options.document, textEditing);
     if (proposal.kind === "blocked") {
       options.setStatus(
-        textEditing.visualInstanceId && !textEditing.displayAlias
-          ? "Enter a valid netlist name, or enable Use display alias for free text"
-          : "This text can no longer be edited",
+        proposal.message ??
+          (textEditing.visualInstanceId && !textEditing.displayAlias
+            ? "Type a name for this part, or hide its label from Properties"
+            : "This text can no longer be edited"),
       );
       return;
     }
@@ -1093,6 +1120,10 @@ export function usePropertiesEditor(options: UsePropertiesEditorOptions) {
     if (proposal.kind === "delete") {
       options.clearSelectionKinds(["annotation", "drafting"]);
       options.setStatus(`Deleted text ${proposal.id}`);
+    } else if (proposal.kind === "update" && proposal.aliasFor) {
+      options.setStatus(
+        `Showing ${flattenRichText(textEditing.content).trim()} as a display alias; the netlist name stays ${proposal.aliasFor}`,
+      );
     } else {
       options.setStatus(`Updated text ${proposal.id}`);
     }
@@ -1109,7 +1140,8 @@ export function usePropertiesEditor(options: UsePropertiesEditorOptions) {
     if (!reference) return;
     const content = enabled
       ? textEditing.content
-      : semanticTextDocument(reference, "instance-label");
+      : (roleLabelFormat("device-reference", reference) ??
+        semanticTextDocument(reference, "instance-label"));
     const next = { ...textEditing, content, displayAlias: enabled };
     const proposal = proposeTextEditingCommit(options.document, next);
     if (proposal.kind === "blocked" || proposal.kind === "delete") return;
@@ -1144,6 +1176,12 @@ export function usePropertiesEditor(options: UsePropertiesEditorOptions) {
     commitNetLabelEditing,
     commitPendingNetLabelDraft,
     commitTextEditing,
+    escapeTextEditing: () => {
+      // Preserve Escape's existing commit behavior for valid edits, but never
+      // trap the user in an invalid or unsupported bound-label draft.
+      commitTextEditing();
+      setTextEditing(null);
+    },
     cancelAdditionalParameters,
     clearTextEditing: () => setTextEditing(null),
     deleteSelectedRouteNetLabel,

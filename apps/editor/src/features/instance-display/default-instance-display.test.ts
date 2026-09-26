@@ -1,5 +1,8 @@
-import { resolveSchematicStyleProfile } from "@icm/derived";
-import { createEmptyDocument } from "@icm/model";
+import {
+  resolveAnnotationName,
+  resolveSchematicStyleProfile,
+} from "@icm/derived";
+import { createEmptyDocument, roleLabelFormat } from "@icm/model";
 import { InMemorySymbolResolver, builtInSymbols } from "@icm/symbols";
 import { describe, expect, it } from "vitest";
 
@@ -7,10 +10,44 @@ import {
   defaultInstanceDisplayAnnotations,
   missingDefaultInstanceDisplayAnnotations,
 } from "./default-instance-display";
+import {
+  createNewInstance,
+  initialInstanceNetlist,
+} from "../netlist-export/netlist-authoring";
 
 const resolver = new InMemorySymbolResolver(builtInSymbols);
 
 describe("default instance display annotations", () => {
+  it("shows a live, editable Battery Reference with no default netlist binding", () => {
+    const document = createEmptyDocument("battery", "Battery");
+    const instance = createNewInstance(document, {
+      symbolId: "battery",
+      placement: {
+        position: { x: 100, y: 100 },
+        rotation: 0,
+        mirror: "none",
+      },
+      netlist: initialInstanceNetlist("battery", {}),
+    });
+    document.instances.push(instance);
+    const annotations = defaultInstanceDisplayAnnotations(
+      document,
+      instance,
+      resolver,
+      resolveSchematicStyleProfile(document.presentation.styleProfileId),
+    );
+
+    expect(instance.reference).toBe("B1");
+    expect(instance.netlist?.binding).toBeUndefined();
+    expect(annotations).toHaveLength(1);
+    expect(annotations[0]).toMatchObject({
+      kind: "instance-label",
+      binding: { kind: "instance-reference", instanceId: instance.id },
+      anchor: { kind: "object", objectId: instance.id },
+    });
+    expect(resolveAnnotationName(document, annotations[0]!)).toBe("B1");
+  });
+
   it("creates a live Reference label and literal master label for an external call", () => {
     const document = createEmptyDocument("main", "Main");
     const instance = {
@@ -51,6 +88,35 @@ describe("default instance display annotations", () => {
         kind: "instance-value",
       },
     ]);
+  });
+
+  it("places a device Reference in its standard look without changing it", () => {
+    const document = createEmptyDocument("main", "Main");
+    const profile = resolveSchematicStyleProfile(
+      document.presentation.styleProfileId,
+    );
+    const placed = (reference: string) =>
+      defaultInstanceDisplayAnnotations(
+        document,
+        {
+          id: "device-1",
+          symbolId: "nmos",
+          placement: {
+            position: { x: 100, y: 100 },
+            rotation: 0 as const,
+            mirror: "none" as const,
+          },
+          reference,
+        },
+        resolver,
+        profile,
+      )[0];
+    // M1 is stored as italic M over an upright subscript 1: M₁.
+    expect(placed("M1")?.formatOverride).toEqual(
+      roleLabelFormat("device-reference", "M1"),
+    );
+    // A Reference without an index is shown exactly as written.
+    expect(placed("MTAIL")?.formatOverride).toBeUndefined();
   });
 
   /**
@@ -193,6 +259,33 @@ describe("default instance display annotations", () => {
         binding: { kind: "cell-terminal-name", terminalId: "terminal-input" },
       }),
     ]);
+  });
+
+  it("places a V-led Pin name in its voltage-node look and any other name as written", () => {
+    const document = createEmptyDocument("main", "Main");
+    const instance = {
+      id: "P1",
+      symbolId: "port-filled",
+      placement: {
+        position: { x: 100, y: 100 },
+        rotation: 0 as const,
+        mirror: "none" as const,
+      },
+    };
+    const pinLabel = (formalName: string) =>
+      defaultInstanceDisplayAnnotations(
+        document,
+        instance,
+        resolver,
+        resolveSchematicStyleProfile(document.presentation.styleProfileId),
+        { formalTerminalId: "terminal-p1", formalName },
+      )[0];
+    for (const name of ["VBP", "VBN", "Vin", "Vout", "VcasP", "VCASN"])
+      expect(pinLabel(name)?.formatOverride).toEqual(
+        roleLabelFormat("voltage-node", name),
+      );
+    expect(pinLabel("CLK")?.formatOverride).toBeUndefined();
+    expect(pinLabel("V_ref")?.formatOverride).toBeUndefined();
   });
 
   it("materializes an imported reference once when a retained Instance is placed", () => {

@@ -39,7 +39,10 @@ export const DEFAULT_AGENT_SESSION_LIMITS: AgentSessionLimits = {
   claimTtlMs: 30 * 60 * 1000,
   tokenTtlMs: 8 * 60 * 60 * 1000,
   sessionTtlMs: 30 * 60 * 1000,
-  maxRequestBytes: 2_000_000,
+  // Project Code may occupy the full 2 MB product limit; leave room for the
+  // typed request envelope instead of making the largest valid Project
+  // impossible to replace through the Project Resource.
+  maxRequestBytes: 3_000_000,
   maxMessageBytes: 6_000_000,
   rateLimit: { windowMs: 60_000, maxRequests: 60 },
   resultCacheTtlMs: 5 * 60 * 1000,
@@ -116,9 +119,12 @@ interface PendingRequest {
   payloadHash: string;
   startedAt: number;
   completedAt?: number;
+  /** Read-only requests may be retried after eviction and need no durable ID. */
+  replayMode?: "read" | "write";
 }
 
 interface SessionInternals {
+  contextRevision?: string;
   sessionId: string;
   editorSecretVerifier: string;
   projectSessionId: string;
@@ -150,6 +156,7 @@ function secretVerifier(secret: string): string {
 }
 
 export interface PersistedAgentSessionState {
+  contextRevision?: string;
   version: 1;
   limits: AgentSessionLimits;
   sessionId: string;
@@ -180,6 +187,20 @@ export interface CreateAgentSessionOptions {
 }
 
 export class AgentSessionMachine {
+  get contextRevision(): string | undefined {
+    return this.internals.contextRevision;
+  }
+
+  /** The authenticated browser supplies context; pairing survives Project changes. */
+  bindContext(
+    contextRevision: string,
+    projectId: string,
+    documentIds: readonly string[],
+  ): void {
+    this.internals.contextRevision = contextRevision;
+    this.internals.projectId = projectId;
+    this.internals.documentIds = new Set(documentIds);
+  }
   private readonly activeRequests = new Set<string>();
 
   private constructor(
@@ -294,6 +315,9 @@ export class AgentSessionMachine {
         editorSecretVerifier: state.editorSecretVerifier,
         projectSessionId: state.projectSessionId,
         projectId: state.projectId,
+        ...(state.contextRevision
+          ? { contextRevision: state.contextRevision }
+          : {}),
         documentIds: new Set(state.documentIds),
         scopes: [...state.scopes],
         status: state.status,
@@ -324,6 +348,9 @@ export class AgentSessionMachine {
       editorSecretVerifier: this.internals.editorSecretVerifier,
       projectSessionId: this.internals.projectSessionId,
       projectId: this.internals.projectId,
+      ...(this.contextRevision
+        ? { contextRevision: this.contextRevision }
+        : {}),
       documentIds: this.documentIds,
       scopes: this.scopes,
       status: this.internals.status,
@@ -336,9 +363,9 @@ export class AgentSessionMachine {
         ? { ...this.internals.connector }
         : null,
       rateWindow: { ...this.internals.rateWindow },
-      requestLedger: [...this.internals.pending.entries()].map(
-        ([id, value]) => [id, { ...value }],
-      ),
+      requestLedger: [...this.internals.pending.entries()]
+        .filter(([, value]) => value.replayMode !== "read")
+        .map(([id, value]) => [id, { ...value }]),
     };
   }
 
@@ -504,12 +531,13 @@ export class AgentSessionMachine {
   /**
    * Begin a forwarded request: reject on pause/revoke/expiry/rate-limit, serve a
    * cached terminal result for a repeated `requestId`, or allow the forward to
-   * proceed. Never re-runs a completed request.
+   * proceed. A completed write never runs again; an evicted read may.
    */
   beginRequest(
     requestId: string,
     now: number,
     payloadHash = requestId,
+    replayMode: "read" | "write" = "write",
   ): RequestBeginResult {
     const lifecycle = this.lifecycleCode(now);
     if (lifecycle) return { kind: "rejected", code: lifecycle };
@@ -533,6 +561,9 @@ export class AgentSessionMachine {
       if (pending.payloadHash !== payloadHash) {
         return { kind: "rejected", code: "REQUEST_ID_REUSED" };
       }
+      if (pending.completedAt !== undefined) {
+        return { kind: "rejected", code: "REQUEST_RESULT_UNAVAILABLE" };
+      }
       if (this.activeRequests.has(requestId)) {
         return { kind: "rejected", code: "REQUEST_IN_PROGRESS" };
       }
@@ -549,7 +580,11 @@ export class AgentSessionMachine {
       return { kind: "rejected", code: "RATE_LIMITED" };
     }
     window.count += 1;
-    this.internals.pending.set(requestId, { payloadHash, startedAt: now });
+    this.internals.pending.set(requestId, {
+      payloadHash,
+      startedAt: now,
+      replayMode,
+    });
     this.activeRequests.add(requestId);
     return { kind: "proceed" };
   }
@@ -558,11 +593,15 @@ export class AgentSessionMachine {
   completeRequest(requestId: string, result: unknown, now: number): void {
     const pending = this.internals.pending.get(requestId);
     this.activeRequests.delete(requestId);
-    this.internals.pending.set(requestId, {
-      payloadHash: pending?.payloadHash ?? requestId,
-      startedAt: pending?.startedAt ?? now,
-      completedAt: now,
-    });
+    if (pending?.replayMode === "read")
+      this.internals.pending.delete(requestId);
+    else
+      this.internals.pending.set(requestId, {
+        payloadHash: pending?.payloadHash ?? requestId,
+        startedAt: pending?.startedAt ?? now,
+        completedAt: now,
+        replayMode: "write",
+      });
     const byteLength = new TextEncoder().encode(
       JSON.stringify(result),
     ).byteLength;
@@ -597,11 +636,15 @@ export class AgentSessionMachine {
   completeRequestWithoutResult(requestId: string, now: number): void {
     const pending = this.internals.pending.get(requestId);
     this.activeRequests.delete(requestId);
-    this.internals.pending.set(requestId, {
-      payloadHash: pending?.payloadHash ?? requestId,
-      startedAt: pending?.startedAt ?? now,
-      completedAt: now,
-    });
+    if (pending?.replayMode === "read")
+      this.internals.pending.delete(requestId);
+    else
+      this.internals.pending.set(requestId, {
+        payloadHash: pending?.payloadHash ?? requestId,
+        startedAt: pending?.startedAt ?? now,
+        completedAt: now,
+        replayMode: "write",
+      });
     this.internals.cache.set(requestId, {
       unavailable: true,
       completedAt: now,

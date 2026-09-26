@@ -16,7 +16,7 @@ describe("EditorCrashScreen", () => {
     expect(html).toContain("重新加载编辑器");
     expect(html).toContain('data-testid="crash-report-bug"');
     expect(html).toContain("报告问题");
-    expect(html).toContain("恢复本地工作");
+    expect(html).toContain("Recover Unsaved Work");
   });
 
   it("offers a clean reload when the build is the thing that is stale", () => {

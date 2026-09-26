@@ -15,6 +15,16 @@ node containers/self-host/init-secrets.mjs "$state/secrets"
 release_env="$state/releases/$revision.env"
 printf 'ANALOG_REVISION=%s\nANALOG_STATE_DIR=%s\n' "$revision" "$state" > "$release_env"
 compose=containers/self-host/compose.yaml
+# The upstream executor now consumes a bundled simulation-service harness.
+# Build it with the same pinned Node/pnpm toolchain, then stage only that output.
+docker build -f containers/self-host/Dockerfile --target build \
+  -t "analog-canvas-build:$revision" .
+stager=$(docker create "analog-canvas-build:$revision")
+trap 'docker rm "$stager" >/dev/null 2>&1 || true' EXIT HUP INT TERM
+mkdir -p containers/ngspice/runtime
+docker cp "$stager:/app/containers/ngspice/runtime/." containers/ngspice/runtime/
+docker rm "$stager" >/dev/null
+trap - EXIT HUP INT TERM
 docker compose --env-file "$release_env" -f "$compose" build app assets executor
 # No down, volume deletion, shared network changes or data reset.
 docker compose --env-file "$release_env" -f "$compose" up -d --no-build

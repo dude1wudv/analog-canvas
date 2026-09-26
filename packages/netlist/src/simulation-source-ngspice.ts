@@ -127,6 +127,7 @@ export function compileNgspiceSourceSimulation(
     parsedConfig.config,
     graph,
     variant,
+    parsedConfig.authority,
   );
   const effective = projection.project;
   const config = projection.config;
@@ -134,11 +135,6 @@ export function compileNgspiceSourceSimulation(
     const native = nativeSourceCollection(graph);
     config.collection = native.collection;
     diagnostics.push(...native.diagnostics);
-    if (variant && Object.values(variant).some((value) => value !== undefined))
-      fail(
-        "SIMULATION_NATIVE_VARIANT_UNSUPPORTED",
-        "Native experiments define sweeps and overrides in Code. Batch selects folders; it does not override their parameters.",
-      );
   }
   diagnostics.push(...projection.diagnostics);
   const reachable = new Set(graph.paths);
@@ -209,9 +205,10 @@ export function compileNgspiceSourceSimulation(
   // Two passes share one ephemeral instrumentation set across reused Cell definitions.
   // No additional sources or pins are written back into the Project.
   let instrumentations: readonly TerminalCurrentInstrumentation[] = [];
-  for (const intent of intents.values()) {
+  for (const [id, intent] of intents) {
     const plan = buildSimulationPlan(effective, intent, {
       nativeControl: true,
+      rootAsTopLevel: byBinding.get(id)!.emission === "top-level",
       terminalInstrumentations: instrumentations,
     });
     if (plan.ok) instrumentations = plan.terminalInstrumentations;
@@ -223,6 +220,7 @@ export function compileNgspiceSourceSimulation(
   for (const [id, intent] of intents) {
     const plan = buildSimulationPlan(effective, intent, {
       nativeControl: true,
+      rootAsTopLevel: byBinding.get(id)!.emission === "top-level",
       terminalInstrumentations: instrumentations,
     });
     if (!plan.ok)

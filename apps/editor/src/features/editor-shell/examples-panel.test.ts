@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { galleryEntryMatchesQuery } from "../../gallery-client";
 import { libraryProjectExamples } from "../../examples/library-examples";
 import { deriveGalleryPanelView, ExamplesPanel } from "./examples-panel";
+import { LocalExamplesCards } from "./local-examples-cards";
 
 function entry(
   overrides: Partial<Parameters<typeof galleryEntryMatchesQuery>[0]> & {
@@ -44,15 +45,15 @@ describe("ExamplesPanel", () => {
   });
   it("presents every bundled example outside the Library device panel", () => {
     const markup = renderToStaticMarkup(
-      createElement(ExamplesPanel, {
-        open: true,
+      createElement(LocalExamplesCards, {
         onOpenExample: () => undefined,
       }),
     );
 
-    expect(markup).toContain('data-testid="examples-panel"');
     expect(markup).toContain("<svg");
     expect(markup).not.toContain('data-testid="shapes-fold-library"');
+    expect(markup).not.toContain('data-testid="gallery-topology-check"');
+    expect(markup).not.toContain("Check current topology");
     expect(markup.match(/data-testid="shapes-example-/g)).toHaveLength(
       libraryProjectExamples.length,
     );
@@ -81,32 +82,19 @@ describe("gallery panel view", () => {
   };
 
   it("says the wall's size from the server, never a guess", () => {
-    expect(
-      deriveGalleryPanelView(feed, { searchQuery: "", selectedTags: [] })
-        .countLabel,
-    ).toBe("120 个电路");
+    expect(deriveGalleryPanelView(feed, { searchQuery: "" }).countLabel).toBe(
+      "120 个电路",
+    );
     // A pre-totals API answers null; the panel then says nothing at all.
     expect(
-      deriveGalleryPanelView(
-        { ...feed, total: null },
-        { searchQuery: "", selectedTags: [] },
-      ).countLabel,
+      deriveGalleryPanelView({ ...feed, total: null }, { searchQuery: "" })
+        .countLabel,
     ).toBeNull();
-  });
-
-  it("names a server-side narrowing as filtered, matching the wall", () => {
-    expect(
-      deriveGalleryPanelView(feed, {
-        searchQuery: "",
-        selectedTags: ["bias"],
-      }).countLabel,
-    ).toBe("120 个筛选后的电路");
   });
 
   it("counts text matches separately from the wall's size", () => {
     const view = deriveGalleryPanelView(feed, {
       searchQuery: "bandgap",
-      selectedTags: [],
     });
     expect(view.visibleEntries.map((candidate) => candidate.id)).toEqual([
       "g-2",
@@ -117,10 +105,9 @@ describe("gallery panel view", () => {
   it("searches the same fields the wall searches", () => {
     // name / author / description / tag — one case each, through the shared
     // matcher, so the panel cannot quietly narrow the search.
-    for (const query of ["ring", "mei", "three-stage", "clock"]) {
+    for (const query of ["ring", "mei", "three-stage", "stgae", "clock"]) {
       const view = deriveGalleryPanelView(feed, {
         searchQuery: query,
-        selectedTags: [],
       });
       expect(view.visibleEntries.some((c) => c.id === "g-1")).toBe(true);
     }
@@ -130,7 +117,6 @@ describe("gallery panel view", () => {
     const paging = { ...feed, nextCursor: "cursor-1" };
     const view = deriveGalleryPanelView(paging, {
       searchQuery: "zzz",
-      selectedTags: [],
     });
     expect(view.emptyMessage).toBe(
       "No matches yet — searching older circuits…",
@@ -141,17 +127,48 @@ describe("gallery panel view", () => {
   it("says nothing matches only once the feed is exhausted", () => {
     const view = deriveGalleryPanelView(feed, {
       searchQuery: "zzz",
-      selectedTags: [],
     });
     expect(view.emptyMessage).toBe("No circuits match “zzz”.");
     expect(view.countLabel).toBe("120 个电路 · 0 个匹配");
+  });
+
+  it("combines multi-tag OR selection with text search without duplicating circuits", () => {
+    expect(
+      deriveGalleryPanelView(feed, {
+        searchQuery: "",
+        selectedTags: ["clock", "bias"],
+      }).visibleEntries.map((e) => e.id),
+    ).toEqual(["g-1", "g-2"]);
+    const view = deriveGalleryPanelView(feed, {
+      searchQuery: "lin",
+      selectedTags: ["clock", "bias"],
+    });
+    expect(view.visibleEntries.map((e) => e.id)).toEqual(["g-2"]);
+    expect(view.countLabel).toBe("120 个电路 · 1 个匹配");
+  });
+
+  it("keeps filtered zero results in the Gallery and searches remaining pages", () => {
+    const filters = { searchQuery: "", selectedTags: ["adc"] };
+    const pending = deriveGalleryPanelView(
+      { ...feed, nextCursor: "later" },
+      filters,
+    );
+    expect(pending.showGallery).toBe(true);
+    expect(pending.visibleEntries).toHaveLength(0);
+    expect(pending.emptyMessage).toBe(
+      "No matches yet — searching older circuits…",
+    );
+    const done = deriveGalleryPanelView(feed, filters);
+    expect(done.showGallery).toBe(true);
+    expect(done.emptyMessage).toBe("No circuits match these filters.");
+    expect(done.countLabel).toBe("120 个电路 · 0 个匹配");
   });
 
   it("stands the bundled circuits in while the feed is unavailable", () => {
     for (const status of ["loading", "unavailable"] as const) {
       const view = deriveGalleryPanelView(
         { status, entries: [], nextCursor: null, total: null },
-        { searchQuery: "", selectedTags: [] },
+        { searchQuery: "" },
       );
       expect(view.showGallery).toBe(false);
       expect(view.countLabel).toBeNull();
@@ -162,8 +179,7 @@ describe("gallery panel view", () => {
 describe("user examples section", () => {
   it("previews each circuit rather than only naming it", () => {
     const markup = renderToStaticMarkup(
-      createElement(ExamplesPanel, {
-        open: true,
+      createElement(LocalExamplesCards, {
         onOpenExample: () => undefined,
       }),
     );
@@ -175,6 +191,17 @@ describe("user examples section", () => {
     // Columns follow the panel's dragged width rather than a second control
     // for the same thing.
     expect(markup).not.toContain('data-testid="gallery-column-slider"');
+  });
+
+  it("does not offer bundled examples on a non-loopback host", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ExamplesPanel, {
+        open: true,
+        onOpenExample: () => undefined,
+      }),
+    );
+    expect(markup).not.toContain('data-testid="shapes-example-');
+    expect(markup).toContain("No published circuits yet.");
   });
 
   it("keeps the gallery as the only place circuits are stored", () => {

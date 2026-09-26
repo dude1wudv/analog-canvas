@@ -51,7 +51,7 @@ export function HierarchyToolbar({
           {documents.map((document) => (
             <option key={document.id} value={document.id}>
               {document.id === topDocumentId
-                ? `${document.name} (top)`
+                ? `${document.name}（顶层）`
                 : document.name}
             </option>
           ))}
@@ -62,18 +62,18 @@ export function HierarchyToolbar({
           disabled={!canEnter}
           title="进入所选 Cell（E）"
         >
-          Enter Cell
+          进入 Cell
         </button>
         <div className="cell-command-row" data-testid="cell-command-menu">
           <button type="button" onClick={onManageCells}>
-            Manage Cells…
+            管理 Cell…
           </button>
           <button
             type="button"
             onClick={onPlaceCell}
             disabled={documents.length < 2}
           >
-            Place Cell
+            放置 Cell
           </button>
         </div>
       </div>

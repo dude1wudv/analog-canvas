@@ -100,6 +100,7 @@ function ModelTargetControl({
             ref={customInput}
             dir="auto"
             aria-label="自定义模型名称"
+            autoComplete="off"
             value={customDraft}
             placeholder="模型名称"
             onChange={(event) => setCustomDraft(event.currentTarget.value)}
@@ -223,6 +224,7 @@ export function ComponentIdentityProperties({
                     dir="auto"
                     key={`${instance.id}-${revision}-reference`}
                     aria-label="网表位号"
+                    autoComplete="off"
                     defaultValue={reference}
                     onBlur={(event) =>
                       commitIdentityInput(event, reference, onReferenceChange)

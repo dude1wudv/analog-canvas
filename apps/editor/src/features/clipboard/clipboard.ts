@@ -37,6 +37,7 @@ import type {
 } from "@icm/model";
 import type { SymbolResolver } from "@icm/symbols";
 import {
+  createdRouteChildIds,
   createRoutePath,
   rewriteRichTextPlainText,
   routeBends,
@@ -48,10 +49,7 @@ import {
   type PlacementOrientationOperation,
 } from "../../interaction/shortcut-orientation";
 
-import {
-  createNewInstance,
-  nextCellPinName,
-} from "../netlist-export/netlist-authoring";
+import { createNewInstance } from "../netlist-export/netlist-authoring";
 
 export interface SchematicClipboard {
   context?: import("./project-copy").CopyContext;
@@ -586,6 +584,8 @@ export function clipboardPreviewDocument(
       oriented,
       { x: offset.x + clearance.x, y: offset.y + clearance.y },
       sequence,
+      undefined,
+      resolver,
     );
     if (proposal.errors.length === 0) {
       const result = executeTransaction(
@@ -790,6 +790,7 @@ export function copySelection(
   instanceIds: readonly string[],
   draftingIds: readonly string[] = [],
   routingSelection?: ExplicitCopyRoutingSelection,
+  preserveElectrical = false,
 ): SchematicClipboard | null {
   document = withPowerMarkerOwnership(document);
   const selectedIds = new Set(instanceIds);
@@ -830,6 +831,13 @@ export function copySelection(
     },
   );
   const netIds = new Set(capture.clonedNetIds);
+  if (preserveElectrical) {
+    for (const net of document.nets)
+      if (
+        net.terminals.some((terminal) => selectedIds.has(terminal.instanceId))
+      )
+        netIds.add(net.id);
+  }
   const routeIds = new Set(capture.affected.internalRoutes);
   const junctionIds = new Set(capture.affected.internalJunctions);
   const attachedIds = new Set<string>([
@@ -881,7 +889,7 @@ export function copySelection(
     ),
   );
   const clipboard: SchematicClipboard = structuredClone({
-    intent: "clone-selection",
+    intent: preserveElectrical ? "compose-document" : "clone-selection",
     sourceDocumentId: document.id,
     sourceGrid: document.presentation.grid,
     instances,
@@ -915,7 +923,8 @@ export function copySelection(
         terminals: net.terminals.filter(
           (terminal) =>
             selectedIds.has(terminal.instanceId) &&
-            (ownedMarkerIds.has(terminal.instanceId) ||
+            (preserveElectrical ||
+              ownedMarkerIds.has(terminal.instanceId) ||
               copiedTerminalKeys.has(
                 `${terminal.instanceId}\0${terminal.pinName}`,
               )),
@@ -926,13 +935,17 @@ export function copySelection(
       junctionIds.has(junction.id),
     ),
     annotations,
-    noConnects: [],
+    noConnects: preserveElectrical
+      ? document.noConnects.filter((item) =>
+          selectedIds.has(item.endpoint.instanceId),
+        )
+      : [],
     connectivityEvidence: document.connectivityEvidence.filter((evidence) => {
       if (!netIds.has(evidence.netId)) return false;
-      if (evidence.kind !== "name-claim") return false;
+      if (evidence.kind !== "name-claim") return preserveElectrical;
       switch (evidence.owner.kind) {
         case "global-declaration":
-          return false;
+          return preserveElectrical;
         case "net-label":
           return annotationIds.has(evidence.owner.annotationId);
         case "power-marker":
@@ -946,35 +959,9 @@ export function copySelection(
     layoutGroups,
     constraints,
   });
-  // A copied supply marker starts with the same VDD/ground name as Insert.
-  // Explicitly copied rails and standalone net labels remain authored objects.
-  for (const evidence of clipboard.connectivityEvidence) {
-    if (
-      evidence.kind !== "name-claim" ||
-      evidence.owner.kind !== "power-marker"
-    )
-      continue;
-    const ownerId = evidence.owner.objectId;
-    const owner = clipboard.instances.find(
-      (instance) => instance.id === ownerId,
-    );
-    const power = owner && powerConnectionForSymbol(owner.symbolId);
-    if (!power) continue;
-    evidence.name = power.name;
-    evidence.scope = power.scope;
-    for (const annotation of clipboard.annotations) {
-      if (
-        annotation.binding?.kind === "net-name" &&
-        annotation.binding.netId === evidence.netId &&
-        annotation.formatOverride
-      ) {
-        annotation.formatOverride = rewriteRichTextPlainText(
-          annotation.formatOverride,
-          power.name,
-        );
-      }
-    }
-  }
+  if (preserveElectrical) return clipboard;
+  // Copied electrical names and rich-text labels remain authored content,
+  // including customized power markers. Fresh object IDs do not imply fresh names.
   // Two selected Port markers must not retain a shared invisible source Net.
   // Their selected wires, when present, remain the only reason to share it.
   for (const instance of clipboard.instances) {
@@ -1031,27 +1018,81 @@ export function copySelection(
   return clipboard;
 }
 
-function uniqueCopyId(
-  sourceId: string,
-  sequence: number,
-  occupied: Set<string>,
-): string {
-  let candidate = `${sourceId}-copy-${sequence}`;
-  let collision = 1;
-  while (occupied.has(candidate)) {
-    collision += 1;
-    candidate = `${sourceId}-copy-${sequence}-${collision}`;
-  }
-  occupied.add(candidate);
-  return candidate;
+/**
+ * What a paste numbers: an identity without the `-copy-N` that earlier copies
+ * chained onto it (`GND1-copy-2-copy-7`) or the `_N` of the paste it came
+ * from (`R1_2`).
+ */
+function copyIdStem(id: string): string {
+  return (
+    (id.replace(/-copy-\d+(?:-\d+)?/gu, "") || id).replace(/_\d+$/u, "") || id
+  );
 }
 
-function pastedInstanceId(
-  source: Instance,
-  sequence: number,
-  occupied: Set<string>,
-): string {
-  return uniqueCopyId(source.id, sequence, occupied);
+/**
+ * A pasted object is a new object, so a copy never grows its identity: every
+ * object of one paste takes its stem and one shared ordinal, the first that
+ * none of them finds taken (`R1` pastes as `R1_2`, and that as `R1_3`);
+ * objects that share a stem take consecutive ones. The ordinal is shared
+ * because identities derive from one another, `power-label-vdd1` belonging to
+ * `VDD1`, and one suffix keeps such pairs; a label named after the object it
+ * is anchored to is named after that object's copy. A copy never takes its
+ * source's identity, even where that is free: the Edit Engine tells a clone
+ * from its source by it.
+ */
+function pastedIdentities(
+  ids: readonly string[],
+  routes: readonly RouteBranch[],
+  owned: readonly { id: string; ownerId: string }[],
+  occupied: ReadonlySet<string>,
+  occupiedRouteChildren: ReadonlySet<string>,
+): Map<string, string> {
+  const stems = new Map<string, string[]>();
+  for (const id of new Set(ids)) {
+    const stem = copyIdStem(id);
+    stems.set(stem, [...(stems.get(stem) ?? []), id]);
+  }
+  for (const members of stems.values()) members.sort();
+  const fits = (pasted: ReadonlyMap<string, string>) =>
+    [...pasted].every(
+      ([id, candidate]) => candidate !== id && !occupied.has(candidate),
+    ) &&
+    // A Route's Leg and Bend IDs derive from its own; split Routes keep the
+    // children of the Route they came from, so a freed Route ID can still
+    // have its derived children in the Document.
+    routes.every(
+      (route) =>
+        !createdRouteChildIds(pasted.get(route.id)!, route.legs.length).some(
+          (child) => occupiedRouteChildren.has(child),
+        ),
+    );
+  let pasted = new Map<string, string>();
+  for (let ordinal = 2; pasted.size === 0 || !fits(pasted); ordinal += 1)
+    pasted = new Map(
+      [...stems].flatMap(([stem, members]) =>
+        members.map((id, index) => [id, `${stem}_${ordinal + index}`] as const),
+      ),
+    );
+  const taken = new Set(pasted.values());
+  for (const { id, ownerId } of owned) {
+    const owner = pasted.get(ownerId);
+    const current = pasted.get(id);
+    if (!owner || !current) continue;
+    const prefix = id.slice(0, id.length - ownerId.length);
+    const derived = !prefix.endsWith("-")
+      ? null
+      : id === `${prefix}${ownerId}`
+        ? `${prefix}${owner}`
+        : id === `${prefix}${ownerId.toLowerCase()}`
+          ? `${prefix}${owner.toLowerCase()}`
+          : null;
+    if (!derived || derived === current) continue;
+    if (derived === id || occupied.has(derived) || taken.has(derived)) continue;
+    taken.delete(current);
+    taken.add(derived);
+    pasted.set(id, derived);
+  }
+  return pasted;
 }
 
 /** Allocate a sole authored Reference for schematic-only Instance kinds. */
@@ -1062,8 +1103,8 @@ function nextUnconstrainedReference(
   reserved: ReadonlySet<string>,
 ): string {
   const suffix = /^(.*?)(\d+)$/u.exec(current);
-  const prefix = suffix?.[1] || `${current}-copy-`;
-  let ordinal = suffix ? Number(suffix[2]) + 1 : sequence;
+  const prefix = suffix?.[1] || `${current}-`;
+  let ordinal = suffix ? Number(suffix[2]) + 1 : sequence + 1;
   while (true) {
     const digits = String(ordinal);
     const candidate = `${prefix.slice(0, Math.max(1, 128 - digits.length))}${digits}`;
@@ -1159,6 +1200,7 @@ export function proposePaste(
   offset: Point,
   sequence: number,
   project?: Pick<CircuitProject, "componentDefinitions">,
+  resolver?: SymbolResolver,
 ): PasteProposal {
   const occupied = new Set<string>(
     [
@@ -1175,14 +1217,52 @@ export function proposePaste(
       ...(document.drafting?.objects ?? []),
     ].map((object) => object.id),
   );
-  const compositionOccurrenceId =
-    clipboard.intent === "compose-document"
-      ? uniqueCopyId(
-          `composition-${clipboard.sourceDocumentId}`,
-          sequence,
-          occupied,
-        )
-      : undefined;
+  const occupiedRouteChildren = new Set(
+    document.routes.flatMap((route) =>
+      route.legs.flatMap((leg) => [
+        leg.id,
+        ...(leg.to.kind === "bend" ? [leg.to.bendId] : []),
+      ]),
+    ),
+  );
+  const pasted = pastedIdentities(
+    [
+      ...clipboard.instances,
+      ...clipboard.routes,
+      ...clipboard.junctions,
+      ...clipboard.noConnects,
+      ...clipboard.annotations,
+      ...clipboard.connectivityEvidence,
+      ...clipboard.layoutGroups,
+      ...clipboard.constraints,
+      ...clipboard.cellTerminals,
+      ...clipboard.nets,
+      // A junction can arrive without its net (a junction-only marquee copy
+      // clones no internal Route, so the net is never cloned): the paste
+      // creates a fresh net for it instead of emitting an undefined netId.
+      ...clipboard.junctions.map((junction) => ({ id: junction.netId })),
+      ...clipboard.draftingObjects,
+    ].map((object) => object.id),
+    clipboard.routes,
+    clipboard.annotations.flatMap((annotation) =>
+      annotation.anchor.kind === "object"
+        ? [{ id: annotation.id, ownerId: annotation.anchor.objectId }]
+        : annotation.anchor.kind === "route"
+          ? [{ id: annotation.id, ownerId: annotation.anchor.routeId }]
+          : [],
+    ),
+    occupied,
+    occupiedRouteChildren,
+  );
+  for (const id of pasted.values()) occupied.add(id);
+  const pastedId = (id: string) => pasted.get(id)!;
+  let compositionOccurrenceId: string | undefined;
+  if (clipboard.intent === "compose-document") {
+    compositionOccurrenceId = `composition-${clipboard.sourceDocumentId}-${sequence}`;
+    for (let ordinal = 2; occupied.has(compositionOccurrenceId); ordinal += 1)
+      compositionOccurrenceId = `composition-${clipboard.sourceDocumentId}-${sequence}_${ordinal}`;
+    occupied.add(compositionOccurrenceId);
+  }
   const referenceIndex = createReferenceIndex(document, project);
   const reservedReferences = new Set<string>();
   const occupiedReferences = new Set(
@@ -1226,10 +1306,7 @@ export function proposePaste(
     }),
   );
   const instanceIds = new Map(
-    clipboard.instances.map((instance) => [
-      instance.id,
-      pastedInstanceId(instance, sequence, occupied),
-    ]),
+    clipboard.instances.map((instance) => [instance.id, pastedId(instance.id)]),
   );
   const freshInstances = new Map<string, Instance>();
   if (clipboard.intent === "clone-selection") {
@@ -1238,10 +1315,27 @@ export function proposePaste(
       ...document,
       instances: [...document.instances],
     };
+    // A copy keeps its Reference wherever that name is still free, so a
+    // circuit copied into another tab keeps R7 and XDUT, and what its
+    // simulation setups call them. Only a taken name gets the next free one,
+    // and names that can be kept are claimed before any is allocated.
+    const taken = new Set(occupiedReferences);
+    const keptReferences = new Map<string, string>();
     for (const source of clipboard.instances) {
+      const key = source.reference?.toLowerCase();
+      if (!source.reference || !key || taken.has(key)) continue;
+      taken.add(key);
+      keptReferences.set(source.id, source.reference);
+    }
+    const allocationOrder = [
+      ...clipboard.instances.filter((item) => keptReferences.has(item.id)),
+      ...clipboard.instances.filter((item) => !keptReferences.has(item.id)),
+    ];
+    for (const source of allocationOrder) {
       const instance = createNewInstance(allocationDocument, source, {
         id: instanceIds.get(source.id)!,
         project,
+        reference: keptReferences.get(source.id),
       });
       freshInstances.set(source.id, instance);
       allocationDocument.instances.push(instance);
@@ -1250,74 +1344,81 @@ export function proposePaste(
     }
   }
   const routeIds = new Map(
-    clipboard.routes.map((route) => [
-      route.id,
-      uniqueCopyId(route.id, sequence, occupied),
-    ]),
+    clipboard.routes.map((route) => [route.id, pastedId(route.id)]),
   );
   const junctionIds = new Map(
-    clipboard.junctions.map((junction) => [
-      junction.id,
-      uniqueCopyId(junction.id, sequence, occupied),
-    ]),
+    clipboard.junctions.map((junction) => [junction.id, pastedId(junction.id)]),
   );
   const netIds = new Map<string, string>();
   const noConnectIds = new Map(
     clipboard.noConnects.map((noConnect) => [
       noConnect.id,
-      uniqueCopyId(noConnect.id, sequence, occupied),
+      pastedId(noConnect.id),
     ]),
   );
   const annotationIds = new Map(
     clipboard.annotations.map((annotation) => [
       annotation.id,
-      uniqueCopyId(annotation.id, sequence, occupied),
+      pastedId(annotation.id),
     ]),
   );
   const evidenceIds = new Map(
     clipboard.connectivityEvidence.map((evidence) => [
       evidence.id,
-      uniqueCopyId(evidence.id, sequence, occupied),
+      pastedId(evidence.id),
     ]),
   );
   const layoutGroupIds = new Map(
-    clipboard.layoutGroups.map((group) => [
-      group.id,
-      uniqueCopyId(group.id, sequence, occupied),
-    ]),
+    clipboard.layoutGroups.map((group) => [group.id, pastedId(group.id)]),
   );
   const constraintIds = new Map(
     clipboard.constraints.map((constraint) => [
       constraint.id,
-      uniqueCopyId(constraint.id, sequence, occupied),
+      pastedId(constraint.id),
     ]),
   );
   const errors: string[] = [];
+  // Net names survive paste, so V(node) expressions are stable. Device
+  // References still need unique names: reject expressions that would silently
+  // keep targeting the original device after its copied instance is renamed.
+  const renamedReferences = new Set(
+    clipboard.instances.flatMap((instance) =>
+      instance.reference &&
+      instanceReferences.has(instance.id) &&
+      instanceReferences.get(instance.id) !== instance.reference
+        ? [instance.reference.toLowerCase()]
+        : [],
+    ),
+  );
+  if (
+    clipboard.instances.some((instance) =>
+      Object.values(instance.netlist?.parameters ?? {}).some((value) =>
+        [
+          ...value.matchAll(/\bi\s*\(\s*([^\s,)]+)|@([^\s[\](){}+*/=,]+)/giu),
+        ].some((match) =>
+          renamedReferences.has((match[1] ?? match[2]!).toLowerCase()),
+        ),
+      ),
+    )
+  )
+    errors.push(
+      "Copied behavioral expressions refer to device names that conflict with this Cell; paste into an empty Cell first",
+    );
   const terminalIds = new Map(
     clipboard.cellTerminals.map((terminal) => [
       terminal.id,
-      uniqueCopyId(terminal.id, sequence, occupied),
+      pastedId(terminal.id),
     ]),
   );
   for (const net of clipboard.nets) {
-    netIds.set(net.id, uniqueCopyId(net.id, sequence, occupied));
+    netIds.set(net.id, pastedId(net.id));
   }
   for (const junction of clipboard.junctions) {
-    // A junction can arrive without its net (a junction-only marquee copy
-    // clones no internal Route, so the net is never cloned): the paste
-    // creates a fresh net for it instead of emitting an undefined netId.
-    if (!netIds.has(junction.netId)) {
-      netIds.set(
-        junction.netId,
-        uniqueCopyId(junction.netId, sequence, occupied),
-      );
-    }
+    if (!netIds.has(junction.netId))
+      netIds.set(junction.netId, pastedId(junction.netId));
   }
   const draftingIds = new Map(
-    clipboard.draftingObjects.map((object) => [
-      object.id,
-      uniqueCopyId(object.id, sequence, occupied),
-    ]),
+    clipboard.draftingObjects.map((object) => [object.id, pastedId(object.id)]),
   );
   const objectIds = new Map<string, string>([
     ...instanceIds,
@@ -1408,8 +1509,6 @@ export function proposePaste(
     })),
   );
 
-  const reservedPortNames = new Set<string>();
-  const terminalNames = new Map<string, string>();
   for (const terminal of clipboard.cellTerminals) {
     const copiedMarkerIds = terminal.interfaceInstanceIds.flatMap(
       (instanceId) => {
@@ -1421,26 +1520,10 @@ export function proposePaste(
       ? annotationIds.get(terminal.interfaceAnnotationId)
       : undefined;
     if (copiedMarkerIds.length === 0 && !copiedAnnotationId) continue;
-    const copiedPort = clipboard.instances.find((instance) =>
-      terminal.interfaceInstanceIds.includes(instance.id),
-    );
-    const name =
-      clipboard.intent === "clone-selection" && copiedPort
-        ? copiedPort.symbolId === "vdd-port"
-          ? "VDD"
-          : nextCellPinName(
-              document,
-              reservedPortNames,
-              copiedPort.symbolId === "port-filled" ? "filled" : "hollow",
-            )
-        : terminal.name;
-    reservedPortNames.add(name.toLowerCase());
-    terminalNames.set(terminal.id, name);
     edits.push({
       kind: "add_cell_terminal",
       terminal: {
         ...terminal,
-        name,
         id: terminalIds.get(terminal.id)!,
         netId: netIds.get(terminal.netId) ?? terminal.netId,
         interfaceInstanceIds: copiedMarkerIds,
@@ -1451,7 +1534,20 @@ export function proposePaste(
     });
   }
 
+  // A pin its symbol does not draw, such as a transistor substrate, has no
+  // place for a wire: it joins its Net as a property, as the process binds it.
+  const drawsPin = (instanceId: string, pinName: string): boolean => {
+    const instance = clipboard.instances.find((item) => item.id === instanceId);
+    const symbol =
+      instance &&
+      resolver?.resolve(instance.symbolId, instance.symbolVariantId);
+    return (
+      !symbol || symbol.definition.pins.some((pin) => pin.name === pinName)
+    );
+  };
+  const propertyEdits: SchematicEdit[] = [];
   for (const net of clipboard.nets) {
+    const netId = netIds.get(net.id)!;
     const mappedTerminals = net.terminals.flatMap(
       (terminal): RouteEndpoint[] => {
         const instanceId = instanceIds.get(terminal.instanceId);
@@ -1461,10 +1557,18 @@ export function proposePaste(
           errors.push(`Unknown terminal instance: ${terminal.instanceId}`);
           return [];
         }
+        if (!drawsPin(terminal.instanceId, terminal.pinName)) {
+          propertyEdits.push({
+            kind: "set_property_terminal_net",
+            instanceId,
+            pinName: terminal.pinName,
+            netId,
+          });
+          return [];
+        }
         return [{ kind: "terminal", instanceId, pinName: terminal.pinName }];
       },
     );
-    const netId = netIds.get(net.id)!;
     if (mappedTerminals[0]) {
       edits.push({
         kind: "connect_endpoints",
@@ -1481,6 +1585,7 @@ export function proposePaste(
       }
     }
   }
+  edits.push(...propertyEdits);
   // An implicit MOS bulk binding is a Cell policy, not a copied boundary
   // Wire. Re-materialize that one declared policy connection explicitly;
   // ordinary boundary terminals never enter this loop.
@@ -1554,6 +1659,7 @@ export function proposePaste(
       return {
         kind: "add_no_connect",
         noConnect: {
+          ...structuredClone(noConnect),
           id: noConnectIds.get(noConnect.id)!,
           endpoint: {
             kind: "terminal",
@@ -1657,17 +1763,6 @@ export function proposePaste(
           instanceId: clone.anchor.objectId,
         };
         delete clone.content;
-      }
-      if (
-        clipboard.intent === "clone-selection" &&
-        clone.binding?.kind === "cell-terminal-name"
-      ) {
-        const name = terminalNames.get(clone.binding.terminalId);
-        if (name && clone.formatOverride)
-          clone.formatOverride = rewriteRichTextPlainText(
-            clone.formatOverride,
-            name,
-          );
       }
       if (
         clone.binding?.kind === "instance-reference" &&

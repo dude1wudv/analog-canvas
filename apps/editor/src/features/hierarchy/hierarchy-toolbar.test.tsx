@@ -48,10 +48,10 @@ describe("HierarchyToolbar", () => {
     );
 
     expect(markup).toContain('data-testid="cell-navigation"');
-    expect(markup).toContain("dut (top)");
+    expect(markup).toContain("dut（顶层）");
     expect(markup).toContain("Child");
-    expect(markup).toContain("Enter Cell");
-    expect(markup).toContain("Manage Cells…");
-    expect(markup).not.toContain(">Up</button>");
+    expect(markup).toContain("进入 Cell");
+    expect(markup).toContain("管理 Cell…");
+    expect(markup).not.toContain(">返回顶层</button>");
   });
 });

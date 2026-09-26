@@ -8,9 +8,10 @@ import type {
 import type { SimulationService } from "@icm/simulation-service";
 import type { Prepared } from "@icm/simulation-service/contract";
 import type { ProjectRunHistory } from "./project-run-history";
-import { sourcePresentation } from "./source-presentation";
+import type { sourcePresentation } from "./source-presentation";
 import { serializeProject } from "@icm/project-protocol";
 import { simulationFileEngine } from "./file-engine";
+import { createBrowserSimulationArtifactStore } from "./browser-simulation-artifact-store";
 
 /** Do not export a pre-prepare Project when editing raced with compilation. */
 export function unchangedProjectSnapshot(
@@ -57,6 +58,11 @@ export class BrowserSimulationSession {
         Date.now,
         options.projectFiles,
         simulationFileEngine(options),
+        createBrowserSimulationArtifactStore(
+          options.getProject().id,
+          undefined,
+          { retainSession: true },
+        ),
       );
   }
   async clear() {
@@ -81,8 +87,11 @@ export class BrowserSimulationSession {
   async handle(
     operation: SimulationOperation,
     requestId: string = crypto.randomUUID(),
+    options: { waitMs?: number } = {},
   ): Promise<SimulationReply> {
     const generation = this.generation;
+    let phase: "load" | "execute" | "history" = "load";
+    let executed: SimulationReply | undefined;
     if (this.options.getProjectSessionId() !== this.projectSessionId)
       return {
         ok: false,
@@ -120,7 +129,10 @@ export class BrowserSimulationSession {
           if (generation === this.generation) this.service = undefined;
           throw error;
         });
-      const service = await this.service;
+      const [service, { sourcePresentation }] = await Promise.all([
+        this.service,
+        import("./source-presentation"),
+      ]);
       if (
         generation !== this.generation ||
         this.options.getProjectSessionId() !== this.projectSessionId
@@ -141,7 +153,10 @@ export class BrowserSimulationSession {
         this.options.runHistory
           ? structuredClone(this.options.getProject())
           : undefined;
-      const reply = await service.handle(operation, requestId);
+      phase = "execute";
+      const reply = await service.handle(operation, requestId, options);
+      executed = reply;
+      phase = "history";
       const projectFile = sourceProject
         ? unchangedProjectSnapshot(sourceProject, this.options.getProject())
         : "";
@@ -150,6 +165,12 @@ export class BrowserSimulationSession {
         this.options.runHistory &&
         reply.ok
       ) {
+        if (
+          operation.operation === "history-delete" &&
+          "deletion" in reply &&
+          reply.deletion.deleted
+        )
+          this.options.runHistory.forgetRun(operation.runId);
         if (
           (operation.operation === "prepare-batch" ||
             operation.operation === "prepare-sweep") &&
@@ -250,16 +271,53 @@ export class BrowserSimulationSession {
         }
       }
       return reply;
-    } catch {
+    } catch (error) {
+      // History is a secondary view. Never disguise an accepted start as a
+      // failed initialization and invite a duplicate run.
+      if (phase === "history" && executed) {
+        console.warn("SIMULATION_HISTORY_UPDATE_FAILED", { requestId });
+        return executed;
+      }
+      const moduleFailure = phase === "load" && isModuleLoadFailure(error);
       return {
         ok: false,
         error: {
-          code: "SIMULATION_HOST_UNAVAILABLE",
-          message: "Simulation could not load; the editor remains available",
-          stage: "read",
-          recovery: "retry-after",
+          code:
+            phase === "load"
+              ? "SIMULATION_HOST_UNAVAILABLE"
+              : "SIMULATION_OPERATION_FAILED",
+          message:
+            phase === "load"
+              ? moduleFailure
+                ? "Simulation module could not load. Check the network; if it persists, save the Project and reload Editor. No simulation was submitted."
+                : "Simulation initialization failed before submission; the editor remains available."
+              : "Simulation operation failed unexpectedly. Reconcile using the same request identity; do not submit a new run.",
+          stage:
+            phase === "load"
+              ? "read"
+              : operation.operation.startsWith("prepare")
+                ? "prepare"
+                : operation.operation.startsWith("start")
+                  ? "start"
+                  : operation.operation.startsWith("cancel")
+                    ? "cancel"
+                    : operation.operation === "export"
+                      ? "export"
+                      : "read",
+          recovery: phase === "load" ? "retry-after" : "retry-same-request",
+          correlationId: requestId,
         },
       };
     }
   }
+}
+
+/** Classify known browser loader failures without returning URLs or credentials. */
+export function isModuleLoadFailure(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /dynamically imported module|importing a module script|loading chunk|chunkloaderror|module script failed/i.test(
+      `${error.name}: ${error.message}`,
+    )
+  );
 }

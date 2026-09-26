@@ -1,6 +1,7 @@
 import { transformPoint } from "@icm/model";
 import type { Point, Rect, SchematicDocument } from "@icm/model";
 import type { ResolvedSymbol } from "@icm/symbols";
+import { getRazaviCatalogEntry } from "@icm/symbols";
 
 import type { SchematicStyleProfile } from "./style-profile.js";
 import { visibleSymbolInkBounds } from "./visual.js";
@@ -35,6 +36,7 @@ const SIDE_LABEL_SYMBOLS = new Set([
   "inductor",
   "inductor-compact",
   "variable-inductor",
+  "battery",
   "voltage-source",
   "current-source",
   "ac-voltage-source",
@@ -230,16 +232,217 @@ function transformedSide(
   return world.y > 0 ? "bottom" : "top";
 }
 
+/** Unbounded absolute M/L/C paths (the coil) otherwise use the padded viewBox.
+ * Their control-point hull gives a conservative artwork envelope for label
+ * spacing without changing symbol geometry, pin coordinates or hit testing. */
+function compactLabelInkBounds(resolved: ResolvedSymbol): Rect {
+  const primitives = resolved.definition.primitives.map((primitive) => {
+    if (primitive.kind !== "path" || primitive.bounds) return primitive;
+    const commands = primitive.data.match(/[a-z]/gi) ?? [];
+    if (
+      !commands.length ||
+      commands.some((command) => !["M", "L", "C"].includes(command))
+    )
+      return primitive;
+    const coordinates = (
+      primitive.data.match(/[-+]?(?:\d*\.\d+|\d+)/g) ?? []
+    ).map(Number);
+    if (!coordinates.length || coordinates.length % 2) return primitive;
+    const xs = coordinates.filter((_, index) => index % 2 === 0);
+    const ys = coordinates.filter((_, index) => index % 2 === 1);
+    const x = Math.min(...xs),
+      y = Math.min(...ys);
+    return {
+      ...primitive,
+      bounds: { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y },
+    };
+  });
+  return visibleSymbolInkBounds({
+    ...resolved,
+    definition: { ...resolved.definition, primitives },
+  });
+}
+
 /**
- * Places horizontal SVG text around the active symbol variant. Vertical sides
- * convert one grid interval from the drawn edge to the upright glyph baseline
- * before returning it. Coordinates are then snapped once to the active grid.
- * Critically, this is nearest-grid snapping rather than outward snapping:
- * the 1-unit padded interaction envelope is excluded from the calculation, so
- * a label never gains a second grid cell merely because a symbol edge uses
- * finite calibrated coordinates.
+ * The drawn extent a label keeps its distance from. A path without declared
+ * bounds contributes the hull of its absolute M/L/C points (Z closes it
+ * without adding any) instead of the Symbol's padded viewBox, which left a
+ * delay cell's label 15 units from its box.
+ */
+export function instanceLabelInkBounds(
+  resolved: ResolvedSymbol,
+  signalFlowParameters?: Parameters<typeof visibleSymbolInkBounds>[1],
+): Rect {
+  const withBounds = (
+    primitives: ResolvedSymbol["definition"]["primitives"],
+  ): ResolvedSymbol["definition"]["primitives"] =>
+    primitives.map((primitive) => {
+      if (primitive.kind !== "path" || primitive.bounds) return primitive;
+      const commands = primitive.data.match(/[a-z]/gi) ?? [];
+      if (
+        !commands.length ||
+        commands.some((command) => !["M", "L", "C", "Z", "z"].includes(command))
+      )
+        return primitive;
+      const coordinates = (
+        primitive.data.match(/[-+]?(?:\d*\.\d+|\d+)/g) ?? []
+      ).map(Number);
+      if (!coordinates.length || coordinates.length % 2) return primitive;
+      const xs = coordinates.filter((_, index) => index % 2 === 0);
+      const ys = coordinates.filter((_, index) => index % 2 === 1);
+      const x = Math.min(...xs),
+        y = Math.min(...ys);
+      return {
+        ...primitive,
+        bounds: {
+          x,
+          y,
+          width: Math.max(...xs) - x,
+          height: Math.max(...ys) - y,
+        },
+      };
+    });
+  return visibleSymbolInkBounds(
+    {
+      ...resolved,
+      definition: {
+        ...resolved.definition,
+        primitives: withBounds(resolved.definition.primitives),
+      },
+      ...(resolved.variant
+        ? {
+            variant: {
+              ...resolved.variant,
+              ...(resolved.variant.additionalPrimitives
+                ? {
+                    additionalPrimitives: withBounds(
+                      resolved.variant.additionalPrimitives,
+                    ),
+                  }
+                : {}),
+            },
+          }
+        : {}),
+    },
+    signalFlowParameters,
+  );
+}
+
+/** Clearance between a label's ink and its Symbol's drawn ink, in drawing units. */
+export const INSTANCE_LABEL_GAP = 4;
+/** Height of the label font's capitals and figures, in em. */
+const LABEL_CAP_HEIGHT_EM = 0.72;
+
+/**
+ * The distances the placement rule works with, in drawing units: the gap,
+ * the height of the label's capitals, and how far a subscript's figures reach
+ * below its baseline.
+ */
+export function instanceLabelMetrics(
+  profile: SchematicStyleProfile,
+  sizeScale = 1,
+): { gap: number; capHeight: number; subscriptDrop: number } {
+  const fontSize = profile.typography.instanceFontSize * sizeScale;
+  return {
+    gap: INSTANCE_LABEL_GAP,
+    capHeight: fontSize * LABEL_CAP_HEIGHT_EM,
+    subscriptDrop:
+      fontSize *
+      profile.typography.subscriptScale *
+      profile.typography.subscriptBaselineShiftEm,
+  };
+}
+
+/**
+ * Places horizontal SVG text around the active symbol variant, the same way
+ * for every family: the label's ink keeps INSTANCE_LABEL_GAP from the drawn
+ * artwork on whichever side it sits. Beside the Symbol its capitals are
+ * centred on the body; below, the capitals start one gap under it; above,
+ * the subscript's descent is cleared first, so M₂ or R₂ over a part never
+ * touches it. The position is not snapped to the connection grid: rounding
+ * the gap to a grid step is what left gates, registers and blocks 10 to 26
+ * units away while devices sat at 5. A value row stacks away from the body
+ * (below a lower label, above an upper one).
  */
 export function placeUprightInstanceLabel(
+  instance: SchematicDocument["instances"][number],
+  resolved: ResolvedSymbol,
+  profile: SchematicStyleProfile,
+  _localAnchor: Point,
+  localSide: InstanceLabelSide,
+  _grid: number,
+  sizeScale = 1,
+  rowOffset = 0,
+  /**
+   * Keep the label beside the symbol through every quarter turn. Upright text
+   * above or below a rotated Port reads as the label having flipped over, so
+   * such a Symbol swaps between left and right instead.
+   */
+  horizontalSidesOnly = false,
+): InstanceLabelPlacement | null {
+  if (!instance.placement) return null;
+  const worldBounds = transformedBounds(
+    instanceLabelInkBounds(resolved, instance.signalFlowParameters),
+    instance,
+  );
+  const rotatedSide = transformedSide(localSide, instance);
+  const worldSide =
+    horizontalSidesOnly && (rotatedSide === "top" || rotatedSide === "bottom")
+      ? horizontalSideAwayFromPin(instance, resolved)
+      : rotatedSide;
+  if (!worldBounds || !worldSide) return null;
+  const { gap, capHeight, subscriptDrop } = instanceLabelMetrics(
+    profile,
+    sizeScale,
+  );
+  const centreX = worldBounds.x + worldBounds.width / 2;
+  const centreBaseline =
+    worldBounds.y + worldBounds.height / 2 + capHeight / 2 + rowOffset;
+  switch (worldSide) {
+    case "right":
+      return {
+        position: {
+          x: Math.round(worldBounds.x + worldBounds.width + gap),
+          y: Math.round(centreBaseline),
+        },
+        alignment: "start",
+      };
+    case "left":
+      return {
+        position: {
+          x: Math.round(worldBounds.x - gap),
+          y: Math.round(centreBaseline),
+        },
+        alignment: "end",
+      };
+    case "bottom":
+      return {
+        position: {
+          x: Math.round(centreX),
+          y: Math.round(
+            worldBounds.y + worldBounds.height + gap + capHeight + rowOffset,
+          ),
+        },
+        alignment: "middle",
+      };
+    case "top":
+      return {
+        position: {
+          x: Math.round(centreX),
+          y: Math.round(worldBounds.y - gap - subscriptDrop - rowOffset),
+        },
+        alignment: "middle",
+      };
+  }
+}
+
+/**
+ * The placement rule used until 2026-09-25: a five-unit gap for devices and
+ * Analog Blocks that ignored a subscript above the part, and grid-snapped
+ * spacing for everything else. Labels still exactly there count as
+ * untouched, so they keep following their Symbol.
+ */
+function legacyPlaceUprightInstanceLabel(
   instance: SchematicDocument["instances"][number],
   resolved: ResolvedSymbol,
   profile: SchematicStyleProfile,
@@ -256,10 +459,16 @@ export function placeUprightInstanceLabel(
   horizontalSidesOnly = false,
 ): InstanceLabelPlacement | null {
   if (!instance.placement) return null;
-  const localBounds = visibleSymbolInkBounds(
-    resolved,
-    instance.signalFlowParameters,
-  );
+  const compactDevice =
+    isMosSymbol(resolved) ||
+    isBjtSymbol(resolved) ||
+    SIDE_LABEL_SYMBOLS.has(instance.symbolId);
+  const compact =
+    compactDevice ||
+    getRazaviCatalogEntry(instance.symbolId)?.category === "analog-block";
+  const localBounds = compactDevice
+    ? compactLabelInkBounds(resolved)
+    : visibleSymbolInkBounds(resolved, instance.signalFlowParameters);
   const worldBounds = transformedBounds(localBounds, instance);
   const rotatedSide = transformedSide(localSide, instance);
   const worldSide =
@@ -276,15 +485,26 @@ export function placeUprightInstanceLabel(
   // side. Its previous distance from the edge is not a visual constraint:
   // retaining a reconstructed, snapped distance was the source of one-grid
   // outward drift on each repeated quarter turn.
-  const clearance = grid;
+  // Device text belongs to the artwork, not to the electrical connection grid.
+  // Rounding a five-unit gap to a ten-unit grid makes different families appear
+  // inconsistently spaced and pushes their visual centre below the body.
+  const clearance = compact ? 5 : grid;
   const fontSize = profile.typography.instanceFontSize * sizeScale;
-  const snap = (value: number) => Math.round(value / grid) * grid;
+  const snap = compact
+    ? Math.round
+    : (value: number) => Math.round(value / grid) * grid;
+  const centerX = compact
+    ? worldBounds.x + worldBounds.width / 2
+    : semanticPosition.x;
+  const centerBaseline = compact
+    ? worldBounds.y + worldBounds.height / 2 + fontSize * 0.35
+    : semanticPosition.y;
   switch (worldSide) {
     case "right":
       return {
         position: {
           x: snap(worldBounds.x + worldBounds.width + clearance),
-          y: snap(semanticPosition.y + rowOffset),
+          y: snap(centerBaseline + rowOffset),
         },
         alignment: "start",
       };
@@ -292,19 +512,19 @@ export function placeUprightInstanceLabel(
       return {
         position: {
           x: snap(worldBounds.x - clearance),
-          y: snap(semanticPosition.y + rowOffset),
+          y: snap(centerBaseline + rowOffset),
         },
         alignment: "end",
       };
     case "bottom":
       return {
         position: {
-          x: snap(semanticPosition.x),
+          x: snap(centerX),
           y: snap(
             worldBounds.y +
               worldBounds.height +
               clearance +
-              fontSize * 1.05 +
+              fontSize * (compact ? 0.7 : 1.05) +
               rowOffset,
           ),
         },
@@ -313,21 +533,177 @@ export function placeUprightInstanceLabel(
     case "top":
       return {
         position: {
-          x: snap(semanticPosition.x),
-          y: snap(worldBounds.y - clearance - fontSize * 0.3 + rowOffset),
+          x: snap(centerX),
+          y: snap(
+            worldBounds.y -
+              clearance -
+              (compact ? 0 : fontSize * 0.3) +
+              rowOffset,
+          ),
         },
         alignment: "middle",
       };
   }
 }
 
-/** Supplies canonical placement for renderer-owned instance labels. */
+/**
+ * A Cell Pin's name sits squarely beside its artwork on the side away from its
+ * wire: left, right, above or below, centred across that side. Capitals are
+ * centred on the Pin, so a subscript hangs below the way it does on a device.
+ * The text is not snapped to the connection grid, which used to pull it up
+ * to half a grid off centre, and a vertical Pin's name is no longer pushed to
+ * one side at the height of its rotated anchor.
+ */
+function portLabelPlacement(
+  instance: SchematicDocument["instances"][number],
+  resolved: ResolvedSymbol,
+  profile: SchematicStyleProfile,
+  grid: number,
+  rowOffset: number,
+): InstanceLabelPlacement | null {
+  const pin = resolved.definition.pins[0];
+  const bounds = transformedBounds(
+    visibleSymbolInkBounds(resolved, instance.signalFlowParameters),
+    instance,
+  );
+  if (!pin || !bounds || !instance.placement) return null;
+  const pinWorld = transformPoint(
+    pin.at,
+    instance.placement.position,
+    instance.placement,
+  );
+  const centreX = bounds.x + bounds.width / 2;
+  const centreY = bounds.y + bounds.height / 2;
+  const towardWireX = pinWorld.x - centreX;
+  const towardWireY = pinWorld.y - centreY;
+  const fontSize = profile.typography.instanceFontSize;
+  const gap = grid;
+  if (Math.abs(towardWireX) >= Math.abs(towardWireY)) {
+    const baseline = Math.round(centreY + fontSize * 0.35 + rowOffset);
+    return towardWireX > 0
+      ? {
+          position: { x: Math.round(bounds.x - gap), y: baseline },
+          alignment: "end",
+        }
+      : {
+          position: {
+            x: Math.round(bounds.x + bounds.width + gap),
+            y: baseline,
+          },
+          alignment: "start",
+        };
+  }
+  const x = Math.round(centreX);
+  return towardWireY > 0
+    ? {
+        // Above: leave room for a subscript's descent under the baseline.
+        position: {
+          x,
+          y: Math.round(bounds.y - gap - fontSize * 0.3 + rowOffset),
+        },
+        alignment: "middle",
+      }
+    : {
+        position: {
+          x,
+          y: Math.round(
+            bounds.y + bounds.height + gap + fontSize * 0.7 + rowOffset,
+          ),
+        },
+        alignment: "middle",
+      };
+}
+
+/**
+ * Where a Cell Pin's name was placed before 2026-09-24: always beside the
+ * Pin, snapped to the grid, at the height of its rotated anchor. Labels still
+ * sitting there count as untouched, so they keep following their Pin.
+ */
+export function legacyPortLabelPlacement(
+  instance: SchematicDocument["instances"][number],
+  resolved: ResolvedSymbol,
+  profile: SchematicStyleProfile,
+  grid: number,
+): InstanceLabelPlacement | null {
+  if (!instance.placement) return null;
+  const localBounds = visibleSymbolInkBounds(
+    resolved,
+    instance.signalFlowParameters,
+  );
+  return legacyPlaceUprightInstanceLabel(
+    instance,
+    resolved,
+    profile,
+    {
+      x: localBounds.x - grid,
+      y:
+        localBounds.y +
+        localBounds.height / 2 +
+        profile.typography.instanceFontSize * 0.35,
+    },
+    "left",
+    grid,
+    1,
+    0,
+    true,
+  );
+}
+
+/**
+ * Supplies canonical placement for renderer-owned instance labels, for a
+ * label of the given size (a label a person made smaller sits closer).
+ */
 export function defaultInstanceLabelPlacement(
   instance: SchematicDocument["instances"][number],
   resolved: ResolvedSymbol,
   profile: SchematicStyleProfile,
   grid: number,
   slot: InstanceLabelSlot = "reference",
+  sizeScale = 1,
+): InstanceLabelPlacement | null {
+  return defaultPlacementWith(
+    placeUprightInstanceLabel,
+    instance,
+    resolved,
+    profile,
+    grid,
+    slot,
+    sizeScale,
+  );
+}
+
+/**
+ * Where the placement rule before 2026-09-25 put an untouched label, so an
+ * orientation edit still recognizes it as machine-placed and moves it with
+ * the current rule.
+ */
+export function legacyDefaultInstanceLabelPlacement(
+  instance: SchematicDocument["instances"][number],
+  resolved: ResolvedSymbol,
+  profile: SchematicStyleProfile,
+  grid: number,
+  slot: InstanceLabelSlot = "reference",
+  sizeScale = 1,
+): InstanceLabelPlacement | null {
+  return defaultPlacementWith(
+    legacyPlaceUprightInstanceLabel,
+    instance,
+    resolved,
+    profile,
+    grid,
+    slot,
+    sizeScale,
+  );
+}
+
+function defaultPlacementWith(
+  place: typeof placeUprightInstanceLabel,
+  instance: SchematicDocument["instances"][number],
+  resolved: ResolvedSymbol,
+  profile: SchematicStyleProfile,
+  grid: number,
+  slot: InstanceLabelSlot,
+  sizeScale: number,
 ): InstanceLabelPlacement | null {
   if (!instance.placement) return null;
   const localBounds = visibleSymbolInkBounds(
@@ -339,85 +715,53 @@ export function defaultInstanceLabelPlacement(
   // A label gap is a grid-space visual rule, measured from drawn ink rather
   // than the padded hit envelope.
   const compactSideGap = grid;
-  const baselineOffset = profile.typography.instanceFontSize * 0.35;
   // The value slot is the second upright row under the reference on the same
   // side; see instanceLabelRowOffset.
   const rowOffset =
     slot === "value" ? instanceLabelRowOffset(profile, grid) : 0;
 
   if (instance.symbolId === "port" || instance.symbolId === "port-filled") {
-    const localPosition = {
-      x: localBounds.x - compactSideGap,
-      y: middleY + baselineOffset,
-    };
-    return placeUprightInstanceLabel(
-      instance,
-      resolved,
-      profile,
-      localPosition,
-      "left",
-      grid,
-      1,
-      rowOffset,
-      true,
-    );
+    return portLabelPlacement(instance, resolved, profile, grid, rowOffset);
   }
 
-  if (isMosSymbol(resolved) || isBjtSymbol(resolved)) {
-    const localPosition = {
-      x: localBounds.x + localBounds.width + compactSideGap,
-      y: middleY + profile.typography.instanceFontSize * 0.55,
-    };
-    return placeUprightInstanceLabel(
+  if (
+    isMosSymbol(resolved) ||
+    isBjtSymbol(resolved) ||
+    SIDE_LABEL_SYMBOLS.has(instance.symbolId)
+  ) {
+    return place(
       instance,
       resolved,
       profile,
-      localPosition,
+      { x: middleX, y: middleY },
       "right",
       grid,
-      1,
-      rowOffset,
-    );
-  }
-
-  if (SIDE_LABEL_SYMBOLS.has(instance.symbolId)) {
-    const localPosition = {
-      x: localBounds.x + localBounds.width + compactSideGap,
-      y: middleY + baselineOffset,
-    };
-    return placeUprightInstanceLabel(
-      instance,
-      resolved,
-      profile,
-      localPosition,
-      "right",
-      grid,
-      1,
+      sizeScale,
       rowOffset,
     );
   }
 
   if (TOP_LABEL_SYMBOLS.has(instance.symbolId)) {
-    return placeUprightInstanceLabel(
+    return place(
       instance,
       resolved,
       profile,
       { x: middleX, y: localBounds.y - compactSideGap },
       "top",
       grid,
-      1,
+      sizeScale,
       rowOffset,
     );
   }
 
-  return placeUprightInstanceLabel(
+  return place(
     instance,
     resolved,
     profile,
     { x: middleX, y: localBounds.y + localBounds.height + compactSideGap },
     "bottom",
     grid,
-    1,
+    sizeScale,
     rowOffset,
   );
 }

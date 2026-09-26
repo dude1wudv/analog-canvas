@@ -119,6 +119,7 @@ describe("component insertion catalog", () => {
     expect(annotations?.symbols.map((symbol) => symbol.id)).toEqual([
       "annotation-arrow",
       "annotation-line",
+      "annotation-polyline",
       "annotation-rectangle",
       "annotation-circle",
       "annotation-polarity-both",
@@ -203,24 +204,13 @@ describe("component insertion catalog", () => {
     );
   });
 
-  it("offers Digital Clock locally but can remove it with the production flag", () => {
+  it("does not offer the retired Digital Clock in any editor palette", () => {
     expect(
       findPaletteSymbol("razavi-textbook-v1", "pulse-voltage-source"),
-    )?.toMatchObject({
-      id: "pulse-voltage-source",
-      pins: [{ name: "+" }, { name: "-" }],
-    });
-    expect(
-      flattenComponentCatalog(
-        componentCatalog("razavi-textbook-v1", "digital clock"),
-      ),
-    ).toHaveLength(1);
-    expect(
-      findPaletteSymbol("razavi-textbook-v1", "pulse-voltage-source", false),
     ).toBeUndefined();
     expect(
       flattenComponentCatalog(
-        componentCatalog("razavi-textbook-v1", "digital clock", [], false),
+        componentCatalog("razavi-textbook-v1", "digital clock"),
       ),
     ).toEqual([]);
   });
@@ -246,7 +236,7 @@ describe("component insertion catalog", () => {
     expect(extended).not.toHaveProperty("subcategory");
   });
 
-  it("describes the filled Cell Pin as an independent authoring object", () => {
+  it("describes the filled marker as a bias-voltage port", () => {
     expect(libraryDisplayName("depletion-nmos", "Depletion NMOS")).toBe(
       "D-NMOS",
     );
@@ -254,6 +244,9 @@ describe("component insertion catalog", () => {
       "D-PMOS",
     );
     expect(libraryDisplayName("zener-diode", "Zener Diode")).toBe("Zener");
+    expect(libraryDisplayName("port-filled", "Bias Voltage Port")).toBe(
+      "Bias Voltage Port",
+    );
     expect(
       libraryDisplayName(
         "externally-controlled-switch",
@@ -261,7 +254,7 @@ describe("component insertion catalog", () => {
       ),
     ).toBe("Ctrl SW");
     expect(libraryDescription("port-filled")).toBe(
-      "An independent Cell Pin with a solid appearance",
+      "A solid bias-voltage port, typically used for VB-style bias nodes",
     );
   });
 
@@ -353,7 +346,9 @@ describe("reach order inside a category", () => {
     // And the pair sits after the parts an analog schematic reaches for more
     // often, rather than leading the group as the letter A did.
     expect(blocks).toEqual([
+      "opamp-wide",
       "opamp",
+      "opamp-differential-wide",
       "opamp-differential",
       "voltage-amplifier",
       "transconductance",
@@ -362,6 +357,25 @@ describe("reach order inside a category", () => {
       "adc",
       "dac",
     ]);
+    expect(blocks.slice(0, 4).map((id) => libraryDisplayName(id, id))).toEqual([
+      "Op Amp",
+      "Op Amp S",
+      "FD Amp",
+      "FD Amp S",
+    ]);
+    for (const [name, id] of [
+      ["Op Amp S", "opamp"],
+      ["FD Amp S", "opamp-differential"],
+    ] as const) {
+      expect(
+        flattenComponentCatalog(
+          componentCatalog("razavi-textbook-v1", name),
+        ).map((symbol) => symbol.id),
+      ).toEqual([id]);
+      expect(libraryDescription(id)).toContain("20");
+    }
+    expect(libraryDescription("opamp-wide")).toContain("40");
+    expect(libraryDescription("opamp-differential-wide")).toContain("40");
   });
 
   it("orders logic gates by family rather than by name", () => {

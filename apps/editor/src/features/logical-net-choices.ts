@@ -1,4 +1,4 @@
-import { resolveDocumentLogicalNets } from "@icm/derived";
+import { drawnSupplyNet, resolveDocumentLogicalNets } from "@icm/derived";
 import type { SchematicDocument } from "@icm/model";
 
 export interface LogicalNetChoice {
@@ -52,5 +52,16 @@ export function logicalNetChoiceForNet(
 ): LogicalNetChoice | undefined {
   return netId
     ? choices.find((choice) => choice.baseNetIds.includes(netId))
+    : undefined;
+}
+
+/** Return the sole authored supply choice, including a formal VSS/VDD Port. */
+export function logicalSupplyNetChoice(
+  document: SchematicDocument,
+  domain: "ground" | "vdd",
+): LogicalNetChoice | undefined {
+  const supply = drawnSupplyNet(document, domain);
+  return supply
+    ? logicalNetChoiceForNet(logicalNetChoices(document), supply.id)
     : undefined;
 }

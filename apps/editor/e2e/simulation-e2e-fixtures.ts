@@ -35,15 +35,15 @@ export async function editSimulationFile(
   path: string,
   text: string,
 ) {
-  const panel = page.getByRole("region", { name: "Analog simulation" });
+  const panel = page.getByRole("region", { name: "模拟仿真" });
   if (path === "experiment.json") {
     if (
       (await panel
-        .getByRole("button", { name: "Explorer", exact: true })
+        .getByRole("button", { name: "资源管理器", exact: true })
         .getAttribute("aria-expanded")) !== "true"
     )
       await panel
-        .getByRole("button", { name: "Explorer", exact: true })
+        .getByRole("button", { name: "资源管理器", exact: true })
         .click();
     const folderId = await panel
       .getByRole("treeitem", { name: "Run", exact: true })
@@ -54,7 +54,7 @@ export async function editSimulationFile(
       .click();
   } else await panel.getByRole("tab", { name: path, exact: false }).click();
   const editor = panel.getByRole("textbox", {
-    name: "Simulation source editor",
+    name: "仿真源代码编辑器",
   });
   await expect(editor).toBeVisible();
   await editor.click();

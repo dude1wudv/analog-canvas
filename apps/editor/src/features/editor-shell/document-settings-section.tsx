@@ -1,3 +1,4 @@
+import { applyLabelSubscriptCase } from "../text-editing/label-subscript-case";
 import {
   lazy,
   Suspense,
@@ -10,6 +11,7 @@ import type { SchematicDocument } from "@icm/model";
 import type { PropertyJsonEditorAdapter } from "../properties/component-property-json-editor";
 
 import {
+  documentSettingsCodeValue,
   defaultDocumentSettingsCode,
   formatDocumentSettingsCode,
   parseDocumentSettingsCode,
@@ -31,10 +33,12 @@ export interface DocumentSettingsSectionProps {
   canvas: CanvasPreferenceCodeValue;
   onApply(
     value: DocumentSettingsCodeValue,
+    current: DocumentSettingsCodeValue,
+    applyLabels: typeof applyLabelSubscriptCase,
   ): { ok: true } | { ok: false; message: string };
 }
 
-/** One plain JSON surface for Document appearance and uncommon canvas preferences. */
+/** One plain JSON surface for every Document-wide and editor preference. */
 export function DocumentSettingsSection({
   document,
   canvas,
@@ -77,7 +81,7 @@ export function DocumentSettingsSection({
   );
   const status =
     message ??
-    (parsed.ok ? null : `${parsed.message} · Canvas keeps the last valid edit`);
+    (parsed.ok ? null : `${parsed.message} · 画布将保留上次有效的修改`);
 
   function change(source: string): void {
     setDraft(source);
@@ -87,7 +91,11 @@ export function DocumentSettingsSection({
     if (!next.ok) return;
     const normalized = serializeDocumentSettingsCode(next.value);
     if (normalized === baseline) return;
-    const result = onApply(next.value);
+    const result = onApply(
+      next.value,
+      documentSettingsCodeValue(document, canvas),
+      applyLabelSubscriptCase,
+    );
     if (!result.ok) {
       setMessage(result.message);
       setRejected(true);
@@ -99,20 +107,20 @@ export function DocumentSettingsSection({
   async function copy(): Promise<void> {
     try {
       await navigator.clipboard.writeText(draft);
-      setMessage("Style JSON copied");
+      setMessage("已复制属性 JSON");
     } catch {
-      setMessage("Clipboard unavailable; select the code and copy it");
+      setMessage("剪贴板不可用；请选择代码并手动复制");
     }
   }
 
   return (
     <section
       className="component-property-code-editor document-settings-code-editor"
-      aria-label="Document settings"
+      aria-label="文档设置"
       data-testid="document-settings-code-editor"
     >
       <header>
-        <strong>Style</strong>
+        <strong>属性代码</strong>
         <div className="component-property-header-actions">
           <button
             type="button"
@@ -121,14 +129,14 @@ export function DocumentSettingsSection({
               change(defaultDocumentSettingsCode(document, canvas))
             }
           >
-            Defaults
+            恢复默认值
           </button>
           {(!parsed.ok || rejected) && (
             <button
               type="button"
               className="component-property-copy"
-              aria-label="Discard Style draft"
-              title="Discard invalid Style draft"
+              aria-label="放弃属性草稿"
+              title="放弃无效的属性草稿"
               onClick={() => {
                 setDraft(baseline);
                 setMessage(null);
@@ -141,8 +149,8 @@ export function DocumentSettingsSection({
           <button
             type="button"
             className="component-property-copy"
-            aria-label="Copy Style JSON"
-            title="Copy Style JSON"
+            aria-label="复制属性 JSON"
+            title="复制属性 JSON"
             onClick={() => void copy()}
           >
             <svg
@@ -161,7 +169,7 @@ export function DocumentSettingsSection({
       <Suspense
         fallback={
           <textarea
-            aria-label="Loading document Style code"
+            aria-label="正在加载属性代码"
             value={draft}
             readOnly
             rows={20}
@@ -173,7 +181,7 @@ export function DocumentSettingsSection({
           historyKey={historyKey}
           adapter={adapter}
           defaultForeground="#000000"
-          ariaLabel="Editable document Style code"
+          ariaLabel="可编辑的属性代码"
           onChange={change}
         />
       </Suspense>

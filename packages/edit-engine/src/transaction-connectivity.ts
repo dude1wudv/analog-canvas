@@ -4,6 +4,7 @@ import {
   endpointKey,
   hasExplicitMosBulkRoute,
   mosBulkKind,
+  resolveDetachedMosBulkDefault,
   resolveDocumentLogicalNets,
 } from "@icm/derived";
 import type { SymbolResolver } from "@icm/symbols";
@@ -210,10 +211,14 @@ export function preferredPhysicalMergeTarget(
     : [rightNetId, leftNetId];
 }
 
+/**
+ * Derived from the Document revision the transaction starts from, never its
+ * transaction ID: a planner that previews a step under one ID and commits it
+ * under another must still address the objects that step creates.
+ */
 export function uniquePhysicalContactId(
   draft: SchematicDocument,
   kind: "net" | "route",
-  transactionId: string,
   seed: string,
 ): string {
   const occupied = new Set([
@@ -235,7 +240,7 @@ export function uniquePhysicalContactId(
       kind,
       draft.id,
       "physical-contact",
-      transactionId,
+      String(draft.revision),
       seed,
       String(attempt),
     );
@@ -404,6 +409,71 @@ export function retargetOwnerEvidenceAfterSplit(
     draft.annotations.find((annotation) => annotation.id === objectId)?.netId ??
     instanceNetId(objectId);
 
+  // A label on a part names the Net of one of the part's pins. While the part
+  // keeps a pin on the label's Net the label stays there: the part's first
+  // Net by id moved a substrate's hidden ground label onto its emitter's Net.
+  const partNetId = (
+    annotation: SchematicDocument["annotations"][number],
+    objectId: string,
+  ): string | undefined => {
+    const currentNetId =
+      annotation.netId ??
+      (annotation.binding?.kind === "net-name"
+        ? annotation.binding.netId
+        : undefined);
+    return draft.nets.some(
+      (net) =>
+        net.id === currentNetId &&
+        net.terminals.some((terminal) => terminal.instanceId === objectId),
+    )
+      ? currentNetId
+      : objectNetId(objectId);
+  };
+  const retargetAnnotation = (
+    annotation: SchematicDocument["annotations"][number],
+  ): string | undefined => {
+    const targetNetId =
+      annotation.anchor.kind === "route"
+        ? objectNetId(annotation.anchor.routeId)
+        : annotation.anchor.kind === "object"
+          ? partNetId(annotation, annotation.anchor.objectId)
+          : undefined;
+    if (!targetNetId) return undefined;
+    if (annotation.netId !== targetNetId) {
+      annotation.netId = targetNetId;
+      changedObjectIds.add(annotation.id);
+    }
+    if (
+      annotation.binding?.kind === "net-name" &&
+      annotation.binding.netId !== targetNetId
+    ) {
+      annotation.binding = { kind: "net-name", netId: targetNetId };
+      changedObjectIds.add(annotation.id);
+    }
+    for (const terminal of draft.netlist?.terminals ?? []) {
+      if (
+        terminal.interfaceAnnotationId === annotation.id &&
+        terminal.netId !== targetNetId
+      ) {
+        terminal.netId = targetNetId;
+        changedObjectIds.add(terminal.id);
+      }
+    }
+    return targetNetId;
+  };
+
+  // A power symbol can own the name claim while a separate annotation displays
+  // it. Move every bound label with its physical anchor, including labels that
+  // do not own evidence themselves. Preserve their text and presentation.
+  for (const annotation of draft.annotations) {
+    if (
+      annotation.netId === originalNetId ||
+      (annotation.binding?.kind === "net-name" &&
+        annotation.binding.netId === originalNetId)
+    ) {
+      retargetAnnotation(annotation);
+    }
+  }
   for (const evidence of draft.connectivityEvidence) {
     if (evidence.kind !== "name-claim" || evidence.netId !== originalNetId) {
       continue;
@@ -418,35 +488,8 @@ export function retargetOwnerEvidenceAfterSplit(
     const ownedAnnotation = draft.annotations.find(
       (candidate) => candidate.id === annotationId,
     );
-    // Both net labels and annotation-owned power markers follow their physical
-    // anchor, never their own pre-split netId. The formal terminal is owned by
-    // this same annotation and must migrate with it.
     if (ownedAnnotation) {
-      const annotation = ownedAnnotation;
-      if (annotation?.anchor.kind === "route") {
-        const routeId = annotation.anchor.routeId;
-        targetNetId = draft.routes.find((route) => route.id === routeId)?.netId;
-      } else if (annotation?.anchor.kind === "object") {
-        targetNetId = objectNetId(annotation.anchor.objectId);
-      }
-      if (annotation && targetNetId && targetNetId !== annotation.netId) {
-        annotation.netId = targetNetId;
-        if (annotation.binding?.kind === "net-name") {
-          annotation.binding = { kind: "net-name", netId: targetNetId };
-        }
-        changedObjectIds.add(annotation.id);
-      }
-      if (targetNetId) {
-        for (const terminal of draft.netlist?.terminals ?? []) {
-          if (
-            terminal.interfaceAnnotationId === annotation.id &&
-            terminal.netId !== targetNetId
-          ) {
-            terminal.netId = targetNetId;
-            changedObjectIds.add(terminal.id);
-          }
-        }
-      }
+      targetNetId = retargetAnnotation(ownedAnnotation);
     } else if (evidence.owner.kind === "power-marker") {
       targetNetId = objectNetId(evidence.owner.objectId);
     }
@@ -742,20 +785,58 @@ export function implicitBulkPresentation(
 }
 
 /**
- * A materialized cell-default body is policy-owned, not route-owned.  Route
- * splitting may temporarily place its terminal on a detached Base Net, but it
- * must converge back to the currently configured default before validation.
- * An explicit disconnect first removes mosBulkBinding, so explicit four-pin
- * body editing remains outside this invariant.
+ * Reconcile bulk after a physical Net rebuild. Materialized Cell defaults
+ * follow policy even when a route split temporarily detaches B. An imported
+ * explicit B keeps its source ownership, but a B-only fragment of the same
+ * source Net is repaired to its configured default before it becomes a
+ * flightline. Authored bulk geometry and explicit disconnects stay outside
+ * that narrow repair.
  */
-export function reconcileMaterializedMosBulkBindings(
+export function reconcileMosBulkAfterConnectivity(
   draft: SchematicDocument,
   changedObjectIds: Set<string>,
   deferNetPrune: (netId: string) => void,
 ): boolean {
   let changed = false;
   for (const instance of draft.instances) {
-    if (instance.mosBulkBinding?.origin !== "cell-default") continue;
+    if (instance.mosBulkBinding?.origin !== "cell-default") {
+      // Imported B membership is explicit source data, so do not turn it into
+      // policy ownership. A route split can nevertheless leave that B alone
+      // on a fragment of its original source Net. Restore only that proven
+      // artifact to the configured default before it becomes a flightline.
+      if (
+        !(instance.sourceRef || instance.importProvenance) ||
+        hasExplicitMosBulkRoute(draft, instance.id)
+      ) {
+        continue;
+      }
+      const target = resolveDetachedMosBulkDefault(draft, instance);
+      if (!target) continue;
+      const detached = draft.nets.find((net) =>
+        net.terminals.some(
+          (terminal) =>
+            terminal.instanceId === instance.id && terminal.pinName === "B",
+        ),
+      );
+      if (!detached || detached.id === target.id) continue;
+      detached.terminals = detached.terminals.filter(
+        (terminal) =>
+          terminal.instanceId !== instance.id || terminal.pinName !== "B",
+      );
+      if (
+        !target.terminals.some(
+          (terminal) =>
+            terminal.instanceId === instance.id && terminal.pinName === "B",
+        )
+      ) {
+        target.terminals.push({ instanceId: instance.id, pinName: "B" });
+      }
+      changedObjectIds.add(detached.id);
+      changedObjectIds.add(target.id);
+      deferNetPrune(detached.id);
+      changed = true;
+      continue;
+    }
     if (hasExplicitMosBulkRoute(draft, instance.id)) {
       delete instance.mosBulkBinding;
       changedObjectIds.add(instance.id);

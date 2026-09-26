@@ -3,12 +3,57 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import {
+  canReuseGalleryLandingFeed,
   galleryEntryMatchesQuery,
   GalleryCountPanel,
   GalleryFeed,
   loadGalleryAuthors,
   loadGalleryFeed,
 } from "./gallery-feed";
+
+import {
+  GALLERY_SIGN_IN_REQUIRED,
+  galleryAuthorsOf,
+  removeGalleryAuthorEntry,
+  type GalleryFeedEntry,
+} from "../gallery-client";
+
+describe("Gallery landing preload", () => {
+  const defaultFilters = {
+    author: null,
+    ownerUserId: null,
+    tags: [] as string[],
+    netlistable: false,
+    liked: false,
+    attention: false,
+  };
+
+  it("is consumed only for the first unfiltered wall request", () => {
+    expect(canReuseGalleryLandingFeed(0, null, defaultFilters)).toBe(true);
+    expect(canReuseGalleryLandingFeed(0, "default", defaultFilters)).toBe(
+      false,
+    );
+    expect(canReuseGalleryLandingFeed(1, null, defaultFilters)).toBe(false);
+    for (const filters of [
+      { ...defaultFilters, author: "alice" },
+      { ...defaultFilters, ownerUserId: "account-alice" },
+      { ...defaultFilters, tags: ["amplifier"] },
+      { ...defaultFilters, netlistable: true },
+      { ...defaultFilters, liked: true },
+      { ...defaultFilters, attention: true },
+    ]) {
+      expect(canReuseGalleryLandingFeed(0, null, filters)).toBe(false);
+    }
+  });
+});
+
+function fetchStatus(status: number): typeof fetch {
+  return (async () =>
+    new Response(JSON.stringify({ error: "x" }), {
+      status,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+}
 
 function fetchReturning(payload: unknown, ok = true): typeof fetch {
   return (async () =>
@@ -18,22 +63,35 @@ function fetchReturning(payload: unknown, ok = true): typeof fetch {
     })) as typeof fetch;
 }
 
+/** A page, or null for anything that is not one. */
+const pageOf = (result: Awaited<ReturnType<typeof loadGalleryFeed>>) =>
+  typeof result === "string" ? null : result;
+
 describe("loadGalleryFeed", () => {
+  it("says a signed-out reader must sign in instead of calling the Gallery unavailable", async () => {
+    expect(await loadGalleryFeed(fetchStatus(401))).toBe(
+      GALLERY_SIGN_IN_REQUIRED,
+    );
+    expect(await loadGalleryFeed(fetchStatus(503))).toBeNull();
+  });
+
   it("returns a page of entries with its cursor", async () => {
-    const page = await loadGalleryFeed(
-      fetchReturning({
-        entries: [
-          {
-            id: "g1",
-            name: "Ring",
-            author: "tz",
-            description: "",
-            createdAt: "2026-08-21T00:00:00.000Z",
-            schemaVersion: 23,
-          },
-        ],
-        nextCursor: "2026-08-21T00:00:00.000Z|g1",
-      }),
+    const page = pageOf(
+      await loadGalleryFeed(
+        fetchReturning({
+          entries: [
+            {
+              id: "g1",
+              name: "Ring",
+              author: "tz",
+              description: "",
+              createdAt: "2026-08-21T00:00:00.000Z",
+              schemaVersion: 23,
+            },
+          ],
+          nextCursor: "2026-08-21T00:00:00.000Z|g1",
+        }),
+      ),
     );
     expect(page?.entries.map((entry) => entry.id)).toEqual(["g1"]);
     expect(page?.nextCursor).toBe("2026-08-21T00:00:00.000Z|g1");
@@ -69,13 +127,77 @@ describe("loadGalleryFeed", () => {
   });
 
   it("passes the server's total through and tolerates its absence", async () => {
-    const withTotal = await loadGalleryFeed(
-      fetchReturning({ entries: [], nextCursor: null, total: 42 }),
+    const withTotal = pageOf(
+      await loadGalleryFeed(
+        fetchReturning({ entries: [], nextCursor: null, total: 42 }),
+      ),
     );
     expect(withTotal?.total).toBe(42);
     // An older worker without totals must read as "unknown", never as zero.
-    const withoutTotal = await loadGalleryFeed(fetchReturning({ entries: [] }));
+    const withoutTotal = pageOf(
+      await loadGalleryFeed(fetchReturning({ entries: [] })),
+    );
     expect(withoutTotal?.total).toBeNull();
+  });
+
+  it("keeps full quick-filter totals distinct from the loaded page", async () => {
+    const filterCounts = { attention: 15, netlistable: 240, liked: 3 };
+    const page = pageOf(
+      await loadGalleryFeed(
+        fetchReturning({
+          entries: [],
+          nextCursor: "next",
+          total: 500,
+          filterCounts,
+        }),
+      ),
+    );
+    expect(page?.filterCounts).toEqual(filterCounts);
+    for (const invalid of [
+      undefined,
+      {},
+      { ...filterCounts, liked: -1 },
+      { ...filterCounts, liked: "3" },
+    ]) {
+      expect(
+        pageOf(
+          await loadGalleryFeed(
+            fetchReturning({ entries: [], filterCounts: invalid }),
+          ),
+        )?.filterCounts,
+      ).toBeUndefined();
+    }
+  });
+
+  it("reads filtered contributor aggregates while tolerating older or invalid payloads", async () => {
+    const authors = [{ author: "Alice", ownerUserId: "owner-a", count: 7 }];
+    expect(
+      pageOf(
+        await loadGalleryFeed(
+          fetchReturning({ entries: [], authors, nextCursor: "next" }),
+        ),
+      )?.authors,
+    ).toEqual(authors);
+    expect(
+      pageOf(
+        await loadGalleryFeed(fetchReturning({ entries: [], authors: [] })),
+      )?.authors,
+    ).toEqual([]);
+    for (const invalid of [
+      undefined,
+      {},
+      [null],
+      [{ author: "Alice", count: -1 }],
+      [{ author: "Alice", count: "1" }],
+    ]) {
+      expect(
+        pageOf(
+          await loadGalleryFeed(
+            fetchReturning({ entries: [], authors: invalid }),
+          ),
+        )?.authors,
+      ).toBeUndefined();
+    }
   });
 
   it("degrades to null on errors and non-OK responses", async () => {
@@ -118,9 +240,53 @@ describe("loadGalleryAuthors", () => {
   });
 });
 
+describe("contributors in matching entries", () => {
+  const entry = (
+    author: string,
+    ownerUserId: string | null,
+  ): GalleryFeedEntry => ({
+    id: "entry",
+    author,
+    ownerUserId,
+    name: "Circuit",
+    description: "",
+    createdAt: "",
+    schemaVersion: 23,
+  });
+  it("groups stable accounts without merging same-name authors or blank bylines", () => {
+    expect(
+      galleryAuthorsOf([
+        entry("Alice", "a"),
+        entry("Alice", "b"),
+        entry("Former name", "a"),
+        entry("Alice", null),
+        entry("Alice", null),
+        entry("  ", "blank"),
+      ]),
+    ).toEqual([
+      { author: "Alice", ownerUserId: null, count: 2 },
+      { author: "Former name", ownerUserId: "a", count: 2 },
+      { author: "Alice", ownerUserId: "b", count: 1 },
+    ]);
+  });
+  it("drops empty contributors and re-ranks after a local removal without changing the prior snapshot", () => {
+    const original = [
+      { author: "Bob", ownerUserId: "b", count: 2 },
+      { author: "Alice", ownerUserId: "a", count: 1 },
+    ];
+    const updated = removeGalleryAuthorEntry(original, entry("Bob", "b"));
+    expect(updated.map((author) => author.author)).toEqual(["Alice", "Bob"]);
+    expect(original[0]!.count).toBe(2);
+    expect(removeGalleryAuthorEntry(original, entry(" ", "b"))).toEqual(
+      original,
+    );
+    expect(removeGalleryAuthorEntry(updated, entry("Alice", "a"))).toEqual([
+      { author: "Bob", ownerUserId: "b", count: 1 },
+    ]);
+  });
+});
+
 describe("galleryEntryMatchesQuery", () => {
-  // The caller normalizes the query (trim + lowercase); fields match
-  // case-insensitively on their side.
   const entry = {
     name: "Ring Oscillator",
     author: "Mei Chen",
@@ -128,11 +294,26 @@ describe("galleryEntryMatchesQuery", () => {
     tags: ["clocking"],
   };
   it("reaches name, author, description, and tags, case-insensitively", () => {
-    expect(galleryEntryMatchesQuery(entry, "ring")).toBe(true);
+    expect(galleryEntryMatchesQuery(entry, "RING")).toBe(true);
     expect(galleryEntryMatchesQuery(entry, "mei")).toBe(true);
     expect(galleryEntryMatchesQuery(entry, "three-stage")).toBe(true);
     expect(galleryEntryMatchesQuery(entry, "clock")).toBe(true);
     expect(galleryEntryMatchesQuery(entry, "zzz")).toBe(false);
+  });
+  it("tolerates one ordinary typo per word without fuzzing short acronyms", () => {
+    for (const query of [
+      "rign",
+      "oscilltor",
+      "stgae",
+      "clockign",
+      "rign chne",
+    ]) {
+      expect(galleryEntryMatchesQuery(entry, query)).toBe(true);
+    }
+    expect(galleryEntryMatchesQuery({ ...entry, tags: ["ota"] }, "otb")).toBe(
+      false,
+    );
+    expect(galleryEntryMatchesQuery(entry, "unrelated")).toBe(false);
   });
   it("treats an empty query as no filter and missing fields as absent", () => {
     expect(galleryEntryMatchesQuery(entry, "")).toBe(true);

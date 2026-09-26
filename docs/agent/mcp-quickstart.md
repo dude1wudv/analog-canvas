@@ -1,41 +1,51 @@
 # Analog Canvas MCP quickstart
 
-## Connect and inspect
+Before pairing, `connection_status({"refresh":false})` reports the loaded
+version and exact API origin locally. When the origin matches, connect directly
+and let the capabilities/bootstrap exchange confirm compatibility. Fetch the
+bootstrap manifest and read [installation](mcp-install.md) only for a missing,
+wrong-origin, or rejected incompatible adapter; installed-package integrity
+checks are not part of ordinary pairing.
 
-Call `connect` with the browser Claim Code once; omit it to resume the saved
-connector. The Helper owns HTTP endpoints, tokens, request IDs and revisions.
-Closing the browser details panel does not revoke the connection.
-Call `get_context` and read the built-in catalog before placing devices.
-Use `inspect` and `search` for IDs and pins, not screenshot coordinates.
-Read `analog-canvas://reference/authoring` for the shared native placement,
-display, Port, Net Label and simulation-result workflow. Both surfaces are generated directly from the same source; the tool
-examples below are MCP-specific mappings, not a separate operating policy.
+Call `connect` with the Claim once, or omit it to resume the saved connector.
+Its reply already includes lightweight authoritative context. Capabilities and
+that bootstrap Snapshot are fetched in parallel. Use the returned identity,
+counts and revisions immediately; no duplicate `get_context` is required. Use
+`inspect` when you need objects. For new instance endpoints, use
+`inspect({"target":{"kind":"pins","instanceIds":["<stable-id>"]}})`:
+up to 64 selected instances, resolved pins and bulk, without full Snapshot.
+For only current placement, route,
+annotation-anchor or drafting geometry, use
+`inspect({"target":{"kind":"geometry","objectIds":["<stable-id>"]}})`;
+this reads selected authored objects without constructing a full Snapshot.
+Other inspections reuse the clean full Snapshot after its first load;
+`refresh:true` forces a reread after a known human change or for reconciliation.
+MCP manages credentials, request IDs and expected revisions.
 
-Production and Preview both expose the Agent UI. Their accounts, Projects and
-connector bindings remain separate.
+Choose only the guidance needed for the task:
 
-Before pairing, `connection_status({"refresh":false})` identifies the loaded
-MCP version and exact API origin without a network request. Installation and
-host loading are separate stages: an installed binary is not proof that this
-conversation can call it. Prefer the verified local launch described in
-[installation](mcp-install.md). Do not silently replace a failed MCP connection
-with HTTP; that path requires the user's explicit choice and is not MCP acceptance.
+Use a focused tool's displayed parameters directly. For a hidden or unfamiliar
+field, `describe_tool` can select its exact offline contract by `tool`, optional
+`operations`, and `field` (argument JSON Pointer; `*` for array items).
+For example, `{"tool":"simulation_plot","field":"/request/formats"}`
+returns the format field and its context. Contract lookup is optional, not a
+prerequisite for calling a tool.
 
-For the explicit shared-client CLI path, read
-[CLI lifecycle](http-cli.md). Compatibility is determined by the current
-bootstrap manifest and loaded runtime, not a remembered release version.
+- Circuit editing: [authoring](shared/authoring.md), then the built-in catalog
+  before placing unfamiliar symbols. Select known symbol IDs with resource
+  `analog-canvas://catalog/builtins?symbols=nmos,pmos,port`; use the full catalog
+  for discovery. [Tool details](mcp/tools.md) cover less common edits.
+- Simulation: [simulation calls](mcp/simulation.md). Start with its quick path
+  and follow its detailed-contract link only for the feature being used.
+- Failures: [recovery](response-semantics.md). Keep uncertain write/start identities;
+  reconcile before repeating a mutation. Never restart a run just to fetch results.
 
-Sessions have a renewable 30-minute idle deadline. Agent operations and manual
-edits renew it; passive heartbeats do not. A saved connector's deadline may be
-stale after activity in the browser: MCP asks the server whether it can resume,
-rather than discarding the connector based on its local timestamp. Expired or
-revoked server sessions still require a new Claim Code.
+Sessions renew on Agent operations and manual edits, with a 30-minute idle
+deadline. Keep the editor open. Closing connection details does not disconnect.
+Read [session rules](shared/session.md) when investigating lifecycle behavior.
+HTTP fallback requires the user's explicit choice; it is not MCP acceptance.
 
-## Choose task guidance
-
-- [Editing, verification and recovery](mcp/tools.md) for circuit work.
-- [Simulation tools](mcp/simulation.md) for source ownership, prepare/start/read and evidence.
-- [Native authoring](shared/authoring.md) for shared electrical and visual rules.
-- [CLI lifecycle](http-cli.md) only when explicitly using the command-line path.
-
-Read these on demand. Reading a resource never unlocks a tool.
+Use the planning revision for transactions; accepted receipts need no
+confirmation reread. Replan after a stale-revision response and reserve
+`verify` for milestones. Simulation `prepare` freezes a revisioned input, so
+start/read/download need no circuit reread.

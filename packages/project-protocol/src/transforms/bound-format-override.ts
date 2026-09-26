@@ -1,6 +1,7 @@
 import {
-  boundAnnotationSemanticText,
-  flattenRichText,
+  boundAnnotationName,
+  richTextPresentsIdentifier,
+  rewriteRichTextIdentifier,
   rewriteRichTextPlainText,
   RichTextDocumentSchema,
 } from "@icm/model";
@@ -32,7 +33,7 @@ function records(value: unknown): Record<string, unknown>[] {
  * one whose name has since disappeared — is dropped, and the label falls back
  * to the house style rather than taking the Project down with it.
  *
- * The semantic name comes from `boundAnnotationSemanticText`, the same
+ * The semantic name comes from `boundAnnotationName`, the same
  * function the schema checks against. A repair computed any other way would
  * either miss files the check still refuses or claim success on a file that
  * still cannot load.
@@ -58,13 +59,9 @@ export function repairBoundFormatOverrides(
         annotation.formatOverride,
       );
       if (!parsed.success) return annotation;
-      const semantic = boundAnnotationSemanticText(
-        document as never,
-        annotation as never,
-      );
-      if (!semantic) return annotation;
-      const name = flattenRichText(semantic);
-      if (flattenRichText(parsed.data) === name) return annotation;
+      const name = boundAnnotationName(document as never, annotation as never);
+      if (name === null) return annotation;
+      if (richTextPresentsIdentifier(parsed.data, name)) return annotation;
       changed = true;
       if (!name.trim()) {
         const { formatOverride: _dropped, ...rest } = annotation;
@@ -72,7 +69,9 @@ export function repairBoundFormatOverrides(
       }
       return {
         ...annotation,
-        formatOverride: rewriteRichTextPlainText(parsed.data, name),
+        formatOverride: name.includes("_")
+          ? rewriteRichTextIdentifier(parsed.data, name)
+          : rewriteRichTextPlainText(parsed.data, name),
       };
     });
     return changed ? { ...document, annotations: repaired } : document;

@@ -44,6 +44,24 @@ function setup(overrides: Partial<AgentSessionLimits> = {}) {
 // exercised here with fake time. The machine never touches a Project or edit.
 
 describe("AgentSessionMachine", () => {
+  it("changes browser context without rotating authorization, including Gallery and restore", () => {
+    const { machine, session, now, random } = setup();
+    const claimed = machine.redeemClaim(session.claimCode, now());
+    if (!claimed.ok) throw new Error("claim failed");
+    machine.bindContext("context-b", "project-b", ["cell-b"]);
+    expect(machine.authorize(claimed.claim.agentToken, now()).ok).toBe(true);
+    expect(machine.documentIds).toEqual(["cell-b"]);
+    machine.bindContext("gallery", "no-active-project", []);
+    expect(machine.authorize(claimed.claim.agentToken, now()).ok).toBe(true);
+    const restored = AgentSessionMachine.restore(
+      machine.serialize(),
+      random,
+      now(),
+    );
+    expect(restored.contextRevision).toBe("gallery");
+    expect(restored.documentIds).toEqual([]);
+    expect(restored.authorize(claimed.claim.agentToken, now()).ok).toBe(true);
+  });
   it("creates a session, returns secrets once, and authenticates the editor", () => {
     const { machine, session, now } = setup();
     expect(session.sessionId).toMatch(/^rand-/u);
@@ -319,7 +337,10 @@ describe("AgentSessionMachine", () => {
       machine.beginRequest(requestId, now());
       machine.completeRequest(requestId, { requestId }, now());
     }
-    expect(machine.beginRequest("one", now()).kind).toBe("proceed");
+    expect(machine.beginRequest("one", now())).toEqual({
+      kind: "rejected",
+      code: "REQUEST_RESULT_UNAVAILABLE",
+    });
     expect(machine.beginRequest("two", now()).kind).toBe("cached");
     expect(machine.beginRequest("three", now()).kind).toBe("cached");
   });
@@ -366,9 +387,37 @@ describe("AgentSessionMachine", () => {
     );
     expect(restored.authorizeEditor(session.editorSecret)).toBe(true);
     expect(restored.authorize(redeemed.claim.agentToken, now()).ok).toBe(true);
-    expect(restored.beginRequest("pending", now(), "payload-hash").kind).toBe(
-      "proceed",
-    );
+    expect(restored.beginRequest("pending", now(), "payload-hash")).toEqual({
+      kind: "rejected",
+      code: "REQUEST_RESULT_UNAVAILABLE",
+    });
+  });
+
+  it("persists only writes and safely reexecutes evicted reads", () => {
+    const { machine, now } = setup({ resultCacheMaxEntries: 1 });
+    machine.beginRequest("read-1", now(), "read-hash", "read");
+    expect(machine.serialize().requestLedger).toEqual([]);
+    machine.completeRequest("read-1", { value: 1 }, now());
+    machine.beginRequest("read-2", now(), "other-hash", "read");
+    machine.completeRequest("read-2", { value: 2 }, now());
+    expect(machine.serialize().requestLedger).toEqual([]);
+    expect(machine.beginRequest("read-1", now(), "read-hash", "read")).toEqual({
+      kind: "proceed",
+    });
+  });
+
+  it("does not grow the persisted ledger during a long read-only session", () => {
+    const { machine, now } = setup({
+      rateLimit: { windowMs: 60_000, maxRequests: 1_100 },
+    });
+    for (let index = 0; index < 1_000; index++) {
+      const requestId = `snapshot-${index}`;
+      expect(
+        machine.beginRequest(requestId, now(), requestId, "read").kind,
+      ).toBe("proceed");
+      machine.completeRequest(requestId, { ok: true }, now());
+    }
+    expect(machine.serialize().requestLedger).toEqual([]);
   });
 
   it("rate-limits requests over the configured window", () => {

@@ -46,8 +46,9 @@ branch/full fallback for local planning. The PR planner separately translates
 shipped product paths into focused browser contracts. Unit tests, package
 manifests, the Node-only local host and Node platform package stay in Core
 contracts instead of allocating a browser. An unmapped browser path gets a
-small insertion/runtime-safety fallback. The complete browser suite remains a
-weekly scheduled and manual audit.
+small insertion/runtime-safety fallback alongside all mapped contracts; an
+unmapped path never removes another changed path's selected tests. CI never
+runs the complete browser suite; `pnpm test:e2e` runs it locally.
 
 `gate:preflight` runs cheap static contracts and cross-checks the commit's test
 impact declaration. `gate:affected` runs the catalog's bounded unit, focused
@@ -81,8 +82,7 @@ affected selection contains at least twelve spec files, with three workers
 per runner. A lightweight `Browser tests` aggregation job preserves the required
 check name and succeeds only after all selected shards pass. This keeps broad but
 legitimate focused selections within the PR wall-clock budget without raising
-per-runner Chromium contention; weekly scheduled and manual audits retain their
-separate four-shard full-suite route.
+per-runner Chromium contention.
 
 ## Local iteration and batch validation
 
@@ -112,11 +112,33 @@ verification.
 
 This changes when delivery validation runs, not the required GitHub checks.
 The [deployment guide](../deployment.md#development-and-publication-cadence)
-owns the local, Preview, and Production handoffs.
+owns the local-to-Production handoff and rollback.
+
+## Gallery census
+
+Fixtures are tidy. The Community Gallery holds drawings in the states earlier
+versions left behind, and some defects shipped because only those states
+reach them. `pnpm gallery:census` puts every drawing of the newest private
+snapshot through the paths that meet them:
+
+- loading and the SPICE netlist;
+- copying each supply marker alone, and the whole drawing into another
+  Project and into itself;
+- copying the copies together with their sources;
+- turning every part a full circle with its labels.
+
+With `--base <ref>` it runs the same census on the mainline base, in a
+temporary worktree, and lists every drawing that behaves differently. The
+harness is `apps/editor/census/gallery.census.ts`. The census reads user
+drawings, so it runs only locally and never in CI, and its reports stay in the
+untracked `plan/`. [AGENTS.md](../../AGENTS.md#during-work) says which changes
+must run it. A defect it finds also gets a small synthetic test in the
+ordinary suite.
 
 ## Batch pull-request checks
 
-Every implementation pull request keeps two required checks:
+Every implementation change keeps two required checks, run once in the merge
+queue:
 
 - `Core contracts` shares one checkout and dependency install while running
   all static and generated checks, the complete unit/module suite, the build,
@@ -131,15 +153,17 @@ Every implementation pull request keeps two required checks:
   configuration and the Node-side specs load; Vite serves the editor sources
   directly because the Core job already owns the production build.
 
-Weekly scheduled and manual workflows run the complete browser suite in four
-shards. The scheduled audit skips Core contracts because the audited `main`
-commit already passed them in its pull request; manual full validation retains
-both layers.
-A PR based on current `main` merges after its two required checks without
-repeating them in a merge queue. CI does not repeat on the subsequent `main`
-push; the deploy workflow chosen by the pull request's `preview` label builds,
-deploys, and verifies the merged commit. A promotion of Preview-accepted work
-is a separate release-tag or explicit-dispatch step.
+Nothing runs on a schedule, and CI has no full browser audit. Run
+`pnpm test:e2e` locally when a change calls for the complete browser suite.
+On the pull request itself, CI only plans the change scope and checks the
+Test-Impact trailers; the two required checks are skipped there, which GitHub
+counts as passing, so the pull request can enter the merge queue at once. The
+queue runs the path-planned checks on the PR merged with current `main`, never
+the complete browser suite, and merges it when both pass. CI does not repeat on the subsequent
+`main` push;
+the Production workflow builds, deploys, and verifies the merged commit.
+A release tag or explicit dispatch may redeploy another selected commit only
+when that commit is already on `main`.
 [Deployment](../deployment.md) owns that sequence and recovery.
 
 ## Change discipline

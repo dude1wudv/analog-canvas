@@ -14,32 +14,6 @@ export type ExportFileOptions = Omit<
   outputPath: string;
 };
 
-export async function exportSimulationArtifact(
-  value: {
-    artifact: { byteLength: number; sha256: string; name: string };
-    text: string;
-  },
-  path: string,
-) {
-  const bytes = Buffer.from(value.text, "utf8");
-  if (
-    bytes.length !== value.artifact.byteLength ||
-    sha256(bytes) !== value.artifact.sha256
-  )
-    return {
-      ok: false,
-      error: {
-        code: "FILE_INTEGRITY_FAILED",
-        message: "Artifact bytes do not match the receipt; no file was written",
-        recovery: "not-retryable",
-      },
-    };
-  const outputPath = resolve(path);
-  await mkdir(dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, bytes);
-  return { ok: true, outputPath, ...value.artifact };
-}
-
 export type ImportFileOperation =
   | { action: "stage-project"; path: string }
   | {
@@ -50,8 +24,19 @@ export type ImportFileOperation =
       namingProfile?: "native" | "cadence-bang";
     }
   | {
-      action: "inspect" | "discard" | "request-approval";
+      action: "inspect" | "discard" | "request-approval" | "open";
       candidateId: string;
+      background?: boolean;
+      documentId?: string;
+    }
+  | {
+      action: "import-cell";
+      candidateId: string;
+      sourceDocumentId: string;
+      targetDocumentId: string;
+      mode: "replace-body" | "append";
+      expectedStructureRevision?: number;
+      expectedRevision?: number;
     };
 
 function requestId(): string {
@@ -181,12 +166,34 @@ export async function importFile(
         ? { namingProfile: operation.namingProfile }
         : {}),
     };
+  } else if (operation.action === "import-cell") {
+    const { action: _action, ...input } = operation;
+    const state =
+      operation.expectedStructureRevision === undefined ||
+      operation.expectedRevision === undefined
+        ? await client.documentState(operation.targetDocumentId)
+        : undefined;
+    request = {
+      ...input,
+      apiVersion: AGENT_API_VERSION,
+      requestId: requestId(),
+      operation: "import-cell",
+      expectedStructureRevision:
+        operation.expectedStructureRevision ?? state!.structureRevision,
+      expectedRevision: operation.expectedRevision ?? state!.revision,
+    };
   } else {
     request = {
       apiVersion: AGENT_API_VERSION,
       requestId: requestId(),
       operation: operation.action,
       candidateId: operation.candidateId,
+      ...(operation.action === "inspect" && operation.documentId
+        ? { documentId: operation.documentId }
+        : {}),
+      ...(operation.action === "open" && operation.background
+        ? { background: true }
+        : {}),
     };
   }
   return client.fileResource(request);

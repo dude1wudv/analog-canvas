@@ -52,7 +52,7 @@ test("Analog Block hit boxes closely enclose browser-rendered artwork", async ({
         symbol.id,
       ) || ["transconductance", "adc", "dac"].includes(symbol.id),
   );
-  expect(blocks).toHaveLength(23);
+  expect(blocks).toHaveLength(35);
   const instances: SchematicDocument["instances"] = blocks.map(
     (symbol, index) => ({
       id: `U${index + 1}`,
@@ -67,14 +67,15 @@ test("Analog Block hit boxes closely enclose browser-rendered artwork", async ({
       },
     }),
   );
+  // A rotated and a mirrored copy, numbered after the catalogue above.
   instances.push(
     {
-      id: "U24",
+      id: `U${blocks.length + 1}`,
       symbolId: "opamp-differential",
       placement: { position: { x: 800, y: 460 }, rotation: 90, mirror: "none" },
     },
     {
-      id: "U25",
+      id: `U${blocks.length + 2}`,
       symbolId: "opamp-differential",
       placement: {
         position: { x: 100, y: 580 },
@@ -139,7 +140,7 @@ test("FD Amp blank space does not capture clicks; body and pins remain usable", 
   // A one-symbol import auto-fits tightly. Leave room for the whole drag so
   // this checks object movement rather than edge-triggered canvas scrolling.
   for (let step = 0; step < 3; step += 1)
-    await page.getByRole("button", { name: "Zoom out" }).click();
+    await page.getByRole("button", { name: "缩小" }).click();
   const hit = page.getByTestId("hit-U1");
   const drag = async (
     fromX: number,

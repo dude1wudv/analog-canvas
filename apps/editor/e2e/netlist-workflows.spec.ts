@@ -9,6 +9,7 @@ import {
   clickCommand,
   downloadBytes,
   copyNetlistText,
+  clickNetlistWorkflowCommand,
   expectComponentCodeField,
   openMenu,
 } from "./editor-fixtures.js";
@@ -80,9 +81,9 @@ test("opens netlist preflight and navigates its canonical finding", async ({
 }) => {
   await page.goto("/editor");
   await placeComponent(page, "resistor", { x: 360, y: 240 });
-  await clickCommand(page, "Netlist", "Check Report…");
-  const dialog = page.getByRole("dialog", { name: "Check Report" });
-  await expect(dialog).toContainText("blocking issue");
+  await clickCommand(page, "Netlist", "Review Netlist Issues…");
+  const dialog = page.getByRole("dialog", { name: "检查报告" });
+  await expect(dialog).toContainText("项阻止导出的问题");
   await dialog
     .getByRole("button", { name: /MISSING_PIN_NET/u })
     .first()
@@ -92,7 +93,7 @@ test("opens netlist preflight and navigates its canonical finding", async ({
   await expect(dialog).toBeVisible();
 
   const reportBody = dialog.locator(".netlist-preflight-body");
-  const diagnostics = dialog.getByLabel("Netlist diagnostics");
+  const diagnostics = dialog.getByLabel("网表诊断");
   const reportBodyBox = await reportBody.boundingBox();
   const diagnosticsBox = await diagnostics.boundingBox();
   expect(reportBodyBox).not.toBeNull();
@@ -114,13 +115,13 @@ test("previews a validated structural netlist in both export dialects", async ({
     name: "Live netlist",
     exact: true,
   });
-  await clickCommand(page, "Netlist", "Check Report…");
-  const dialog = page.getByRole("dialog", { name: "Check Report" });
+  await clickCommand(page, "Netlist", "Review Netlist Issues…");
+  const dialog = page.getByRole("dialog", { name: "检查报告" });
   const preview = dialog.getByTestId("netlist-preview");
   await expect(preview).toContainText(".subckt dut");
   await dialog.getByTestId("check-report-close").click();
   await netlistPanel.getByLabel("Netlist format").selectOption("spectre");
-  await clickCommand(page, "Netlist", "Check Report…");
+  await clickCommand(page, "Netlist", "Review Netlist Issues…");
   await expect(preview).toContainText("simulator lang=spectre");
 });
 
@@ -183,9 +184,7 @@ X2 OUT IN EXT_MASTER l=1u nf=4
     "Imported 2 Documents",
   );
   const spice = await copyNetlistText(page);
-  await expect(page.getByRole("dialog", { name: "Check Report" })).toHaveCount(
-    0,
-  );
+  await expect(page.getByRole("dialog", { name: "检查报告" })).toHaveCount(0);
   expect(spice).toContain(".subckt leaf A B params: scale=1");
   expect(spice).toContain("X1 IN OUT leaf scale=2");
   expect(spice).toContain("X2 OUT IN EXT_MASTER l=1u nf=4");
@@ -207,9 +206,7 @@ R7 IN OUT 10k
     "Imported 1 Documents",
   );
   // The import draws every device: nothing waits off-sheet in a tray.
-  await expect(
-    page.getByRole("region", { name: "Placement Tray" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "待放置区" })).toHaveCount(0);
   await expect(
     page
       .getByTestId("schematic-canvas")
@@ -231,6 +228,54 @@ R7 IN OUT 10k
   await expect(
     page.getByTestId("annotation-hit-instance-label-R7"),
   ).toBeVisible();
+});
+
+test("preserves the original import reference through portable save and distinguishes legacy imports", async ({
+  page,
+}) => {
+  const source =
+    "* archived original\n.subckt top IN OUT\nR7 IN OUT 10k\n.ends top\n";
+  await page.goto("/editor");
+  await page.getByTestId("spice-files").setInputFiles({
+    name: "reference.spi",
+    mimeType: "application/x-spice",
+    buffer: Buffer.from(source),
+  });
+  await expect(page.getByTestId("status")).toContainText(
+    "Imported 1 Documents",
+  );
+  await expect(page.getByTestId("flightline")).toHaveCount(2);
+  const first = parseSavedProject(
+    (await downloadBytes(page, "File", "Export Project File…")).toString(
+      "utf8",
+    ),
+  );
+  expect(first.source.files[0]?.content?.text).toBe(source);
+  expect(first.documents[0]?.importReference?.nets).toHaveLength(2);
+  const beforeNetlist = await copyNetlistText(page);
+  await page.getByTestId("project-file").setInputFiles({
+    name: "saved.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(serializeProject(first)),
+  });
+  await expect(page.getByTestId("flightline")).toHaveCount(2);
+  expect(await copyNetlistText(page)).toBe(beforeNetlist);
+  const legacy = structuredClone(first);
+  for (const document of legacy.documents) delete document.importReference;
+  for (const file of legacy.source.files) delete file.content;
+  await page.getByTestId("project-file").setInputFiles({
+    name: "legacy.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(serializeProject(legacy)),
+  });
+  await expect(page.getByTestId("flightline")).toHaveCount(0);
+  expect(await copyNetlistText(page)).toBe(beforeNetlist);
+  await clickNetlistWorkflowCommand(page, "check-and-save");
+  await page.getByTestId("statusbar-issues").click();
+  await page.getByTestId("diagnostic-observations-toggle").click();
+  await expect(page.getByTestId("project-diagnostics")).toContainText(
+    "Original import reference is unavailable",
+  );
 });
 
 test("copies generated NoConnect nodes immediately and retains the optional Check Report", async ({
@@ -283,20 +328,18 @@ test("copies generated NoConnect nodes immediately and retains the optional Chec
     buffer: Buffer.from(serializeProject(project)),
   });
   expect(await copyNetlistText(page)).toContain("R1 IN NC0001 10k");
-  await expect(page.getByRole("dialog", { name: "Check Report" })).toHaveCount(
-    0,
-  );
-  await clickCommand(page, "Netlist", "Check Report…");
-  const dialog = page.getByRole("dialog", { name: "Check Report" });
+  await expect(page.getByRole("dialog", { name: "检查报告" })).toHaveCount(0);
+  await clickCommand(page, "Netlist", "Review Netlist Issues…");
+  const dialog = page.getByRole("dialog", { name: "检查报告" });
   await expect(dialog).toContainText("GENERATED_NO_CONNECT_NODE");
   await expect(dialog.getByTestId("netlist-preview")).toContainText(
     "R1 IN NC0001 10k",
   );
-  await expect(dialog.getByLabel("Preflight findings")).toBeVisible();
-  await expect(dialog.getByLabel("Electrical findings")).toBeVisible();
+  await expect(dialog.getByLabel("预检结果")).toBeVisible();
+  await expect(dialog.getByLabel("电气检查结果")).toBeVisible();
 
   const previewPane = dialog.locator(".netlist-preflight-export");
-  const diagnosticsPane = dialog.getByLabel("Netlist diagnostics");
+  const diagnosticsPane = dialog.getByLabel("网表诊断");
   const desktopPreviewBox = await previewPane.boundingBox();
   const desktopDiagnosticsBox = await diagnosticsPane.boundingBox();
   expect(desktopPreviewBox).not.toBeNull();
@@ -318,7 +361,7 @@ test("copies generated NoConnect nodes immediately and retains the optional Chec
   );
 
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-  await dialog.getByRole("button", { name: "Copy SPICE netlist" }).click();
+  await dialog.getByRole("button", { name: "复制 SPICE 网表" }).click();
   await expect(page.getByTestId("status")).toContainText(
     "SPICE netlist copied",
   );
@@ -397,20 +440,33 @@ test("copies structural SPICE and Spectre netlists while exposing instance autho
   expect(spice).not.toMatch(/^(?:\*|\/\/)/mu);
   const spectre = await copyNetlistText(page, "spectre");
   expect(spectre).toContain("simulator lang=spectre");
+  await openMenu(page, "Netlist");
   const primary = page.getByTestId("copy-netlist");
-  await expect(primary).toHaveAccessibleName("Copy netlist");
-  await expect(primary).not.toContainText("Copy");
+  await expect(primary).toHaveAccessibleName("复制网表");
+  await expect(primary).toContainText("复制网表");
   await expect(primary).toHaveAttribute("title", /Spectre \(\.scs\)/u);
   expect(await copyNetlistText(page)).toBe(spectre);
-  await expect(page.getByRole("dialog", { name: "Check Report" })).toHaveCount(
-    0,
-  );
+  // The panel's own copy button, beside the code, copies the same netlist.
+  await page.evaluate(() => navigator.clipboard.writeText("unchanged"));
+  await page.getByTestId("copy-netlist-panel").click();
+  // Match copyNetlistText's line-ending-neutral clipboard contract: Windows
+  // returns CRLF even though the generated netlist uses LF.
+  await expect
+    .poll(async () =>
+      (await page.evaluate(() => navigator.clipboard.readText())).replace(
+        /\r\n?/gu,
+        "\n",
+      ),
+    )
+    .toBe(spectre);
+  await expect(page.getByRole("dialog", { name: "检查报告" })).toHaveCount(0);
 
   await placeComponent(page, "nmos", { x: 360, y: 220 });
   await page.getByTestId("netlist-panel-toggle").click();
+  // The lone MOS prints at once as a draft, ? on every open pin.
   await expect(
     page.getByRole("textbox", { name: "Netlist code", exact: true }),
-  ).toHaveText("");
+  ).toContainText(/M1 \(\? \? \? VSS\)/u);
   // The panel surfaces the first structural error for the Instance just
   // placed. Which one comes first is diagnostic order, not a contract — a
   // lone MOS is missing a model target and its connections both — so this
@@ -419,7 +475,7 @@ test("copies structural SPICE and Spectre netlists while exposing instance autho
     page.getByRole("region", { name: "Live netlist" }).getByRole("alert"),
   ).toContainText("M1");
   await page.evaluate(() => navigator.clipboard.writeText("unchanged"));
-  await primary.click();
+  await clickCommand(page, "Netlist", "Copy Netlist");
   await expect(page.getByTestId("status")).toContainText(
     "Resolve the Check Report",
   );
@@ -428,7 +484,7 @@ test("copies structural SPICE and Spectre netlists while exposing instance autho
   );
   await page.keyboard.press("q");
   await openSelectionShelf(page);
-  const properties = page.getByRole("complementary", { name: "Properties" });
+  const properties = page.getByRole("complementary", { name: "属性" });
   await expect(properties.getByLabel("Cell netlist name")).toHaveCount(0);
   await expect(properties.getByLabel("Cell netlist port order")).toHaveCount(0);
   await expectComponentCodeField(page, "netlistName", "M1");
@@ -533,48 +589,44 @@ test("shows and copies a live MOS netlist with explicitly connected bulk termina
     0,
   );
   const refresh = panel.getByRole("button", { name: "Refresh netlist" });
+  // The copy button sits beside refresh and keeps the panel's right edge.
   const copy = panel.getByRole("button", { name: "Copy netlist", exact: true });
+  await expect(copy).toBeVisible();
   const formatSelect = panel.getByLabel("Netlist format");
   const processSelect = panel.getByLabel("Netlist process");
-  const assertControls = async (stacked: boolean) => {
-    const [format, process, refreshBox, copyBox] = await Promise.all(
-      [formatSelect, processSelect, refresh, copy].map((item) =>
+  const assertControls = async () => {
+    const [format, process, refreshBox, copyBox, panelBox] = await Promise.all(
+      [formatSelect, processSelect, refresh, copy, panel].map((item) =>
         item.boundingBox(),
       ),
     );
     for (const box of [process, refreshBox, copyBox])
       expect(box!.height).toBeCloseTo(format!.height, 1);
     expect(refreshBox!.y).toBeCloseTo(format!.y, 1);
-    expect(copyBox!.y).toBeCloseTo(process!.y, 1);
-    if (stacked) {
-      expect(copyBox!.x).toBeCloseTo(refreshBox!.x, 1);
-      expect(copyBox!.y).toBeGreaterThan(refreshBox!.y);
-    } else {
-      expect(copyBox!.x).toBeGreaterThan(refreshBox!.x);
-      expect(copyBox!.y).toBeCloseTo(refreshBox!.y, 1);
-    }
+    expect(copyBox!.x + copyBox!.width).toBeLessThanOrEqual(
+      panelBox!.x + panelBox!.width,
+    );
   };
-  await assertControls(true);
+  await assertControls();
   const handle = page.getByTestId("properties-resize-handle");
   const handleBox = (await handle.boundingBox())!;
   await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + 80);
   await page.mouse.down();
   await page.mouse.move(handleBox.x - 300, handleBox.y + 80);
   await page.mouse.up();
-  await assertControls(false);
+  await assertControls();
   await page.setViewportSize({ width: 720, height: 900 });
   // Restore the narrow dock through its keyboard resize control.
   await handle.focus();
   for (let index = 0; index < 10; index++)
     await handle.press("Shift+ArrowRight");
-  await assertControls(true);
+  await assertControls();
   await page.setViewportSize({ width: 1280, height: 720 });
   const code = panel.getByLabel("Netlist code", { exact: true });
   const original = await code.innerText();
   await code.fill(original.replace(/\bM1\b/u, "M91"));
   await refresh.click();
   await expect(code).toContainText("M91");
-  await expect(copy).toBeEnabled();
   await expect(formatSelect).toHaveValue("spectre");
   const valid = await code.innerText();
   await code.fill(valid + "\nINVALID");
@@ -593,17 +645,13 @@ test("shows and copies a live MOS netlist with explicitly connected bulk termina
   await expect(codeViewport.locator(".cm-lineNumbers")).toBeVisible();
   await expect(panel.getByLabel("Netlist process")).toBeVisible();
   await expect(panel.getByLabel("NMOS netlist target")).toBeVisible();
-  const portCase = panel.getByRole("button", {
-    name: "Port names: uppercase",
-  });
   const defaultButton = panel.getByRole("button", {
     name: "Default",
     exact: true,
   });
-  await portCase.click();
-  await expect(
-    panel.getByRole("button", { name: "Port names: lowercase" }),
-  ).toBeVisible();
+  await expect(panel.getByRole("button", { name: /Port names:/u })).toHaveCount(
+    0,
+  );
   const codeViewportBox = await codeViewport.boundingBox();
   const optionsBarBox = await panel
     .getByLabel("Netlist output options")
@@ -620,15 +668,15 @@ test("shows and copies a live MOS netlist with explicitly connected bulk termina
       .getAttribute("aria-pressed")) !== "true"
   )
     await page.getByTestId("netlist-panel-toggle").click();
-  await expect(
-    panel.getByRole("button", { name: "Port names: lowercase" }),
-  ).toBeVisible();
+  await expect(panel.getByRole("button", { name: /Port names:/u })).toHaveCount(
+    0,
+  );
   await expect(panel.getByRole("alert")).toHaveCount(0);
   await defaultButton.click();
   await expect(panel.getByLabel("Netlist format")).toHaveValue("spice");
-  await expect(
-    panel.getByRole("button", { name: "Port names: uppercase" }),
-  ).toBeVisible();
+  await expect(panel.getByRole("button", { name: /Port names:/u })).toHaveCount(
+    0,
+  );
   await expect(panel.getByLabel("Netlist code")).toContainText(".subckt dut\n");
   await page.reload();
   if (
@@ -682,11 +730,15 @@ test("grows and shrinks the live netlist with content, scrolling only at the vie
         },
         netlist: { parameters: { value: `${index}k` } },
       });
-      for (const pinName of ["1", "2"])
-        document.nets.push({
-          id: `${id}-${pinName}`,
-          terminals: [{ instanceId: id, pinName }],
-        });
+      // Both pins on one Net: a pin alone on its Net would be an unfinished
+      // node, and the panel lists every such finding under the code.
+      document.nets.push({
+        id: `${id}-net`,
+        terminals: [
+          { instanceId: id, pinName: "1" },
+          { instanceId: id, pinName: "2" },
+        ],
+      });
     }
     await page.getByTestId("project-file").setInputFiles({
       name: "growing-netlist.icproj.json",
@@ -765,7 +817,7 @@ test("edits output configuration without creating another electrical authority",
   page,
 }) => {
   await page.goto("/editor");
-  await clickCommand(page, "Netlist", "Configuration…");
+  await clickCommand(page, "Netlist", "Netlist Settings…");
   const panel = page.getByRole("region", {
     name: "Netlist configuration",
     exact: true,
@@ -778,33 +830,30 @@ test("edits output configuration without creating another electrical authority",
   const config = JSON.parse(await code.inputValue());
   expect(config).toMatchObject({
     format: "spice",
-    portCase: "upper",
     selected: "sky130",
   });
+  expect(config).not.toHaveProperty("portCase");
   config.format = "spectre";
-  config.portCase = "lower";
   await code.fill(JSON.stringify(config, null, 2));
   await page.reload();
-  if (
-    (await page
-      .getByTestId("netlist-panel-toggle")
-      .getAttribute("aria-pressed")) !== "true"
-  )
-    await page.getByTestId("netlist-panel-toggle").click();
+  // The workspace restores the open configuration panel. Wait for that
+  // restoration before switching to the output panel.
+  await expect(panel).toBeVisible();
+  await page.getByTestId("netlist-panel-toggle").click();
   await expect(
     page.getByRole("combobox", { name: "Netlist format" }),
   ).toHaveValue("spectre");
-  await clickCommand(page, "Netlist", "Configuration…");
+  await clickCommand(page, "Netlist", "Netlist Settings…");
   await expect
     .poll(async () => JSON.parse(await code.inputValue()))
     .toEqual(config);
   await code.fill("{");
   await expect(panel.getByRole("alert")).toContainText("Copying is paused");
-  await page.getByTestId("copy-netlist").click();
+  await clickCommand(page, "Netlist", "Copy Netlist");
   await expect(page.getByTestId("status")).toContainText(
     "Fix Netlist configuration",
   );
-  await clickCommand(page, "Netlist", "Configuration…");
+  await clickCommand(page, "Netlist", "Netlist Settings…");
   await code.fill(JSON.stringify(config, null, 2));
   const netlist = await copyNetlistText(page, "spectre");
   expect(netlist).toContain("simulator lang=spectre");
@@ -877,7 +926,8 @@ test("refreshes a legacy circuit with missing device defaults in one click", asy
   });
   await expect(page.getByTestId("status")).toContainText("Opened");
   const code = page.getByLabel("Netlist code", { exact: true });
-  await expect(code).toHaveText("");
+  await expect(code).toContainText("* Draft:");
+  await expect(code).toContainText("w=? l=?");
   await expect(
     page.getByRole("region", { name: "Live netlist" }).getByRole("alert"),
   ).toContainText("requires an explicit model target");
@@ -888,8 +938,8 @@ test("refreshes a legacy circuit with missing device defaults in one click", asy
   await expect(code).toContainText(/R1 \S+ \S+ 1k/u);
   await expect(fill).toHaveCount(0);
   // One undo step: the circuit is back to what was opened.
-  await clickCommand(page, "Edit", "Undo");
-  await expect(code).toHaveText("");
+  await page.getByTestId("draw-tool-undo").click();
+  await expect(code).toContainText("w=? l=?");
   await expect(page.getByTestId("netlist-fill-defaults")).toHaveText(
     "Fill 3 devices",
   );
@@ -919,7 +969,7 @@ test("blocks netlist output when the configured default is missing", async ({
     })),
   );
   await page.goto("/editor");
-  await clickCommand(page, "Netlist", "Configuration…");
+  await clickCommand(page, "Netlist", "Netlist Settings…");
   const configuration = page.getByLabel("Netlist configuration JSON");
   const preferences = JSON.parse(await configuration.inputValue());
   preferences.profiles.abstract.devices.resistor.parameters = {};
@@ -931,21 +981,23 @@ test("blocks netlist output when the configured default is missing", async ({
     buffer: Buffer.from(serializeProject(project)),
   });
   const code = page.getByLabel("Netlist code", { exact: true });
-  await expect(code).toHaveText("");
+  // The panel shows the draft, value unknown; output itself stays blocked.
+  await expect(code).toContainText("* Draft:");
+  await expect(code).toContainText(/R1 \S+ \S+ \?/u);
   await expect(
     page.getByRole("region", { name: "Live netlist" }).getByRole("alert"),
   ).toContainText("requires parameter value");
-  await clickCommand(page, "Netlist", "Check Report…");
-  const report = page.getByRole("dialog", { name: "Check Report" });
-  await expect(report).toContainText("1 blocking issue");
+  await clickCommand(page, "Netlist", "Review Netlist Issues…");
+  const report = page.getByRole("dialog", { name: "检查报告" });
+  await expect(report).toContainText("1 项阻止导出的问题");
   await expect(report).toContainText("MISSING_REQUIRED_PARAMETER");
   await expect(report.getByTestId("netlist-preview")).toHaveCount(0);
   await report.getByTestId("check-report-close").click();
   await page
     .getByRole("combobox", { name: "Netlist format" })
     .selectOption("spectre");
-  await clickCommand(page, "Netlist", "Check Report…");
-  await expect(report).toContainText("1 blocking issue");
+  await clickCommand(page, "Netlist", "Review Netlist Issues…");
+  await expect(report).toContainText("1 项阻止导出的问题");
   await expect(report.getByTestId("netlist-preview")).toHaveCount(0);
 });
 
@@ -963,7 +1015,7 @@ test("keeps the netlist live and selectable when clipboard access fails", async 
   page.on("download", (download) =>
     downloads.push(download.suggestedFilename()),
   );
-  await page.getByTestId("copy-netlist").click();
+  await clickCommand(page, "Netlist", "Copy Netlist");
   const code = page.getByRole("textbox", { name: "Netlist code", exact: true });
   await expect(code).toContainText(".subckt dut");
   const netlistEditor = page.locator(
@@ -990,7 +1042,7 @@ test("keeps the netlist live and selectable when clipboard access fails", async 
     buffer: Buffer.from("\n.subckt live a b\nR1 a b 2k\n.ends live\n"),
   });
   await expect(
-    page.getByRole("region", { name: "Import Review", exact: true }),
+    page.getByRole("region", { name: "导入检查", exact: true }),
   ).toBeVisible();
   await page.getByTestId("netlist-panel-toggle").click();
   await expect(code).toContainText(/R1 a b 2k/iu);
@@ -1055,12 +1107,13 @@ test("exports a MOS pair without bulk wiring or supply symbols", async ({
   await expect(page.getByLabel("Netlist code", { exact: true })).toContainText(
     "M1",
   );
+  // Port names print as authored, never re-cased.
   const scs = await copyNetlistText(page, "spectre");
-  expect(scs).toContain("subckt dut (VDD VSS VIN VIN2)");
-  expect(scs).toMatch(/M1 \(\S+ VIN \S+ VSS\) NMOS/u);
-  expect(scs).toMatch(/M2 \(\S+ VIN2 \S+ VSS\) NMOS/u);
+  expect(scs).toContain("subckt dut (VDD VSS Vin Vin2)");
+  expect(scs).toMatch(/M1 \(\S+ Vin \S+ VSS\) NMOS/u);
+  expect(scs).toMatch(/M2 \(\S+ Vin2 \S+ VSS\) NMOS/u);
   const spice = await copyNetlistText(page, "spice");
-  expect(spice).toContain(".subckt dut VDD VSS VIN VIN2");
+  expect(spice).toContain(".subckt dut VDD VSS Vin Vin2");
   expect(spice).not.toContain(".global");
   const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(

@@ -4,6 +4,7 @@ import {
   createEmptyDocument,
   createRoutePath,
   type CircuitProject,
+  type Point,
 } from "@icm/model";
 import { executeProjectTransaction } from "@icm/edit-engine";
 import { parseProject } from "@icm/project-protocol";
@@ -18,6 +19,7 @@ import { EditorDocumentController } from "../../document/document-controller";
 import { resolveDocumentLogicalNets } from "@icm/derived";
 import {
   captureProjectCopy,
+  applyProjectCopyPlacement,
   planProjectCopyPlacement,
   prepareProjectCopy,
 } from "./project-copy";
@@ -46,15 +48,7 @@ function place(
     { x: 4000 * sequence, y: 0 },
     sequence,
   );
-  const result = executeProjectTransaction(project, {
-    transactionId: `copy-${sequence}`,
-    projectId: project.id,
-    expectedStructureRevision: project.structureRevision,
-    actor: { kind: "human", id: "test" },
-    edits: plan.edits,
-  });
-  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics));
-  return result.project;
+  return applyProjectCopyPlacement(plan);
 }
 function externalFixture() {
   const source = createEmptyProject("source", "Source");
@@ -262,7 +256,8 @@ describe("one Project copy path", () => {
     const instance = copied.instances.find(
       (candidate) => candidate.symbolId === "resistor",
     )!;
-    expect(instance.reference).toBe("R1");
+    // R9 is free in the destination, so the copy keeps its name.
+    expect(instance.reference).toBe("R9");
     expect(
       copied.nets.find((net) =>
         net.terminals.some((terminal) => terminal.instanceId === "P1"),
@@ -270,7 +265,7 @@ describe("one Project copy path", () => {
     ).toContainEqual({ instanceId: instance.id, pinName: pin.name });
   });
 
-  it("does not preserve invisible connectivity between copied Port markers", () => {
+  it("preserves copied Port names while allocating distinct Base Nets", () => {
     const project = createEmptyProject("ports", "Ports");
     const document = project.documents[0]!;
     document.instances.push(
@@ -307,9 +302,9 @@ describe("one Project copy path", () => {
     const terminals = copied.netlist!.terminals.filter((terminal) =>
       terminal.interfaceInstanceIds.some((id) => id !== "P1" && id !== "P2"),
     );
-    expect(terminals.map((terminal) => terminal.name).sort()).toEqual([
-      "Vin",
-      "Vout",
+    expect(terminals.map((terminal) => terminal.name)).toEqual([
+      "OLD_INPUT",
+      "OLD_INPUT",
     ]);
     expect(new Set(terminals.map((terminal) => terminal.netId)).size).toBe(2);
     expect(terminals.every((terminal) => terminal.netId !== "shared")).toBe(
@@ -317,7 +312,7 @@ describe("one Project copy path", () => {
     );
   });
 
-  it("uses the Insert supply name instead of silently reconnecting a copied AVDD marker", () => {
+  it("preserves the authored AVDD supply name when copying its marker", () => {
     const project = createEmptyProject("supplies", "Supplies");
     const document = project.documents[0]!;
     document.instances.push({
@@ -343,15 +338,315 @@ describe("one Project copy path", () => {
       captureProjectCopy(project, document, selection(["VDD1"]))!,
     ).documents[0]!;
     const logical = resolveDocumentLogicalNets(copied);
-    expect(logical.groups.map((group) => group.name).sort()).toEqual([
-      "AVDD",
-      "VDD",
-    ]);
+    expect(logical.groups.map((group) => group.name)).toEqual(["AVDD"]);
+    expect(logical.groups[0]!.baseNetIds).toHaveLength(2);
     const copy = copied.instances.find((instance) => instance.id !== "VDD1")!;
     const net = copied.nets.find((candidate) =>
       candidate.terminals.some((terminal) => terminal.instanceId === copy.id),
     )!;
-    expect(logical.byBaseNetId.get(net.id)?.name).toBe("VDD");
+    expect(logical.byBaseNetId.get(net.id)?.name).toBe("AVDD");
+    expect(net.id).not.toBe("analog-supply");
+  });
+
+  it("copies a VDD Cell Pin without its label as a Cell Pin its terminal names", () => {
+    const project = createEmptyProject("supplies", "Supplies");
+    const document = project.documents[0]!;
+    document.instances.push({
+      id: "VDD1",
+      symbolId: "vdd-port",
+      placement: { position: { x: 0, y: 0 }, rotation: 0, mirror: "none" },
+    });
+    document.nets.push({
+      id: "net-cell-pin-vdd1",
+      terminals: [{ instanceId: "VDD1", pinName: "P" }],
+    });
+    document.netlist!.terminals.push({
+      id: "terminal-vdd1",
+      name: "VDD",
+      netId: "net-cell-pin-vdd1",
+      direction: "inout",
+      interfaceInstanceIds: ["VDD1"],
+    });
+    const copied = place(
+      project,
+      captureProjectCopy(project, document, selection(["VDD1"]))!,
+    ).documents[0]!;
+    const copy = copied.instances.find((instance) => instance.id !== "VDD1")!;
+    const terminal = copied.netlist!.terminals.find((candidate) =>
+      candidate.interfaceInstanceIds.includes(copy.id),
+    )!;
+    expect(terminal.name).toBe("VDD");
+    // Its terminal names it, so the copy gains neither a supply claim nor a
+    // label bound to one, just as its source had none.
+    expect(copied.connectivityEvidence).toEqual([]);
+    expect(copied.annotations).toEqual([]);
+    expect(
+      resolveDocumentLogicalNets(copied).byBaseNetId.get(terminal.netId)?.name,
+    ).toBe("VDD");
+  });
+
+  // Drawings from before the Edit Engine removed zero-length steps still
+  // store Wires that re-created as they are would be rejected as degenerate.
+  function legacyWireFixture(gap: number, stepped: boolean) {
+    const project = createEmptyProject("legacy-wires", "Legacy wires");
+    const document = project.documents[0]!;
+    const resolver = new InMemorySymbolResolver(builtInSymbols);
+    const [first, second] = resolver.resolve("resistor")!.definition.pins;
+    const resistor = (id: string, x: number, y: number) => ({
+      id,
+      reference: id,
+      symbolId: "resistor",
+      placement: {
+        position: { x, y },
+        rotation: 0 as const,
+        mirror: "none" as const,
+      },
+      netlist: { parameters: { value: "1k" } },
+    });
+    // R2's first pin lies `gap` to the right of R1's second pin.
+    document.instances.push(
+      resistor("R1", 0, 0),
+      resistor(
+        "R2",
+        second!.at.x - first!.at.x + gap,
+        second!.at.y - first!.at.y,
+      ),
+    );
+    const from = {
+      kind: "terminal" as const,
+      instanceId: "R1",
+      pinName: second!.name,
+    };
+    const to = {
+      kind: "terminal" as const,
+      instanceId: "R2",
+      pinName: first!.name,
+    };
+    document.nets.push({
+      id: "joined",
+      terminals: [
+        { instanceId: "R1", pinName: second!.name },
+        { instanceId: "R2", pinName: first!.name },
+      ],
+    });
+    document.routes.push(
+      createRoutePath({
+        id: "legacy",
+        netId: "joined",
+        start: from,
+        end: to,
+        // A first step of no length, from R1's pin to a bend on that pin.
+        bends: stepped ? [{ x: second!.at.x, y: second!.at.y }] : [],
+        modes: stepped ? ["manual", "manual"] : ["manual"],
+      }),
+    );
+    const copied = place(
+      project,
+      captureProjectCopy(
+        project,
+        document,
+        selection(["R1", "R2"], ["legacy"]),
+      )!,
+    ).documents[0]!;
+    const copies = copied.instances
+      .filter((instance) => instance.id !== "R1" && instance.id !== "R2")
+      .map((instance) => instance.id);
+    return { copied, copies };
+  }
+
+  it("copies a legacy Wire whose ends meet as the contact it is", () => {
+    const { copied, copies } = legacyWireFixture(0, false);
+    expect(copies).toHaveLength(2);
+    // The copied pins share their Net, and no empty Wire is re-created.
+    expect(copied.routes.map((route) => route.id)).toEqual(["legacy"]);
+    const net = copied.nets.find((candidate) =>
+      candidate.terminals.some((terminal) => terminal.instanceId === copies[0]),
+    )!;
+    expect(net.terminals.map((terminal) => terminal.instanceId).sort()).toEqual(
+      [...copies].sort(),
+    );
+  });
+
+  it("copies a legacy Wire without its zero-length step", () => {
+    const { copied } = legacyWireFixture(40, true);
+    const copy = copied.routes.find((route) => route.id !== "legacy")!;
+    expect(copy.legs).toHaveLength(1);
+    expect(copy.legs[0]!.to.kind).toBe("endpoint");
+  });
+
+  // Vertical resistors, pin 1 at the top and pin 2 at the bottom, so one
+  // part's pin can sit exactly on another part's pin or on a wire.
+  function connectivityFixture() {
+    const project = createEmptyProject("joins", "Joins");
+    const document = project.documents[0]!;
+    const resolver = new InMemorySymbolResolver(builtInSymbols);
+    const [first, second] = resolver.resolve("resistor")!.definition.pins;
+    const pin = (id: string, which: "1" | "2") => ({
+      kind: "terminal" as const,
+      instanceId: id,
+      pinName: (which === "1" ? first : second)!.name,
+    });
+    // Places a resistor so that its pin `which` lands on `at`.
+    const resistor = (id: string, which: "1" | "2", at: Point) => {
+      const local = (which === "1" ? first : second)!.at;
+      document.instances.push({
+        id,
+        reference: id,
+        symbolId: "resistor",
+        placement: {
+          position: { x: at.x - local.x, y: at.y - local.y },
+          rotation: 0,
+          mirror: "none",
+        },
+        netlist: { parameters: { value: "1k" } },
+      });
+    };
+    const net = (id: string, ends: ReturnType<typeof pin>[]) =>
+      document.nets.push({
+        id,
+        terminals: ends.map(({ instanceId, pinName }) => ({
+          instanceId,
+          pinName,
+        })),
+      });
+    const wire = (
+      id: string,
+      netId: string,
+      from: ReturnType<typeof pin>,
+      to: ReturnType<typeof pin>,
+    ) =>
+      document.routes.push(
+        createRoutePath({
+          id,
+          netId,
+          start: from,
+          end: to,
+          bends: [],
+          modes: ["manual"],
+        }),
+      );
+    const copy = () => {
+      const plan = planProjectCopyPlacement(
+        project,
+        document,
+        captureProjectCopy(project, document, {
+          instanceIds: document.instances.map((item) => item.id),
+          routeIds: document.routes.map((item) => item.id),
+          junctionIds: [],
+          annotationIds: [],
+          draftingIds: [],
+        })!,
+        { x: 4000, y: 0 },
+        1,
+      );
+      const copied = applyProjectCopyPlacement(plan).documents[0]!;
+      const netOf = (id: string, which: "1" | "2") =>
+        copied.nets.find((candidate) =>
+          candidate.terminals.some(
+            (terminal) =>
+              terminal.instanceId === plan.mapping.objects.instances[id] &&
+              terminal.pinName === pin(id, which).pinName,
+          ),
+        )?.id ?? null;
+      return { copied, netOf };
+    };
+    return { document, pin, resistor, net, wire, copy };
+  }
+
+  it("never joins a copied pin to another Net's wire it only lies on", () => {
+    // R1's top pin, the end of its own wire up to R4, lies on the middle of
+    // the R2–R3 bus without being connected to it: the two wires cross.
+    const { pin, resistor, net, wire, copy } = connectivityFixture();
+    resistor("R2", "2", { x: -100, y: 100 });
+    resistor("R3", "2", { x: 100, y: 100 });
+    resistor("R1", "1", { x: 0, y: 100 });
+    resistor("R4", "2", { x: 0, y: 40 });
+    net("bus", [pin("R2", "2"), pin("R3", "2")]);
+    net("tap", [pin("R1", "1"), pin("R4", "2")]);
+    wire("bus-wire", "bus", pin("R2", "2"), pin("R3", "2"));
+    wire("tap-wire", "tap", pin("R1", "1"), pin("R4", "2"));
+    const { netOf } = copy();
+    expect(netOf("R1", "1")).toBe(netOf("R4", "2"));
+    expect(netOf("R1", "1")).not.toBe(netOf("R2", "2"));
+    expect(netOf("R2", "2")).toBe(netOf("R3", "2"));
+  });
+
+  it("copies a supply marker its source left unnamed as it was, without a label", () => {
+    // Markers from before they claimed their supply sit on an unnamed Net;
+    // here the marker's pin touches R1's top pin.
+    const project = createEmptyProject("unnamed-supply", "Unnamed supply");
+    const document = project.documents[0]!;
+    const resolver = new InMemorySymbolResolver(builtInSymbols);
+    const top = resolver.resolve("resistor")!.definition.pins[0]!;
+    const supply = resolver.resolve("vdd-port")!.definition.pins[0]!;
+    document.instances.push(
+      {
+        id: "VDD1",
+        symbolId: "vdd-port",
+        placement: {
+          position: { x: top.at.x - supply.at.x, y: top.at.y - supply.at.y },
+          rotation: 0,
+          mirror: "none",
+        },
+      },
+      {
+        id: "R1",
+        reference: "R1",
+        symbolId: "resistor",
+        placement: { position: { x: 0, y: 0 }, rotation: 0, mirror: "none" },
+        netlist: { parameters: { value: "1k" } },
+      },
+    );
+    document.nets.push({
+      id: "rail",
+      terminals: [
+        { instanceId: "VDD1", pinName: supply.name },
+        { instanceId: "R1", pinName: top.name },
+      ],
+    });
+    const copied = place(
+      project,
+      captureProjectCopy(project, document, selection(["VDD1", "R1"]))!,
+    ).documents[0]!;
+    const marker = copied.instances.find(
+      (item) => item.symbolId === "vdd-port" && item.id !== "VDD1",
+    )!;
+    const part = copied.instances.find(
+      (item) => item.symbolId === "resistor" && item.id !== "R1",
+    )!;
+    const net = copied.nets.find((candidate) =>
+      candidate.terminals.some((terminal) => terminal.instanceId === marker.id),
+    )!;
+    expect(net.terminals.map((terminal) => terminal.instanceId).sort()).toEqual(
+      [marker.id, part.id].sort(),
+    );
+    expect(copied.connectivityEvidence).toEqual([]);
+    expect(copied.annotations).toEqual([]);
+  });
+
+  it("keeps copied pins that touch, or lie on their own Net's wire, joined", () => {
+    // R1 and R2 touch pin to pin; R5's top pin sits on the middle of the
+    // R2–R3 wire of the Net it belongs to. Neither join is a Wire end.
+    const { pin, resistor, net, wire, copy } = connectivityFixture();
+    resistor("R1", "2", { x: -100, y: 100 });
+    resistor("R2", "1", { x: -100, y: 100 });
+    resistor("R3", "1", { x: 100, y: 100 });
+    resistor("R5", "1", { x: 0, y: 100 });
+    net("row", [
+      pin("R1", "2"),
+      pin("R2", "1"),
+      pin("R3", "1"),
+      pin("R5", "1"),
+    ]);
+    wire("row-wire", "row", pin("R2", "1"), pin("R3", "1"));
+    const { netOf } = copy();
+    const row = netOf("R2", "1");
+    expect(row).not.toBeNull();
+    expect([netOf("R1", "2"), netOf("R3", "1"), netOf("R5", "1")]).toEqual([
+      row,
+      row,
+      row,
+    ]);
   });
 
   it("undoes dependencies and placed objects together, with no writes from preparation", () => {
@@ -592,6 +887,89 @@ describe("one Project copy path", () => {
     expect(changed.documents).toHaveLength(3);
   });
 
+  it("copies a Wire whose first copy name was freed by an earlier split", () => {
+    const source = createEmptyProject("source", "Source");
+    const doc = source.documents[0]!;
+    doc.instances.push(
+      ...[100, 220].map((x, i) => ({
+        id: `R${i + 1}`,
+        symbolId: "resistor",
+        placement: {
+          position: { x, y: 100 },
+          rotation: 0 as const,
+          mirror: "none" as const,
+        },
+      })),
+    );
+    doc.nets.push(
+      {
+        id: "n",
+        terminals: [
+          { instanceId: "R1", pinName: "2" },
+          { instanceId: "R2", pinName: "1" },
+        ],
+      },
+      { id: "m", terminals: [] },
+    );
+    doc.routes.push(
+      createRoutePath({
+        id: "wire",
+        netId: "n",
+        start: { kind: "terminal", instanceId: "R1", pinName: "2" },
+        end: { kind: "terminal", instanceId: "R2", pinName: "1" },
+        bends: [],
+        modes: ["manual"],
+      }),
+    );
+    // An earlier session's first copy, `wire-copy-1`, was later split. The
+    // half renamed `wire-copy-1-a-move-1` kept that Route's Leg ID, so the
+    // Route name is free while its derived child ID is not.
+    doc.junctions.push(
+      {
+        id: "j1",
+        netId: "m",
+        position: { x: 0, y: 300 },
+        role: "route-anchor",
+      },
+      {
+        id: "j2",
+        netId: "m",
+        position: { x: 100, y: 300 },
+        role: "route-anchor",
+      },
+    );
+    const survivor = createRoutePath({
+      id: "wire-copy-1",
+      netId: "m",
+      start: { kind: "junction", junctionId: "j1" },
+      end: { kind: "junction", junctionId: "j2" },
+      bends: [],
+      modes: ["manual"],
+    });
+    doc.routes.push({ ...survivor, id: "wire-copy-1-a-move-1" });
+
+    // A fresh C session always places its first copy with sequence 1.
+    const plan = planProjectCopyPlacement(
+      source,
+      doc,
+      captureProjectCopy(source, doc, selection(["R1", "R2"], ["wire"]))!,
+      { x: 0, y: 400 },
+      1,
+    );
+    const placed = applyProjectCopyPlacement(plan).documents[0]!;
+    const copied = placed.routes.find(
+      (route) => route.id === plan.mapping.objects.routes.wire,
+    )!;
+    expect(copied.id).not.toBe("wire-copy-1");
+    const children = placed.routes.flatMap((route) =>
+      route.legs.flatMap((leg) => [
+        leg.id,
+        ...(leg.to.kind === "bend" ? [leg.to.bendId] : []),
+      ]),
+    );
+    expect(new Set(children).size).toBe(children.length);
+  });
+
   it("copies an attached Wire and current marker without importing its unselected devices", () => {
     const source = createEmptyProject("source", "Source");
     const doc = source.documents[0]!;
@@ -711,4 +1089,174 @@ describe("one Project copy path", () => {
     target.documents[0]!.presentation.styleOverrides = { symbolStrokeScale: 2 };
     expect(() => place(target, fragment)).toThrow(/preserve appearance/);
   });
+
+  it("commits a whole-circuit copy plan under any transaction ID", () => {
+    // Its contact steps address Wires and Nets that the placement step creates,
+    // while planning previews that step under a different transaction ID.
+    const { project, document, clipboard } = bundledExampleCopy(
+      "current-mirror-loaded-differential-pair",
+    );
+    const plan = planProjectCopyPlacement(
+      project,
+      document,
+      clipboard,
+      { x: -20, y: -40 },
+      1,
+    );
+    for (const transactionId of ["copy-placement", "agent-command-plan-3"]) {
+      const result = executeProjectTransaction(plan.baseProject, {
+        transactionId,
+        projectId: plan.baseProject.id,
+        expectedStructureRevision: plan.baseProject.structureRevision,
+        actor: { kind: "human", id: "test" },
+        edits: plan.edits,
+      });
+      expect(result.ok ? "committed" : result.error.message).toBe("committed");
+    }
+  });
+
+  it("claims each copied supply on the Net that survives its contact merges", () => {
+    const { project, document, clipboard } = bundledExampleCopy(
+      "common-source-amplifier",
+    );
+    for (const offset of [
+      { x: 4000, y: 0 },
+      { x: -160, y: -60 },
+    ]) {
+      const placed = applyProjectCopyPlacement(
+        planProjectCopyPlacement(project, document, clipboard, offset, 1),
+      ).documents.find((candidate) => candidate.id === document.id)!;
+      expect(placed.instances).toHaveLength(document.instances.length * 2);
+      const claimedNetIds = placed.connectivityEvidence.flatMap((evidence) =>
+        evidence.kind === "name-claim" && evidence.owner.kind === "power-marker"
+          ? [evidence.netId]
+          : [],
+      );
+      expect(claimedNetIds.length).toBeGreaterThan(0);
+      expect(
+        claimedNetIds.filter(
+          (netId) => !placed.nets.some((net) => net.id === netId),
+        ),
+      ).toEqual([]);
+    }
+  });
+
+  it("keeps the supply name a copied label claims on a Net no pin holds", () => {
+    // An old copy left a second V_DD label on a Net of its own, with no pins.
+    // The label keeps its claim. Without it the copy's V_DD look spelled a
+    // name its unnamed Net did not have, and the paste failed.
+    const project = createEmptyProject("stray-supply", "Stray supply");
+    const document = project.documents[0]!;
+    document.nets.push({ id: "stray", terminals: [] });
+    document.annotations.push({
+      id: "stray-label",
+      kind: "power-label",
+      netId: "stray",
+      binding: { kind: "net-name", netId: "stray" },
+      formatOverride: {
+        runs: [
+          {
+            kind: "span",
+            style: "italic",
+            children: [{ kind: "text", value: "V" }],
+          },
+          {
+            kind: "span",
+            style: "subscript",
+            children: [{ kind: "text", value: "DD" }],
+          },
+        ],
+      },
+      anchor: { kind: "free", position: { x: 100, y: 100 } },
+      alignment: "start",
+      rotation: 0,
+      locked: false,
+    });
+    document.connectivityEvidence.push({
+      id: "stray-name",
+      kind: "name-claim",
+      netId: "stray",
+      name: "VDD",
+      scope: "global",
+      powerDomain: "vdd",
+      owner: { kind: "power-marker", objectId: "stray-label" },
+    });
+    const copied = place(
+      project,
+      captureProjectCopy(project, document, {
+        ...selection(),
+        annotationIds: ["stray-label"],
+      })!,
+    ).documents[0]!;
+    const label = copied.annotations.find((item) => item.id !== "stray-label")!;
+    expect(
+      resolveDocumentLogicalNets(copied).byBaseNetId.get(label.netId!)?.name,
+    ).toBe("VDD");
+  });
+
+  it("keeps a property pin on the Net its part's hidden label names", () => {
+    // The process tied R1's body B, a pin its symbol does not draw, to ground
+    // through a hidden label on R1. The copy keeps B on that Net, bound as a
+    // property. The label used to land on pin 1's Net instead and ground it.
+    const { document, pin, resistor, net, wire, copy } = connectivityFixture();
+    resistor("R1", "1", { x: 0, y: 100 });
+    resistor("R2", "1", { x: 200, y: 100 });
+    net("a-signal", [pin("R1", "1"), pin("R2", "1")]);
+    wire("a-signal-wire", "a-signal", pin("R1", "1"), pin("R2", "1"));
+    document.nets.push({
+      id: "substrate",
+      terminals: [{ instanceId: "R1", pinName: "B" }],
+    });
+    document.annotations.push({
+      id: "substrate-label",
+      kind: "net-label",
+      netId: "substrate",
+      binding: { kind: "net-name", netId: "substrate" },
+      visible: false,
+      anchor: {
+        kind: "object",
+        objectId: "R1",
+        localOffset: { x: 0, y: 0 },
+        fallbackPosition: { x: 0, y: 0 },
+      },
+      alignment: "start",
+      rotation: 0,
+      locked: false,
+    });
+    document.connectivityEvidence.push({
+      id: "substrate-name",
+      kind: "name-claim",
+      netId: "substrate",
+      name: "0",
+      scope: "global",
+      powerDomain: "ground",
+      owner: { kind: "net-label", annotationId: "substrate-label" },
+    });
+    const { copied, netOf } = copy();
+    const names = resolveDocumentLogicalNets(copied).byBaseNetId;
+    const body = copied.nets.find((candidate) =>
+      candidate.terminals.some(
+        (terminal) => terminal.pinName === "B" && terminal.instanceId !== "R1",
+      ),
+    );
+    expect(body && names.get(body.id)?.name).toBe("0");
+    expect(names.get(netOf("R1", "1")!)?.name).toBeUndefined();
+  });
 });
+
+function bundledExampleCopy(name: string) {
+  const project = parseProject(
+    readFileSync(`apps/editor/src/examples/${name}.icproj.json`, "utf8"),
+  );
+  const document = project.documents.find(
+    (candidate) => candidate.id === project.topDocumentId,
+  )!;
+  const clipboard = captureProjectCopy(project, document, {
+    instanceIds: document.instances.map((instance) => instance.id),
+    routeIds: document.routes.map((route) => route.id),
+    junctionIds: document.junctions.map((junction) => junction.id),
+    annotationIds: [],
+    draftingIds: [],
+  })!;
+  return { project, document, clipboard };
+}

@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
+import { createEmptyProject } from "@icm/model";
+import { serializeProject } from "@icm/project-protocol";
 
-import { chooseComponent } from "./editor-fixtures";
+import { awaitEditorReady, chooseComponent } from "./editor-fixtures";
 
 async function placeComponent(
   page: Page,
@@ -16,34 +18,129 @@ function instances(page: Page) {
   return page.locator('[data-canvas-hit-kind="instance"]');
 }
 
-test("C pressed first arms copy; the next click picks up a copy", async ({
+test("C before selection picks up one copy and only subsequent clicks place it", async ({
   page,
 }) => {
   await page.goto("/editor");
-  await placeComponent(page, "resistor", { x: 300, y: 250 });
-  await expect(instances(page)).toHaveCount(1);
+  await placeComponent(page, "resistor", { x: 340, y: 220 });
+  const canvas = page.getByTestId("schematic-canvas");
+  await canvas.click({ position: { x: 700, y: 500 } });
+  const original = page.getByTestId("hit-R1");
+  const origin = (await original.boundingBox())!;
+  const revision = await page.getByTestId("revision").textContent();
+  const ghost = page.getByTestId("copy-placement-preview");
 
-  // Nothing selected: C arms the verb instead of complaining.
-  // Click empty canvas so nothing is selected before pressing the verb key.
-  await page.getByTestId("schematic-canvas").click({
-    position: { x: 150, y: 420 },
-  });
   await page.keyboard.press("c");
-  await expect(page.getByTestId("status")).toContainText("Copy: click");
-
-  // Clicking the part starts copy placement with its ghost on the cursor.
-  const part = instances(page).first();
-  const box = (await part.boundingBox())!;
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await expect(page.getByTestId("status")).toContainText("Place copy");
-
-  // Clicking empty canvas commits the copy.
-  await page.getByTestId("schematic-canvas").click({
-    position: { x: 520, y: 250 },
-  });
-  await expect(instances(page)).toHaveCount(2);
+  await expect(page.getByTestId("status")).toContainText("Copy: click a part");
+  await expect(ghost).toHaveCount(0);
   await page.keyboard.press("Escape");
+  await expect(page.getByTestId("revision")).toHaveText(revision!);
+  await page.keyboard.press("c");
+  await original.click();
+  await expect(ghost).toBeVisible();
+  // The pickup click must not leave an overlapping copy on the source.
+  await expect(page.getByTestId("instance-count")).toHaveText("1");
+  await expect(page.getByTestId("revision")).toHaveText(revision!);
+  const first = (await ghost.boundingBox())!;
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + 560, box.y + 350);
+  const moved = (await ghost.boundingBox())!;
+  expect(moved.x).not.toBe(first.x);
+  expect(moved.y).not.toBe(first.y);
+  expect(await original.boundingBox()).toEqual(origin);
+  await canvas.click({ position: { x: 560, y: 350 } });
+  await expect(page.getByTestId("instance-count")).toHaveText("2");
+  await canvas.click({ position: { x: 650, y: 440 } });
+  await expect(page.getByTestId("instance-count")).toHaveText("3");
+  await page.keyboard.press("Escape");
+  await expect(ghost).toHaveCount(0);
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(page.getByTestId("instance-count")).toHaveText("2");
 });
+
+for (const gesture of ["C", "Ctrl/Cmd+C then Ctrl/Cmd+V"] as const) {
+  test(`${gesture} copies a part as a fresh insertion, without the Net names its pins were on`, async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    // M1's gate is on the Net a Cell Pin names O; its source goes to ground.
+    const project = createEmptyProject("fresh-copy", "Fresh copy");
+    const document = project.documents[0]!;
+    const placement = (x: number, y: number) => ({
+      position: { x, y },
+      rotation: 0 as const,
+      mirror: "none" as const,
+    });
+    document.instances.push(
+      {
+        id: "M1",
+        reference: "M1",
+        symbolId: "nmos",
+        placement: placement(300, 200),
+        netlist: {
+          binding: { kind: "model", deviceClass: "mos", name: "NMOS" },
+          parameters: { w: "1u", l: "150n", nf: "1", m: "1" },
+        },
+      },
+      { id: "P1", symbolId: "port", placement: placement(200, 200) },
+      { id: "GND1", symbolId: "ground", placement: placement(320, 300) },
+    );
+    document.nets.push(
+      {
+        id: "net-o",
+        terminals: [
+          { instanceId: "M1", pinName: "G" },
+          { instanceId: "P1", pinName: "P" },
+        ],
+      },
+      {
+        id: "net-gnd",
+        terminals: [
+          { instanceId: "M1", pinName: "S" },
+          { instanceId: "GND1", pinName: "0" },
+        ],
+      },
+    );
+    document.netlist!.terminals.push({
+      id: "terminal-o",
+      name: "O",
+      netId: "net-o",
+      direction: "input",
+      interfaceInstanceIds: ["P1"],
+    });
+    await page.goto("/editor");
+    await awaitEditorReady(page);
+    await page.getByTestId("project-file").setInputFiles({
+      name: "fresh-copy.icproj.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(serializeProject(project)),
+    });
+    const netLabels = page.locator(
+      '[data-layer="annotations"] [data-kind="net-label"]',
+    );
+    await expect(page.getByTestId("hit-M1")).toBeVisible();
+    await expect(netLabels).toHaveCount(0);
+
+    await page.getByTestId("hit-M1").click();
+    // The two gestures are one copy: the same ghost, the same placed part.
+    if (gesture === "C") await page.keyboard.press("c");
+    else {
+      await page.keyboard.press("ControlOrMeta+c");
+      await page.keyboard.press("ControlOrMeta+v");
+    }
+    const ghost = page.getByTestId("copy-placement-preview");
+    await expect(ghost).toBeVisible();
+    // Nothing from the source circuit travels: no O, no ground name.
+    await expect(ghost.locator('[data-kind="net-label"]')).toHaveCount(0);
+    await page
+      .getByTestId("schematic-canvas")
+      .click({ position: { x: 620, y: 460 } });
+    await page.keyboard.press("Escape");
+    await expect(instances(page)).toHaveCount(4);
+    await expect(netLabels).toHaveCount(0);
+  });
+}
 
 test("Delete pressed first enters a repeating delete mode until Escape", async ({
   page,

@@ -15,7 +15,7 @@ describe("SelectionFilterPopover", () => {
       />,
     );
     expect(markup).toContain('data-testid="selection-filter-popover"');
-    expect(markup).toContain("选择筛选器");
+    expect(markup).toContain("Choose Selectable Objects");
     expect(markup).toContain("实例");
     expect(markup).toContain("导线");
     expect(markup).toContain("网络 / 电源名称");

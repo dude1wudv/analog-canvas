@@ -22,7 +22,7 @@ test("Check and Save surfaces findings in the existing workbench and canvas", as
   // A fresh document rests at a quiet, still-clickable entry point.
   const badge = page.getByTestId("statusbar-issues");
   await expect(badge).toHaveAttribute("data-severity", "none");
-  await expect(badge).toHaveText("Not checked");
+  await expect(badge).toHaveText("尚未检查");
 
   // Unfinished drawing produces neither diagnostic counts nor markers.
   await chooseComponent(page, "resistor");
@@ -30,21 +30,17 @@ test("Check and Save surfaces findings in the existing workbench and canvas", as
     .getByTestId("schematic-canvas")
     .click({ position: { x: 400, y: 240 } });
   await page.keyboard.press("Escape");
-  await expect(badge).toHaveText("Not checked");
+  await expect(badge).toHaveText("尚未检查");
   await expect(page.locator(".diagnostic-marker")).toHaveCount(0);
   await clickNetlistWorkflowCommand(page, "check-and-save");
   await expect(badge).toHaveAttribute("data-severity", "warning");
   await expect(badge).toContainText("warning");
   await expect(page.getByTestId("check-and-save")).toBeEnabled();
-  await expect(page.getByRole("dialog", { name: "Check Report" })).toHaveCount(
-    0,
-  );
+  await expect(page.getByRole("dialog", { name: "检查报告" })).toHaveCount(0);
 
   // The badge opens the dock with the issues section expanded.
   await badge.click();
-  const issuesSection = page.locator(
-    'section[aria-label="Project diagnostics"] details',
-  );
+  const issuesSection = page.locator('section[aria-label="项目诊断"] details');
   await expect(issuesSection).toHaveAttribute("open", "");
   const findings = page.getByTestId("project-diagnostics").locator("li button");
   await expect(findings.first()).toBeVisible();
@@ -90,7 +86,7 @@ test("signed-out Save does not suppress ERC or visual check results", async ({
     await page.getByTestId("schematic-canvas").click({ position });
     await page.keyboard.press("Escape");
   }
-  await expect(page.getByTestId("statusbar-issues")).toHaveText("Not checked");
+  await expect(page.getByTestId("statusbar-issues")).toHaveText("尚未检查");
   await clickNetlistWorkflowCommand(page, "check-and-save");
   await expect(page.getByTestId("status")).toContainText("Sign in to save");
   await expect(page.getByTestId("project-diagnostics")).toContainText(

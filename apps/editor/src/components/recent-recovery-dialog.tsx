@@ -138,8 +138,7 @@ export function RecentRecoveryDialog({
         </header>
         <div className="help-dialog-content">
           <p>
-            These copies live only in this browser and are not the formal
-            Project. Save to Cloud or download a backup for durable storage.
+            这些副本仅保存在此浏览器中，不是正式的项目存档。请保存到云端或下载备份以长期保存。
           </p>
           <ul className="recovery-session-list">
             {sessions.map((session) => {
@@ -193,8 +192,8 @@ export function RecentRecoveryDialog({
                           : `Restore ${session.projectName}`
                       }
                     >
-                      Restore
-                      {restorable === "previous" ? " previous copy" : ""}
+                      恢复
+                      {restorable === "previous" ? "上一份副本" : ""}
                     </button>
                     <button
                       type="button"
@@ -204,14 +203,14 @@ export function RecentRecoveryDialog({
                           onDownloadBackup(session.workingCopyId, downloadable);
                         }
                       }}
-                      aria-label={`Download backup of ${session.projectName}`}
+                      aria-label={`下载 ${session.projectName} 的备份`}
                     >
-                      Download backup
+                      下载备份
                     </button>
                     <button
                       type="button"
                       onClick={() => onDeleteSession(session.workingCopyId)}
-                      aria-label={`Delete recovery copy of ${session.projectName}`}
+                      aria-label={`删除 ${session.projectName} 的恢复副本`}
                     >
                       删除
                     </button>

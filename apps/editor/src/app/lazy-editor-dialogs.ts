@@ -31,6 +31,20 @@ export const LazyCellManagerDialog = lazyChunk("dialog", () =>
   })),
 );
 
+export const LazyCellInterfaceConfirmationDialog = lazyChunk("dialog", () =>
+  import("../features/hierarchy/cell-interface-confirmation").then(
+    (module) => ({
+      default: module.CellInterfaceConfirmationDialog,
+    }),
+  ),
+);
+
+export const LazyProjectCodePanel = lazyChunk("inline", () =>
+  import("../features/project-code/project-code-panel").then((module) => ({
+    default: module.ProjectCodePanel,
+  })),
+);
+
 export const LazySpiceSimulationSurface = lazyChunk("inline", () =>
   import("../features/simulation/spice-simulation-surface").then((module) => ({
     default: module.SpiceSimulationSurface,
@@ -52,12 +66,6 @@ export const LazyPublishGalleryDialog = lazyChunk("dialog", () =>
 export const LazyVersionHistoryDialog = lazyChunk("dialog", () =>
   import("../components/version-history-dialog").then((module) => ({
     default: module.VersionHistoryDialog,
-  })),
-);
-
-export const LazyEditorHelpDialog = lazyChunk("dialog", () =>
-  import("../components/editor-help-dialog").then((module) => ({
-    default: module.EditorHelpDialog,
   })),
 );
 

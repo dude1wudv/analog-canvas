@@ -1,5 +1,5 @@
 {
-  "name": "interactive-circuit-maker",
+  "name": "analog-canvas",
   "version": "0.9.2",
   "private": true,
   "type": "module",
@@ -46,6 +46,7 @@
     "gate:preflight": "node scripts/gate-run.mjs --stage preflight",
     "gate:affected": "node scripts/gate-run.mjs --stage affected",
     "gate:full": "pnpm ci:check",
+    "gallery:census": "node scripts/gallery-census.mjs",
     "setup:e2e": "playwright install --with-deps chromium",
     "ci:static": "pnpm format:check && pnpm docs:check && pnpm agent-docs:generated:check && pnpm references:check && pnpm components:check && pnpm agent-kit:catalog:check && pnpm mcp:distribution:check && pnpm typecheck",
     "ci:unit": "pnpm test",
@@ -84,6 +85,8 @@
     "symbols:razavi-common:check": "node scripts/generate-razavi-common-assets.mjs --check",
     "symbols:razavi-zener": "node scripts/generate-razavi-zener-asset.mjs",
     "symbols:razavi-zener:check": "node scripts/generate-razavi-zener-asset.mjs --check",
+    "symbols:razavi-battery": "node scripts/generate-razavi-battery-asset.mjs",
+    "symbols:razavi-battery:check": "node scripts/generate-razavi-battery-asset.mjs --check",
     "visual:golden": "pnpm build && node scripts/visual-golden.mjs",
     "visual:golden:check": "pnpm build && node scripts/visual-golden.mjs --check",
     "test": "vitest run",

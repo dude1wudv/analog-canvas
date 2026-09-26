@@ -1,12 +1,12 @@
 name: CI
 
 on:
+  # This fork has no merge queue: validate the review candidate on each PR.
   pull_request:
-  workflow_dispatch:
-  schedule:
-    # PRs already validate every change. One weekly full-browser audit is
-    # enough to catch latent cross-suite drift without repeating it every day.
-    - cron: "23 18 * * 0"
+  # The merge queue runs the checks once, on the candidate merged with current
+  # main: what is tested is what lands, and nobody updates a branch by hand.
+  merge_group:
+  # Both PRs and optional queued groups use the mapped browser contracts.
 
 permissions:
   contents: read
@@ -28,25 +28,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Pull requests need their complete commit range for Test-Impact.
-          # Scheduled and manual runs inspect only the checked-out commit, so
-          # two commits avoid an unbounded all-ref fetch.
-          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '2' }}
+          # Pull requests need their complete commit range for Test-Impact,
+          # and a queued group its range from the main it was queued on.
+          fetch-depth: 0
       - id: plan
         name: Plan CI validation
         env:
           EVENT_NAME: ${{ github.event_name }}
           PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         shell: bash
         run: |
-          force_args=()
+          base=""
           case "$EVENT_NAME" in
             pull_request)
               base="$PULL_REQUEST_BASE_SHA"
               ;;
-            *)
-              base="$(git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD)"
-              force_args+=(--force-full)
+            merge_group)
+              # Planned by its changed paths like a pull request: the queue
+              # re-checks the combination, not the whole suite.
+              base="$MERGE_GROUP_BASE_SHA"
               ;;
           esac
           if [[ -z "$base" ]] || ! git rev-parse --verify "$base^{commit}" >/dev/null 2>&1; then
@@ -54,13 +55,11 @@ jobs:
           fi
           node scripts/ci-plan.mjs \
             --base "$base" \
-            "${force_args[@]}" \
             --github-output \
             --github-summary
       - name: Check test-impact declaration
-        if: github.event_name == 'pull_request'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: node scripts/check-test-impact.mjs --base "$BASE_SHA"
       - name: Check local Markdown links
         # Core contracts includes this check for implementation changes.
@@ -71,9 +70,7 @@ jobs:
   core:
     name: Core contracts
     needs: changes
-    # A scheduled run audits the browser suite against a commit that already
-    # passed Core contracts as a PR. Manual runs still execute both layers.
-    if: needs.changes.outputs.heavy == 'true' && github.event_name != 'schedule'
+    if: needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     env:
       PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: /usr/bin/google-chrome
@@ -100,7 +97,7 @@ jobs:
   browser_shard:
     name: Browser tests (${{ matrix.shard }})
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.browser == 'true'
+    if: needs.changes.outputs.browser == 'true'
     runs-on: ubuntu-latest
     env:
       PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: /usr/bin/google-chrome
@@ -132,45 +129,10 @@ jobs:
     needs:
       - changes
       - browser_shard
-    if: always() && github.event_name == 'pull_request' && needs.changes.outputs.browser == 'true'
+    if: always() && needs.changes.outputs.browser == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Confirm every selected browser shard passed
         env:
           SHARD_RESULT: ${{ needs.browser_shard.result }}
         run: test "$SHARD_RESULT" = "success"
-
-  full_browser_audit:
-    name: Full browser audit (${{ matrix.shard }})
-    needs: changes
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    env:
-      PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: /usr/bin/google-chrome
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        # Full coverage is a weekly/manual audit, not a per-PR tax. Four shards
-        # retain its wall-clock speed without charging every candidate for the
-        # complete browser suite.
-        shard:
-          - 1/4
-          - 2/4
-          - 3/4
-          - 4/4
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.16.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - env:
-          E2E_ARGS: ${{ needs.changes.outputs.e2e_args }}
-        run: |
-          read -r -a specs <<< "$E2E_ARGS"
-          pnpm ci:e2e --workers=2 --shard=${{ matrix.shard }} "${specs[@]}"

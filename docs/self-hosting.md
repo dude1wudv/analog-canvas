@@ -6,11 +6,11 @@ commit，独立于上游的 Cloudflare Wrangler 工作流，也不会自动同�
 
 ## 访问和组件
 
-目标入口是 `https://analog.sunmmyapi.xyz/editor`。公网 HTTPS 入口由 Caddy
+目标入口是 `https://analog.microedulab.com/editor`。公网 HTTPS 入口由 Caddy
 终止 TLS，并反向代理到本机的 `127.0.0.1:8787`：
 
 ```caddyfile
-analog.sunmmyapi.xyz {
+analog.microedulab.com {
     reverse_proxy 127.0.0.1:8787 {
         header_up CF-Connecting-IP {http.request.remote.host}
     }
@@ -48,7 +48,7 @@ ANALOG_STATE_DIR=/opt/analog-canvas \
 ```
 
 `deploy.sh` 会在服务器上创建持久目录，初始化 secret，并构建 `app`、`assets`
-和 `executor` 镜像；随后用同一个 revision 启动 Compose 栈。它只执行
+和 `executor` 镜像；构建阶段先打包上游 ngspice harness，并从构建容器提取到 executor 构建上下文。构建工具链仍在容器内，不依赖主机 Node 版本。随后用同一个 revision 启动 Compose 栈。它只执行
 `docker compose up -d --no-build`，不会执行 `down`、删除 volume、重置数据库或
 改动共享网络。回滚时指定之前已经构建过的固定 SHA，并保留同一个状态目录。
 
@@ -138,8 +138,8 @@ down -v`。executor 的 `run-root` 是模拟执行工作目录，和 Worker 的 
    「通过 Import SPICE 建立工程」。也可先下载 `.cir`，再用原有 Import SPICE
    流程处理。
 
-第一版的目标是保留电气连接，不恢复图片版图。导入的器件没有 placement 和
-route，会进入 Placement Tray，之后使用现有放置和布线操作。可识别的常见记录
+第一版的目标是保留电气连接，不恢复图片版图。识图结果不携带图片版图的 placement 和
+route；当前 Import SPICE 会为器件建立初始画布位置，之后使用现有放置和布线操作调整布局。可识别的常见记录
 包括 R/C/L、独立 V/I、二极管 D、三端 Q、四端 M，以及带明确 pin order 的 X
 子电路或外部块；外部块的 P1、P2 等按 SPICE 源文件顺序生成。
 已知器件族的缺省模型卡可以作为拓扑占位，但不代表具有可仿真的模型；完全未知

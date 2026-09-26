@@ -41,7 +41,7 @@ export function ProjectSearchDialog({
         <header>
           <div>
             <p className="help-kicker">项目导航</p>
-            <h2 id="project-search-title">搜索原理图</h2>
+            <h2 id="project-search-title">在电路中查找</h2>
           </div>
           <button type="button" onClick={onClose} aria-label="关闭搜索">
             关闭
@@ -51,7 +51,8 @@ export function ProjectSearchDialog({
           dir="auto"
           ref={inputRef}
           data-testid="project-search-input"
-          aria-label="搜索项目"
+          aria-label="在电路中查找"
+          autoComplete="off"
           value={query}
           placeholder="实例、网络、端口、属性…"
           onChange={(event) => onQueryChange(event.currentTarget.value)}
@@ -64,10 +65,7 @@ export function ProjectSearchDialog({
         />
         <div className="project-search-results" aria-live="polite">
           {query.trim().length === 0 ? (
-            <p>
-              Search instance IDs, symbols, Nets, ports, property keys or
-              values.
-            </p>
+            <p>搜索实例 ID、符号、网络、端口、属性名或属性值。</p>
           ) : results.length === 0 ? (
             <p>没有匹配的项目对象。</p>
           ) : (
@@ -83,7 +81,7 @@ export function ProjectSearchDialog({
                   {result.locator.kind} · {result.locator.documentId} ·{" "}
                   {result.field}
                   {result.locator.hierarchyPath.length > 0
-                    ? ` · via ${result.locator.hierarchyPath.map((frame) => frame.instanceId).join(" / ")}`
+                    ? ` · 经由 ${result.locator.hierarchyPath.map((frame) => frame.instanceId).join(" / ")}`
                     : ""}
                 </small>
               </button>

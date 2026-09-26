@@ -1,21 +1,28 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { TilePreview } from "./tile-preview";
 import "../styles/gallery-entry.css";
 
 import {
   announceGalleryChange,
   galleryCountLabel,
+  galleryAuthorsOf,
+  removeGalleryAuthorEntry,
   galleryEntryMatchesQuery,
   galleryPreviewUrl,
   loadGalleryAuthors,
   loadGalleryFeed,
+  galleryTagScope,
+  GALLERY_SIGN_IN_REQUIRED,
+  loadGalleryTagSummary,
   loadGalleryTags,
+  localhostExamplesEnabled,
   subscribeGalleryRefresh,
   type GalleryAuthorOption,
   type GalleryFeedEntry,
   type GalleryFeedPage,
   type GalleryFeedState,
   type GalleryTagOption,
+  type GalleryLandingPreload,
 } from "../gallery-client";
 import {
   GALLERY_FILTERS_KEY,
@@ -26,6 +33,7 @@ import {
   type GalleryFilterState,
 } from "../gallery-filters";
 import type { BundledGalleryTile } from "./gallery-bundled-fallback";
+import { galleryTagLabel } from "../gallery-tag-label";
 
 // The wall and the canvas-side panel share one data layer, so a search that
 // finds a circuit here finds it there too. These re-exports keep every
@@ -43,183 +51,44 @@ export {
 };
 import { fetchSessionUser } from "./account";
 import { GalleryChrome } from "./gallery-chrome";
+import { GalleryTagSidebar } from "./gallery-tag-sidebar";
 import { Masonry } from "./masonry";
-import { ShelfWall } from "./shelf-wall";
-import { GalleryDuplicateCheck } from "./gallery-duplicate-check";
 import type { GalleryDuplicateReport } from "../gallery-duplicates";
 
-/**
- * How many tags the bar shows before it offers the rest. One row at a typical
- * desktop width; the wall is what the reader came for, so the tags stay a
- * header rather than becoming the page.
- */
-const COLLAPSED_TAG_COUNT = 10;
-const OWNER_REJECT_REASONS = [
-  "too ugly",
-  "circuit incorrect",
-  "too simple",
-  "duplicate",
-] as const;
+const ShelfWall = lazy(() =>
+  import("./shelf-wall").then((module) => ({ default: module.ShelfWall })),
+);
+const GalleryAttentionReview = lazy(() =>
+  import("./gallery-attention-review").then((module) => ({
+    default: module.GalleryAttentionReview,
+  })),
+);
+const GalleryDuplicateCheck = lazy(() =>
+  import("./gallery-duplicate-check").then((module) => ({
+    default: module.GalleryDuplicateCheck,
+  })),
+);
 
-function joinedRejectReason(reasons: readonly string[], note: string): string {
-  const selected = reasons.join("; ");
-  const detail = note.trim();
-  if (selected && detail) return `${selected} — Note: ${detail}`;
-  return selected || detail;
-}
-
-function GalleryOwnerMenu({
-  entry,
-  busy,
-  onWithdraw,
-}: {
-  entry: GalleryFeedEntry;
-  busy: boolean;
-  onWithdraw: () => void;
-}) {
-  return (
-    <details
-      className="gallery-owner-menu"
-      data-testid={`gallery-owner-menu-${entry.id}`}
-    >
-      <summary aria-label={`管理 ${entry.name}`} title={`管理 ${entry.name}`}>
-        ⋯
-      </summary>
-      <div className="gallery-owner-popover">
-        <a
-          href={`/g/${entry.id}`}
-          data-testid={`gallery-owner-edit-${entry.id}`}
-        >
-          编辑并替换
-        </a>
-        <button
-          type="button"
-          disabled={busy}
-          data-testid={`gallery-owner-withdraw-${entry.id}`}
-          onClick={onWithdraw}
-        >
-          撤回
-        </button>
-      </div>
-    </details>
-  );
-}
-
-function GalleryOwnerRejectButton({
-  entry,
-  busy,
-  onReject,
-}: {
-  entry: GalleryFeedEntry;
-  busy: boolean;
-  onReject: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className="gallery-owner-reject-shortcut"
-      aria-label={`拒绝 ${entry.name}`}
-      title={`拒绝 ${entry.name}`}
-      disabled={busy}
-      data-testid={`gallery-owner-reject-${entry.id}`}
-      onClick={onReject}
-    >
-      ×
-    </button>
-  );
-}
-
-function RejectEntryDialog({
-  entry,
-  busy,
-  onSubmit,
-  onClose,
-}: {
-  entry: GalleryFeedEntry;
-  busy: boolean;
-  onSubmit: (reason: string) => void;
-  onClose: () => void;
-}) {
-  const [selectedReasons, setSelectedReasons] = useState<string[]>([]);
-  const [note, setNote] = useState("");
-  const reason = joinedRejectReason(selectedReasons, note);
-
-  function toggleReason(candidate: string): void {
-    setSelectedReasons((previous) =>
-      previous.includes(candidate)
-        ? previous.filter((reason) => reason !== candidate)
-        : [...previous, candidate],
-    );
-  }
-
-  return (
-    <div
-      className="gallery-owner-dialog-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !busy) onClose();
-      }}
-    >
-      <section
-        className="gallery-owner-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="gallery-reject-title"
-        data-testid="gallery-owner-reject-dialog"
-      >
-        <h2 id="gallery-reject-title">拒绝“{entry.name}”</h2>
-        <p>此电路将立即从画廊移除。提交者可在“我的提交”中看到此原因。</p>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (reason) onSubmit(reason);
-          }}
-        >
-          <fieldset className="gallery-owner-reason-options">
-            <legend>常见原因（可多选）</legend>
-            <div>
-              {OWNER_REJECT_REASONS.map((candidate, index) => (
-                <label key={candidate}>
-                  <input
-                    type="checkbox"
-                    checked={selectedReasons.includes(candidate)}
-                    autoFocus={index === 0}
-                    data-testid={`gallery-owner-reject-option-${candidate.replace(/\s/gu, "-")}`}
-                    onChange={() => toggleReason(candidate)}
-                  />
-                  <span>{candidate}</span>
-                </label>
-              ))}
-            </div>
-          </fieldset>
-          <label htmlFor="gallery-reject-note">
-            补充说明或其他原因 <span>（可选）</span>
-          </label>
-          <textarea
-            id="gallery-reject-note"
-            value={note}
-            maxLength={360}
-            placeholder="为提交者补充说明…"
-            data-testid="gallery-owner-reject-note"
-            onChange={(event) => setNote(event.currentTarget.value)}
-          />
-          <div className="gallery-owner-dialog-actions">
-            <button type="button" disabled={busy} onClick={onClose}>
-              取消
-            </button>
-            <button
-              type="submit"
-              className="gallery-owner-danger"
-              disabled={busy || !reason}
-              data-testid="gallery-owner-reject-confirm"
-            >
-              {busy ? "正在拒绝…" : "拒绝条目"}
-            </button>
-          </div>
-        </form>
-      </section>
-    </div>
-  );
-}
+const GalleryOwnerMenu = lazy(() =>
+  import("./gallery-owner-controls").then((module) => ({
+    default: module.GalleryOwnerMenu,
+  })),
+);
+const GalleryWithdrawMenu = lazy(() =>
+  import("./gallery-owner-controls").then((module) => ({
+    default: module.GalleryWithdrawMenu,
+  })),
+);
+const GalleryOwnerRejectButton = lazy(() =>
+  import("./gallery-owner-controls").then((module) => ({
+    default: module.GalleryOwnerRejectButton,
+  })),
+);
+const RejectEntryDialog = lazy(() =>
+  import("./gallery-owner-controls").then((module) => ({
+    default: module.RejectEntryDialog,
+  })),
+);
 
 /**
  * The like mark, drawn rather than typed.
@@ -296,10 +165,12 @@ function contributionLabel(count: number): string {
 function GalleryContributorRow({
   option,
   rank,
+  partial,
   onSelectAuthor,
 }: {
   option: GalleryAuthorOption;
   rank: number;
+  partial: boolean;
   onSelectAuthor: (option: GalleryAuthorOption) => void;
 }) {
   return (
@@ -319,6 +190,7 @@ function GalleryContributorRow({
       </button>
       <span className="gallery-contributor-count">
         {contributionLabel(option.count)}
+        {partial ? " so far" : ""}
       </span>
     </li>
   );
@@ -328,54 +200,25 @@ export function GalleryCountPanel({
   total,
   filtered = false,
   search = null,
-  refreshSignal = 0,
+  authors = [],
+  partial = false,
   onSelectAuthor = () => undefined,
 }: {
   total: number | null;
   filtered?: boolean;
   search?: { visible: number; settled: boolean } | null;
-  refreshSignal?: number;
+  authors?: GalleryAuthorOption[];
+  partial?: boolean;
   onSelectAuthor?: (option: GalleryAuthorOption) => void;
 }) {
   const label = galleryCountLabel(total, { filtered, search });
   const rootRef = useRef<HTMLDetailsElement | null>(null);
-  const requestGenerationRef = useRef(0);
-  const revision = `${refreshSignal}:${total ?? "unknown"}`;
-  const [contributors, setContributors] = useState<{
-    status: "idle" | "loading" | "ready" | "unavailable";
-    authors: GalleryAuthorOption[];
-    revision: string;
-  }>({ status: "idle", authors: [], revision });
-  const contributorStatus =
-    contributors.revision === revision ? contributors.status : "idle";
-  const contributorAuthors =
-    contributors.revision === revision ? contributors.authors : [];
-
-  function loadContributors(): void {
-    if (contributorStatus === "loading" || contributorStatus === "ready") {
-      return;
-    }
-    const generation = ++requestGenerationRef.current;
-    setContributors({ status: "loading", authors: [], revision });
-    void loadGalleryAuthors(fetch).then((authors) => {
-      if (generation !== requestGenerationRef.current) return;
-      setContributors(
-        authors === null
-          ? { status: "unavailable", authors: [], revision }
-          : { status: "ready", authors, revision },
-      );
-    });
-  }
-
   if (label === null) return null;
   return (
     <details
       ref={rootRef}
       className="gallery-contributor-menu"
       data-testid="gallery-contributor-menu"
-      onToggle={(event) => {
-        if (event.currentTarget.open) loadContributors();
-      }}
     >
       <summary
         className="gallery-count-panel"
@@ -389,29 +232,27 @@ export function GalleryCountPanel({
         data-testid="gallery-contributor-popover"
       >
         <div className="gallery-contributor-heading">
-          <strong>贡献者</strong>
-          {contributorStatus === "ready" ? (
-            <span>{contributorAuthors.length.toLocaleString()} 位作者</span>
-          ) : null}
+          <strong>Contributors</strong>
+          <span>
+            {authors.length.toLocaleString()}{" "}
+            {authors.length === 1 ? "author" : "authors"}
+            {partial ? " so far" : ""}
+          </span>
         </div>
-        {contributorStatus === "loading" || contributorStatus === "idle" ? (
-          <p className="gallery-contributor-status">正在加载贡献者…</p>
-        ) : contributorStatus === "unavailable" ? (
-          <div className="gallery-contributor-status">
-            <p>无法加载贡献者。</p>
-            <button type="button" onClick={loadContributors}>
-              重试
-            </button>
-          </div>
-        ) : contributorAuthors.length === 0 ? (
-          <p className="gallery-contributor-status">暂无贡献者。</p>
+        {authors.length === 0 ? (
+          <p className="gallery-contributor-status">
+            {partial
+              ? "No matching contributors in circuits loaded so far."
+              : "No contributors match the current filters."}
+          </p>
         ) : (
           <ol className="gallery-contributor-list">
-            {contributorAuthors.map((option, index) => (
+            {authors.map((option, index) => (
               <GalleryContributorRow
-                key={`${refreshSignal}:${total}:${option.ownerUserId ?? "legacy"}:${option.author}`}
+                key={`${option.ownerUserId ?? "legacy"}:${option.author}`}
                 option={option}
                 rank={index + 1}
+                partial={partial}
                 onSelectAuthor={(option) => {
                   rootRef.current?.removeAttribute("open");
                   onSelectAuthor(option);
@@ -436,6 +277,30 @@ function savedAtLabel(createdAt: string): string {
       });
 }
 
+type ServerGalleryFilters = Pick<
+  GalleryFilterState,
+  "author" | "ownerUserId" | "tags" | "netlistable" | "liked" | "attention"
+>;
+
+/** The eager landing request is one-use and unfiltered; never replay it after
+ * the reader changes the wall query. */
+export function canReuseGalleryLandingFeed(
+  refreshSignal: number,
+  loadedQuery: string | null,
+  filters: ServerGalleryFilters,
+): boolean {
+  return (
+    refreshSignal === 0 &&
+    loadedQuery === null &&
+    filters.author === null &&
+    filters.ownerUserId === null &&
+    filters.tags.length === 0 &&
+    !filters.netlistable &&
+    !filters.liked &&
+    !filters.attention
+  );
+}
+
 /** One feed page; the plain first request stays exactly `/api/gallery`. */
 /**
  * Full-screen landing feed: every tile is one published circuit that opens
@@ -445,8 +310,10 @@ function savedAtLabel(createdAt: string): string {
  */
 export function GalleryFeed({
   visitStats,
+  preload,
 }: {
   visitStats?: { pv: number; uv: number } | null | undefined;
+  preload?: GalleryLandingPreload;
 }) {
   // Which wall, whose circuits, which tags, which words, which marks: one
   // state, because a reader changes them for one reason. It rides in the URL
@@ -472,13 +339,14 @@ export function GalleryFeed({
     search: searchQuery,
     netlistable: netlistableOnly,
     liked: likedOnly,
+    attention: attentionOnly,
   } = filters;
   function updateFilters(patch: Partial<GalleryFilterState>): void {
     setFilters((previous) => ({ ...previous, ...patch }));
   }
-  const [showAllTags, setShowAllTags] = useState(false);
   const [duplicateReport, setDuplicateReport] =
     useState<GalleryDuplicateReport | null>(null);
+  const [viewerId, setViewerId] = useState<string | null>(null);
   const [signedIn, setSignedIn] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
   const [ownerBusy, setOwnerBusy] = useState<string | null>(null);
@@ -487,7 +355,21 @@ export function GalleryFeed({
   const [tagOptions, setTagOptions] = useState<
     { tag: string; count: number }[]
   >([]);
+  const [tagGroupCounts, setTagGroupCounts] = useState<Record<string, number>>(
+    {},
+  );
+  // Which wall filters the shown tag counts answer; counts for any other
+  // combination show as loading rather than as stale numbers.
+  const [tagCountsScope, setTagCountsScope] = useState<string | null>(null);
+  const tagScope = galleryTagScope({
+    netlistable: netlistableOnly,
+    liked: likedOnly,
+    attention: attentionOnly,
+  });
   const [refreshSignal, setRefreshSignal] = useState(0);
+  // A like taken back under Liked removes its drawing from the wall without
+  // reloading it; this recounts the tags beside it.
+  const [tagCountsRefresh, setTagCountsRefresh] = useState(0);
   const [bundledFallback, setBundledFallback] = useState<{
     status: "idle" | "loading" | "ready" | "failed";
     tiles: BundledGalleryTile[];
@@ -503,18 +385,31 @@ export function GalleryFeed({
     }
   }, [filters]);
 
-  // The address follows a beat later, so typing in the search box does not
-  // push a history entry per keystroke. Losing the last one to a navigation
-  // costs nothing, because the store above already has it.
+  const previousUrlFilters = useRef(filters);
+  // Discrete choices must reach the URL immediately: on refresh an explicit
+  // URL filter takes precedence over the saved preference. Only search typing
+  // is debounced to avoid excessive browser history writes.
   useEffect(() => {
-    const handle = window.setTimeout(() => {
+    const previous = previousUrlFilters.current;
+    previousUrlFilters.current = filters;
+    const searchOnly =
+      filters.search !== previous.search &&
+      (Object.keys(filters) as Array<keyof GalleryFilterState>).every(
+        (key) => key === "search" || filters[key] === previous[key],
+      );
+    const updateAddress = () => {
       window.history.replaceState(
         null,
         "",
         window.location.pathname +
           galleryFilterSearch(window.location.search, filters),
       );
-    }, 150);
+    };
+    if (!searchOnly) {
+      updateAddress();
+      return;
+    }
+    const handle = window.setTimeout(updateAddress, 150);
     return () => window.clearTimeout(handle);
   }, [filters]);
 
@@ -523,6 +418,7 @@ export function GalleryFeed({
     void fetchSessionUser().then((user) => {
       if (cancelled) return;
       setSignedIn(user !== null);
+      setViewerId(user?.id ?? null);
       setIsOwner(user?.isAdmin === true);
     });
     return () => {
@@ -532,24 +428,44 @@ export function GalleryFeed({
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      try {
-        const response = await fetch("/api/gallery/tags", {
-          credentials: "same-origin",
-        });
-        if (!response.ok) return;
-        const payload = (await response.json()) as {
-          tags?: { tag: string; count: number }[];
-        };
-        if (!cancelled) setTagOptions(payload.tags ?? []);
-      } catch {
-        // No menu without the worker; the wall itself still works.
+    const scope = galleryTagScope({
+      netlistable: netlistableOnly,
+      liked: likedOnly,
+      attention: attentionOnly,
+    });
+    const request =
+      refreshSignal === 0 &&
+      tagCountsRefresh === 0 &&
+      preload &&
+      (preload.tagsScope ?? "") === scope
+        ? preload.tags
+        : loadGalleryTagSummary(fetch, {
+            netlistable: netlistableOnly,
+            liked: likedOnly,
+            attention: attentionOnly,
+          });
+    void request.then((payload) => {
+      if (!cancelled) {
+        setTagOptions(payload.tags);
+        setTagGroupCounts(
+          Object.fromEntries(
+            payload.groups.map(({ group, count }) => [group, count]),
+          ),
+        );
+        setTagCountsScope(scope);
       }
-    })();
+    });
     return () => {
       cancelled = true;
     };
-  }, [refreshSignal]);
+  }, [
+    preload,
+    refreshSignal,
+    tagCountsRefresh,
+    netlistableOnly,
+    likedOnly,
+    attentionOnly,
+  ]);
   const [state, setState] = useState<GalleryFeedState>({
     status: "loading",
     entries: [],
@@ -610,18 +526,53 @@ export function GalleryFeed({
       likedByViewer?: boolean;
     } | null;
     if (!result) return;
-    setState((previous) => ({
-      ...previous,
-      entries: previous.entries.map((entry): GalleryFeedEntry =>
-        entry.id === entryId
+    setState((previous) => {
+      const entry = previous.entries.find((item) => item.id === entryId);
+      if (!entry) return previous;
+      const liked = result.likedByViewer === true;
+      const removed = likedOnly && !liked;
+      return {
+        ...previous,
+        entries: removed
+          ? previous.entries.filter((item) => item.id !== entryId)
+          : previous.entries.map((item): GalleryFeedEntry =>
+              item.id === entryId
+                ? {
+                    ...item,
+                    likes: result.likes ?? item.likes ?? 0,
+                    likedByViewer: liked,
+                  }
+                : item,
+            ),
+        total:
+          removed && previous.total !== null
+            ? previous.total - 1
+            : previous.total,
+        ...(removed && previous.authors
+          ? { authors: removeGalleryAuthorEntry(previous.authors, entry) }
+          : {}),
+        ...(previous.filterCounts
           ? {
-              ...entry,
-              likes: result.likes ?? entry.likes ?? 0,
-              likedByViewer: result.likedByViewer === true,
+              filterCounts: {
+                attention:
+                  previous.filterCounts.attention -
+                  Number(
+                    removed && entry.attention?.status === "needs-attention",
+                  ),
+                netlistable:
+                  previous.filterCounts.netlistable -
+                  Number(removed && entry.netlistable === true),
+                liked:
+                  previous.filterCounts.liked +
+                  Number(liked) -
+                  Number(entry.likedByViewer === true),
+              },
             }
-          : entry,
-      ),
-    }));
+          : {}),
+      };
+    });
+    if (likedOnly) setTagCountsRefresh((previous) => previous + 1);
+    announceGalleryChange({ entryId });
   }
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -637,6 +588,7 @@ export function GalleryFeed({
       selectedTags.join(","),
       netlistableOnly ? "netlist" : "",
       likedOnly ? "liked" : "",
+      attentionOnly ? "attention" : "",
     ].join("\u0000");
     const changingQuery = loadedQueryRef.current !== queryKey;
     if (changingQuery) {
@@ -647,16 +599,37 @@ export function GalleryFeed({
         total: null,
       });
     }
-    void loadGalleryFeed(fetch, {
-      author,
-      ownerUserId,
-      tags: selectedTags,
-      netlistable: netlistableOnly,
-      liked: likedOnly,
-    }).then((page) => {
+    const request =
+      preload?.feed &&
+      canReuseGalleryLandingFeed(refreshSignal, loadedQueryRef.current, {
+        author,
+        ownerUserId,
+        tags: selectedTags,
+        netlistable: netlistableOnly,
+        liked: likedOnly,
+        attention: attentionOnly,
+      })
+        ? preload.feed
+        : loadGalleryFeed(fetch, {
+            author,
+            ownerUserId,
+            tags: selectedTags,
+            netlistable: netlistableOnly,
+            liked: likedOnly,
+            attention: attentionOnly,
+          });
+    void request.then((page) => {
       if (cancelled || generation !== feedGenerationRef.current) return;
       firstPageLoadingRef.current = false;
-      if (page) {
+      if (page === GALLERY_SIGN_IN_REQUIRED) {
+        loadedQueryRef.current = queryKey;
+        setState({
+          status: "signed-out",
+          entries: [],
+          nextCursor: null,
+          total: null,
+        });
+      } else if (page) {
         loadedQueryRef.current = queryKey;
         setState({ status: "ready", ...page });
       } else if (changingQuery) {
@@ -678,6 +651,8 @@ export function GalleryFeed({
     selectedTags,
     netlistableOnly,
     likedOnly,
+    attentionOnly,
+    preload,
     refreshSignal,
   ]);
 
@@ -701,10 +676,21 @@ export function GalleryFeed({
         tags: selectedTags,
         netlistable: netlistableOnly,
         liked: likedOnly,
+        attention: attentionOnly,
         cursor: nextCursor,
       }).then((page) => {
         if (generation !== feedGenerationRef.current) return;
         loadingMoreRef.current = false;
+        if (page === GALLERY_SIGN_IN_REQUIRED) {
+          // The session ended while the reader scrolled.
+          setState({
+            status: "signed-out",
+            entries: [],
+            nextCursor: null,
+            total: null,
+          });
+          return;
+        }
         if (!page) return;
         setState((previous) =>
           previous.status === "ready" && previous.nextCursor === nextCursor
@@ -713,6 +699,10 @@ export function GalleryFeed({
                 entries: [...previous.entries, ...page.entries],
                 nextCursor: page.nextCursor,
                 total: page.total ?? previous.total,
+                ...(page.authors ? { authors: page.authors } : {}),
+                ...(page.filterCounts
+                  ? { filterCounts: page.filterCounts }
+                  : {}),
               }
             : previous,
         );
@@ -727,6 +717,7 @@ export function GalleryFeed({
     selectedTags,
     netlistableOnly,
     likedOnly,
+    attentionOnly,
   ]);
 
   function selectAuthor(
@@ -740,8 +731,6 @@ export function GalleryFeed({
     updateFilters({
       author: option.author,
       ownerUserId: option.ownerUserId ?? null,
-      tags: [],
-      search: "",
     });
   }
 
@@ -761,6 +750,24 @@ export function GalleryFeed({
         (candidate) => candidate.id !== entry.id,
       ),
       total: previous.total === null ? null : previous.total - 1,
+      ...(previous.authors
+        ? { authors: removeGalleryAuthorEntry(previous.authors, entry) }
+        : {}),
+      ...(previous.filterCounts
+        ? {
+            filterCounts: {
+              attention:
+                previous.filterCounts.attention -
+                Number(entry.attention?.status === "needs-attention"),
+              netlistable:
+                previous.filterCounts.netlistable -
+                Number(entry.netlistable === true),
+              liked:
+                previous.filterCounts.liked -
+                Number(entry.likedByViewer === true),
+            },
+          }
+        : {}),
     }));
     const removedTags = new Set(entry.tags ?? []);
     if (removedTags.size > 0) {
@@ -777,7 +784,6 @@ export function GalleryFeed({
   }
 
   async function withdrawEntry(entry: GalleryFeedEntry): Promise<void> {
-    if (!window.confirm(`Withdraw “${entry.name}” from the Gallery?`)) return;
     setOwnerBusy(entry.id);
     setOwnerNotice(null);
     try {
@@ -788,9 +794,14 @@ export function GalleryFeed({
       if (!response.ok) throw new Error();
       removeManagedEntry(entry);
       announceGalleryChange({ entryId: entry.id });
-      setOwnerNotice(`“${entry.name}” was moved to the recycle bin.`);
+      setOwnerNotice(
+        isOwner
+          ? `“${entry.name}” was moved to the recycle bin.`
+          : `“${entry.name}” was withdrawn. Restore it from My submissions.`,
+      );
     } catch {
       setOwnerNotice(`Could not withdraw “${entry.name}”.`);
+      throw new Error("Could not withdraw this entry. Try again.");
     } finally {
       setOwnerBusy(null);
     }
@@ -823,7 +834,10 @@ export function GalleryFeed({
 
   const entries = state.entries;
   const needsBundledFallback =
-    state.status !== "loading" && entries.length === 0 && author === null;
+    localhostExamplesEnabled() &&
+    state.status !== "loading" &&
+    entries.length === 0 &&
+    !galleryFiltersNarrowQuery(filters);
 
   useEffect(() => {
     if (!needsBundledFallback || bundledFallback.status !== "idle") return;
@@ -848,26 +862,35 @@ export function GalleryFeed({
         galleryEntryMatchesQuery(entry, normalizedSearchQuery),
       )
     : entries;
-  const matchingTags = normalizedSearchQuery
-    ? tagOptions.filter((option) =>
-        option.tag.toLowerCase().includes(normalizedSearchQuery),
-      )
-    : tagOptions;
-  const everyTagSelected =
-    tagOptions.length > 0 && selectedTags.length === tagOptions.length;
-  // A selected tag stays visible while the collapsed row would otherwise hide
-  // it, so collapsing can never conceal the reason the wall is filtered. With
-  // every tag on, the pressed "Any tag" control is that reason, and pinning
-  // all of them open would undo the collapse entirely.
-  const visibleTags =
-    showAllTags || normalizedSearchQuery
-      ? matchingTags
-      : matchingTags.filter(
-          (option, index) =>
-            index < COLLAPSED_TAG_COUNT ||
-            (!everyTagSelected && selectedTags.includes(option.tag)),
-        );
-  const hiddenTagCount = matchingTags.length - visibleTags.length;
+  const localAuthors = Boolean(normalizedSearchQuery) || !state.authors;
+  const authors = localAuthors
+    ? galleryAuthorsOf(visibleEntries)
+    : state.authors!;
+  const localQuickCounts = normalizedSearchQuery || !state.filterCounts;
+  const quickCounts = localQuickCounts
+    ? {
+        attention: visibleEntries.filter(
+          (entry) => entry.attention?.status === "needs-attention",
+        ).length,
+        netlistable: visibleEntries.filter((entry) => entry.netlistable).length,
+        liked: visibleEntries.filter((entry) => entry.likedByViewer).length,
+      }
+    : state.filterCounts!;
+  const quickCountsPartial = localQuickCounts && state.nextCursor !== null;
+  const quickCount = (key: keyof typeof quickCounts) => (
+    <span
+      className="gallery-sidebar-count"
+      title={
+        quickCountsPartial ? "Matches in circuits loaded so far" : undefined
+      }
+    >
+      {state.status === "loading"
+        ? "…"
+        : state.status === "unavailable"
+          ? "—"
+          : `${quickCounts[key].toLocaleString()}${quickCountsPartial ? "+" : ""}`}
+    </span>
+  );
   const duplicates = new Map(
     duplicateReport?.groups.flatMap((group, index) =>
       group.map(
@@ -918,7 +941,8 @@ export function GalleryFeed({
           <GalleryCountPanel
             total={state.total}
             filtered={galleryFiltersNarrowQuery(filters)}
-            refreshSignal={refreshSignal}
+            authors={authors}
+            partial={localAuthors && state.nextCursor !== null}
             onSelectAuthor={selectContributor}
             search={
               normalizedSearchQuery
@@ -932,434 +956,450 @@ export function GalleryFeed({
           />
         ) : null}
       </div>
-      {view === "shelf" ? <ShelfWall /> : null}
+      {view === "shelf" ? (
+        <Suspense
+          fallback={
+            <p className="gallery-status" data-testid="shelf-loading">
+              Loading your shelf…
+            </p>
+          }
+        >
+          <ShelfWall />
+        </Suspense>
+      ) : null}
 
-      {view === "gallery" ? (
-        <>
-          {tagOptions.length > 0 ||
-          entries.length > 0 ||
-          netlistableOnly ||
-          likedOnly ||
-          isOwner ? (
-            <div className="gallery-tag-bar" data-testid="gallery-tag-bar">
-              <input
-                className="gallery-tag-search"
-                data-testid="gallery-search"
-                type="search"
-                value={searchQuery}
-                placeholder="名称、作者、标签…"
-                aria-label="搜索电路"
-                onChange={(event) =>
-                  updateFilters({ search: event.currentTarget.value })
-                }
-              />
-              {/* The wall's two marks, narrowing by the same glyphs the tiles
-                  carry. The heart is asked of the session, so it is offered
-                  to a reader who has one — or who left it on. */}
-              <button
-                type="button"
-                className={
-                  netlistableOnly
-                    ? "gallery-tag-option gallery-tag-mark gallery-tag-selected"
-                    : "gallery-tag-option gallery-tag-mark"
-                }
-                data-testid="gallery-filter-netlistable"
-                aria-pressed={netlistableOnly}
-                title={
-                  netlistableOnly
-                    ? "Stop filtering by netlist"
-                    : "Show only circuits that extract to a netlist"
-                }
-                onClick={() => updateFilters({ netlistable: !netlistableOnly })}
-              >
-                <NetlistIcon /> With netlist
-              </button>
-              {signedIn || likedOnly ? (
+      {view === "gallery" && state.status === "signed-out" ? (
+        <section className="gallery-sign-in" data-testid="gallery-sign-in">
+          <p className="gallery-status">
+            The Community Gallery is for signed-in members. Sign in (top right)
+            to browse its circuits and open them in the editor.
+          </p>
+        </section>
+      ) : null}
+      {view === "gallery" && state.status !== "signed-out" ? (
+        <div className="gallery-browser">
+          <GalleryTagSidebar
+            tags={tagOptions}
+            groupCounts={tagGroupCounts}
+            countsLoading={tagCountsScope !== tagScope}
+            selected={selectedTags}
+            onChange={(tags) => updateFilters({ tags })}
+            search={searchQuery}
+            onSearchChange={(search) => updateFilters({ search })}
+            quickFilters={
+              <>
+                {signedIn || attentionOnly ? (
+                  <button
+                    type="button"
+                    className="gallery-sidebar-option"
+                    aria-pressed={attentionOnly}
+                    onClick={() => updateFilters({ attention: !attentionOnly })}
+                    data-testid="gallery-filter-attention"
+                  >
+                    <span>
+                      Needs attention{signedIn && !isOwner ? " · Mine" : ""}
+                    </span>
+                    {quickCount("attention")}
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className={
-                    likedOnly
+                    netlistableOnly
                       ? "gallery-tag-option gallery-tag-mark gallery-tag-selected"
                       : "gallery-tag-option gallery-tag-mark"
                   }
-                  data-testid="gallery-filter-liked"
-                  aria-pressed={likedOnly}
+                  data-testid="gallery-filter-netlistable"
+                  aria-pressed={netlistableOnly}
                   title={
-                    likedOnly
-                      ? "Stop filtering by your likes"
-                      : "Show only circuits you have liked"
-                  }
-                  onClick={() => updateFilters({ liked: !likedOnly })}
-                >
-                  <HeartIcon filled={true} /> Liked
-                </button>
-              ) : null}
-              {/* Tags select as a union, so turning every one on is not "no
-                  filter" — it is "carrying at least one tag", which drops the
-                  untagged circuits. The control is named for what it does, and
-                  sits with the filter box so it is reachable without first
-                  expanding the row. */}
-              {tagOptions.length > 0 ? (
-                <button
-                  type="button"
-                  className="gallery-tag-option gallery-tag-any"
-                  data-testid="gallery-tags-any"
-                  aria-pressed={everyTagSelected}
-                  title={
-                    everyTagSelected
-                      ? "停止按标签筛选"
-                      : "仅显示至少带有一个标签的电路"
+                    netlistableOnly
+                      ? "Stop filtering by netlist"
+                      : "Show only circuits that extract to a netlist"
                   }
                   onClick={() =>
-                    updateFilters({
-                      tags: everyTagSelected
-                        ? []
-                        : tagOptions.map((option) => option.tag),
-                    })
+                    updateFilters({ netlistable: !netlistableOnly })
                   }
                 >
-                  任意标签
+                  <NetlistIcon /> <span>With netlist</span>
+                  {quickCount("netlistable")}
                 </button>
-              ) : null}
-              {visibleTags.map(({ tag, count }) => (
+                {signedIn || likedOnly ? (
+                  <button
+                    type="button"
+                    className={
+                      likedOnly
+                        ? "gallery-tag-option gallery-tag-mark gallery-tag-selected"
+                        : "gallery-tag-option gallery-tag-mark"
+                    }
+                    data-testid="gallery-filter-liked"
+                    aria-pressed={likedOnly}
+                    title={
+                      likedOnly
+                        ? "Stop filtering by your likes"
+                        : "Show only circuits you have liked"
+                    }
+                    onClick={() => updateFilters({ liked: !likedOnly })}
+                  >
+                    <HeartIcon filled={true} /> <span>Liked</span>
+                    {quickCount("liked")}
+                  </button>
+                ) : null}
+              </>
+            }
+            adminTools={
+              isOwner ? (
+                <Suspense fallback={null}>
+                  <GalleryDuplicateCheck
+                    onReport={setDuplicateReport}
+                    onRecycled={(ids) => {
+                      // The scan covers the whole library, while this feed may
+                      // be filtered. Let the server recalculate its counts.
+                      setRefreshSignal((signal) => signal + 1);
+                      if (ids[0]) announceGalleryChange({ entryId: ids[0] });
+                    }}
+                  />
+                </Suspense>
+              ) : null
+            }
+          />
+          <div className="gallery-main">
+            {author ? (
+              <div className="gallery-filter" data-testid="gallery-filter">
+                <span>Circuits by {author}</span>
                 <button
-                  key={tag}
                   type="button"
-                  className={
-                    selectedTags.includes(tag)
-                      ? "gallery-tag-option gallery-tag-selected"
-                      : "gallery-tag-option"
-                  }
-                  data-testid={`gallery-tag-option-${tag.replace(/\s/gu, "-")}`}
-                  aria-pressed={selectedTags.includes(tag)}
-                  onClick={() => toggleTag(tag)}
+                  data-testid="gallery-filter-clear"
+                  onClick={() => selectAuthor(null)}
                 >
-                  {tag} <span>{count}</span>
+                  Show everyone
                 </button>
-              ))}
-              {hiddenTagCount > 0 ? (
-                <button
-                  type="button"
-                  className="gallery-tag-option gallery-tag-more"
-                  data-testid="gallery-tags-show-all"
-                  onClick={() => setShowAllTags(true)}
-                >
-                  再显示 {hiddenTagCount} 个
-                </button>
-              ) : null}
-              {showAllTags && !normalizedSearchQuery ? (
-                <button
-                  type="button"
-                  className="gallery-tag-option gallery-tag-more"
-                  data-testid="gallery-tags-show-fewer"
-                  onClick={() => setShowAllTags(false)}
-                >
-                  收起
-                </button>
-              ) : null}
-              {selectedTags.length > 0 && !everyTagSelected ? (
-                <button
-                  type="button"
-                  className="gallery-tag-option gallery-tag-clear"
-                  data-testid="gallery-tags-clear"
-                  onClick={() => updateFilters({ tags: [] })}
-                >
-                  清除 {selectedTags.length} 个已选标签
-                </button>
-              ) : null}
-              {/* The curator's scan wears the same pill as the filters and
-                  takes the free end of their row; what it reports breaks onto
-                  its own line below them. */}
-              {isOwner ? (
-                <GalleryDuplicateCheck
-                  onReport={setDuplicateReport}
-                  onRecycled={(ids) => {
-                    // The scan covers the whole library, while this feed may
-                    // be filtered. Let the server recalculate its counts.
-                    setRefreshSignal((signal) => signal + 1);
-                    if (ids[0]) announceGalleryChange({ entryId: ids[0] });
-                  }}
-                />
-              ) : null}
-            </div>
-          ) : null}
-          {author ? (
-            <div className="gallery-filter" data-testid="gallery-filter">
-              <span>{author} 发布的电路</span>
-              <button
-                type="button"
-                data-testid="gallery-filter-clear"
-                onClick={() => selectAuthor(null)}
-              >
-                显示所有作者
-              </button>
-            </div>
-          ) : null}
-          {ownerNotice ? (
-            <p className="gallery-status" data-testid="gallery-owner-notice">
-              {ownerNotice}
-            </p>
-          ) : null}
-          {state.status === "loading" ||
-          (needsBundledFallback &&
-            (bundledFallback.status === "idle" ||
-              bundledFallback.status === "loading")) ? (
-            <p className="gallery-status" data-testid="gallery-loading">
-              正在加载画廊…
-            </p>
-          ) : (
-            <section className="gallery-wall">
-              <Masonry
-                aria-label="已发布电路"
-                items={[
-                  ...visibleEntries.map((entry) => ({
-                    key: entry.id,
-                    node: (
-                      <div className="gallery-tile-wrap">
-                        <a
-                          className="gallery-tile"
-                          href={`/g/${entry.id}`}
-                          data-testid={`gallery-tile-${entry.id}`}
-                        >
-                          <TilePreview
-                            key={`${entry.id}-${entry.previewRevision}`}
-                            src={galleryPreviewUrl(
-                              entry.id,
-                              entry.previewRevision,
-                            )}
-                            alt={`${entry.name} 的预览图`}
-                            {...(entry.previewWidth !== undefined &&
-                            entry.previewHeight !== undefined
-                              ? {
-                                  width: entry.previewWidth,
-                                  height: entry.previewHeight,
-                                }
-                              : {})}
-                          />
-                          <span className="gallery-tile-copy">
-                            <span className="gallery-tile-name">
-                              {entry.name}
-                              {duplicates.has(entry.id) &&
-                              duplicates.get(entry.id)!.revision ===
-                                entry.previewRevision ? (
-                                <span
-                                  className="gallery-duplicate-badge"
-                                  title={`Same netlist as ${duplicates.get(entry.id)!.count - 1} other circuits. See duplicate group ${duplicates.get(entry.id)!.group}.`}
+              </div>
+            ) : null}
+            {ownerNotice ? (
+              <p className="gallery-status" data-testid="gallery-owner-notice">
+                {ownerNotice}
+              </p>
+            ) : null}
+            {state.status === "loading" ||
+            (needsBundledFallback &&
+              (bundledFallback.status === "idle" ||
+                bundledFallback.status === "loading")) ? (
+              <p className="gallery-status" data-testid="gallery-loading">
+                Loading gallery…
+              </p>
+            ) : (
+              <section className="gallery-wall">
+                <Masonry
+                  aria-label="Published circuits"
+                  items={[
+                    ...visibleEntries.map((entry) => ({
+                      key: entry.id,
+                      node: (
+                        <div className="gallery-tile-wrap">
+                          <a
+                            className="gallery-tile"
+                            href={`/g/${entry.id}`}
+                            data-testid={`gallery-tile-${entry.id}`}
+                          >
+                            <TilePreview
+                              key={`${entry.id}-${entry.previewRevision}`}
+                              src={galleryPreviewUrl(
+                                entry.id,
+                                entry.previewRevision,
+                              )}
+                              alt={`Preview of ${entry.name}`}
+                              {...(entry.previewWidth !== undefined &&
+                              entry.previewHeight !== undefined
+                                ? {
+                                    width: entry.previewWidth,
+                                    height: entry.previewHeight,
+                                  }
+                                : {})}
+                            />
+                            <span className="gallery-tile-copy">
+                              <span className="gallery-tile-name">
+                                {entry.name}
+                                {duplicates.has(entry.id) &&
+                                duplicates.get(entry.id)!.revision ===
+                                  entry.previewRevision ? (
+                                  <span
+                                    className="gallery-duplicate-badge"
+                                    title={`Same netlist as ${duplicates.get(entry.id)!.count - 1} other circuits. See duplicate group ${duplicates.get(entry.id)!.group}.`}
+                                  >
+                                    Duplicate · group{" "}
+                                    {duplicates.get(entry.id)!.group}
+                                  </span>
+                                ) : null}
+                                {entry.netlistable ? (
+                                  <span
+                                    className="gallery-tile-netlist"
+                                    data-testid={`gallery-netlist-${entry.id}`}
+                                    title="Extracts to a SPICE netlist"
+                                    aria-label="Extracts to a SPICE netlist"
+                                  >
+                                    <NetlistIcon />
+                                  </span>
+                                ) : null}
+                              </span>
+                              <span className="gallery-tile-meta">
+                                {entry.author ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="gallery-tile-author"
+                                      data-testid={`gallery-author-${entry.id}`}
+                                      title={`Show circuits by ${entry.author}`}
+                                      onClick={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        selectAuthor(
+                                          entry.author,
+                                          entry.ownerUserId ?? null,
+                                        );
+                                      }}
+                                    >
+                                      {entry.author}
+                                    </button>
+                                    {" · "}
+                                  </>
+                                ) : null}
+                                {savedAtLabel(entry.createdAt)}
+                                {" · "}
+                                <button
+                                  type="button"
+                                  className="gallery-tile-like"
+                                  data-testid={`gallery-like-${entry.id}`}
+                                  aria-pressed={entry.likedByViewer === true}
+                                  title={
+                                    entry.likedByViewer
+                                      ? "Remove your like"
+                                      : "Like this circuit"
+                                  }
+                                  aria-label={
+                                    entry.likedByViewer
+                                      ? `Remove your like from ${entry.name}`
+                                      : `Like ${entry.name}`
+                                  }
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    void toggleLike(entry.id);
+                                  }}
                                 >
-                                  Duplicate · group{" "}
-                                  {duplicates.get(entry.id)!.group}
+                                  <HeartIcon
+                                    filled={entry.likedByViewer === true}
+                                  />
+                                  {entry.likes ?? 0}
+                                </button>
+                              </span>
+                              {entry.description ? (
+                                <span
+                                  className="gallery-tile-description"
+                                  title={entry.description}
+                                >
+                                  {entry.description}
                                 </span>
                               ) : null}
-                              {entry.netlistable ? (
-                                <span
-                                  className="gallery-tile-netlist"
-                                  data-testid={`gallery-netlist-${entry.id}`}
-                                  title="可提取为 SPICE 网表"
-                                  aria-label="可提取为 SPICE 网表"
-                                >
-                                  <NetlistIcon />
+                              {entry.tags && entry.tags.length > 0 ? (
+                                <span className="gallery-tile-tags">
+                                  {entry.tags.map((tag) => (
+                                    <button
+                                      key={tag}
+                                      type="button"
+                                      className="gallery-tile-tag"
+                                      data-testid={`gallery-tile-tag-${entry.id}-${tag.replace(/\s/gu, "-")}`}
+                                      title={`Filter by ${galleryTagLabel(tag)}`}
+                                      onClick={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        if (!selectedTags.includes(tag))
+                                          toggleTag(tag);
+                                      }}
+                                    >
+                                      {galleryTagLabel(tag)}
+                                    </button>
+                                  ))}
                                 </span>
                               ) : null}
                             </span>
-                            <span className="gallery-tile-meta">
-                              {entry.author ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    className="gallery-tile-author"
-                                    data-testid={`gallery-author-${entry.id}`}
-                                    title={`显示 ${entry.author} 发布的电路`}
-                                    onClick={(event) => {
-                                      event.preventDefault();
-                                      event.stopPropagation();
-                                      selectAuthor(
-                                        entry.author,
-                                        entry.ownerUserId ?? null,
-                                      );
-                                    }}
-                                  >
-                                    {entry.author}
-                                  </button>
-                                  {" · "}
-                                </>
-                              ) : null}
-                              {savedAtLabel(entry.createdAt)}
-                              {" · "}
-                              <button
-                                type="button"
-                                className="gallery-tile-like"
-                                data-testid={`gallery-like-${entry.id}`}
-                                aria-pressed={entry.likedByViewer === true}
-                                title={
-                                  entry.likedByViewer
-                                    ? "取消点赞"
-                                    : "点赞此电路"
-                                }
-                                aria-label={
-                                  entry.likedByViewer
-                                    ? `取消点赞 ${entry.name}`
-                                    : `点赞 ${entry.name}`
-                                }
-                                onClick={(event) => {
-                                  event.preventDefault();
-                                  event.stopPropagation();
-                                  void toggleLike(entry.id);
+                          </a>
+                          {isOwner ||
+                          (!!viewerId && viewerId === entry.ownerUserId) ? (
+                            <Suspense fallback={null}>
+                              <GalleryAttentionReview
+                                entry={entry}
+                                onChange={(updated) => {
+                                  setState((previous) => ({
+                                    ...previous,
+                                    entries: previous.entries.map((item) =>
+                                      item.id === updated.id ? updated : item,
+                                    ),
+                                  }));
+                                  setRefreshSignal((signal) => signal + 1);
+                                  announceGalleryChange({ entryId: entry.id });
                                 }}
-                              >
-                                <HeartIcon
-                                  filled={entry.likedByViewer === true}
-                                />
-                                {entry.likes ?? 0}
-                              </button>
-                            </span>
-                            {entry.description ? (
-                              <span className="gallery-tile-description">
-                                {entry.description}
-                              </span>
-                            ) : null}
-                            {entry.tags && entry.tags.length > 0 ? (
-                              <span className="gallery-tile-tags">
-                                {entry.tags.map((tag) => (
-                                  <button
-                                    key={tag}
-                                    type="button"
-                                    className="gallery-tile-tag"
-                                    data-testid={`gallery-tile-tag-${entry.id}-${tag.replace(/\s/gu, "-")}`}
-                                    title={`按 ${tag} 筛选`}
-                                    onClick={(event) => {
-                                      event.preventDefault();
-                                      event.stopPropagation();
-                                      if (!selectedTags.includes(tag))
-                                        toggleTag(tag);
-                                    }}
-                                  >
-                                    {tag}
-                                  </button>
-                                ))}
-                              </span>
-                            ) : null}
-                          </span>
-                        </a>
-                        {isOwner ? (
-                          <>
-                            <GalleryOwnerRejectButton
-                              entry={entry}
-                              busy={ownerBusy === entry.id}
-                              onReject={() => setRejecting(entry)}
-                            />
-                            <GalleryOwnerMenu
-                              entry={entry}
-                              busy={ownerBusy === entry.id}
-                              onWithdraw={() => void withdrawEntry(entry)}
-                            />
-                          </>
-                        ) : null}
-                      </div>
-                    ),
-                  })),
-                  ...(needsBundledFallback
-                    ? bundledFallback.tiles
-                        .filter((tile) =>
-                          galleryEntryMatchesQuery(
-                            { ...tile, author: "", tags: [] },
-                            normalizedSearchQuery,
-                          ),
-                        )
-                        .map((tile) => ({
-                          key: `bundled-${tile.id}`,
-                          node: (
-                            <a
-                              className="gallery-tile gallery-tile-bundled"
-                              href={`/editor?example=${tile.id}`}
-                              data-testid={`gallery-bundled-${tile.id}`}
-                            >
-                              <span
-                                className="gallery-tile-preview"
-                                // Server-free preview: our own renderer's escaped SVG output.
-                                dangerouslySetInnerHTML={{ __html: tile.svg }}
                               />
-                              <span className="gallery-tile-copy">
-                                <span className="gallery-tile-kicker">
-                                  内置示例
+                            </Suspense>
+                          ) : null}
+                          {isOwner ? (
+                            <Suspense fallback={null}>
+                              <GalleryOwnerRejectButton
+                                entry={entry}
+                                busy={ownerBusy === entry.id}
+                                onReject={() => setRejecting(entry)}
+                              />
+                              <GalleryOwnerMenu
+                                entry={entry}
+                                busy={ownerBusy === entry.id}
+                                onWithdraw={() => withdrawEntry(entry)}
+                              />
+                            </Suspense>
+                          ) : !!viewerId && viewerId === entry.ownerUserId ? (
+                            <Suspense fallback={null}>
+                              <GalleryWithdrawMenu
+                                entry={entry}
+                                busy={ownerBusy === entry.id}
+                                onWithdraw={() => withdrawEntry(entry)}
+                              />
+                            </Suspense>
+                          ) : null}
+                        </div>
+                      ),
+                    })),
+                    ...(needsBundledFallback
+                      ? bundledFallback.tiles
+                          .filter((tile) =>
+                            galleryEntryMatchesQuery(
+                              { ...tile, author: "", tags: [] },
+                              normalizedSearchQuery,
+                            ),
+                          )
+                          .map((tile) => ({
+                            key: `bundled-${tile.id}`,
+                            node: (
+                              <a
+                                className="gallery-tile gallery-tile-bundled"
+                                href={`/editor?example=${tile.id}`}
+                                data-testid={`gallery-bundled-${tile.id}`}
+                              >
+                                <span
+                                  className="gallery-tile-preview"
+                                  // Server-free preview: our own renderer's escaped SVG output.
+                                  dangerouslySetInnerHTML={{ __html: tile.svg }}
+                                />
+                                <span className="gallery-tile-copy">
+                                  <span className="gallery-tile-kicker">
+                                    Built-in example
+                                  </span>
+                                  <span className="gallery-tile-name">
+                                    {tile.name}
+                                  </span>
+                                  <span
+                                    className="gallery-tile-description"
+                                    title={tile.description}
+                                  >
+                                    {tile.description}
+                                  </span>
                                 </span>
-                                <span className="gallery-tile-name">
-                                  {tile.name}
-                                </span>
-                                <span className="gallery-tile-description">
-                                  {tile.description}
-                                </span>
-                              </span>
-                            </a>
-                          ),
-                        }))
-                    : []),
-                ]}
-              />
-              {entries.length === 0 && author !== null ? (
-                <p
-                  className="gallery-status"
-                  data-testid="gallery-filter-empty"
-                >
-                  {author} 暂未发布公开电路。
-                </p>
-              ) : null}
-              {entries.length === 0 &&
-              author === null &&
-              (netlistableOnly || likedOnly) ? (
-                <p className="gallery-status" data-testid="gallery-mark-empty">
-                  {likedOnly && !signedIn
-                    ? "Sign in to collect the circuits you like."
-                    : likedOnly && netlistableOnly
-                      ? "None of the circuits you liked extracts to a netlist yet."
-                      : likedOnly
-                        ? "You have not liked any circuits yet."
-                        : "No circuits here extract to a netlist yet."}
-                </p>
-              ) : null}
-              {/* Two empty states, because only one of them is a verdict:
+                              </a>
+                            ),
+                          }))
+                      : []),
+                  ]}
+                />
+                {entries.length === 0 &&
+                selectedTags.length > 0 &&
+                author === null ? (
+                  <p
+                    className="gallery-status"
+                    data-testid="gallery-tags-empty"
+                  >
+                    No circuits match the selected tags.
+                  </p>
+                ) : null}
+                {entries.length === 0 && author !== null ? (
+                  <p
+                    className="gallery-status"
+                    data-testid="gallery-filter-empty"
+                  >
+                    No public circuits by {author} yet.
+                  </p>
+                ) : null}
+                {entries.length === 0 &&
+                author === null &&
+                (netlistableOnly || likedOnly) ? (
+                  <p
+                    className="gallery-status"
+                    data-testid="gallery-mark-empty"
+                  >
+                    {likedOnly && !signedIn
+                      ? "Sign in to collect the circuits you like."
+                      : likedOnly && netlistableOnly
+                        ? "None of the circuits you liked extracts to a netlist yet."
+                        : likedOnly
+                          ? "You have not liked any circuits yet."
+                          : "No circuits here extract to a netlist yet."}
+                  </p>
+                ) : null}
+                {!localhostExamplesEnabled() &&
+                entries.length === 0 &&
+                !galleryFiltersNarrowQuery(filters) ? (
+                  <p className="gallery-status" data-testid="gallery-empty">
+                    {state.status === "unavailable"
+                      ? "Gallery is unavailable. Try again later."
+                      : "No published circuits yet."}
+                  </p>
+                ) : null}
+                {/* Two empty states, because only one of them is a verdict:
                   while the cursor chain is unexhausted the true sentence is
                   "nothing in what has loaded", not "nothing". The sentinel
                   below keeps pulling pages whenever the thin wall leaves it
                   in view, so the pending state resolves itself. */}
-              {normalizedSearchQuery &&
-              visibleEntries.length === 0 &&
-              entries.length > 0 ? (
-                state.nextCursor !== null ? (
-                  <p
-                    className="gallery-status"
-                    data-testid="gallery-search-pending"
-                  >
-                    暂无匹配项——正在搜索更早的电路…
-                  </p>
-                ) : (
-                  <p
-                    className="gallery-status"
-                    data-testid="gallery-search-empty"
-                  >
-                    没有电路匹配“{searchQuery.trim()}”。
-                  </p>
-                )
-              ) : null}
-            </section>
-          )}
-          <div
-            ref={sentinelRef}
-            className="gallery-sentinel"
-            data-testid="gallery-sentinel"
-            aria-hidden="true"
-          />
-        </>
+                {normalizedSearchQuery &&
+                visibleEntries.length === 0 &&
+                entries.length > 0 ? (
+                  state.nextCursor !== null ? (
+                    <p
+                      className="gallery-status"
+                      data-testid="gallery-search-pending"
+                    >
+                      No matches yet — searching older circuits…
+                    </p>
+                  ) : (
+                    <p
+                      className="gallery-status"
+                      data-testid="gallery-search-empty"
+                    >
+                      No circuits match “{searchQuery.trim()}”.
+                    </p>
+                  )
+                ) : null}
+              </section>
+            )}
+            <div
+              ref={sentinelRef}
+              className="gallery-sentinel"
+              data-testid="gallery-sentinel"
+              aria-hidden="true"
+            />
+          </div>
+        </div>
       ) : null}
-      <footer className="gallery-footnote">
-        可自由浏览；打开任意电路即可编辑你自己的副本。登录后可发布作品。
-      </footer>
+      {state.status === "signed-out" ? null : (
+        <footer className="gallery-footnote" data-testid="gallery-footnote">
+          Open any circuit to edit your own copy; publish your own from the
+          editor.
+        </footer>
+      )}
       {rejecting ? (
-        <RejectEntryDialog
-          entry={rejecting}
-          busy={ownerBusy === rejecting.id}
-          onSubmit={(reason) => void rejectEntry(reason)}
-          onClose={() => setRejecting(null)}
-        />
+        <Suspense fallback={null}>
+          <RejectEntryDialog
+            entry={rejecting}
+            busy={ownerBusy === rejecting.id}
+            onSubmit={(reason) => void rejectEntry(reason)}
+            onClose={() => setRejecting(null)}
+          />
+        </Suspense>
       ) : null}
     </main>
   );

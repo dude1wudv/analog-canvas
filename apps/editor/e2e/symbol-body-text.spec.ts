@@ -63,10 +63,9 @@ test("double-clicking a Symbol's body text edits it on the canvas", async ({
   await expect(bodyText(page)).toContainText("DAC");
 
   await page.getByTestId("hit-X1").dblclick();
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await expect(editor).toBeVisible();
-  await expect(editor).toHaveValue("DAC");
-  await expect(editor).toHaveAttribute("wrap", "soft");
+  await expect(editor).toHaveText("DAC");
 
   await editor.fill(
     "A deliberately long plain-text symbol formula that wraps while it is edited",
@@ -78,7 +77,7 @@ test("double-clicking a Symbol's body text edits it on the canvas", async ({
   ).toBe(true);
 
   await editor.fill("8-bit DAC");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   await expect(bodyText(page)).toContainText("8-bit DAC");
 });
@@ -91,9 +90,9 @@ test("the Properties field shows what the canvas edit committed", async ({
 
   await page.getByTestId("hit-X1").dblclick();
   await page
-    .getByRole("textbox", { name: "Canvas text editor" })
+    .getByRole("textbox", { name: "画布文本编辑器" })
     .fill("current steering");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   await page.getByTestId("hit-X1").click();
   await revealPropertiesShelf(page);
@@ -120,24 +119,79 @@ test("the Properties field shows what the canvas edit committed", async ({
   );
 });
 
-// The Symbol's own text is a plain string in a compact script syntax, so the
-// canvas editor offers no rich-text or formula affordances on it. Offering
-// them would promise formatting the field cannot store — the shape of defect
-// that #495 was.
-test("the Symbol body editor offers no formatting it cannot keep", async ({
-  page,
-}) => {
-  await placeSymbol(page, "integrator");
+// The owner's request: the text inside a block takes every format a label
+// takes — upright or italic, scripts, Greek letters — and keeps it.
+test("formats a Symbol's body text like any label", async ({ page }) => {
+  await placeSymbol(page, "adc");
 
   await page.getByTestId("hit-X1").dblclick();
-  await expect(
-    page.getByRole("textbox", { name: "Canvas text editor" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Insert formula" }),
-  ).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Overbar" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Bold" })).toHaveCount(0);
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
+  await expect(editor).toHaveText("ADC");
+  for (const name of ["粗体", "斜体", "下标", "插入公式"])
+    await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
+  await expect(page.getByLabel("Insert circuit symbol")).toBeVisible();
+
+  // A slanted ADC — a look its text alone cannot ask for — then a subscript.
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.getByRole("button", { name: "斜体", exact: true }).click();
+  await page.keyboard.press("End");
+  await page.keyboard.type("1");
+  await page.keyboard.press("Shift+ArrowLeft");
+  await page.getByRole("button", { name: "下标", exact: true }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
+
+  const drawn = bodyText(page);
+  await expect(drawn).toHaveAttribute("data-formatted", "true");
+  await expect(drawn).toContainText("ADC1");
+  expect(
+    await drawn.evaluate((element) =>
+      [...element.querySelectorAll("text, tspan")].some(
+        (node) => getComputedStyle(node).fontStyle === "italic",
+      ),
+    ),
+  ).toBe(true);
+
+  const saved = parseSavedProject(
+    (await downloadBytes(page, "File", "Export Project File…")).toString(
+      "utf8",
+    ),
+  ) as {
+    documents: Array<{
+      instances: Array<{
+        signalFlowParameters?: { formula?: string; formulaFormat?: unknown };
+      }>;
+    }>;
+  };
+  const parameters = saved.documents[0]!.instances[0]!.signalFlowParameters;
+  expect(parameters?.formula).toBe("ADC1");
+  expect(parameters?.formulaFormat).toBeDefined();
+
+  // Reopening edits the stored look, subscript and all.
+  await page.getByTestId("hit-X1").dblclick();
+  await expect(editor.locator("sub")).toHaveText("1");
+});
+
+// Textbook notation, as the owner asked: a converter's word stands upright,
+// an amplifier's single-letter gain slants.
+async function slanted(page: Page): Promise<boolean> {
+  return bodyText(page).evaluate((element) =>
+    [element, ...element.querySelectorAll("text, tspan")].some(
+      (node) => getComputedStyle(node).fontStyle === "italic",
+    ),
+  );
+}
+
+test("stands a converter's word upright", async ({ page }) => {
+  await placeSymbol(page, "adc");
+  await expect(bodyText(page)).toHaveText("ADC");
+  expect(await slanted(page)).toBe(false);
+});
+
+test("slants an amplifier's single-letter gain", async ({ page }) => {
+  await placeBodyTextSymbol(page, "opamp-lettered");
+  await expect(bodyText(page)).toHaveText("A");
+  expect(await slanted(page)).toBe(true);
 });
 
 // The owner reported this on a DAC and said several other circuits have it
@@ -157,12 +211,12 @@ for (const symbolId of [
     await placeBodyTextSymbol(page, symbolId);
 
     await page.getByTestId("hit-X1").dblclick();
-    const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+    const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
     await expect(editor).toBeVisible();
-    await expect(editor).not.toHaveValue("");
+    await expect(editor).not.toHaveText("");
 
     await editor.fill("Zz");
-    await page.getByRole("button", { name: "Apply text changes" }).click();
+    await page.getByRole("button", { name: "应用文本更改" }).click();
     await expect(bodyText(page)).toContainText("Zz");
   });
 }
@@ -197,10 +251,10 @@ test("the swapped-input op-amp edits its body text too", async ({ page }) => {
   await setComponentCodeField(page, "symbol", "opamp-lettered-inputs-swapped");
 
   await page.getByTestId("hit-X1").dblclick();
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await expect(editor).toBeVisible();
   await editor.fill("Zz");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   await expect(bodyText(page)).toContainText("Zz");
 });

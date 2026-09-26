@@ -64,16 +64,18 @@ Document style profile while their own `textColor` remains Auto.
 Net labels are formal electrical annotations tied to a logical Net; plain text
 has no electrical meaning.
 
-Under `razavi-textbook-v1`, instance identifiers and recognized voltage,
-current, power, and pin labels are composed into deterministic SVG
-`<tspan>` runs. The leading symbol is the base and the remaining identifier
-defaults to its subscript; trailing `+` and `-` signs remain upright. This is a
-style compiler, not an input grammar: underscores, braces, carets, backslashes,
-letter case, and every other authored character remain literal. Users change
-ordinary RichText formatting through the explicit toolbar, while only the
-explicit Formula editor interprets LaTeX syntax. The persisted semantic name
-and the flattened RichText projection therefore remain identical, and the same
-composed formal SVG scene feeds SVG, PNG, and PDF export.
+Under `razavi-textbook-v1`, bound names are composed into deterministic SVG
+`<tspan>` runs. By default `_` starts a subscript and a terminal `_bar` denotes
+an overbar. Each Document can keep underscores literal, apply the leading-letter
+subscript convention, and choose subscript case and independent initial/script
+slant. The leading-letter convention and slant are presentation only; only an
+explicit whole-drawing subscript case change updates electrical spelling along
+with the labels. RichText overrides remain editable,
+and case/slant actions preserve unrelated color, weight and bar decoration.
+Simple analog-block body names share these rules; mathematical expressions
+retain the formula renderer. Only the explicit Formula editor interprets LaTeX.
+Electrical readers use bound names rather than flattened visible text; the same
+composed formal SVG scene feeds canvas, Gallery thumbnails, SVG, PNG and PDF.
 
 An authored formula is the atomic alternative to ordinary styled RichText,
 not another text object type. Its persisted facts are bounded LaTeX source and
@@ -84,6 +86,12 @@ formal profile recognizes MathLive's `\differentialD` source as an upright
 differential operator, so source produced by the editor preview remains valid
 without rewriting the persisted LaTeX. The typesetter emits standalone
 path-only SVG with deterministic width, height, baseline, and source identity.
+Formula letters and numerals default to bold sans-serif, matching schematic
+text. Drafting text and callout weight/slant overrides also apply to formulas;
+explicit LaTeX font commands retain their meaning. This is rendering style,
+not a rewrite of the stored expression. Measurement and drawing use the same
+style-aware artifact, prepared before canvas, export, and server thumbnail
+rendering.
 Formula SVG is embedded into the same formal
 scene used by canvas, SVG, PNG, and vector PDF; it is never rasterized or
 persisted.
@@ -142,8 +150,18 @@ active symbol variant's visible geometry and clusters repeated overlaps.
   metrics are transient derived output.
 - Annotation attachment moves with an edited instance while its offset and
   semantic kind remain persisted.
-- Instance-label drag is bounded around its symbol and Net-label drag is
-  bounded around attached route geometry; free text is unconstrained.
+- Instance labels may be dragged to any position, retaining their
+  object-relative anchor so they follow subsequent component moves. Ordinary
+  Net labels also move freely without changing their electrical binding;
+  directional route markers retain their route attachment.
+- A new instance name keeps four units between its ink and the drawn artwork
+  on whichever side it sits, the same for devices, gates, registers,
+  converters and Analog Blocks. Beside the Symbol its capitals are centred on
+  the body; below it they start one gap under the artwork; above it the
+  subscript's descent is cleared first, so R₂ over a part never touches it. A
+  value row stacks away from the body. Label coordinates are whole units, not
+  connection-grid rounded; saved, authored placements are retained, and a
+  label still exactly where an earlier rule placed it counts as untouched.
 - Visual goldens use original project fixtures, not copied textbook artwork.
 
 ## Operations and state transitions

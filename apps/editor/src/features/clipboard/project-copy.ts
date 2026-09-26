@@ -1,6 +1,9 @@
 import {
   createEmptyProject,
+  createRoutePath,
+  ComponentDefinitionSchema,
   deriveStableId,
+  roleLabelFormat,
   routeEnd,
   type CircuitProject,
   type Point,
@@ -11,9 +14,11 @@ import {
   resolveVisualAnchor,
   resolveDocumentRoutingGeometry,
   resolveDocumentLogicalNets,
+  resolveEndpointConnection,
 } from "@icm/derived";
 import {
   builtInSymbols,
+  withProjectComponentDefinitions,
   createProjectSymbolResolver,
   hierarchicalSymbolId,
 } from "@icm/symbols";
@@ -21,6 +26,7 @@ import {
   executeProjectTransaction,
   executeTransaction,
   gateRoutingOperationPlan,
+  normalizeRouteGeometry,
   planExternalCopyDependencies,
   planProjectCellImport,
   remapCopySourceFiles,
@@ -39,10 +45,12 @@ import {
 
 import { planInsertedInstanceConnections } from "../component-insert/placement-connectivity";
 
-/** Session-only dependency capsule. No Project schema or transport contract. */
+/** Dependency closure shared by canvas composition and the system clipboard. */
 export interface CopyContext extends CopyDependencySource {
   documents: SchematicDocument[];
   presentation: SchematicDocument["presentation"];
+  componentDefinitions?: CircuitProject["componentDefinitions"];
+  simulationFolders?: CircuitProject["simulationFolders"];
 }
 
 export function captureProjectCopy(
@@ -52,6 +60,7 @@ export function captureProjectCopy(
     instanceIds: readonly string[];
     draftingIds: readonly string[];
   },
+  preserveElectrical = false,
 ): SchematicClipboard | null {
   const clipboard = selection
     ? copySelection(
@@ -59,6 +68,7 @@ export function captureProjectCopy(
         selection.instanceIds,
         selection.draftingIds,
         selection,
+        preserveElectrical,
       )
     : captureDocumentComposition(document);
   if (!clipboard) return null;
@@ -76,6 +86,69 @@ export function captureProjectCopy(
     const source = document.routes.find((r) => r.id === routeId);
     if (!source || clipboard.routes.some((r) => r.id === routeId)) continue;
     clipboard.routes.push(structuredClone(source));
+  }
+  // Drawings from before the Edit Engine removed zero-length steps still hold
+  // Wires with them, and re-creating such a Wire is rejected as degenerate,
+  // which failed the whole copy. The copy takes each Wire as the engine now
+  // leaves one: without its zero-length steps. A Wire whose ends meet is a
+  // direct contact, which the engine keeps as its ends' Net membership, never
+  // as a Route; the copy keeps that membership and any Junction the Wire
+  // ended on, which the pasted pin touches, and leaves the empty Wire behind.
+  const legAnchored = new Set(
+    [
+      ...clipboard.annotations.map((annotation) => annotation.anchor),
+      ...clipboard.draftingObjects.flatMap((object) => [
+        object.anchor,
+        ...(object.kind === "arrow" ? [object.from, object.to] : []),
+        ...(object.kind === "leader" || object.kind === "callout"
+          ? [object.target]
+          : []),
+      ]),
+    ].flatMap((anchor) => (anchor.kind === "route" ? [anchor.routeId] : [])),
+  );
+  const contacts = new Set<string>();
+  clipboard.routes = clipboard.routes.flatMap((route) => {
+    const centerline = geometry.routes.get(route.id)?.centerline;
+    if (!centerline?.length) return [route];
+    const points = [
+      centerline[0]!,
+      ...route.legs.flatMap((leg) =>
+        leg.to.kind === "bend" ? [leg.to.position] : [],
+      ),
+      centerline.at(-1)!,
+    ];
+    const normalized = normalizeRouteGeometry(
+      points,
+      route.legs.map((leg) => leg.mode),
+    );
+    if (normalized.points.length < 2) {
+      contacts.add(route.id);
+      return [];
+    }
+    if (normalized.points.length === points.length || legAnchored.has(route.id))
+      return [route];
+    return [
+      createRoutePath({
+        id: route.id,
+        netId: route.netId,
+        start: route.start,
+        end: routeEnd(route),
+        bends: normalized.points.slice(1, -1),
+        modes: normalized.segmentModes,
+        ...(route.presentation ? { presentation: route.presentation } : {}),
+        ...(route.styleOverride ? { styleOverride: route.styleOverride } : {}),
+      }),
+    ];
+  });
+  if (contacts.size) {
+    const whole = (ids: readonly string[]) =>
+      ids.every((id) => !contacts.has(id));
+    clipboard.layoutGroups = clipboard.layoutGroups.filter((group) =>
+      whole(group.objectIds),
+    );
+    clipboard.constraints = clipboard.constraints.filter((constraint) =>
+      whole(constraint.objectIds),
+    );
   }
   for (const route of clipboard.routes) {
     if (!netIds.has(route.netId)) {
@@ -119,6 +192,130 @@ export function captureProjectCopy(
       }
     }
   }
+  // A junction/label can be copied alone. The transport still needs a closed
+  // Net record even when none of its original component terminals are selected.
+  // The record is structure only: names stay with the labels that own them.
+  {
+    const referencedNets = [
+      ...clipboard.junctions.map((item) => item.netId),
+      ...clipboard.cellTerminals.map((item) => item.netId),
+      ...clipboard.annotations.flatMap((item) =>
+        item.netId ? [item.netId] : [],
+      ),
+    ];
+    for (const id of referencedNets) {
+      if (netIds.has(id)) continue;
+      const net = document.nets.find((item) => item.id === id);
+      if (!net)
+        throw new Error(`Copied object references an unavailable Net: ${id}`);
+      clipboard.nets.push({
+        ...structuredClone(net),
+        terminals: net.terminals.filter((terminal) =>
+          selectedInstances.has(terminal.instanceId),
+        ),
+      });
+      netIds.add(id);
+    }
+  }
+  // What the source visibly connects among the copied parts travels as it
+  // is. The paste no longer joins pasted parts by where they touch (that
+  // joined a crossing's two wires), so the copy carries those joins itself:
+  // pins that meet another copied pin or Junction of their Net, or lie along
+  // a copied Wire of their Net. A pin on another Net's Wire stays apart, as
+  // it was. A pin's other links stay as the copy already decided (a Net its
+  // record alone holds is not carried, as Ports never shared one).
+  {
+    const copiedJunctions = new Set(clipboard.junctions.map((j) => j.id));
+    const placed = new Set(
+      clipboard.nets.flatMap((net) =>
+        net.terminals.map((t) => `${t.instanceId}\0${t.pinName}`),
+      ),
+    );
+    const key = (point: Point | undefined) =>
+      point ? `${point.x},${point.y}` : null;
+    for (const net of document.nets) {
+      const pins = net.terminals.filter((terminal) =>
+        selectedInstances.has(terminal.instanceId),
+      );
+      if (pins.length === 0) continue;
+      const pinPoints = pins.map((terminal) =>
+        key(
+          resolveEndpointConnection(document, resolver, {
+            kind: "terminal",
+            ...terminal,
+          })?.contactPoint,
+        ),
+      );
+      const points = [
+        ...pinPoints,
+        ...document.junctions
+          .filter((j) => j.netId === net.id && copiedJunctions.has(j.id))
+          .map((junction) => key(junction.position)),
+      ];
+      const wires = clipboard.routes
+        .filter((route) => route.netId === net.id)
+        .flatMap((route) => {
+          const line = geometry.routes.get(route.id)?.centerline ?? [];
+          return line.slice(1).map((end, index) => [line[index]!, end]);
+        });
+      const onWire = (point: Point) =>
+        wires.some(
+          ([a, b]) =>
+            Math.abs(
+              (b!.x - a!.x) * (point.y - a!.y) -
+                (b!.y - a!.y) * (point.x - a!.x),
+            ) < 0.5 &&
+            point.x >= Math.min(a!.x, b!.x) - 0.5 &&
+            point.x <= Math.max(a!.x, b!.x) + 0.5 &&
+            point.y >= Math.min(a!.y, b!.y) - 0.5 &&
+            point.y <= Math.max(a!.y, b!.y) + 0.5,
+        );
+      const attached = pins.filter((_, index) => {
+        const at = pinPoints[index];
+        if (!at) return false;
+        const [x, y] = at.split(",").map(Number);
+        return (
+          points.filter((point) => point === at).length > 1 ||
+          onWire({ x: x!, y: y! })
+        );
+      });
+      let copied = clipboard.nets.find((item) => item.id === net.id);
+      if (!copied) {
+        if (attached.length < 2) continue;
+        copied = { ...structuredClone(net), terminals: [] };
+        clipboard.nets.push(copied);
+        netIds.add(net.id);
+      }
+      for (const terminal of attached) {
+        const pin = `${terminal.instanceId}\0${terminal.pinName}`;
+        // A Port copySelection set apart, for sharing its Net with nothing
+        // visible, touches the Net's copied wiring here: it shares it visibly,
+        // so it goes back, and whatever was pointed at its own Net with it.
+        const splitId = `${net.id}-insert-${terminal.instanceId}`;
+        const split = clipboard.nets.find((item) => item.id === splitId);
+        if (split) {
+          clipboard.nets = clipboard.nets.filter((item) => item !== split);
+          netIds.delete(splitId);
+          for (const cell of clipboard.cellTerminals)
+            if (cell.netId === splitId) cell.netId = net.id;
+          for (const annotation of clipboard.annotations) {
+            if (annotation.netId === splitId) annotation.netId = net.id;
+            if (
+              annotation.binding?.kind === "net-name" &&
+              annotation.binding.netId === splitId
+            )
+              annotation.binding.netId = net.id;
+          }
+          for (const evidence of clipboard.connectivityEvidence)
+            if (evidence.netId === splitId) evidence.netId = net.id;
+          placed.delete(pin);
+        }
+        if (placed.has(pin)) continue;
+        copied.terminals.push({ ...terminal });
+        placed.add(pin);
+      }
+    }
+  }
   const copiedRoutes = new Set(clipboard.routes.map((r) => r.id));
   // A selected Wire carries its own attached marker, even if its devices were cut.
   for (const annotation of document.annotations) {
@@ -129,6 +326,67 @@ export function captureProjectCopy(
       !clipboard.annotations.some((a) => a.id === annotation.id)
     )
       clipboard.annotations.push(structuredClone(annotation));
+  }
+  // A copied label keeps its Net and the name it claims. A label copied
+  // without its Net's wiring (a supply label an old copy left without pins)
+  // otherwise landed on an unnamed Net its look no longer spells, which
+  // failed the paste. A label on a part can also name a Net that only that
+  // part's pins hold, with no wire to show it: a transistor substrate the
+  // process tied to ground. Those pins stay on it. Otherwise the emptied Net's
+  // label followed the part's first other Net and renamed that Net, even
+  // to ground.
+  {
+    const copiedNets = new Set(clipboard.nets.map((net) => net.id));
+    const labelIds = new Set(clipboard.annotations.map((item) => item.id));
+    const carried = new Set(
+      clipboard.connectivityEvidence.map((item) => item.id),
+    );
+    for (const evidence of document.connectivityEvidence) {
+      if (
+        evidence.kind !== "name-claim" ||
+        carried.has(evidence.id) ||
+        !copiedNets.has(evidence.netId)
+      )
+        continue;
+      const owner =
+        evidence.owner.kind === "net-label"
+          ? evidence.owner.annotationId
+          : evidence.owner.kind === "power-marker"
+            ? evidence.owner.objectId
+            : undefined;
+      if (
+        owner !== undefined &&
+        (labelIds.has(owner) || selectedInstances.has(owner))
+      )
+        clipboard.connectivityEvidence.push(structuredClone(evidence));
+    }
+    const pin = (terminal: { instanceId: string; pinName: string }) =>
+      `${terminal.instanceId}\0${terminal.pinName}`;
+    const placed = new Set(
+      clipboard.nets.flatMap((net) => net.terminals.map(pin)),
+    );
+    for (const annotation of clipboard.annotations) {
+      const anchor = annotation.anchor;
+      if (anchor.kind !== "object" || !selectedInstances.has(anchor.objectId))
+        continue;
+      const copied = clipboard.nets.find((net) => net.id === annotation.netId);
+      const source = document.nets.find((net) => net.id === annotation.netId);
+      if (
+        !copied ||
+        !source?.terminals.length ||
+        source.terminals.some(
+          (terminal) => terminal.instanceId !== anchor.objectId,
+        ) ||
+        document.routes.some((route) => route.netId === source.id) ||
+        document.junctions.some((junction) => junction.netId === source.id)
+      )
+        continue;
+      for (const terminal of source.terminals) {
+        if (placed.has(pin(terminal))) continue;
+        copied.terminals.push({ ...terminal });
+        placed.add(pin(terminal));
+      }
+    }
   }
   const owners = new Set(
     [
@@ -179,9 +437,9 @@ export function captureProjectCopy(
       clipboard.cellTerminals.some((t) => t.id === binding.terminalId)
     );
   });
-  // Whole-document composition preserves its electrical contract. A selected
-  // device is a new insertion and must never inherit off-selection dependencies.
-  if (!selection) {
+  // System clipboard composition preserves electrical context; ordinary C
+  // still creates fresh insertions without source circuit dependencies.
+  if (!selection || preserveElectrical) {
     // Bulk defaults and overrides are actual electrical dependencies, not copied boundary wires.
     const whole = captureDocumentComposition(document);
     for (const instance of clipboard.instances) {
@@ -234,11 +492,13 @@ export function captureProjectCopy(
         clipboard.instances.find((i) => i.id === terminal?.instanceId)
           ?.placement?.position ?? { x: 0, y: 0 };
       const id = deriveStableId("copy-net-name", net.id);
+      const format = roleLabelFormat("voltage-node", logical.name);
       clipboard.annotations.push({
         id,
         kind: "net-label",
         netId: net.id,
         binding: { kind: "net-name", netId: net.id },
+        ...(format ? { formatOverride: format } : {}),
         anchor: { kind: "free", position: { ...position } },
         alignment: "start",
         rotation: 0,
@@ -288,6 +548,18 @@ export function captureProjectCopy(
     ),
   );
   const fileIds = referencedSourceFiles([clipboard, [...documents.values()]]);
+  const componentProject = withProjectComponentDefinitions({
+    ...project,
+    documents: [
+      {
+        ...document,
+        instances: clipboard.instances,
+        drafting: { objects: clipboard.draftingObjects },
+      },
+      ...documents.values(),
+    ],
+  });
+  const copiedDocumentIds = new Set([document.id, ...documents.keys()]);
   clipboard.context = structuredClone({
     id: project.id,
     symbolLibrary: project.symbolLibrary,
@@ -300,8 +572,27 @@ export function captureProjectCopy(
     ),
     documents: [...documents.values()],
     presentation: document.presentation,
+    componentDefinitions: componentProject.componentDefinitions,
+    // Simulation source belongs to the complete Cell, not a partial selection.
+    simulationFolders: !selection
+      ? cellSimulationFolders(project, copiedDocumentIds)
+      : [],
   });
   return clipboard;
+}
+
+/** The simulation folders bound only to the given Cells: their testbench. */
+export function cellSimulationFolders(
+  project: CircuitProject,
+  documentIds: ReadonlySet<string>,
+): CircuitProject["simulationFolders"] {
+  return project.simulationFolders.filter(
+    (folder) =>
+      folder.input.circuitBindings.length > 0 &&
+      folder.input.circuitBindings.every((binding) =>
+        documentIds.has(binding.documentId),
+      ),
+  );
 }
 
 /** Resolve dependencies once per Project revision/orientation, not per pointer move. */
@@ -311,6 +602,10 @@ export function prepareProjectCopy(
   sourceClipboard: SchematicClipboard,
 ) {
   let clipboard = structuredClone(sourceClipboard);
+  const dependencyMapping = {
+    cells: {} as Record<string, string>,
+    files: {} as Record<string, string>,
+  };
   let prepared = project;
   const edits: ProjectStructureEdit[] = [];
   const install = (additional: readonly ProjectStructureEdit[]) => {
@@ -329,6 +624,58 @@ export function prepareProjectCopy(
     edits.push(...additional);
   };
   const context = clipboard.context;
+  let componentDefinitions = project.componentDefinitions;
+  if (context?.componentDefinitions?.length) {
+    // Schema normalization makes equality independent of object-key order and
+    // omitted defaults; identical definitions must not fork on every paste.
+    componentDefinitions = (
+      withProjectComponentDefinitions(project).componentDefinitions ?? []
+    ).map((definition) => ComponentDefinitionSchema.parse(definition));
+    const symbolIds = new Map<string, string>();
+    for (const rawDefinition of context.componentDefinitions) {
+      const definition = ComponentDefinitionSchema.parse(rawDefinition);
+      // Cell/external symbols are regenerated from their imported interfaces.
+      if (definition.generatedFrom) continue;
+      const originalId = definition.symbol.id;
+      let id = originalId;
+      let ordinal = 1;
+      let existing = componentDefinitions.find((item) => item.symbol.id === id);
+      const withId = (nextId: string) => ({
+        ...definition,
+        symbol: { ...definition.symbol, id: nextId },
+        ...(definition.electrical
+          ? { electrical: { ...definition.electrical, symbolId: nextId } }
+          : {}),
+        ...(definition.subcircuit
+          ? { subcircuit: { ...definition.subcircuit, symbolId: nextId } }
+          : {}),
+      });
+      while (
+        existing &&
+        JSON.stringify(existing) !== JSON.stringify(withId(id))
+      ) {
+        id = `${originalId}-copy-${ordinal++}`;
+        existing = componentDefinitions.find((item) => item.symbol.id === id);
+      }
+      symbolIds.set(originalId, id);
+      if (!existing) componentDefinitions.push(withId(id));
+    }
+    const remap = (
+      instances: SchematicDocument["instances"],
+      objects: SchematicClipboard["draftingObjects"],
+    ) => {
+      for (const instance of instances)
+        instance.symbolId =
+          symbolIds.get(instance.symbolId) ?? instance.symbolId;
+      for (const object of objects)
+        if (object.kind === "floating-symbol")
+          object.symbolId = symbolIds.get(object.symbolId) ?? object.symbolId;
+    };
+    remap(clipboard.instances, clipboard.draftingObjects);
+    for (const child of context.documents)
+      remap(child.instances, child.drafting?.objects ?? []);
+    prepared = { ...project, componentDefinitions };
+  }
   if (context) {
     if (
       JSON.stringify(context.symbolLibrary) !==
@@ -351,11 +698,31 @@ export function prepareProjectCopy(
       [{ ...clipboard, context: undefined }, context.documents],
     );
     install(dependencies.edits);
+    Object.assign(
+      dependencyMapping.files,
+      Object.fromEntries(dependencies.fileIds),
+    );
     clipboard = remapCopySourceFiles(clipboard, dependencies.fileIds);
     clipboard.instances = clipboard.instances.map((i) =>
       remapExternalCopyInstance(i, dependencies.externalIds),
     );
     const childMap = new Map<string, string>();
+    const mapChildClosure = (sourceId: string, targetId: string): void => {
+      if (childMap.has(sourceId)) return;
+      childMap.set(sourceId, targetId);
+      const sourceChild = context.documents.find(
+        (item) => item.id === sourceId,
+      );
+      const targetChild = prepared.documents.find(
+        (item) => item.id === targetId,
+      );
+      sourceChild?.instances.forEach((instance, index) => {
+        const from = instance.netlist?.binding;
+        const to = targetChild?.instances[index]?.netlist?.binding;
+        if (from?.kind === "subcircuit" && to?.kind === "subcircuit")
+          mapChildClosure(from.childDocumentId, to.childDocumentId);
+      });
+    };
     const canReuseSourceCells =
       context.id === project.id &&
       context.documents.every(
@@ -395,6 +762,7 @@ export function prepareProjectCopy(
             sourceId,
           );
           source.documents = structuredClone(context.documents);
+          source.componentDefinitions = componentDefinitions;
           source.source = structuredClone(context.source);
           source.symbolLibrary = structuredClone(context.symbolLibrary);
           source.externalSubcircuitDefinitions = structuredClone(
@@ -407,13 +775,65 @@ export function prepareProjectCopy(
           install(plan.edits);
           targetId = plan.rootDocumentId;
         }
-        childMap.set(sourceId, targetId);
+        mapChildClosure(sourceId, targetId);
       }
       binding.childDocumentId = targetId;
       const child = prepared.documents.find((d) => d.id === targetId)!;
       instance.symbolId = hierarchicalSymbolId(
         child.netlist?.name ?? child.name,
       );
+    }
+    childMap.set(clipboard.sourceDocumentId, document.id);
+    Object.assign(dependencyMapping.cells, Object.fromEntries(childMap));
+    for (const sourceFolder of context.simulationFolders ?? []) {
+      const folder = structuredClone(sourceFolder);
+      for (const binding of folder.input.circuitBindings) {
+        const id = childMap.get(binding.documentId);
+        if (!id)
+          throw new Error(
+            `Copied simulation source references an unavailable Cell: ${binding.documentId}`,
+          );
+        binding.documentId = id;
+      }
+      for (const draft of folder.input.drafts ?? []) {
+        if (draft.binding) {
+          const id = childMap.get(draft.binding.documentId);
+          if (!id)
+            throw new Error(
+              "Copied simulation draft references an unavailable Cell",
+            );
+          draft.binding.documentId = id;
+        }
+      }
+      const base = deriveStableId(
+        "copy-folder",
+        project.id,
+        context.id,
+        folder.id,
+      );
+      if (
+        prepared.simulationFolders.some(
+          (item) =>
+            (item.id === base ||
+              item.id.startsWith(`${base}-`) ||
+              (context.id === project.id && item.id === folder.id)) &&
+            JSON.stringify(item.input) === JSON.stringify(folder.input),
+        )
+      )
+        continue;
+      folder.id = base;
+      let ordinal = 1;
+      while (prepared.simulationFolders.some((item) => item.id === folder.id))
+        folder.id = `${base}-${ordinal++}`;
+      const name = folder.name;
+      ordinal = 1;
+      while (
+        prepared.simulationFolders.some(
+          (item) => item.name.toLowerCase() === folder.name.toLowerCase(),
+        )
+      )
+        folder.name = `${name.slice(0, 110)} (copy ${ordinal++})`;
+      install([{ kind: "upsert_simulation_folder", folder }]);
     }
   }
   const resolver = createProjectSymbolResolver(prepared, builtInSymbols);
@@ -427,9 +847,19 @@ export function prepareProjectCopy(
     { x: 0, y: 0 },
     0,
     prepared,
+    resolver,
   );
   if (preflight.errors.length) throw new Error(preflight.errors.join("; "));
-  return { clipboard, dependencyEdits: edits, resolver };
+  return {
+    clipboard,
+    dependencyMapping,
+    dependencyEdits: edits,
+    resolver,
+    baseProject: {
+      ...project,
+      ...(componentDefinitions ? { componentDefinitions } : {}),
+    },
+  };
 }
 
 export function planProjectCopyPlacement(
@@ -445,7 +875,8 @@ export function planProjectCopyPlacement(
     prepared.clipboard,
     offset,
     sequence,
-    project,
+    prepared.baseProject,
+    prepared.resolver,
   );
   if (proposal.errors.length) throw new Error(proposal.errors.join("; "));
   const gate = gateRoutingOperationPlan(document, proposal.operationPlan, {
@@ -483,10 +914,15 @@ export function planProjectCopyPlacement(
       const instance = projected.instances.find(
         (candidate) => candidate.id === id,
       )!;
+      // A pasted part meets the destination as an inserted one does, and
+      // only the destination: its links to the other pasted parts are the
+      // copied Nets, never where their drawings happen to touch.
       const connections = planInsertedInstanceConnections(
         projected,
         prepared.resolver,
         instance,
+        undefined,
+        { existing: document },
       );
       if (!connections.edits.length) continue;
       // Contact planning reads canonical endpoint bonds after insertion. Keep
@@ -515,5 +951,34 @@ export function planProjectCopyPlacement(
   }
   if (edits.length > 256)
     throw new Error("Copy exceeds the atomic Project transaction limit");
-  return { edits, instanceIds: proposal.instanceIds };
+  return {
+    edits,
+    instanceIds: proposal.instanceIds,
+    mapping: {
+      objects: { ...proposal.idRemap },
+      ...prepared.dependencyMapping,
+    },
+    baseProject: prepared.baseProject,
+  };
+}
+
+/** Install dependencies and placement in one undoable Project revision. */
+export function applyProjectCopyPlacement(
+  plan: ReturnType<typeof planProjectCopyPlacement>,
+  actor: { kind: "human" | "agent"; id: string } = {
+    kind: "human",
+    id: "clipboard",
+  },
+): CircuitProject {
+  const project = plan.baseProject;
+  const result = executeProjectTransaction(project, {
+    transactionId: "copy-placement",
+    projectId: project.id,
+    expectedStructureRevision: project.structureRevision,
+    actor,
+    edits: plan.edits,
+  });
+  if (!result.ok)
+    throw new Error(result.diagnostics[0]?.message ?? result.error.message);
+  return result.project;
 }

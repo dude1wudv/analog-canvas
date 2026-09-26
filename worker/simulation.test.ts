@@ -10,6 +10,7 @@ import {
   nativeInput,
   nativeReply,
   nativeWorkerEnv,
+  nativeStreamingReply,
 } from "./simulation.test-fixture";
 const post = (body: unknown, path = "/api/simulate") =>
   new Request(`https://canvas.test${path}`, {
@@ -20,6 +21,82 @@ const post = (body: unknown, path = "/api/simulate") =>
 afterEach(() => vi.unstubAllGlobals());
 
 describe("native simulation route", () => {
+  it("expires cached runtime facts and invalidates them after execution refusal", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+    let refused = false;
+    const env = nativeWorkerEnv(async (_url, init) =>
+      refused
+        ? new Response(null, { status: 401 })
+        : Response.json(await nativeReply(JSON.parse(String(init?.body)))),
+    );
+    const original = env.VACASK.getByName;
+    const fetch = vi.fn(async (url: string, init?: RequestInit) =>
+      original("test").fetch(url, init),
+    );
+    env.VACASK.getByName = () => ({ fetch });
+    try {
+      await routeSimulationRequest(post({ operation: "capabilities" }), env);
+      clock.mockReturnValue(31_001);
+      await routeSimulationRequest(post(nativeInput()), env);
+      refused = true;
+      expect(
+        (await routeSimulationRequest(post(nativeInput()), env))!.status,
+      ).toBe(502);
+      refused = false;
+      await routeSimulationRequest(post(nativeInput()), env);
+      expect(fetch.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+        "/health",
+        "/health",
+        "/run",
+        "/run",
+        "/health",
+        "/run",
+      ]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+  it("reuses bounded selected-runtime facts but refreshes explicit discovery", async () => {
+    const env = nativeWorkerEnv();
+    const original = env.VACASK.getByName;
+    const fetch = vi.fn(async (url: string, init?: RequestInit) =>
+      original("test").fetch(url, init),
+    );
+    env.VACASK.getByName = () => ({ fetch });
+    await routeSimulationRequest(post({ operation: "capabilities" }), env);
+    expect(
+      (await routeSimulationRequest(post(nativeInput()), env))!.status,
+    ).toBe(200);
+    expect(
+      (await routeSimulationRequest(post(nativeInput()), env))!.status,
+    ).toBe(200);
+    expect(fetch.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+      "/health",
+      "/run",
+      "/run",
+    ]);
+    await routeSimulationRequest(post({ operation: "capabilities" }), env);
+    expect(
+      fetch.mock.calls.filter(([url]) => new URL(url).pathname === "/health"),
+    ).toHaveLength(2);
+  });
+  it("rejects a streaming receipt bound to another run before exposing bytes", async () => {
+    const input = {
+      ...nativeInput(),
+      runToken: "11111111-1111-1111-1111-111111111111",
+    };
+    const env = nativeWorkerEnv(async (_url, init) =>
+      nativeStreamingReply({
+        ...JSON.parse(String(init?.body)),
+        runToken: "22222222-2222-2222-2222-222222222222",
+      }),
+    );
+    const response = await routeSimulationRequest(post(input), env);
+    expect(response!.status).toBe(502);
+    expect(await response!.json()).toMatchObject({
+      error: "simulator-protocol-invalid",
+    });
+  });
   it("keeps absence unconfigured, ignores other paths and rejects malformed operations", async () => {
     expect(await routeSimulationRequest(post({}, "/elsewhere"), {})).toBeNull();
     expect(
@@ -195,6 +272,22 @@ describe("native simulation route", () => {
       expect((await response!.json()).outcome.status).toBe(status);
     },
   );
+  it("preserves collector partial status independently of a successful process", async () => {
+    const response = await routeSimulationRequest(
+      post(nativeInput()),
+      nativeWorkerEnv(async () =>
+        Response.json({
+          ...(await nativeReply()),
+          collectionStatus: "partial",
+        }),
+      ),
+    );
+    expect(response!.status).toBe(200);
+    expect(await response!.json()).toMatchObject({
+      outcome: { status: "completed" },
+      collectionStatus: "partial",
+    });
+  });
   it.each(["environment", "input", "files", "legacy-result", "malformed"])(
     "withholds invalid %s result evidence without retry",
     async (fault) => {
@@ -337,6 +430,10 @@ describe("native simulation route", () => {
             "Bearer operator-token",
           );
           expect(init?.redirect).toBe("manual");
+          if (new URL(String(url)).pathname === "/run")
+            expect(
+              new Headers(init?.headers).get("x-analog-execution-transfer"),
+            ).toBe("receipt-v1");
           return new URL(String(url)).pathname === "/health"
             ? Response.json(nativeHealth)
             : Response.json(await nativeReply());

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 
 import type { ComponentInsertRequest } from "../component-insert/component-insert-request";
 import type { InsertLaunch } from "../component-insert/insert-launch";
@@ -19,8 +19,8 @@ import {
 
 /**
  * A tile is 40px wide, so its label is an abbreviation — "Cap", "Res", "NPN".
- * Cell Pins shorten to "Pin"; the full name remains in the tooltip and Insert
- * dialog, where there is room to read it.
+ * A Cell Pin shortens to "Pin" and a Bias Voltage Port to "Bias"; full names
+ * remain in the tooltip and Insert dialog, where there is room to read them.
  */
 const COMPACT_LIBRARY_LABELS: Readonly<Record<string, string>> = {
   capacitor: "Cap",
@@ -40,11 +40,9 @@ const COMPACT_LIBRARY_LABELS: Readonly<Record<string, string>> = {
   "inductor-compact": "Ind",
   ndmos: "NDMOS",
   npn: "NPN",
-  opamp: "OpAmp",
   adc: "ADC",
   dac: "DAC",
   "opamp-lettered": "OpAmp A",
-  "opamp-differential": "FD Amp",
   "opamp-differential-lettered": "FD Amp A",
   "opamp-differential-crossed": "FD Amp X",
   "and-gate": "AND",
@@ -59,8 +57,7 @@ const COMPACT_LIBRARY_LABELS: Readonly<Record<string, string>> = {
   pnp: "PNP",
   pdmos: "PDMOS",
   port: "Pin",
-  "port-filled": "Pin \u2022",
-  "pulse-voltage-source": "Clock",
+  "port-filled": "Bias",
   resistor: "Res",
   "variable-capacitor": "Var Cap",
   "variable-inductor": "Var Ind",
@@ -169,7 +166,6 @@ export function quickPlaceRequest(
 }
 
 export interface ShapesPanelProps {
-  userComponents?: ReactNode;
   styleProfileId: string;
   open: boolean;
   onStartInsert(launch: InsertLaunch): void;
@@ -179,7 +175,6 @@ export function ShapesPanel({
   styleProfileId,
   open,
   onStartInsert,
-  userComponents,
 }: ShapesPanelProps) {
   const libraryGroups = componentCatalog(styleProfileId, "");
   const librarySymbolCount = libraryGroups.reduce(
@@ -273,7 +268,6 @@ export function ShapesPanel({
                   </div>
                 </details>
               ))}
-              {userComponents}
             </div>
           </div>
         </details>

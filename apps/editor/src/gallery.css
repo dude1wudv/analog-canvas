@@ -279,34 +279,6 @@
   background: var(--icm-surface);
 }
 
-.review-appoint {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 14px 22px 0;
-}
-
-.review-appoint input {
-  box-sizing: border-box;
-  width: 20rem;
-  padding: 7px 10px;
-  border: 1px solid var(--icm-border);
-  border-radius: var(--icm-radius-sm);
-  font: inherit;
-  font-size: 13px;
-}
-
-.review-appoint button {
-  padding: 7px 12px;
-  border: 1px solid var(--icm-accent);
-  border-radius: var(--icm-radius-sm);
-  color: #fff;
-  background: var(--icm-accent);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
 .page-body {
   box-sizing: border-box;
   width: 100%;
@@ -399,13 +371,6 @@
 
 .gallery-filter button:hover {
   background: var(--icm-surface-hover);
-}
-
-.gallery-tag-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 12px 22px 0;
 }
 
 .gallery-tag-option {
@@ -723,6 +688,24 @@
   cursor: pointer;
 }
 
+.gallery-withdraw-menu > summary {
+  color: var(--icm-danger, #b42318);
+  font-size: 18px;
+}
+
+.gallery-withdraw-menu > summary:hover {
+  color: #fff;
+  background: var(--icm-danger, #b42318);
+}
+
+.gallery-withdraw-note {
+  max-width: 14rem;
+  margin: 2px 10px 6px;
+  color: var(--icm-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .gallery-owner-menu > summary::-webkit-details-marker {
   display: none;
 }
@@ -990,7 +973,14 @@
 }
 
 .gallery-tile-meta,
+/* A description can run to a full citation; the tile keeps three lines and
+   the title shows the rest, as does the entry's Notes in the editor. */
 .gallery-tile-description {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
   font-size: 12px;
   color: var(--icm-text-muted);
 }
@@ -1301,10 +1291,42 @@ div.gallery-contributor-status {
   opacity: 0.5;
   cursor: default;
 }
+.gallery-tile-wrap > .inline-confirm {
+  margin-top: 6px;
+}
+.shelf-rename-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-block: 8px;
+  min-width: 0;
+}
+.shelf-rename-form input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  color: var(--icm-text);
+  background: var(--icm-surface);
+  border: 1px solid var(--icm-border);
+  border-radius: 4px;
+  font: inherit;
+}
+.shelf-rename-form button {
+  padding: 4px 8px;
+  border: 1px solid var(--icm-border);
+  border-radius: 4px;
+  background: var(--icm-surface);
+  color: var(--icm-text);
+  cursor: pointer;
+}
+.gallery-owner-popover {
+  min-width: 0;
+  width: min(12rem, calc(100vw - 32px));
+}
 
-/* The tag row is a header, not the page: a filter narrows it, and the tail
-   stays one click away instead of wrapping over three rows. */
-.gallery-tag-search {
+/* The Gallery has one search field for circuit names, authors and tags. */
+.gallery-search-input {
   flex: 0 0 auto;
   width: 9rem;
   padding: 5px 12px;
@@ -1316,26 +1338,9 @@ div.gallery-contributor-status {
   font-size: 12px;
 }
 
-.gallery-tag-search:focus-visible {
+.gallery-search-input:focus-visible {
   outline: 2px solid var(--icm-accent);
   outline-offset: 1px;
-}
-
-.gallery-tag-more {
-  font-weight: 600;
-  color: var(--icm-accent);
-}
-
-.gallery-tag-empty {
-  align-self: center;
-  color: var(--icm-text-muted);
-  font-size: 12px;
-}
-
-/* "Any tag" is a filter, not a reset: pressed, it means the wall is showing
-   only circuits that carry at least one tag. */
-.gallery-tag-any {
-  font-weight: 600;
 }
 
 /* Deleting is irreversible, so it reads as the weightier of the two author
@@ -1350,10 +1355,7 @@ div.gallery-contributor-status {
   color: var(--icm-error);
 }
 
-/* The scan lives in the filter row: its own box would only indent what it
-   holds, so it passes its children straight to that row. The controls take the
-   free end beside the filter pills; everything the scan reports claims a full
-   line under them. */
+/* Administrator-only duplicate scan and cleanup results. */
 .gallery-duplicates {
   display: contents;
   font-size: 13px;
@@ -1434,4 +1436,290 @@ div.gallery-contributor-status {
   border-radius: 4px;
   padding: 2px 5px;
   margin-left: 6px;
+}
+
+/* Gallery taxonomy: quiet navigation beside the circuit wall. */
+.gallery-browser {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  flex: 1;
+}
+
+.gallery-main {
+  min-width: 0;
+}
+
+.gallery-sidebar-slot {
+  --gallery-ui-font:
+    "SF Pro Text", "Segoe UI Variable Text", ui-sans-serif, system-ui,
+    -apple-system, BlinkMacSystemFont, sans-serif;
+  position: relative;
+  box-sizing: border-box;
+  width: var(--gallery-sidebar-width, 238px);
+  min-width: 0;
+  border-right: 1px solid var(--icm-border);
+  background: var(--icm-surface);
+  font-family: var(--gallery-ui-font);
+  font-synthesis: none;
+}
+
+.gallery-sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -5px;
+  z-index: 1;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.gallery-sidebar-resize-handle:hover,
+.gallery-sidebar-resize-handle:focus-visible,
+.gallery-sidebar-resize-handle[data-dragging="true"] {
+  background: linear-gradient(
+    to right,
+    transparent 3px,
+    var(--icm-accent) 3px,
+    var(--icm-accent) 5px,
+    transparent 5px
+  );
+  outline: none;
+}
+
+.gallery-tag-sidebar {
+  position: sticky;
+  top: var(--icm-menubar-h);
+  max-height: calc(100dvh - var(--icm-menubar-h));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  box-sizing: border-box;
+  padding: 20px 14px;
+}
+
+.gallery-tag-sidebar h2 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--icm-text-muted);
+}
+
+.gallery-sidebar-quick {
+  display: grid;
+  gap: 3px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--icm-border);
+}
+
+.gallery-sidebar-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 0 8px;
+  margin-bottom: 10px;
+}
+
+.gallery-sidebar-clear {
+  border: 0;
+  padding: 2px 0;
+  background: transparent;
+  color: var(--icm-accent);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.gallery-sidebar-search {
+  margin: 20px 14px 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--icm-border);
+}
+
+.gallery-sidebar-search > .gallery-search-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+
+.gallery-sidebar-admin {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--icm-border);
+}
+
+.gallery-sidebar-admin .gallery-duplicates {
+  display: block;
+}
+
+.gallery-sidebar-admin .gallery-duplicates-actions {
+  display: grid;
+  gap: 6px;
+  margin-left: 0;
+}
+
+.gallery-sidebar-admin .gallery-duplicates-actions .gallery-tag-option {
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+}
+
+.gallery-sidebar-admin .gallery-duplicates-actions > span,
+.gallery-sidebar-admin .gallery-duplicates > p {
+  line-height: 1.4;
+}
+
+.gallery-sidebar-admin .gallery-duplicates-results {
+  max-height: none;
+  padding: 8px;
+  overflow: visible;
+}
+
+.gallery-sidebar-admin .gallery-duplicate-circuits {
+  grid-template-columns: 1fr;
+}
+
+.gallery-sidebar-admin .gallery-duplicate-circuits img {
+  height: 100px;
+}
+
+.gallery-sidebar-toggle {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .gallery-sidebar-search {
+    margin: 16px 10px 0;
+  }
+  .gallery-tag-sidebar {
+    padding: 16px 10px;
+  }
+  .gallery-main .gallery-wall {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+}
+
+@media (max-width: 620px) {
+  .gallery-browser {
+    display: block;
+  }
+  .gallery-sidebar-slot {
+    width: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--icm-border);
+  }
+  .gallery-sidebar-resize-handle {
+    display: none;
+  }
+  .gallery-sidebar-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 12px 18px;
+    border: 0;
+    background: var(--icm-surface);
+    color: var(--icm-text);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .gallery-tag-sidebar {
+    display: none;
+    position: static;
+    max-height: 55dvh;
+  }
+  .gallery-tag-sidebar[data-open="true"] {
+    display: block;
+  }
+}
+
+.gallery-attention {
+  margin: 0 8px 12px;
+  padding: 10px 12px;
+  font-size: 12px;
+  border: 1px solid var(--icm-border);
+  border-radius: 8px;
+  background: var(--icm-surface);
+}
+.gallery-attention summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.gallery-attention p,
+.gallery-attention li {
+  line-height: 1.5;
+}
+.gallery-attention ul {
+  padding-left: 18px;
+}
+.gallery-attention textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 8px;
+  border: 1px solid var(--icm-border);
+  border-radius: 4px;
+  background: var(--icm-surface);
+  color: var(--icm-text);
+}
+.gallery-attention-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.gallery-attention-actions button {
+  padding: 5px 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.shelf-tile-actions {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--icm-border);
+  border-radius: 6px;
+  background: var(--icm-surface);
+  color: var(--icm-text);
+  cursor: pointer;
+}
+.shelf-context-menu {
+  position: fixed;
+  z-index: 800;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: 6px;
+  border: 1px solid var(--icm-border);
+  border-radius: 10px;
+  background: var(--icm-surface);
+  box-shadow: 0 8px 30px rgb(0 0 0 / 15%);
+}
+.shelf-context-menu > * {
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 5px;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  color: var(--icm-text);
+  background: none;
+  text-decoration: none;
+  cursor: pointer;
+}
+.shelf-context-menu > *:hover,
+.shelf-context-menu > *:focus-visible {
+  background: var(--icm-accent-soft);
+}
+.shelf-action-error {
+  color: var(--icm-error);
 }

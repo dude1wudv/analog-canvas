@@ -18,6 +18,7 @@ import { simulationSpecReport, simulationSpecsToCsv } from "./spec-results.js";
 import { vacaskMeasurementResults } from "./vacask-measurements.js";
 import { ngspiceMeasurementResults } from "./ngspice-measurements.js";
 import { executionArtifactEntries } from "./execution-artifacts.js";
+import { resultCatalog } from "./result-catalog.js";
 
 import {
   ExecutionFailure,
@@ -25,26 +26,35 @@ import {
   type ExecutionInput,
   type Executor,
 } from "./executor.js";
-import { runReceipt } from "./run-receipt.js";
+import { runReceipt, releaseRunData } from "./run-receipt.js";
 import { ProjectInputIdentity } from "./input-identity.js";
 import { type Run, type SimulationReply } from "./contract.js";
 type PrepareSource = Extract<
   SimulationOperation,
   { operation: "prepare" }
 >["source"];
+type InputArtifact = {
+  name: string;
+  mediaType: string;
+  text: string;
+  metadata: Pick<ArtifactRef, "role" | "sourcePath" | "analysisIndex">;
+};
 type InternalRun = {
   view: Run;
   engine: "ngspice" | "vacask";
   prepared: Prepared;
   token: string;
-  expiresAt: number;
   done: Promise<void>;
   source: PrepareSource;
+  inputArtifacts?: InputArtifact[];
+  retryEvidence?: (() => Promise<void>) | undefined;
+  savingEvidence?: Promise<void> | undefined;
 };
 type StoredPrepared = {
   view: Prepared;
   input: ExecutionInput;
   source: PrepareSource;
+  inputArtifacts?: InputArtifact[];
 };
 type BatchPrepareItem = {
   id: string;
@@ -58,11 +68,35 @@ type InternalBatch = {
   done: Promise<void>;
 };
 const TTL = 15 * 60_000;
+const MAX_READ_WAIT_MS = 20_000;
+
+async function waitForRun(
+  completion: Promise<void>,
+  waitMs: number | undefined,
+): Promise<void> {
+  const duration = Math.min(Math.max(waitMs ?? 0, 0), MAX_READ_WAIT_MS);
+  if (!duration) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      completion,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, duration);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 /** One live session owns this service. UI visibility has no effect on execution. */
 export class SimulationService {
   private prepared = new Map<string, StoredPrepared>();
   private runs = new Map<string, InternalRun>();
   private starts = new Map<string, { key: string; runId: string }>();
+  private submissions = new Map<
+    string,
+    { key: string; reply: Promise<SimulationReply> }
+  >();
   private batches = new Map<string, InternalBatch>();
   private batchStarts = new Map<string, { key: string; batchId: string }>();
   private epoch = 0;
@@ -82,6 +116,7 @@ export class SimulationService {
     this.prepared.clear();
     this.runs.clear();
     this.starts.clear();
+    this.submissions.clear();
     this.batches.clear();
     this.batchStarts.clear();
     // Draft/artifact teardown belongs to the File Resource owner.
@@ -91,7 +126,11 @@ export class SimulationService {
       ),
     );
   }
-  async handle(request: unknown, requestId: string): Promise<SimulationReply> {
+  async handle(
+    request: unknown,
+    requestId: string,
+    options: { waitMs?: number } = {},
+  ): Promise<SimulationReply> {
     const parsed = SimulationOperationSchema.safeParse(request);
     if (!parsed.success)
       return problem(
@@ -148,11 +187,131 @@ export class SimulationService {
           : { ok: true, helpers };
       }
       this.prune();
-      if (op.operation === "capabilities")
+      if (op.operation === "history") {
+        try {
+          return {
+            ok: true,
+            ...(await this.files.history(op.limit, op.cursor)),
+          };
+        } catch (error) {
+          const invalidCursor =
+            error instanceof Error &&
+            error.message === "HISTORY_CURSOR_UNAVAILABLE";
+          return problem(
+            invalidCursor
+              ? "HISTORY_CURSOR_UNAVAILABLE"
+              : "RUN_HISTORY_UNAVAILABLE",
+            "Retained run directory could not be read; no simulation was started",
+            "read",
+            invalidCursor ? "fix-input" : "retry-after",
+          );
+        }
+      }
+      if (op.operation === "history-usage") {
+        try {
+          return { ok: true, usage: await this.files.usage() };
+        } catch {
+          return problem(
+            "RUN_HISTORY_UNAVAILABLE",
+            "Evidence usage could not be read; no simulation was started",
+            "read",
+            "retry-after",
+          );
+        }
+      }
+      if (op.operation === "history-delete") {
+        const active = this.runs.get(op.runId);
+        if (
+          active &&
+          ["running", "cancelling", "queued"].includes(active.view.state)
+        )
+          return problem(
+            "RUN_HISTORY_ACTIVE",
+            "Wait for this run to finish before deleting its history",
+            "export",
+            "retry-after",
+          );
+        // A terminal receipt may precede its final catalog write. Do not let
+        // a late save resurrect a Run just deleted from this session.
+        if (active) await active.done;
+        try {
+          const deletion = await this.files.deleteHistory(op.runId, op);
+          if (deletion.deleted) this.runs.delete(op.runId);
+          return { ok: true, deletion };
+        } catch (error) {
+          const code = error instanceof Error ? error.message : "";
+          if (code === "RUN_HISTORY_NOT_FOUND")
+            return problem(
+              code,
+              "No retained run has this ID",
+              "export",
+              "fix-input",
+            );
+          if (code === "RUN_HISTORY_ACTIVE")
+            return problem(
+              code,
+              "Wait for this run to finish before deleting its history",
+              "export",
+              "retry-after",
+            );
+          if (code === "RUN_HISTORY_SAVED")
+            return problem(
+              code,
+              "This run has a saved or unclassified archive. Pass includeSaved:true to delete it explicitly",
+              "export",
+              "fix-input",
+            );
+          if (code === "RUN_HISTORY_DELETE_UNAVAILABLE")
+            return problem(
+              code,
+              "This host does not provide persistent Run deletion; no evidence was removed",
+              "export",
+              "not-retryable",
+            );
+          return problem(
+            "RUN_HISTORY_DELETE_FAILED",
+            "Run evidence was not fully removed; inspect history before retrying with a new request ID",
+            "export",
+            "retry-after",
+          );
+        }
+      }
+      if (op.operation === "capabilities") {
+        const capabilities = await this.executor.capabilities(op.profileId);
+        const profiles = capabilities.profiles.filter(
+          (profile) => !op.profileId || profile.id === op.profileId,
+        );
+        if (op.profileId && !profiles.length)
+          return problem(
+            "SIMULATION_PROFILE_UNKNOWN",
+            "Select an advertised Profile",
+            "read",
+            "fix-input",
+          );
         return {
           ok: true,
           capabilities: {
-            ...(await this.executor.capabilities()),
+            ...capabilities,
+            profiles:
+              op.detail === "summary"
+                ? profiles.map(
+                    ({
+                      devices: _devices,
+                      dependencies: _dependencies,
+                      modelSymbols: _symbols,
+                      modelLibrary: _library,
+                      ...profile
+                    }) => profile,
+                  )
+                : profiles,
+            discovery: {
+              detail: op.detail ?? "full",
+              fullRequest: {
+                operation: "capabilities",
+                detail: "full",
+                ...(op.profileId ? { profileId: op.profileId } : {}),
+              },
+            },
             inputs: ["source"],
             maxActiveRuns: 1,
             batch: {
@@ -162,15 +321,76 @@ export class SimulationService {
             },
           },
         };
+      }
       if (op.operation === "prepare") return await this.prepare(op);
-      if (op.operation === "start") return this.start(op, requestId);
+      if (op.operation === "run") return await this.submit(op, requestId);
+      if (op.operation === "start") {
+        if (this.submissions.has(requestId))
+          return problem(
+            "REQUEST_ID_REUSED",
+            "This request ID identifies a run submission",
+            "start",
+          );
+        return this.start(op, requestId);
+      }
       if (op.operation === "prepare-batch") return await this.prepareBatch(op);
       if (op.operation === "prepare-sweep") return await this.prepareSweep(op);
       if (op.operation === "start-batch") return this.startBatch(op, requestId);
       if (op.operation === "read-batch" || op.operation === "cancel-batch")
         return await this.accessBatch(op);
-      if (op.operation === "read" || op.operation === "cancel") {
+      if (
+        op.operation === "read" ||
+        op.operation === "cancel" ||
+        op.operation === "catalog"
+      ) {
         const run = this.runs.get(op.runId);
+        if (!run && (op.operation === "catalog" || op.operation === "read")) {
+          const catalog = await this.files.catalog(op.runId);
+          if (catalog) {
+            if (op.operation === "catalog")
+              return this.catalogReply(catalog, op);
+            return {
+              ok: true,
+              run: {
+                id: catalog.runId,
+                preparedId: catalog.preparedId,
+                inputRevision: catalog.inputRevision,
+                state:
+                  catalog.execution === "cancelled" ||
+                  catalog.execution === "lost"
+                    ? catalog.execution
+                    : "finished",
+                artifacts: catalog.files,
+                details: {
+                  operation: "catalog",
+                  runId: catalog.runId,
+                  execution: catalog.execution,
+                  collection: catalog.collection,
+                  fileCount: catalog.files.length,
+                  datasetCount: catalog.datasets.length,
+                  analyses: catalog.datasets.map(
+                    ({
+                      analysisIndex,
+                      analysis,
+                      plotName,
+                      pointCount,
+                      axis,
+                    }) => ({
+                      analysisIndex,
+                      analysis,
+                      plotName,
+                      pointCount,
+                      ...(axis ? { axis } : {}),
+                    }),
+                  ),
+                },
+                ...(catalog.error ? { error: catalog.error } : {}),
+                inputStatus: "unavailable",
+                resultPreview: true,
+              },
+            };
+          }
+        }
         if (!run)
           return problem(
             "RUN_STATE_LOST",
@@ -178,6 +398,22 @@ export class SimulationService {
             "read",
             "not-retryable",
           );
+        if (op.operation === "catalog")
+          return this.catalogReply(
+            run.view.catalog ??
+              resultCatalog(
+                run.view,
+                "pending",
+                run.prepared.signalTargets,
+                run.source,
+              ),
+            op,
+          );
+        if (
+          op.operation === "read" &&
+          ["running", "cancelling"].includes(run.view.state)
+        )
+          await waitForRun(run.done, options.waitMs);
         if (
           op.operation === "cancel" &&
           ["running", "cancelling", "lost"].includes(run.view.state)
@@ -223,6 +459,20 @@ export class SimulationService {
           "Select one prepared input or one run",
           "export",
         );
+      if (op.runId) {
+        const run = this.runs.get(op.runId);
+        if (
+          run?.retryEvidence &&
+          !["running", "cancelling"].includes(run.view.state)
+        ) {
+          run.savingEvidence ??= run.retryEvidence().finally(() => {
+            run.savingEvidence = undefined;
+          });
+          await run.savingEvidence;
+        }
+        if (run?.view.error && run.retryEvidence)
+          return { ok: false, error: run.view.error };
+      }
       const artifacts = op.runId
         ? this.runs.get(op.runId)?.view.artifacts
         : this.prepared.get(op.preparedId!)?.view.artifacts;
@@ -244,42 +494,89 @@ export class SimulationService {
           message:
             "This operation failed; the session and authored input remain available.",
           stage:
-            op.operation === "capabilities" || op.operation === "authoring-help"
+            op.operation === "capabilities" ||
+            op.operation === "authoring-help" ||
+            op.operation === "history" ||
+            op.operation === "history-usage" ||
+            op.operation === "catalog"
               ? "read"
-              : op.operation === "prepare-batch"
-                ? "prepare"
-                : op.operation === "prepare-sweep"
+              : op.operation === "history-delete"
+                ? "export"
+                : op.operation === "prepare-batch"
                   ? "prepare"
-                  : op.operation === "start-batch"
-                    ? "start"
-                    : op.operation === "read-batch"
-                      ? "read"
-                      : op.operation === "cancel-batch"
-                        ? "cancel"
-                        : op.operation,
+                  : op.operation === "prepare-sweep"
+                    ? "prepare"
+                    : op.operation === "start-batch" || op.operation === "run"
+                      ? "start"
+                      : op.operation === "read-batch"
+                        ? "read"
+                        : op.operation === "cancel-batch"
+                          ? "cancel"
+                          : op.operation,
           recovery: "not-retryable",
           correlationId: crypto.randomUUID(),
         },
       };
     }
   }
+  private catalogReply(
+    catalog: import("./contract.js").ResultCatalog,
+    op: Extract<SimulationOperation, { operation: "catalog" }>,
+  ): SimulationReply {
+    if (!op.section) {
+      if (op.offset !== undefined || op.limit !== undefined)
+        return problem(
+          "CATALOG_SECTION_REQUIRED",
+          "Select files or datasets when paging the catalog",
+          "read",
+          "fix-input",
+        );
+      return { ok: true, catalog: structuredClone(catalog) };
+    }
+    const offset = op.offset ?? 0;
+    const total = catalog[op.section].length;
+    if (offset > total)
+      return problem(
+        "CATALOG_OFFSET_INVALID",
+        "Offset exceeds catalog section length",
+        "read",
+        "fix-input",
+      );
+    const end = Math.min(total, offset + (op.limit ?? 50));
+    const { signalTargets: _targets, ...metadata } = catalog;
+    return {
+      ok: true,
+      catalog: structuredClone({
+        ...metadata,
+        files: [],
+        datasets: [],
+        [op.section]: catalog[op.section].slice(offset, end),
+      }),
+      page: {
+        section: op.section,
+        total,
+        nextOffset: end < total ? end : null,
+      },
+    };
+  }
   private prune() {
     const now = this.now();
+    const pinned = new Set(
+      [...this.batches.values()]
+        .filter((batch) => ["running", "cancelling"].includes(batch.view.state))
+        .flatMap((batch) => batch.view.items.map((item) => item.prepared.id)),
+    );
     for (const [id, p] of this.prepared)
-      if (p.view.expiresAt <= now) this.prepared.delete(id);
-    for (const [id, r] of this.runs)
-      if (
-        r.expiresAt <= now &&
-        !["running", "cancelling"].includes(r.view.state)
-      )
-        this.runs.delete(id);
+      if (p.view.expiresAt <= now && !pinned.has(id)) this.prepared.delete(id);
     for (const [id, batch] of this.batches)
       if (
+        batch.view.expiresAt !== null &&
         batch.view.expiresAt <= now &&
-        !["running", "cancelling"].includes(batch.view.state)
+        batch.view.state === "prepared"
       )
         this.batches.delete(id);
-    // Keep request tombstones for this session: an expired run must not be executed again.
+    // Only unused execution preparations expire. Finished receipts and their
+    // request identities survive for this host lifetime; evidence has its own storage.
   }
   private async prepareBatch(
     op: Extract<SimulationOperation, { operation: "prepare-batch" }>,
@@ -573,7 +870,7 @@ export class SimulationService {
       : batch.view.items.some((item) => ["failed", "lost"].includes(item.state))
         ? "failed"
         : "finished";
-    batch.view.expiresAt = this.now() + TTL;
+    batch.view.expiresAt = null;
   }
   private async accessBatch(
     op: Extract<
@@ -613,14 +910,70 @@ export class SimulationService {
         }
       } else {
         batch.view.state = "cancelled";
+        batch.view.expiresAt = null;
       }
     }
     return { ok: true, batch: structuredClone(batch.view) };
   }
+  private submit(
+    op: Extract<SimulationOperation, { operation: "run" }>,
+    requestId: string,
+  ): Promise<SimulationReply> {
+    const key = JSON.stringify(op);
+    const previous = this.submissions.get(requestId);
+    if (previous)
+      return previous.key === key
+        ? previous.reply
+        : Promise.resolve(
+            problem(
+              "REQUEST_ID_REUSED",
+              "This request ID identifies a different submission",
+              "start",
+            ),
+          );
+    if (this.starts.has(requestId))
+      return Promise.resolve(
+        problem(
+          "REQUEST_ID_REUSED",
+          "This request ID identifies an existing start",
+          "start",
+        ),
+      );
+    if (this.submissions.size >= 256)
+      return Promise.resolve(
+        problem(
+          "RUN_LIMIT",
+          "Session submission history limit reached",
+          "start",
+          "reauthorize",
+        ),
+      );
+    // Reserve the identity while preparation is in flight, not only after it.
+    const reply = this.prepare(
+      { operation: "prepare", source: op.source },
+      false,
+    ).then((prepared): SimulationReply => {
+      if (!prepared.ok || !("prepared" in prepared)) return prepared;
+      const result = this.start(
+        {
+          operation: "start",
+          preparedId: prepared.prepared.id,
+          digest: prepared.prepared.digest,
+          ...(op.timeoutMs === undefined ? {} : { timeoutMs: op.timeoutMs }),
+        },
+        requestId,
+      );
+      this.prepared.delete(prepared.prepared.id);
+      return result;
+    });
+    this.submissions.set(requestId, { key, reply });
+    return reply;
+  }
   private async prepare(
     op: Extract<SimulationOperation, { operation: "prepare" }>,
+    publish = true,
   ): Promise<SimulationReply> {
-    if (this.prepared.size >= 32)
+    if (publish && this.prepared.size >= 32)
       return problem(
         "PREPARED_LIMIT",
         "Prepared input capacity reached; expired entries are removed automatically",
@@ -628,17 +981,9 @@ export class SimulationService {
         "retry-after",
       );
     const epoch = this.epoch;
-    const caps = await this.executor.capabilities();
-    if (!caps.configured)
-      return problem(
-        "simulation-not-configured",
-        "Configure an execution environment to run simulations; authored input remains available.",
-        "prepare",
-        "retry-after",
-      );
     const preparation = await prepareExecutionInput(
       op,
-      caps,
+      undefined,
       this.getProject,
       this.files,
       (profileId) => this.executor.capabilities(profileId),
@@ -660,35 +1005,35 @@ export class SimulationService {
         "prepare",
         "reauthorize",
       );
-    const artifacts: ArtifactRef[] = [];
-    artifacts.push(
-      await this.publishArtifact(
-        epoch,
-        "prepared.cir",
-        "text/plain",
-        input.preparedDeck,
-      ),
-    );
-    for (const f of input.files)
-      artifacts.push(
-        await this.publishArtifact(epoch, f.path, "text/plain", f.text),
-      );
-    artifacts.push(
-      await this.publishArtifact(
-        epoch,
-        "source-map.json",
-        "application/json",
-        JSON.stringify(preparation.sourceMaps, null, 2),
-      ),
-    );
-    artifacts.push(
-      await this.publishArtifact(
-        epoch,
-        "prepared.json",
-        "application/json",
-        JSON.stringify(input, null, 2),
-      ),
-    );
+    const inputArtifacts: InputArtifact[] = [
+      {
+        name: "prepared.cir",
+        mediaType: "text/plain",
+        text: input.preparedDeck,
+        metadata: { role: "prepared" as const },
+      },
+      ...input.files.map((file) => ({
+        name: file.path,
+        mediaType: "text/plain",
+        text: file.text,
+        metadata: { role: "source" as const, sourcePath: file.path },
+      })),
+      {
+        name: "source-map.json",
+        mediaType: "application/json",
+        text: JSON.stringify(preparation.sourceMaps, null, 2),
+        metadata: { role: "source-map" as const },
+      },
+      {
+        name: "prepared.json",
+        mediaType: "application/json",
+        text: JSON.stringify(input, null, 2),
+        metadata: { role: "execution-input" as const },
+      },
+    ];
+    const artifacts = publish
+      ? await this.publishArtifacts(epoch, inputArtifacts)
+      : [];
     if (epoch !== this.epoch)
       return problem(
         "SESSION_CHANGED",
@@ -712,10 +1057,20 @@ export class SimulationService {
       artifacts,
       warnings,
     };
+    const summary: InputArtifact = {
+      name: "preparation.json",
+      mediaType: "application/json",
+      text: JSON.stringify(view),
+      metadata: { role: "prepared" },
+    };
+    if (publish)
+      artifacts.push(...(await this.publishArtifacts(epoch, [summary])));
+    else inputArtifacts.push(summary);
     this.prepared.set(view.id, {
       input: structuredClone(input),
       view,
       source: structuredClone(op.source),
+      ...(publish ? {} : { inputArtifacts }),
     });
     return { ok: true, prepared: structuredClone(view) };
   }
@@ -794,9 +1149,11 @@ export class SimulationService {
       engine: prepared.input.language === "vacask" ? "vacask" : "ngspice",
       prepared: structuredClone(prepared.view),
       token: crypto.randomUUID(),
-      expiresAt: this.now() + TTL,
       done: Promise.resolve(),
       source: prepared.source,
+      ...(prepared.inputArtifacts
+        ? { inputArtifacts: prepared.inputArtifacts }
+        : {}),
     };
     this.runs.set(view.id, entry);
     this.starts.set(requestId, { key, runId: view.id });
@@ -814,17 +1171,43 @@ export class SimulationService {
     input: ExecutionInput,
     timeoutMs: number | undefined,
     epoch: number,
+    acceptedOutput?: Awaited<ReturnType<Executor["execute"]>>,
   ) {
+    const totalStarted = performance.now();
+    let executionWaitMs = 0;
+    let resultMaterializationMs = 0;
+    let managedTiming:
+      Awaited<ReturnType<Executor["execute"]>>["timing"] | undefined;
+    let materializationStarted: number | undefined;
+    let collectionStatus: "complete" | "partial" = "complete";
+    let terminalState: Run["state"] = "finished";
     try {
-      const output = validateExecutionOutput(
-        input,
-        await this.executor.execute(input, run.token, timeoutMs, {
+      const executionOutput =
+        acceptedOutput ??
+        (await this.executor.execute(input, run.token, timeoutMs, {
           preparedId: run.prepared.id,
           preparedDigest: run.prepared.digest,
-        }),
-      );
+        }));
+      executionWaitMs = performance.now() - totalStarted;
+      const output = validateExecutionOutput(input, executionOutput);
+      managedTiming = output.timing;
       if (epoch !== this.epoch) return;
+      if (acceptedOutput) delete run.view.error;
+      run.retryEvidence = () =>
+        this.execute(run, input, timeoutMs, epoch, output);
       run.view.result = output.result;
+      materializationStarted = performance.now();
+      // These are browsing/evidence representations. The executor persists the
+      // immutable execution input before admission; publication need not delay it.
+      if (run.inputArtifacts) {
+        await this.publishArtifacts(
+          epoch,
+          run.inputArtifacts,
+          run.view.artifacts,
+        );
+        delete run.inputArtifacts;
+      }
+      collectionStatus = output.collectionStatus ?? "complete";
       const nativeReports =
         output.result.metadata.environment.simulator.name === "vacask"
           ? vacaskMeasurementResults(
@@ -859,86 +1242,153 @@ export class SimulationService {
         diagnostics: nativeReports.diagnostics,
         specs,
       };
-      const artifact = async (name: string, type: string, text: string) =>
-        run.view.artifacts.push(
-          await this.publishArtifact(epoch, name, type, text),
-        );
-      await artifact("log.txt", "text/plain", output.result.log);
-      await artifact("specs.json", "application/json", JSON.stringify(specs));
-      await artifact("specs.csv", "text/csv", simulationSpecsToCsv(specs));
+      const pendingArtifacts: Array<{
+        name: string;
+        mediaType: string;
+        text: string;
+        metadata: Pick<ArtifactRef, "role" | "sourcePath" | "analysisIndex">;
+      }> = [
+        {
+          name: "log.txt",
+          mediaType: "text/plain",
+          text: output.result.log,
+          metadata: { role: "log" },
+        },
+        {
+          name: "specs.json",
+          mediaType: "application/json",
+          text: JSON.stringify(specs),
+          metadata: { role: "specs" },
+        },
+        {
+          name: "specs.csv",
+          mediaType: "text/csv",
+          text: simulationSpecsToCsv(specs),
+          metadata: { role: "specs" },
+        },
+      ];
+      if (nativeReports.diagnostics.length)
+        pendingArtifacts.push({
+          name: "outputs.json",
+          mediaType: "application/json",
+          text: JSON.stringify(run.view.outputData),
+          metadata: { role: "diagnostics" },
+        });
       if (output.rawfile !== undefined)
-        await artifact("out.raw", "text/plain", output.rawfile);
+        pendingArtifacts.push({
+          name: "out.raw",
+          mediaType: "text/plain",
+          text: output.rawfile,
+          metadata: { role: "raw" },
+        });
       if (output.executedDeck !== undefined)
-        await artifact("executed.cir", "text/plain", output.executedDeck);
+        pendingArtifacts.push({
+          name: "executed.cir",
+          mediaType: "text/plain",
+          text: output.executedDeck,
+          metadata: { role: "executed" },
+        });
+      const executionEntries = executionArtifactEntries(output);
+      pendingArtifacts.push(
+        ...executionEntries.map((item) => ({
+          name: item.name,
+          mediaType: "text/plain",
+          text: item.text,
+          metadata: {
+            role: item.kind,
+            sourcePath: item.path,
+          },
+        })),
+        {
+          name: "result.json",
+          mediaType: "application/json",
+          text: JSON.stringify(output.result),
+          metadata: { role: "result" },
+        },
+        ...(output.result.data?.analyses ?? []).map((analysis, index) => ({
+          name: analysis.analysis + "-" + index + ".csv",
+          mediaType: "text/csv",
+          text: simulationAnalysisToCsv(analysis),
+          metadata: { role: "table" as const, analysisIndex: index },
+        })),
+      );
+      const published = await this.publishArtifacts(
+        epoch,
+        pendingArtifacts,
+        run.view.artifacts,
+      );
       const nativeArtifacts: {
         kind: "raw" | "executed";
         path: string;
         artifact: ArtifactRef;
       }[] = [];
-      for (const item of executionArtifactEntries(output)) {
-        const ref = await this.publishArtifact(
-          epoch,
-          item.name,
-          "text/plain",
-          item.text,
+      for (const item of executionEntries) {
+        const artifact = published.find(
+          (ref) => ref.name === item.name && ref.role === item.kind,
         );
-        run.view.artifacts.push(ref);
+        if (!artifact) throw new Error("ARTIFACT_STORAGE_UNAVAILABLE");
         nativeArtifacts.push({
           kind: item.kind,
           path: item.path,
-          artifact: ref,
+          artifact,
         });
       }
-      await artifact(
-        "result.json",
-        "application/json",
-        JSON.stringify(output.result),
+      const catalog = resultCatalog(
+        { ...run.view, state: output.cancelled ? "cancelled" : "finished" },
+        collectionStatus,
+        run.prepared.signalTargets,
+        run.source,
       );
-      for (const [i, analysis] of (
-        output.result.data?.analyses ?? []
-      ).entries())
-        await artifact(
-          analysis.analysis + "-" + i + ".csv",
-          "text/csv",
-          simulationAnalysisToCsv(analysis),
-        );
       const evidenceArtifacts = run.view.artifacts.map((item) => ({ ...item }));
-      await artifact(
-        "evidence-manifest.json",
-        "application/json",
-        JSON.stringify(
+      await this.publishArtifacts(
+        epoch,
+        [
           {
-            schemaVersion: 1,
-            run: {
-              id: run.view.id,
-              preparedId: run.view.preparedId,
-              inputRevision: run.view.inputRevision,
-            },
-            prepared: {
-              digest: run.prepared.digest,
-              mode: run.prepared.mode,
-              environment: run.prepared.environment,
-              vectors: run.prepared.vectors,
-              signalNames: run.prepared.signalNames,
-              signalTargets: run.prepared.signalTargets,
-              outputs: run.prepared.outputs,
-              deviceOperatingPoints: run.prepared.deviceOperatingPoints,
-              measurements: run.prepared.measurements ?? [],
-            },
-            environment: output.result.metadata.environment,
-            ...(nativeArtifacts.length ? { nativeArtifacts } : {}),
-            artifacts: evidenceArtifacts,
+            name: "evidence-manifest.json",
+            mediaType: "application/json",
+            text: JSON.stringify(
+              {
+                schemaVersion: 1,
+                run: {
+                  id: run.view.id,
+                  preparedId: run.view.preparedId,
+                  inputRevision: run.view.inputRevision,
+                },
+                prepared: {
+                  digest: run.prepared.digest,
+                  mode: run.prepared.mode,
+                  environment: run.prepared.environment,
+                  vectors: run.prepared.vectors,
+                  signalNames: run.prepared.signalNames,
+                  signalTargets: run.prepared.signalTargets,
+                  outputs: run.prepared.outputs,
+                  deviceOperatingPoints: run.prepared.deviceOperatingPoints,
+                  measurements: run.prepared.measurements ?? [],
+                },
+                environment: output.result.metadata.environment,
+                ...(nativeArtifacts.length ? { nativeArtifacts } : {}),
+                artifacts: evidenceArtifacts,
+                catalog,
+              },
+              null,
+              2,
+            ),
+            metadata: { role: "manifest" },
           },
-          null,
-          2,
-        ),
+        ],
+        run.view.artifacts,
       );
+      resultMaterializationMs = performance.now() - materializationStarted;
       if (epoch === this.epoch)
-        run.view.state = output.cancelled ? "cancelled" : "finished";
+        terminalState = output.cancelled ? "cancelled" : "finished";
     } catch (error) {
+      if (executionWaitMs === 0)
+        executionWaitMs = performance.now() - totalStarted;
+      if (materializationStarted !== undefined && resultMaterializationMs === 0)
+        resultMaterializationMs = performance.now() - materializationStarted;
       if (epoch !== this.epoch) return;
       if (error instanceof ExecutionFailure) {
-        run.view.state =
+        terminalState =
           error.problem.code === "run-cancelled"
             ? "cancelled"
             : error.acceptedUnknown
@@ -946,28 +1396,117 @@ export class SimulationService {
               : "finished";
         run.view.error = error.problem;
       } else {
-        run.view.state = run.view.result ? "finished" : "lost";
+        terminalState = run.view.result ? "finished" : "lost";
         run.view.error = {
           code:
             error instanceof Error && error.message === "ARTIFACT_CAPACITY"
               ? "ARTIFACT_CAPACITY"
-              : "INTERNAL_ERROR",
+              : error instanceof Error &&
+                  error.message === "ARTIFACT_STORAGE_UNAVAILABLE"
+                ? "ARTIFACT_STORAGE_UNAVAILABLE"
+                : "INTERNAL_ERROR",
           message:
-            "Run evidence could not be fully collected. Existing artifacts remain available; export them before the retention window expires.",
+            "Run evidence could not be fully saved. Existing files remain available; export this run to retry saving retained results without executing again.",
           stage: "read",
-          recovery: "not-retryable",
+          recovery: "retry-after",
           correlationId: crypto.randomUUID(),
         };
       }
     }
-    run.expiresAt = this.now() + TTL;
+    // A refused/lost execution still needs its captured input evidence. Retrying
+    // this publication must never call the executor again.
+    if (!run.view.result && run.inputArtifacts) {
+      const saveInput = async () => {
+        await this.publishArtifacts(
+          epoch,
+          run.inputArtifacts ?? [],
+          run.view.artifacts,
+        );
+        delete run.inputArtifacts;
+      };
+      try {
+        await saveInput();
+      } catch {
+        run.retryEvidence = async () => {
+          await saveInput();
+          run.view.catalog = resultCatalog(
+            run.view,
+            "partial",
+            run.prepared.signalTargets,
+            run.source,
+          );
+          if (!(await this.files.saveCatalog(run.view.catalog)))
+            throw new Error("ARTIFACT_STORAGE_UNAVAILABLE");
+          run.retryEvidence = undefined;
+        };
+      }
+    }
+    run.view.catalog = resultCatalog(
+      { ...run.view, state: terminalState },
+      run.view.error ? "partial" : collectionStatus,
+      run.prepared.signalTargets,
+      run.source,
+    );
+    const catalogSaveStarted = performance.now();
+    if (!(await this.files.saveCatalog(run.view.catalog))) {
+      run.view.error ??= {
+        code: "RUN_CATALOG_STORAGE_UNAVAILABLE",
+        message:
+          "Files were collected, but the durable run directory could not be saved. Keep this run ID and download its evidence before closing the host.",
+        stage: "export",
+        recovery: "retry-after",
+      };
+    }
+    const catalogSaveMs = performance.now() - catalogSaveStarted;
+    run.view.details = {
+      operation: "catalog",
+      runId: run.view.id,
+      timing: {
+        executionWaitMs,
+        resultMaterializationMs,
+        catalogSaveMs,
+        totalMs: performance.now() - totalStarted,
+        ...(managedTiming?.managed.queueMs === undefined
+          ? {}
+          : { serverQueueMs: managedTiming.managed.queueMs }),
+        ...(managedTiming?.managed.executionMs === undefined
+          ? {}
+          : { serverExecutionMs: managedTiming.managed.executionMs }),
+        ...(managedTiming?.managed.runTotalMs === undefined
+          ? {}
+          : { serverRunTotalMs: managedTiming.managed.runTotalMs }),
+        ...(managedTiming
+          ? {
+              serverInputReadMs: managedTiming.managed.inputReadMs,
+              serverUpstreamMs: managedTiming.managed.upstreamMs,
+              serverResultCommitMs: managedTiming.managed.resultCommitMs,
+              resultFetchMs: managedTiming.managed.resultFetchMs,
+              clientWaitMs: managedTiming.managed.clientWaitMs,
+              pollCount: managedTiming.managed.pollCount,
+              pollSleepMs: managedTiming.managed.pollSleepMs,
+            }
+          : {}),
+      },
+    };
+    if (epoch !== this.epoch) return;
+    run.view.state = terminalState;
+    // Do not retain full numeric arrays in memory after complete artifact
+    // publication. On publication failure, preserve any otherwise unsaved data.
+    if (!run.view.error) {
+      run.view = releaseRunData(run.view);
+      run.retryEvidence = undefined;
+    }
   }
-  private async publishArtifact(
+  private async publishArtifacts(
     epoch: number,
-    name: string,
-    mediaType: string,
-    text: string,
-  ) {
+    artifacts: readonly {
+      name: string;
+      mediaType: string;
+      text: string;
+      metadata: Pick<ArtifactRef, "role" | "sourcePath" | "analysisIndex">;
+    }[],
+    retained: ArtifactRef[] = [],
+  ): Promise<ArtifactRef[]> {
     if (epoch !== this.epoch)
       throw new ExecutionFailure({
         code: "SESSION_CHANGED",
@@ -975,7 +1514,13 @@ export class SimulationService {
         stage: "export",
         recovery: "reauthorize",
       });
-    const ref = await this.files.put(name, mediaType, text);
+    const existing = artifacts.map((item) =>
+      retained.find(
+        (ref) => ref.name === item.name && ref.role === item.metadata.role,
+      ),
+    );
+    const missing = artifacts.filter((_, index) => !existing[index]);
+    const created = await this.files.putMany(missing);
     if (epoch !== this.epoch)
       throw new ExecutionFailure({
         code: "SESSION_CHANGED",
@@ -983,6 +1528,12 @@ export class SimulationService {
         stage: "export",
         recovery: "reauthorize",
       });
-    return ref;
+    let createdIndex = 0;
+    return artifacts.map((_, index) => {
+      const ref = existing[index] ?? created[createdIndex++];
+      if (!ref) throw new Error("ARTIFACT_STORAGE_UNAVAILABLE");
+      if (!retained.some((item) => item.id === ref.id)) retained.push(ref);
+      return ref;
+    });
   }
 }

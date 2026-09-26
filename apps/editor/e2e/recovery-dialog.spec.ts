@@ -80,12 +80,12 @@ async function seedRecoveryRecords(
   }, records);
 }
 
-test("startup recovery is visible after reload and restore forks a working copy", async ({
+test("startup recovery without a saved workspace restores into a new working copy", async ({
   page,
 }) => {
   await page.goto("/editor");
-  // One lone component is below the meaningful-content threshold: the
-  // reload must stay banner-free.
+  // A fresh navigation has no saved window workspace and can offer recovery.
+  // One lone component remains below the banner's meaningful-content threshold.
   await chooseComponent(page, "resistor");
   await page
     .getByTestId("schematic-canvas")
@@ -95,7 +95,7 @@ test("startup recovery is visible after reload and restore forks a working copy"
   await expect
     .poll(() => recoveryProjectTexts(page))
     .toContain('"revision": 1');
-  await page.reload();
+  await page.goto("/editor?recovery=small");
   const banner = page.getByTestId("startup-recovery-banner");
   await expect(page.getByTestId("schematic-canvas")).toBeVisible();
   await expect(banner).toHaveCount(0);
@@ -113,10 +113,10 @@ test("startup recovery is visible after reload and restore forks a working copy"
     .poll(() => recoveryProjectTexts(page))
     .toContain('"revision": 3');
 
-  await page.reload();
+  await page.goto("/editor?recovery=meaningful");
   await expect(banner).toBeVisible();
   await expect(banner).toContainText("New Circuit");
-  await banner.getByRole("button", { name: "Restore" }).click();
+  await banner.getByRole("button", { name: "恢复" }).click();
   await expect(banner).toBeHidden();
   await expect(page.getByTestId("revision")).toHaveText("3");
   await expect(page.getByTestId("status")).toContainText(
@@ -174,9 +174,9 @@ test("a damaged latest copy restores the previous generation", async ({
     });
   }, target!.workingCopyId);
 
-  await page.reload();
-  await clickCommand(page, "File", "Recover Local Work…");
-  const dialog = page.getByRole("dialog", { name: "Recover recent work" });
+  await page.goto("/editor?recovery=damaged");
+  await clickCommand(page, "File", "Recover Unsaved Work…");
+  const dialog = page.getByRole("dialog", { name: "恢复最近工作" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByTestId("recovery-session-card")).toContainText(
     "Damaged",
@@ -207,8 +207,8 @@ test("a newer-schema copy is downloadable but not restorable", async ({
     },
   ]);
   await page.reload();
-  await clickCommand(page, "File", "Recover Local Work…");
-  const dialog = page.getByRole("dialog", { name: "Recover recent work" });
+  await clickCommand(page, "File", "Recover Unsaved Work…");
+  const dialog = page.getByRole("dialog", { name: "恢复最近工作" });
   await expect(dialog).toBeVisible();
   const card = dialog.getByTestId("recovery-session-card").filter({
     hasText: "Future Project",
@@ -218,7 +218,7 @@ test("a newer-schema copy is downloadable but not restorable", async ({
 
   const downloadPromise = page.waitForEvent("download");
   await card
-    .getByRole("button", { name: "Download backup of Future Project" })
+    .getByRole("button", { name: "下载 Future Project 的备份" })
     .click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toContain("-backup.icproj.json");
@@ -259,8 +259,8 @@ test("explicit discard removes outgoing recovery and hides a clean replacement",
     buffer: Buffer.from(serializeProject(replacement)),
   });
   await page
-    .getByRole("dialog", { name: "Unsaved changes" })
-    .getByRole("button", { name: "Continue without saving" })
+    .getByRole("dialog", { name: "有未保存的更改" })
+    .getByRole("button", { name: "不保存并继续" })
     .click();
   await expect(page.getByTestId("active-document-name")).toHaveText(
     "Clean Replacement Cell",
@@ -278,7 +278,7 @@ test("explicit discard removes outgoing recovery and hides a clean replacement",
 
   const fileMenu = await openMenu(page, "File");
   await expect(
-    fileMenu.getByRole("button", { name: "Recover Local Work…" }),
+    fileMenu.getByRole("button", { name: "恢复未保存的内容…" }),
   ).toHaveCount(0);
 });
 
@@ -294,11 +294,11 @@ test("dialog closes with Escape and keeps focus labels", async ({ page }) => {
     .toContain('"revision": 1');
   await page.reload();
 
-  await clickCommand(page, "File", "Recover Local Work…");
-  const dialog = page.getByRole("dialog", { name: "Recover recent work" });
+  await clickCommand(page, "File", "Recover Unsaved Work…");
+  const dialog = page.getByRole("dialog", { name: "恢复最近工作" });
   await expect(dialog).toBeVisible();
   await expect(
-    dialog.getByRole("button", { name: "Close recent work recovery" }),
+    dialog.getByRole("button", { name: "关闭最近工作恢复" }),
   ).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
@@ -324,13 +324,13 @@ test("storage failure offers a backup without acknowledging Cloud Save", async (
   await expect(page.getByTestId("revision")).toHaveText("1");
   const warning = page.getByTestId("recovery-failure-banner");
   await expect(warning).toBeVisible();
-  await expect(warning).toContainText("unavailable");
+  await expect(warning).toContainText("浏览器存储不可用");
   await expect(page.getByTestId("recovery-state")).toHaveText(
-    "Recovery unavailable — download now",
+    "恢复存储不可用，请立即下载",
   );
 
   const downloadPromise = page.waitForEvent("download");
-  await warning.getByRole("button", { name: "Download Backup" }).click();
+  await warning.getByRole("button", { name: "下载备份" }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toContain(".icproj.json");
   // A portable backup mitigates data loss but is not the Cloud Save
@@ -338,7 +338,7 @@ test("storage failure offers a backup without acknowledging Cloud Save", async (
   // warning until the user explicitly dismisses it.
   await expect(warning).toBeVisible();
   await expect(page.getByTestId("project-unsaved-indicator")).toBeVisible();
-  await warning.getByRole("button", { name: "Dismiss warning" }).click();
+  await warning.getByRole("button", { name: "关闭警告" }).click();
   await expect(warning).toBeHidden();
   await expect(page.getByTestId("project-unsaved-indicator")).toBeVisible();
 });

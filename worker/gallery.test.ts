@@ -1,3 +1,4 @@
+import { clearFormulaArtifactCacheForTests } from "../packages/math-typesetting/src/cache";
 import { CURRENT_PROJECT_SCHEMA_VERSION } from "@icm/model";
 import { CURRENT_PROJECT_FILE_VERSION } from "@icm/project-protocol";
 import { DatabaseSync } from "node:sqlite";
@@ -7,14 +8,23 @@ import {
   createEmptyDocument,
   createEmptyProject,
   createRoutePath,
+  flattenRichText,
+  hasItalicScripts,
+  roleLabelFormat,
 } from "@icm/model";
+import type { RichTextDocument, RichTextRun } from "@icm/model";
+import { createDesignNetlistExport } from "@icm/netlist";
 import { parseProject, serializeProject } from "@icm/project-protocol";
 import { hierarchicalSymbolId } from "@icm/symbols";
 
 import { CLOUD_PROJECT_LIMIT as EDITOR_CLOUD_PROJECT_LIMIT } from "../apps/editor/src/features/editor-shell/cloud-projects";
-import { CLOUD_PROJECT_LIMIT } from "./gallery-do";
+import {
+  CLOUD_PROJECT_LIMIT,
+  GALLERY_NETLIST_PAGE_CHARACTERS,
+} from "./gallery-do";
 import {
   GALLERY_DAILY_SUBMISSION_LIMIT,
+  galleryReadableDocument,
   refreshNetlistMarks,
   GALLERY_MAX_PROJECT_BYTES,
   GalleryDO,
@@ -26,16 +36,18 @@ import {
   type GalleryPreviewCache,
 } from "./gallery";
 import { AuthDO, type AuthEnv } from "./auth";
+import workerEntry from "./index";
 
 function sqliteState(queries?: string[]) {
   const db = new DatabaseSync(":memory:");
+  let transactionId = 0;
   return {
     storage: {
       sql: {
         exec<T>(query: string, ...bindings: unknown[]) {
           queries?.push(query);
           const statement = db.prepare(query);
-          if (/^\s*(select|with|pragma)/iu.test(query)) {
+          if (/^\s*(select|with|pragma|explain)/iu.test(query)) {
             const rows = statement.all(
               ...(bindings as (string | number | null)[]),
             ) as T[];
@@ -57,7 +69,17 @@ function sqliteState(queries?: string[]) {
         },
       },
       transactionSync<T>(callback: () => T): T {
-        return callback();
+        const savepoint = `test_transaction_${++transactionId}`;
+        db.exec(`SAVEPOINT ${savepoint}`);
+        try {
+          const result = callback();
+          db.exec(`RELEASE ${savepoint}`);
+          return result;
+        } catch (error) {
+          db.exec(`ROLLBACK TO ${savepoint}`);
+          db.exec(`RELEASE ${savepoint}`);
+          throw error;
+        }
       },
     },
   };
@@ -83,6 +105,7 @@ function environment(): Harness {
     ADMIN_EMAILS: "owner@example.com",
   } as AuthEnv);
   return {
+    GALLERY_BACKUP_TOKEN: READER_TOKEN,
     GALLERY: {
       getByName: () => ({
         fetch: (input: string, init?: RequestInit) =>
@@ -104,6 +127,383 @@ function environment(): Harness {
 }
 
 const ORIGIN = "https://gallery.test";
+
+describe("Gallery readers", () => {
+  // Every read the Gallery serves, for one published entry.
+  async function reads(env: Harness) {
+    const cookie = await adminOf(env);
+    const id = await submitOne(env, "Readers only", { cookie });
+    const { entry } = (await (
+      await route(
+        env,
+        new Request(`${ORIGIN}/api/gallery/${id}`, {
+          headers: cookieHeaders(cookie),
+        }),
+      )
+    ).json()) as { entry: { previewRevision: string } };
+    return [
+      "/api/gallery",
+      "/api/gallery?netlistable=1",
+      "/api/gallery/tags",
+      "/api/gallery/authors",
+      `/api/gallery/${id}`,
+      `/api/gallery/${id}/versions`,
+      `/api/gallery/${id}/preview.svg?v=${entry.previewRevision}`,
+    ];
+  }
+  const direct = async (env: Harness, path: string, headers?: HeadersInit) =>
+    (await routeGalleryRequest(
+      new Request(`${ORIGIN}${path}`, headers ? { headers } : {}),
+      env,
+    ))!;
+
+  it("gives a visitor without a session or the read credential nothing", async () => {
+    const env = environment();
+    for (const path of await reads(env)) {
+      for (const headers of [
+        undefined,
+        { Authorization: "Bearer wrong" },
+        { Cookie: "session=forged" },
+      ]) {
+        const response = await direct(env, path, headers);
+        expect(response.status, `${path} ${JSON.stringify(headers)}`).toBe(401);
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(await response.json()).toEqual({ error: "sign-in-required" });
+      }
+      expect(
+        (
+          await routeGalleryRequest(
+            new Request(`${ORIGIN}${path}`, { method: "HEAD" }),
+            env,
+          )
+        )?.status,
+      ).toBe(401);
+    }
+  });
+
+  it("serves a signed-in member and the read credential every read", async () => {
+    const env = environment();
+    const paths = await reads(env);
+    const member = await makerOf(env);
+    for (const path of paths) {
+      // History stays its owner's or an admin's; the rest is any reader's.
+      const expected = path.endsWith("/versions") ? 401 : 200;
+      const read = await direct(env, path, cookieHeaders(member));
+      expect(read.status, path).toBe(expected);
+      if (expected === 401)
+        expect(((await read.json()) as { error: string }).error).not.toBe(
+          "sign-in-required",
+        );
+      expect(
+        (
+          await direct(env, path, {
+            Authorization: `Bearer ${READER_TOKEN}`,
+          })
+        ).status,
+        path,
+      ).toBe(expected);
+    }
+    const preview = await direct(env, paths.at(-1)!, cookieHeaders(member));
+    // A reader's browser may keep the image; a shared cache may not.
+    expect(preview.headers.get("cache-control")).toBe(
+      "private, max-age=31536000, immutable",
+    );
+  });
+});
+
+describe("off-site Gallery backup credential", () => {
+  const endpoint = `${ORIGIN}/api/gallery/maintenance/automated-backup`;
+  it("reads only bounded Gallery pages and records a stable restore schema", async () => {
+    const env = environment();
+    env.GALLERY_BACKUP_TOKEN = "backup-only-secret";
+    const cookie = await adminOf(env);
+    const id = await submitOne(env, "Backup target", { cookie });
+    const get = (table: string) =>
+      route(
+        env,
+        new Request(`${endpoint}?table=${table}`, {
+          headers: { Authorization: "Bearer backup-only-secret" },
+        }),
+      );
+    const first = (await (await get("inventory")).json()) as any;
+    expect(first.tables).toEqual({
+      galleryEntries: 1,
+      galleryEntryVersions: 0,
+      galleryLikes: 0,
+    });
+    expect(
+      first.schema
+        .filter((s: any) => s.type === "table")
+        .map((s: any) => s.name)
+        .sort(),
+    ).toEqual(["gallery_entries", "gallery_entry_versions", "gallery_likes"]);
+    expect(JSON.stringify(first)).not.toContain("cloud_projects");
+    expect(
+      ((await (await get("inventory")).json()) as any).snapshotRevision,
+    ).toBe(first.snapshotRevision);
+    const page = (await (await get("galleryEntries")).json()) as any;
+    expect(page.rows).toEqual(
+      env.gallerySql
+        .exec("SELECT * FROM gallery_entries WHERE id = ?", id)
+        .toArray(),
+    );
+    expect(page.rows).toHaveLength(1);
+    // A same-count update must invalidate the capture, including a raw SQL maintenance edit.
+    env.gallerySql.exec(
+      "UPDATE gallery_entries SET description = ? WHERE id = ?",
+      "Changed",
+      id,
+    );
+    const after = (await (await get("inventory")).json()) as any;
+    expect(after.tables).toEqual(first.tables);
+    expect(after.snapshotRevision).not.toBe(first.snapshotRevision);
+    expect((await get("cloudProjects")).status).toBe(400);
+    expect((await get("")).status).toBe(400);
+    const replay = new DatabaseSync(":memory:");
+    for (const item of first.schema) replay.exec(item.sql);
+    const columns = Object.keys(page.rows[0]);
+    replay
+      .prepare(
+        `INSERT INTO gallery_entries (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`,
+      )
+      .run(...(Object.values(page.rows[0]) as any[]));
+    expect(replay.prepare("SELECT * FROM gallery_entries").all()).toEqual(
+      page.rows,
+    );
+    replay.close();
+  });
+
+  it("fails closed without the secret and cannot authorize writes or private exports", async () => {
+    const env = environment();
+    const headers = {
+      Authorization: "Bearer backup-only-secret",
+      "content-type": "application/json",
+    };
+    expect(
+      (
+        await route(
+          env,
+          new Request(`${endpoint}?table=inventory`, { headers }),
+        )
+      ).status,
+    ).toBe(401);
+    env.GALLERY_BACKUP_TOKEN = "backup-only-secret";
+    expect(
+      (await route(env, new Request(`${endpoint}?table=inventory`))).status,
+    ).toBe(401);
+    expect(
+      (
+        await route(
+          env,
+          new Request(`${endpoint}?table=inventory`, {
+            headers: { Authorization: "Bearer wrong" },
+          }),
+        )
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await route(
+          env,
+          new Request(endpoint, { method: "POST", headers, body: "{}" }),
+        )
+      ).status,
+    ).toBe(405);
+    for (const action of [
+      "schema-restore",
+      "project-format",
+      "schema-current",
+      "label-looks",
+    ])
+      expect(
+        (
+          await route(
+            env,
+            new Request(`${ORIGIN}/api/gallery/maintenance/${action}`, {
+              method: "POST",
+              headers,
+              body: "{}",
+            }),
+          )
+        ).status,
+      ).toBe(401);
+    expect(
+      (
+        await route(
+          env,
+          new Request(
+            `${ORIGIN}/api/gallery/maintenance/schema-backup?table=cloudProjects`,
+            { headers },
+          ),
+        )
+      ).status,
+    ).toBe(401);
+  });
+});
+
+describe("Gallery netlist read", () => {
+  const endpoint = `${ORIGIN}/api/gallery/maintenance/netlists`;
+  const bearer = { Authorization: "Bearer backup-only-secret" };
+  type NetlistPage = {
+    format: string;
+    netlistFormat: string;
+    entries: {
+      id: string;
+      name: string;
+      netlistable: boolean;
+      netlist: string | null;
+      diagnostics: { severity: string; code: string; message: string }[];
+    }[];
+    nextCursor: string | null;
+  };
+  async function read(
+    env: Harness,
+    query = "",
+    headers: Record<string, string> = bearer,
+  ): Promise<{ status: number; page: NetlistPage }> {
+    const response = await route(
+      env,
+      new Request(`${endpoint}${query}`, { headers }),
+    );
+    return {
+      status: response.status,
+      page: (await response.json()) as NetlistPage,
+    };
+  }
+  function exported(env: Harness, id: string, format: "spice" | "spectre") {
+    const result = createDesignNetlistExport(
+      parseProject(
+        env.gallerySql
+          .exec<{ project_text: string }>(
+            "SELECT project_text FROM gallery_entries WHERE id = ?",
+            id,
+          )
+          .one().project_text,
+      ),
+      { format },
+    );
+    return result.status === "ready" ? result.file.text : null;
+  }
+
+  it("pages the public Gallery's netlists for the read-only credential or an admin", async () => {
+    const env = environment();
+    env.GALLERY_BACKUP_TOKEN = "backup-only-secret";
+    const cookie = await adminOf(env);
+    // An ideal switch has no reviewed netlist definition, so this one blocks.
+    const sketch = createEmptyProject("sketch", "Sketch");
+    sketch.documents[0]!.instances.push({
+      id: "S1",
+      symbolId: "ideal-switch",
+      reference: "S1",
+      placement: { position: { x: 0, y: 0 }, rotation: 0, mirror: "none" },
+    });
+    const blocked = await submitOne(env, "Sketch", {
+      cookie,
+      text: serializeProject(sketch),
+    });
+    const ready = await submitOne(env, "Extractable", { cookie });
+    const withdrawn = await submitOne(env, "Withdrawn", { cookie });
+    env.gallerySql.exec(
+      "UPDATE gallery_entries SET status = 'recycled' WHERE id = ?",
+      withdrawn,
+    );
+    const publicIds = [blocked, ready].sort();
+
+    const { status, page } = await read(env);
+    expect(status).toBe(200);
+    expect(page.format).toBe("analog-canvas-gallery-netlists-v1");
+    expect(page.netlistFormat).toBe("spice");
+    expect(page.entries.map((entry) => entry.id)).toEqual(publicIds);
+    expect(page.nextCursor).toBeNull();
+    expect(JSON.stringify(page)).not.toContain("projectText");
+    const byId = new Map(page.entries.map((entry) => [entry.id, entry]));
+    expect(exported(env, ready, "spice")).toEqual(expect.any(String));
+    expect(byId.get(ready)).toMatchObject({
+      name: "Extractable",
+      netlistable: true,
+      netlist: exported(env, ready, "spice"),
+    });
+    expect(byId.get(blocked)).toMatchObject({
+      netlistable: false,
+      netlist: null,
+    });
+    expect(
+      byId.get(blocked)!.diagnostics.some((item) => item.severity === "error"),
+    ).toBe(true);
+
+    const spectre = await read(env, `?format=spectre&id=${ready}`);
+    expect(spectre.page.entries.map((entry) => entry.netlist)).toEqual([
+      exported(env, ready, "spectre"),
+    ]);
+    const first = await read(env, "?limit=1");
+    expect(first.page.entries).toHaveLength(1);
+    expect(first.page.nextCursor).toBe(first.page.entries[0]!.id);
+    const second = await read(env, `?limit=1&after=${first.page.nextCursor}`);
+    expect(
+      [...first.page.entries, ...second.page.entries].map((entry) => entry.id),
+    ).toEqual(publicIds);
+    expect(second.page.nextCursor).toBeNull();
+
+    // An admin's browser session reads the same pages without the token.
+    expect(await read(env, "", { Cookie: cookie })).toEqual({ status, page });
+  });
+
+  it("ends a page before its Project Code outgrows one response", async () => {
+    const env = environment();
+    env.GALLERY_BACKUP_TOKEN = "backup-only-secret";
+    for (const id of ["~large-1", "~large-2"])
+      env.gallerySql.exec(
+        `INSERT INTO gallery_entries
+         (id, name, author, description, created_at, schema_version, status,
+          project_text, svg_text)
+         VALUES (?, ?, 'Author', '', '2026-09-24T00:00:00.000Z', 1, 'public', ?, '')`,
+        id,
+        id,
+        "x".repeat(GALLERY_NETLIST_PAGE_CHARACTERS / 2 + 1),
+      );
+    const first = await read(env);
+    expect(first.page.entries.map((entry) => entry.id)).toEqual(["~large-1"]);
+    expect(first.page.entries[0]!.diagnostics[0]!.code).toBe(
+      "PROJECT_UNREADABLE",
+    );
+    expect(first.page.nextCursor).toBe("~large-1");
+    const second = await read(env, "?after=~large-1");
+    expect(second.page.entries.map((entry) => entry.id)).toEqual(["~large-2"]);
+    expect(second.page.nextCursor).toBeNull();
+  });
+
+  it("refuses other readers, writes, unknown formats and entries off the wall", async () => {
+    const env = environment();
+    expect((await read(env)).status).toBe(401);
+    env.GALLERY_BACKUP_TOKEN = "backup-only-secret";
+    expect((await read(env, "", {})).status).toBe(401);
+    expect(
+      (await read(env, "", { Authorization: "Bearer wrong" })).status,
+    ).toBe(401);
+    expect((await read(env, "", { Cookie: await makerOf(env) })).status).toBe(
+      401,
+    );
+    expect(
+      (
+        await route(
+          env,
+          new Request(endpoint, {
+            method: "POST",
+            headers: bearer,
+            body: "{}",
+          }),
+        )
+      ).status,
+    ).toBe(405);
+    expect((await read(env, "?format=verilog")).status).toBe(400);
+    const withdrawn = await submitOne(env, "Withdrawn");
+    env.gallerySql.exec(
+      "UPDATE gallery_entries SET status = 'rejected' WHERE id = ?",
+      withdrawn,
+    );
+    expect((await read(env, `?id=${withdrawn}`)).status).toBe(404);
+  });
+});
 
 function submissionRequest(
   body: unknown,
@@ -128,6 +528,29 @@ function submissionRequest(
 
 function projectText(name = "Fixture"): string {
   return serializeProject(createEmptyProject("gallery-fixture", name));
+}
+
+function formulaProjectText(): string {
+  const project = createEmptyProject("formula-fixture", "Formula circuit");
+  project.documents[0]!.drafting!.objects.push({
+    id: "formula-note",
+    kind: "text",
+    locked: false,
+    zIndex: 0,
+    anchor: { kind: "free", position: { x: 100, y: 100 } },
+    alignment: "middle",
+    rotation: 0,
+    content: {
+      runs: [
+        {
+          kind: "math",
+          latex: String.raw`\frac{1}{\sqrt{L_1C_1}}`,
+          display: "block",
+        },
+      ],
+    },
+  });
+  return serializeProject(project);
 }
 
 function previousVersionText(): string {
@@ -188,8 +611,27 @@ function previousRouteVersionText(): string {
   return JSON.stringify(raw);
 }
 
+/**
+ * The Gallery answers only signed-in readers or the read-only credential. A
+ * test that reads without a session means "no account": it reads with the
+ * credential, which the Gallery treats exactly like that.
+ */
+const READER_TOKEN = "gallery-reader-test-token";
+function asReader(request: Request): Request {
+  if (
+    (request.method !== "GET" && request.method !== "HEAD") ||
+    !new URL(request.url).pathname.startsWith("/api/gallery") ||
+    request.headers.get("Cookie") ||
+    request.headers.get("Authorization")
+  )
+    return request;
+  const headers = new Headers(request.headers);
+  headers.set("Authorization", `Bearer ${READER_TOKEN}`);
+  return new Request(request, { headers });
+}
+
 async function route(env: GalleryEnv, request: Request) {
-  const response = await routeGalleryRequest(request, env);
+  const response = await routeGalleryRequest(asReader(request), env);
   if (!response) throw new Error("gallery route did not match");
   return response;
 }
@@ -224,6 +666,78 @@ describe("svgPreviewDimensions", () => {
     ).toEqual({ width: 640, height: 360 });
     expect(svgPreviewDimensions('<svg viewBox="0 0 20 0"></svg>')).toBeNull();
     expect(svgPreviewDimensions("<svg></svg>")).toBeNull();
+  });
+});
+
+describe("suspended public Gallery documents", () => {
+  it("serves the ordinary application shell without embedding the complete catalog", async () => {
+    const env = environment();
+    const id = await submitOne(env, "Five transistor OTA");
+
+    const readable = await galleryReadableDocument(
+      new Request(`${ORIGIN}/?q=transistor&tags=ota`),
+      env,
+    );
+    expect(readable).toBeNull();
+    const assets = {
+      fetch: async () =>
+        new Response(
+          '<!doctype html><html><head><title>Analog Canvas</title></head><body><div id="root"></div></body></html>',
+          { headers: { "content-type": "text/html; charset=utf-8" } },
+        ),
+    };
+    for (const path of ["/?q=transistor&tags=ota", `/g/${id}`]) {
+      const served = await workerEntry.fetch(new Request(`${ORIGIN}${path}`), {
+        ...env,
+        ASSETS: assets,
+      } as unknown as Parameters<typeof workerEntry.fetch>[1]);
+      expect(served.status).toBe(200);
+      const html = await served.text();
+      expect(html).toContain('<div id="root"></div>');
+      expect(html).not.toContain("data-public-gallery-document");
+      expect(html).not.toContain("Five transistor OTA");
+    }
+
+    const list = await route(env, new Request(`${ORIGIN}/api/gallery`));
+    expect(list.status).toBe(200);
+    expect(await list.text()).toContain("Five transistor OTA");
+  });
+
+  it("returns 404 for the former direct Project Code, netlist and preview URLs", async () => {
+    const env = environment();
+    const id = await submitOne(env, "Readable circuit");
+    const readable = await galleryReadableDocument(
+      new Request(`${ORIGIN}/g/${id}`),
+      env,
+    );
+    expect(readable).toBeNull();
+    for (const resource of [
+      "project.icproj.json",
+      "netlist.sp",
+      "netlist.scs",
+      "preview.svg",
+    ]) {
+      for (const method of ["GET", "HEAD"]) {
+        const response = await route(
+          env,
+          new Request(`${ORIGIN}/g/${id}/${resource}`, { method }),
+        );
+        expect(response.status).toBe(404);
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(await response.text()).toBe("");
+      }
+    }
+  });
+
+  it("does not advertise or serve crawler and Agent discovery documents", async () => {
+    const env = environment();
+    const robots = await route(env, new Request(`${ORIGIN}/robots.txt`));
+    expect(await robots.text()).toContain("Disallow: /g/");
+    for (const path of ["/sitemap.xml", "/llms.txt"]) {
+      const response = await route(env, new Request(`${ORIGIN}${path}`));
+      expect(response.status).toBe(404);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    }
   });
 });
 
@@ -459,7 +973,7 @@ describe("gallery data migrations", () => {
     ).toBe("3187863239-netizen");
   });
 
-  it("migrates histories to two versions and removes orphaned data", () => {
+  it("migrates histories to three versions and removes orphaned data", () => {
     const state = sqliteState();
     new GalleryDO(state);
     for (const entryId of ["entry-a", "entry-b"]) {
@@ -523,8 +1037,10 @@ describe("gallery data migrations", () => {
     ).toEqual([
       { entry_id: "entry-a", version_no: 4 },
       { entry_id: "entry-a", version_no: 3 },
+      { entry_id: "entry-a", version_no: 2 },
       { entry_id: "entry-b", version_no: 3 },
       { entry_id: "entry-b", version_no: 2 },
+      { entry_id: "entry-b", version_no: 1 },
     ]);
     expect(
       state.storage.sql
@@ -535,6 +1051,88 @@ describe("gallery data migrations", () => {
 });
 
 describe("newest-first gallery feed", () => {
+  it("covers feed statistics without changing paged, filtered or viewer-specific responses", async () => {
+    const env = environment();
+    const cookie = await adminOf(env);
+    const ids = await wallOf(env, 7);
+    env.gallerySql.exec(
+      "UPDATE gallery_entries SET tags = ',amplifier,' WHERE id = ?",
+      ids[0]!,
+    );
+    env.gallerySql.exec(
+      "UPDATE gallery_entries SET author = 'Other', netlistable = 1 WHERE id = ?",
+      ids[1]!,
+    );
+    env.gallerySql.exec(
+      "UPDATE gallery_entries SET status = 'pending' WHERE id = ?",
+      ids[2]!,
+    );
+    const createIndex = env.galleryQueries.find((q) =>
+      q.includes("CREATE INDEX IF NOT EXISTS idx_gallery_entries_feed_stats"),
+    )!;
+    expect(createIndex).toBeDefined();
+    const first = await galleryPage(env);
+    const variants = [
+      "",
+      "limit=1",
+      `limit=2&cursor=${encodeURIComponent(first.nextCursor!)}`,
+      "tags=amplifier",
+      "netlistable=1",
+      "author=Other",
+      "liked=1",
+      "attention=1",
+    ];
+    const read = async () => {
+      const results = [];
+      for (const query of variants) {
+        for (const signedIn of [false, true]) {
+          const response = await route(
+            env,
+            new Request(`${ORIGIN}/api/gallery?${query}`, {
+              headers: signedIn ? { cookie } : {},
+            }),
+          );
+          results.push({
+            status: response.status,
+            body: await response.json(),
+          });
+        }
+      }
+      return results;
+    };
+    env.gallerySql.exec("DROP INDEX idx_gallery_entries_feed_stats");
+    const before = await read();
+    env.gallerySql.exec(createIndex);
+    const after = await read();
+    expect(after).toEqual(before);
+    const queries = env.galleryQueries.filter(
+      (q) =>
+        q.includes("FROM gallery_entries e") &&
+        (q.includes("AS total") || q.includes("MAX(e.author)")),
+    );
+    for (const query of queries
+      .filter((q) => (q.match(/\?/g) ?? []).length <= 4)
+      .slice(0, 2)) {
+      const bindings = Array.from(
+        { length: (query.match(/\?/g) ?? []).length },
+        () => "",
+      );
+      const plan = env.gallerySql
+        .exec<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, ...bindings)
+        .toArray();
+      expect(
+        plan.some((step) =>
+          step.detail.includes("COVERING INDEX idx_gallery_entries_feed_stats"),
+        ),
+      ).toBe(true);
+    }
+    // Metadata updates must be visible immediately; there is no statistics TTL.
+    env.gallerySql.exec(
+      "UPDATE gallery_entries SET status = 'public' WHERE id = ?",
+      ids[2]!,
+    );
+    expect((await galleryPage(env)).total).toBe(first.total + 1);
+  });
   async function galleryPage(
     env: Harness,
     cursor?: string,
@@ -587,7 +1185,13 @@ describe("newest-first gallery feed", () => {
   it("stops when the newest-first cursor chain is exhausted", async () => {
     const env = environment();
     const empty = await galleryPage(env);
-    expect(empty).toEqual({ entries: [], nextCursor: null, total: 0 });
+    expect(empty).toEqual({
+      entries: [],
+      nextCursor: null,
+      total: 0,
+      filterCounts: { attention: 0, netlistable: 0, liked: 0 },
+      authors: [],
+    });
 
     await wallOf(env, 2);
     const full = await galleryPage(env);
@@ -697,6 +1301,58 @@ describe("newest-first gallery feed", () => {
         { author: "Chen", ownerUserId: "owner-chen", count: 1 },
       ],
     });
+  });
+
+  it("counts contributors within all feed filters before pagination", async () => {
+    const env = environment();
+    const ids = await wallOf(env, 6);
+    const fixtures = [
+      ["Alice", "owner-a", ",amplifier,", 1, "public"],
+      ["Alice", "owner-a", ",amplifier,", 0, "public"],
+      ["Alice", "owner-b", ",oscillator,", 1, "public"],
+      ["Bob", "owner-c", ",amplifier,", 1, "public"],
+      ["", "owner-blank", ",amplifier,", 1, "public"],
+      ["Hidden", "owner-hidden", ",amplifier,", 1, "rejected"],
+    ] as const;
+    fixtures.forEach((fixture, index) =>
+      env.gallerySql.exec(
+        "UPDATE gallery_entries SET author=?, owner_user_id=?, tags=?, netlistable=?, status=? WHERE id=?",
+        ...fixture,
+        ids[index]!,
+      ),
+    );
+    const list = async (query = "") =>
+      (await (
+        await route(env, new Request(`${ORIGIN}/api/gallery?${query}`))
+      ).json()) as {
+        entries: { id: string }[];
+        nextCursor: string;
+        authors: { author: string; ownerUserId: string; count: number }[];
+      };
+    const first = await list("limit=1&tags=amplifier");
+    expect(first.entries).toHaveLength(1);
+    expect(first.authors).toEqual([
+      { author: "Alice", ownerUserId: "owner-a", count: 2 },
+      { author: "Bob", ownerUserId: "owner-c", count: 1 },
+    ]);
+    expect(
+      (
+        await list(
+          `limit=1&tags=amplifier&cursor=${encodeURIComponent(first.nextCursor)}`,
+        )
+      ).authors,
+    ).toEqual(first.authors);
+    expect((await list("tags=amplifier&netlistable=1")).authors).toEqual([
+      { author: "Alice", ownerUserId: "owner-a", count: 1 },
+      { author: "Bob", ownerUserId: "owner-c", count: 1 },
+    ]);
+    expect((await list("author=Alice&tags=amplifier")).authors).toEqual([
+      first.authors[0],
+    ]);
+    expect((await list("owner=owner-b")).authors).toEqual([
+      { author: "Alice", ownerUserId: "owner-b", count: 1 },
+    ]);
+    expect((await list("owner=owner-b&tags=amplifier")).authors).toEqual([]);
   });
 
   it("filters same-name contributors by stable owner identity", async () => {
@@ -853,28 +1509,71 @@ describe("netlist marks and thumbs", () => {
       return (await response.json()) as {
         entries: { id: string }[];
         total: number;
+        nextCursor: string | null;
+        filterCounts: { attention: number; netlistable: number; liked: number };
+        authors: { author: string; ownerUserId: string; count: number }[];
       };
     };
+
+    const firstPage = await list("limit=1", cookie);
+    expect(firstPage.entries).toHaveLength(1);
+    expect(firstPage.filterCounts).toEqual({
+      attention: 0,
+      netlistable: 1,
+      liked: 1,
+    });
+    const secondPage = await list(
+      `limit=1&cursor=${encodeURIComponent(firstPage.nextCursor!)}`,
+      cookie,
+    );
+    expect(secondPage.filterCounts).toEqual(firstPage.filterCounts);
+    expect(firstPage.authors).toHaveLength(1);
+    expect(firstPage.authors[0]!.count).toBe(2);
+    expect(secondPage.authors).toEqual(firstPage.authors);
+    expect((await list("")).filterCounts).toEqual({
+      attention: 0,
+      netlistable: 1,
+      liked: 0,
+    });
 
     const marked = await list("netlistable=1", cookie);
     expect(marked.entries.map((entry) => entry.id)).toEqual([extractableId]);
     // The total describes the narrowed wall, so paging stays honest.
     expect(marked.total).toBe(1);
+    expect(marked.authors).toEqual([{ ...firstPage.authors[0], count: 1 }]);
+    expect(marked.filterCounts).toEqual({
+      attention: 0,
+      netlistable: 1,
+      liked: 0,
+    });
 
     const liked = await list("liked=1", cookie);
     expect(liked.entries.map((entry) => entry.id)).toEqual([sketchId]);
     expect(liked.total).toBe(1);
+    expect(liked.authors).toEqual(marked.authors);
+    expect(liked.filterCounts).toEqual({
+      attention: 0,
+      netlistable: 0,
+      liked: 1,
+    });
 
     // The marks compose, and here nothing satisfies both.
     const both = await list("netlistable=1&liked=1", cookie);
     expect(both.entries).toHaveLength(0);
     expect(both.total).toBe(0);
+    expect(both.authors).toEqual([]);
+    expect(both.filterCounts).toEqual({
+      attention: 0,
+      netlistable: 0,
+      liked: 0,
+    });
 
     // A like belongs to an account: signed out, "the ones I liked" is none of
     // them rather than all of them.
     const anonymous = await list("liked=1");
     expect(anonymous.entries).toHaveLength(0);
     expect(anonymous.total).toBe(0);
+    expect(anonymous.authors).toEqual([]);
     expect((await list("", cookie)).entries).toHaveLength(2);
   });
 
@@ -1212,6 +1911,53 @@ describe("private Cloud Projects", () => {
     expect(anonymous.status).toBe(401);
   });
 
+  it("renders saved and legacy Shelf formulas without exposing private projects", async () => {
+    const env = environment();
+    const cookie = await makerOf(env);
+    clearFormulaArtifactCacheForTests();
+    const created = await route(
+      env,
+      new Request(`${ORIGIN}/api/projects`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Origin: ORIGIN,
+          Cookie: cookie,
+        },
+        body: JSON.stringify({
+          name: "Formula circuit",
+          projectText: formulaProjectText(),
+        }),
+      }),
+    );
+    expect(created.status).toBe(201);
+    const { project } = (await created.json()) as {
+      project: { id: string; revision: number };
+    };
+    const original = env.gallerySql
+      .exec<{ preview_svg: string }>(
+        "SELECT preview_svg FROM cloud_projects WHERE id=?",
+        project.id,
+      )
+      .one().preview_svg;
+    expect(original).toContain('data-role="formula"');
+    const legacy = '<svg><text data-role="formula-pending">latex</text></svg>';
+    env.gallerySql.exec(
+      "UPDATE cloud_projects SET preview_svg=? WHERE id=?",
+      legacy,
+      project.id,
+    );
+    clearFormulaArtifactCacheForTests();
+    const url = `${ORIGIN}/api/projects/${project.id}/preview.svg?v=${project.revision}&render=formula-sans-v2`;
+    const repaired = await route(
+      env,
+      new Request(url, { headers: cookieHeaders(cookie) }),
+    );
+    expect(await repaired.text()).toBe(original);
+    expect(repaired.headers.get("cache-control")).toContain("private");
+    expect((await route(env, new Request(url))).status).toBe(401);
+  });
+
   it("backfills a thumbnail for a shelf saved before previews existed", async () => {
     const env = environment();
     const cookie = await makerOf(env);
@@ -1282,6 +2028,112 @@ describe("private Cloud Projects", () => {
       error: "revision-conflict",
       project: { id: createdProject.id, revision: 2 },
     });
+  });
+
+  it("retains three private saves, restores reversibly with revision checks, and backs up history", async () => {
+    const env = environment();
+    const cookie = await makerOf(env);
+    const stranger = await adminOf(env);
+    const { project } = await (
+      await route(env, saveRequest(cookie, "Draft 1"))
+    ).json();
+    const base = `${ORIGIN}/api/projects/${project.id}`;
+    const call = (
+      path = "",
+      method = "GET",
+      revision?: number,
+      name?: string,
+      identity = cookie,
+    ) =>
+      route(
+        env,
+        new Request(base + path, {
+          method,
+          headers: {
+            Cookie: identity,
+            Origin: ORIGIN,
+            ...(revision ? { "If-Match": `revision-${revision}` } : {}),
+          },
+          ...(name
+            ? { body: JSON.stringify({ name, projectText: projectText(name) }) }
+            : {}),
+        }),
+      );
+    for (let revision = 1; revision < 5; revision++)
+      expect(
+        (await call("", "PUT", revision, `Draft ${revision + 1}`)).status,
+      ).toBe(200);
+    // Retried Save must not grow history or displace a useful revision.
+    expect((await call("", "PUT", 4, "Draft 5")).status).toBe(200);
+    const history = await (await call("/versions")).json();
+    expect(history.revision).toBe(5);
+    expect(
+      history.versions.map((v: { versionNo: number }) => v.versionNo),
+    ).toEqual([4, 3, 2]);
+    const path = `/versions/${encodeURIComponent(history.versions[1].versionId)}`;
+    expect(
+      (await call("/versions", "GET", undefined, undefined, stranger)).status,
+    ).toBe(404);
+    expect(
+      (await call(path + "/project", "GET", undefined, undefined, stranger))
+        .status,
+    ).toBe(404);
+    expect(
+      (await call(path + "/restore", "POST", 5, undefined, stranger)).status,
+    ).toBe(404);
+    expect(
+      (await call(path + "/preview.svg")).headers.get("cache-control"),
+    ).toContain("private");
+    expect(await (await call(path + "/preview.svg")).text()).toContain("<svg");
+    expect((await call(path + "/restore", "POST")).status).toBe(428);
+    expect((await call(path + "/restore", "POST", 4)).status).toBe(409);
+    env.gallerySql.exec(
+      "UPDATE cloud_projects SET favorite = 1, gallery_entry_id = 'publication' WHERE id = ?",
+      project.id,
+    );
+    expect((await call(path + "/restore", "POST", 5)).status).toBe(200);
+    expect((await (await call()).json()).project).toMatchObject({
+      name: "Draft 3",
+      revision: 6,
+      favorite: true,
+      galleryEntryId: "publication",
+    });
+    expect(
+      (await (await call("/versions")).json()).versions.map(
+        (v: { versionNo: number }) => v.versionNo,
+      ),
+    ).toEqual([5, 4, 3]);
+    const maintenance = async (action: string, body: unknown) => {
+      const response = await env.GALLERY.getByName("global").fetch(
+        `https://gallery/${action}`,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+      );
+      return response.json();
+    };
+    const backup = await maintenance("schema-backup", {});
+    expect(backup.tables.cloudProjectVersions).toHaveLength(3);
+    const publicOnly = await maintenance("schema-backup", {
+      table: "inventory",
+      scope: "gallery",
+    });
+    expect(publicOnly.tables).not.toHaveProperty("cloudProjectVersions");
+    expect(
+      await maintenance("schema-backup", {
+        table: "cloudProjectVersions",
+        scope: "gallery",
+      }),
+    ).toMatchObject({ error: "invalid-table" });
+    await call("", "DELETE");
+    expect(
+      env.gallerySql.exec("SELECT * FROM cloud_project_versions").toArray(),
+    ).toHaveLength(0);
+    await maintenance("schema-restore", { backup });
+    expect((await (await call("/versions")).json()).versions).toHaveLength(3);
+    expect((await call(path + "/project")).status).toBe(200);
+    expect(await (await call(path + "/preview.svg")).text()).toContain("<svg");
   });
 
   it("is private to the account that saved it", async () => {
@@ -1377,6 +2229,110 @@ describe("private Cloud Projects", () => {
 });
 
 describe("gallery submissions", () => {
+  it("keeps a description up to 1000 characters, room for a full citation", async () => {
+    const env = environment();
+    const cookie = await adminOf(env);
+    const publish = (description: string) =>
+      route(
+        env,
+        submissionRequest(
+          {
+            name: "Cited circuit",
+            description,
+            projectText: projectText("Cited circuit"),
+          },
+          { ip: "203.0.113.7", cookie },
+        ),
+      );
+    const citation =
+      "Y. Liang, R. Ding and Z. Zhu, \u201cA 9.1ENOB 200MS/s Asynchronous SAR ADC With Hybrid Single-Ended/Differential DAC in 55-nm CMOS for Image Sensing Signals,\u201d in IEEE, ";
+    const longest = citation.repeat(8).slice(0, 1000);
+    const accepted = await publish(longest);
+    expect(accepted.status).toBe(201);
+    const { id } = (await accepted.json()) as { id: string };
+    expect(
+      env.gallerySql
+        .exec<{
+          description: string;
+        }>("SELECT description FROM gallery_entries WHERE id=?", id)
+        .one().description,
+    ).toBe(longest.trim());
+    // One more is refused whole, never stored cut.
+    const refused = await publish(`${longest}x`);
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toEqual({ error: "invalid-fields" });
+  });
+
+  it("prepares formulas on cold publish and repairs legacy previews without changing publications", async () => {
+    const env = environment();
+    const cookie = await adminOf(env);
+    clearFormulaArtifactCacheForTests();
+    const id = await submitOne(env, "Formula circuit", {
+      cookie,
+      text: formulaProjectText(),
+    });
+    const stored = () =>
+      env.gallerySql
+        .exec<{
+          svg_text: string;
+          preview_revision: string;
+          project_text: string;
+        }>(
+          "SELECT svg_text, preview_revision, project_text FROM gallery_entries WHERE id=?",
+          id,
+        )
+        .one();
+    const current = stored();
+    expect(current.svg_text).toContain('data-role="formula"');
+    expect(current.svg_text).toContain('data-c="1D5DF"');
+    expect(current.svg_text).not.toContain('data-role="formula-pending"');
+    const legacy =
+      '<svg xmlns="http://www.w3.org/2000/svg"><text data-role="formula-pending">old latex</text></svg>';
+    env.gallerySql.exec(
+      "UPDATE gallery_entries SET svg_text=? WHERE id=?",
+      legacy,
+      id,
+    );
+    const before = stored();
+    const request = new Request(
+      `${ORIGIN}/api/gallery/${id}/preview.svg?v=${before.preview_revision}&render=formula-sans-v2`,
+    );
+    const cache = memoryPreviewCache();
+    await cache.put(request, new Response(legacy));
+    clearFormulaArtifactCacheForTests();
+    const repaired = await routeGalleryRequest(asReader(request), env, {
+      previewCache: cache,
+    });
+    expect(repaired!.status).toBe(200);
+    expect(await repaired!.text()).toBe(current.svg_text);
+    expect(stored()).toEqual(before);
+    expect(
+      env.gallerySql
+        .exec<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM gallery_entry_versions WHERE entry_id=?",
+          id,
+        )
+        .one().count,
+    ).toBe(0);
+    env.galleryQueries.length = 0;
+    const cached = await routeGalleryRequest(asReader(request), env, {
+      previewCache: cache,
+    });
+    expect(await cached!.text()).toBe(current.svg_text);
+    expect(env.galleryQueries.some((sql) => sql.includes("project_text"))).toBe(
+      false,
+    );
+    env.gallerySql.exec(
+      "UPDATE gallery_entries SET status='rejected' WHERE id=?",
+      id,
+    );
+    expect(
+      (await routeGalleryRequest(asReader(request), env, {
+        previewCache: cache,
+      }))!.status,
+    ).toBe(404);
+  });
+
   it("publishes immediately with canonical text and a server preview", async () => {
     const env = environment();
     const id = await submitOne(env, "Ring Oscillator");
@@ -1423,7 +2379,7 @@ describe("gallery submissions", () => {
       ),
     );
     expect(immutablePreview.headers.get("cache-control")).toBe(
-      "public, max-age=31536000, immutable",
+      "private, max-age=31536000, immutable",
     );
   });
 
@@ -1441,9 +2397,13 @@ describe("gallery submissions", () => {
     const cache = memoryPreviewCache();
 
     env.galleryQueries.length = 0;
-    const first = await routeGalleryRequest(new Request(previewUrl), env, {
-      previewCache: cache,
-    });
+    const first = await routeGalleryRequest(
+      asReader(new Request(previewUrl)),
+      env,
+      {
+        previewCache: cache,
+      },
+    );
     expect(first?.status).toBe(200);
     const firstSvg = await first!.text();
     expect(firstSvg).toContain("<svg");
@@ -1455,9 +2415,13 @@ describe("gallery submissions", () => {
     expect(coldQuery).not.toContain("project_text");
 
     env.galleryQueries.length = 0;
-    const second = await routeGalleryRequest(new Request(previewUrl), env, {
-      previewCache: cache,
-    });
+    const second = await routeGalleryRequest(
+      asReader(new Request(previewUrl)),
+      env,
+      {
+        previewCache: cache,
+      },
+    );
     expect(await second!.text()).toBe(firstSvg);
     expect(cache.putCalls).toHaveLength(1);
     expect(env.galleryQueries.some((query) => query.includes("svg_text"))).toBe(
@@ -1478,9 +2442,13 @@ describe("gallery submissions", () => {
       }),
     );
     expect(recycled.status).toBe(200);
-    const hidden = await routeGalleryRequest(new Request(previewUrl), env, {
-      previewCache: cache,
-    });
+    const hidden = await routeGalleryRequest(
+      asReader(new Request(previewUrl)),
+      env,
+      {
+        previewCache: cache,
+      },
+    );
     expect(hidden?.status).toBe(404);
     expect(hidden?.headers.get("cache-control")).toBe("no-store");
   });
@@ -2298,6 +3266,7 @@ describe("gallery version history", () => {
     expect(afterRestore.versions.map((version) => version.name)).toEqual([
       "Versioned v3",
       "Versioned v2",
+      "Versioned v1",
     ]);
   });
 
@@ -2339,9 +3308,9 @@ describe("gallery version history", () => {
         }),
       )
     ).json()) as { versions: { versionNo: number }[] };
-    expect(listed.versions).toHaveLength(2);
+    expect(listed.versions).toHaveLength(3);
     expect(listed.versions[0]!.versionNo).toBe(4);
-    expect(listed.versions.at(-1)!.versionNo).toBe(3);
+    expect(listed.versions.at(-1)!.versionNo).toBe(2);
 
     const prunedPreview = await route(
       env,
@@ -2351,6 +3320,15 @@ describe("gallery version history", () => {
       ),
     );
     expect(prunedPreview.status).toBe(404);
+    const prunedProject = await route(
+      env,
+      new Request(
+        `${ORIGIN}/api/gallery/${id}/versions/${oldestVersionId}/project`,
+        { headers: cookieHeaders(adminCookie) },
+      ),
+    );
+    expect(prunedProject.status).toBe(404);
+
     const prunedRestore = await route(
       env,
       new Request(
@@ -2366,6 +3344,55 @@ describe("gallery version history", () => {
 });
 
 describe("gallery circuit tags", () => {
+  it("scopes tag and deduplicated group counts to the netlist mark without exposing hidden entries", async () => {
+    const env = environment();
+    const cookie = await adminOf(env);
+    const sketch = createEmptyProject("sketch", "Sketch");
+    sketch.documents[0]!.instances.push({
+      id: "S1",
+      symbolId: "ideal-switch",
+      reference: "S1",
+      placement: { position: { x: 0, y: 0 }, rotation: 0, mirror: "none" },
+    });
+    for (const [name, tags, text] of [
+      ["Extractable", ["amplifier", "ota"], projectText("Extractable")],
+      ["Sketch", ["amplifier", "comparator"], serializeProject(sketch)],
+      ["Hidden", ["amplifier", "buffer"], projectText("Hidden")],
+    ] as const) {
+      const response = await route(
+        env,
+        submissionRequest({ name, tags, projectText: text }, { cookie }),
+      );
+      expect(response.status).toBe(201);
+    }
+    env.gallerySql.exec(
+      "UPDATE gallery_entries SET status = 'rejected' WHERE name = 'Hidden'",
+    );
+    const summary = async (query = "") =>
+      (
+        await route(env, new Request(`${ORIGIN}/api/gallery/tags${query}`))
+      ).json();
+    const all = await summary();
+    expect(all).toMatchObject({
+      tags: expect.arrayContaining([
+        { tag: "amplifier", count: 2 },
+        { tag: "comparator", count: 1 },
+      ]),
+      groups: expect.arrayContaining([
+        { group: "Amplifiers", count: 2 },
+        { group: "Conversion", count: 1 },
+      ]),
+    });
+    expect(await summary("?netlistable=1")).toEqual({
+      tags: [
+        { tag: "amplifier", count: 1 },
+        { tag: "ota", count: 1 },
+      ],
+      groups: [{ group: "Amplifiers", count: 1 }],
+    });
+    expect(await summary("?netlistable=0")).toEqual(all);
+  });
+
   it("normalizes tags on write, filters as an OR-union, and aggregates", async () => {
     const env = environment();
     const adminCookie = await adminOf(env);
@@ -2410,8 +3437,12 @@ describe("gallery circuit tags", () => {
     );
     const counts = (await aggregate.json()) as {
       tags: { tag: string; count: number }[];
+      groups: { group: string; count: number }[];
+      categories?: unknown;
     };
     expect(counts.tags[0]).toEqual({ tag: "amplifier", count: 2 });
+    expect(counts.groups).toContainEqual({ group: "Amplifiers", count: 2 });
+    expect(counts).not.toHaveProperty("categories");
 
     // The bearer update path rewrites tags ("editable any time").
     const target = all.entries.find((entry) => entry.name === "Comp B")!;
@@ -2594,7 +3625,7 @@ describe("gallery owner editing", () => {
       ),
     );
     expect(freshPreview.headers.get("cache-control")).toBe(
-      "public, max-age=31536000, immutable",
+      "private, max-age=31536000, immutable",
     );
 
     const mine = await route(
@@ -2988,7 +4019,7 @@ describe("gallery administration", () => {
     const restoredPreview = await route(env, new Request(previewUrl));
     expect(restoredPreview.status).toBe(200);
     expect(restoredPreview.headers.get("cache-control")).toBe(
-      "public, max-age=31536000, immutable",
+      "private, max-age=31536000, immutable",
     );
     const back = await route(env, new Request(`${ORIGIN}/api/gallery`));
     expect(
@@ -3769,6 +4800,7 @@ describe("gallery administration", () => {
       galleryEntryVersions: 1,
       cloudProjects: 0,
       galleryLikes: 2,
+      cloudProjectVersions: 0,
     });
     for (const [key, name] of Object.entries({
       galleryEntries: "gallery_entries",
@@ -3809,7 +4841,7 @@ describe("gallery administration", () => {
     ).toBe(400);
   });
 
-  it("reapplies two-version retention when restoring a legacy backup", async () => {
+  it("reapplies three-version retention when restoring a legacy backup", async () => {
     const env = environment();
     const adminCookie = await adminOf(env);
     const id = await submitOne(env, "Legacy backup v1", {
@@ -3850,11 +4882,14 @@ describe("gallery administration", () => {
         .map((version) => Number(version.version_no))
         .sort((left, right) => left - right),
     ).toEqual([1, 2]);
-    versions.push({
-      ...versions[0],
-      id: "legacy-version-zero",
-      version_no: 0,
-    });
+    versions.push(
+      {
+        ...versions[0],
+        id: "legacy-version-zero",
+        version_no: 0,
+      },
+      { ...versions[0], id: "legacy-version-four", version_no: 4 },
+    );
 
     const restored = await route(
       env,
@@ -3870,10 +4905,10 @@ describe("gallery administration", () => {
     );
     expect(await restored.json()).toMatchObject({
       restored: true,
-      records: 3,
+      records: 4,
       tables: {
         galleryEntries: 1,
-        galleryEntryVersions: 2,
+        galleryEntryVersions: 3,
         cloudProjects: 0,
       },
     });
@@ -3886,7 +4921,7 @@ describe("gallery administration", () => {
         )
         .toArray()
         .map((version) => version.version_no),
-    ).toEqual([2, 1]);
+    ).toEqual([4, 2, 1]);
   });
 });
 
@@ -4037,6 +5072,33 @@ describe("gallery owner lifecycle (withdrawal and history)", () => {
       new Request(previewPath, { headers: { Cookie: ownerCookie } }),
     );
     expect(await ownerPreview.text()).toContain("<svg");
+    const projectPath = previewPath.replace("preview.svg", "project");
+    for (const cookie of [null, strangerCookie]) {
+      const denied = await route(
+        env,
+        new Request(projectPath, { headers: cookie ? { Cookie: cookie } : {} }),
+      );
+      expect(denied.status).toBe(404);
+      expect(denied.headers.get("cache-control")).toBe("no-store");
+    }
+    const historical = await route(
+      env,
+      new Request(projectPath, { headers: { Cookie: ownerCookie } }),
+    );
+    expect(historical.status).toBe(200);
+    expect(historical.headers.get("cache-control")).toBe("no-store");
+    const snapshot = (await historical.json()) as { projectText: string };
+    expect(Object.keys(snapshot)).toEqual(["projectText"]);
+    expect(parseProject(snapshot.projectText).name).toBe("Hist v1");
+    const otherId = await submitPublished(env, ownerCookie, "Other entry");
+    const wrongEntry = await route(
+      env,
+      new Request(
+        projectPath.replace(`/gallery/${id}/`, `/gallery/${otherId}/`),
+        { headers: { Cookie: ownerCookie } },
+      ),
+    );
+    expect(wrongEntry.status).toBe(404);
 
     // Restoring v1 puts the old content back without taking the entry down.
     const restore = await route(
@@ -4321,5 +5383,1066 @@ describe("recycle bin retention", () => {
       id: "bin-mine",
       recycledAt: "2026-08-30T12:00:00.000Z",
     });
+  });
+});
+
+describe("Gallery visual curation", () => {
+  async function update(
+    env: Harness,
+    id: string,
+    cookie: string,
+    overrides: Record<string, unknown> = {},
+  ) {
+    const current = (await (
+      await route(
+        env,
+        new Request(`${ORIGIN}/api/gallery/${id}`, {
+          headers: cookieHeaders(cookie),
+        }),
+      )
+    ).json()) as {
+      entry: { previewRevision: string; curationRevision: number };
+    };
+    return route(
+      env,
+      new Request(`${ORIGIN}/api/gallery/${id}/curation`, {
+        method: "PATCH",
+        headers: {
+          ...cookieHeaders(cookie),
+          "content-type": "application/json",
+          Origin: ORIGIN,
+        },
+        body: JSON.stringify({
+          tags: [
+            "amplifier",
+            "differential pair",
+            "cmos",
+            "cascode",
+            "feedback",
+            "ota",
+          ],
+          attention: {
+            status: "needs-attention",
+            issues: [
+              {
+                kind: "suspected-disconnection",
+                detail: "右侧输出导线与输出端口之间有可见间隙。",
+              },
+            ],
+          },
+          expectedPreviewRevision: current.entry.previewRevision,
+          expectedCurationRevision: current.entry.curationRevision,
+          ...overrides,
+        }),
+      }),
+    );
+  }
+  it("preserves drawings while tagging, scopes attention to the author/admin, and permits resolution", async () => {
+    const env = environment();
+    const admin = await adminOf(env);
+    const maker = await makerOf(env);
+    const other = await signIn(env.authDurable, "other@example.com");
+    const mine = await submitOne(env, "My amplifier", { cookie: maker });
+    const theirs = await submitOne(env, "Other amplifier", { cookie: other });
+    const before = env.gallerySql
+      .exec<{ project_text: string; svg_text: string }>(
+        "SELECT project_text, svg_text FROM gallery_entries WHERE id = ?",
+        mine,
+      )
+      .one();
+    expect((await update(env, mine, admin)).status).toBe(200);
+    expect((await update(env, theirs, admin)).status).toBe(200);
+    const after = env.gallerySql
+      .exec<{ project_text: string; svg_text: string }>(
+        "SELECT project_text, svg_text FROM gallery_entries WHERE id = ?",
+        mine,
+      )
+      .one();
+    expect(after).toEqual(before);
+    const feed = async (cookie: string, query = "") =>
+      (await (
+        await route(
+          env,
+          new Request(`${ORIGIN}/api/gallery${query}`, {
+            headers: cookieHeaders(cookie),
+          }),
+        )
+      ).json()) as Promise<{
+        entries: Array<{
+          id: string;
+          attention?: unknown;
+          tags: string[];
+        }>;
+        total: number;
+        filterCounts: { attention: number; netlistable: number; liked: number };
+        authors: { author: string; ownerUserId: string; count: number }[];
+      }>;
+    const manyTags = Array.from({ length: 20 }, (_, i) => `absent${i}`);
+    manyTags.push("ota");
+    expect((await feed("", `?tags=${manyTags.join(",")}`)).total).toBe(2);
+    const publicFeed = await feed("");
+    expect(publicFeed.total).toBe(2);
+    expect(publicFeed.filterCounts.attention).toBe(0);
+    expect((await feed(admin, "?limit=1")).filterCounts.attention).toBe(2);
+    expect((await feed(maker)).filterCounts.attention).toBe(1);
+    expect((await feed(other)).filterCounts.attention).toBe(1);
+    expect((await feed(maker, "?tags=absent")).filterCounts.attention).toBe(0);
+    expect((await feed("", "?category=amplifiers")).total).toBe(2);
+    expect(publicFeed.entries.every((e) => e.attention === undefined)).toBe(
+      true,
+    );
+    expect(publicFeed.entries[0]!.tags).toHaveLength(6);
+    expect(
+      (await feed(maker, "?attention=1")).entries.map((e) => e.id),
+    ).toEqual([mine]);
+    expect((await feed(admin, "?attention=1")).total).toBe(2);
+    const mineAuthors = (await feed(maker, "?attention=1")).authors;
+    const otherAuthors = (await feed(other, "?attention=1")).authors;
+    expect(mineAuthors).toHaveLength(1);
+    expect(otherAuthors).toHaveLength(1);
+    expect(mineAuthors[0]!.count).toBe(1);
+    expect(mineAuthors[0]!.ownerUserId).not.toBe(otherAuthors[0]!.ownerUserId);
+    expect((await feed(admin, "?attention=1&limit=1")).authors).toEqual(
+      expect.arrayContaining([...mineAuthors, ...otherAuthors]),
+    );
+    expect((await feed(maker, "?attention=1&tags=absent")).authors).toEqual([]);
+    // The tag counts beside the wall narrow with it: Needs attention counts
+    // only what this viewer may see needing attention, Liked only their likes.
+    const otaCount = async (cookie: string, query = "") => {
+      const response = await route(
+        env,
+        new Request(`${ORIGIN}/api/gallery/tags${query}`, {
+          headers: cookieHeaders(cookie),
+        }),
+      );
+      if (response.status !== 200) return response.status;
+      const { tags } = (await response.json()) as {
+        tags: { tag: string; count: number }[];
+      };
+      return tags.find((item) => item.tag === "ota")?.count ?? 0;
+    };
+    expect(await otaCount("")).toBe(2);
+    expect(await otaCount(admin, "?attention=1")).toBe(2);
+    expect(await otaCount(maker, "?attention=1")).toBe(1);
+    expect(await otaCount(maker, "?liked=1")).toBe(0);
+    expect(await otaCount("", "?attention=1")).toBe(401);
+    const like = await route(
+      env,
+      new Request(`${ORIGIN}/api/gallery/${mine}/like`, {
+        method: "POST",
+        headers: { Origin: ORIGIN, Cookie: other },
+      }),
+    );
+    expect(like.status).toBe(200);
+    expect(await otaCount(other, "?liked=1")).toBe(1);
+    expect(await otaCount("", "?liked=1")).toBe(0);
+    expect(
+      (await feed(other)).entries.find((e) => e.id === mine)?.attention,
+    ).toBeUndefined();
+    const publicEntry = (await (
+      await route(env, new Request(`${ORIGIN}/api/gallery/${mine}`))
+    ).json()) as { entry: { attention?: unknown } };
+    expect(publicEntry.entry.attention).toBeUndefined();
+    expect((await update(env, mine, other)).status).toBe(403);
+    expect(
+      (await route(env, new Request(`${ORIGIN}/api/gallery?attention=1`)))
+        .status,
+    ).toBe(401);
+    expect(
+      (
+        await update(env, mine, maker, {
+          attention: { status: "resolved", issues: [] },
+        })
+      ).status,
+    ).toBe(200);
+    expect((await feed(maker, "?attention=1")).total).toBe(0);
+    expect((await feed(maker, "?attention=1")).authors).toEqual([]);
+    expect((await feed(maker)).filterCounts.attention).toBe(0);
+    expect((await feed(admin)).filterCounts.attention).toBe(1);
+    expect(await otaCount(maker, "?attention=1")).toBe(0);
+    expect(await otaCount(admin, "?attention=1")).toBe(1);
+    expect((await update(env, mine, maker)).status).toBe(200);
+    expect((await feed(maker, "?attention=1")).total).toBe(1);
+  });
+  it("rejects outdated reviews and invalid attention without changing metadata", async () => {
+    const env = environment();
+    const cookie = await adminOf(env);
+    const id = await submitOne(env, "Review target", { cookie });
+    expect(
+      (
+        await update(env, id, cookie, {
+          attention: { status: "needs-attention", issues: [] },
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await update(env, id, cookie, {
+          expectedPreviewRevision: "old-revision",
+        })
+      ).status,
+    ).toBe(409);
+    expect((await update(env, id, cookie)).status).toBe(200);
+    expect(
+      (await update(env, id, cookie, { expectedCurationRevision: 0 })).status,
+    ).toBe(409);
+    expect(
+      env.gallerySql
+        .exec<{ curation_json: string }>(
+          "SELECT curation_json FROM gallery_entries WHERE id = ?",
+          id,
+        )
+        .one().curation_json,
+    ).toContain('"revision":1');
+  });
+  it("rejects a review started before tags were republished with an identical drawing", async () => {
+    const env = environment();
+    const cookie = await adminOf(env);
+    const id = await submitOne(env, "Metadata race", { cookie });
+    await update(env, id, cookie);
+    const original = (await (
+      await route(
+        env,
+        new Request(`${ORIGIN}/api/gallery/${id}`, {
+          headers: cookieHeaders(cookie),
+        }),
+      )
+    ).json()) as { projectText: string; entry: { previewRevision: string } };
+    const response = await route(
+      env,
+      new Request(`${ORIGIN}/api/gallery/${id}`, {
+        method: "PUT",
+        headers: {
+          ...cookieHeaders(cookie),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Metadata race",
+          description: "d",
+          tags: ["new tag"],
+          projectText: original.projectText,
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(
+      ((await response.json()) as { previewRevision: string }).previewRevision,
+    ).toBe(original.entry.previewRevision);
+    expect(
+      (await update(env, id, cookie, { expectedCurationRevision: 1 })).status,
+    ).toBe(409);
+    expect(
+      env.gallerySql
+        .exec<{ tags: string }>(
+          "SELECT tags FROM gallery_entries WHERE id = ?",
+          id,
+        )
+        .one().tags,
+    ).toBe(",new tag,");
+  });
+
+  it("includes curation in backups, version snapshots and restores", async () => {
+    const env = environment();
+    const cookie = await adminOf(env);
+    const id = await submitOne(env, "Backed up review", { cookie });
+    await update(env, id, cookie);
+    await update(env, id, cookie, {
+      attention: { status: "resolved", issues: [] },
+    });
+    const call = async (operation: string, body: unknown) =>
+      (
+        await env.GALLERY.getByName("gallery").fetch(
+          `https://gallery/${operation}`,
+          {
+            method: "POST",
+            body: JSON.stringify(body),
+            headers: { "content-type": "application/json" },
+          },
+        )
+      ).json() as Promise<any>;
+    const backup = await call("schema-backup", {});
+    const current = backup.tables.galleryEntries.find(
+      (e: any) => e.id === id,
+    ).curation_json;
+    expect(JSON.parse(current).attention.status).toBe("resolved");
+    expect(
+      backup.tables.galleryEntryVersions.some((e: any) =>
+        e.curation_json.includes("needs-attention"),
+      ),
+    ).toBe(true);
+    await update(env, id, cookie);
+    await call("schema-restore", { backup });
+    expect(
+      env.gallerySql
+        .exec<{ curation_json: string }>(
+          "SELECT curation_json FROM gallery_entries WHERE id = ?",
+          id,
+        )
+        .one().curation_json,
+    ).toBe(current);
+  });
+});
+
+describe("durable Shelf publication sources", () => {
+  async function request(
+    env: Harness,
+    cookie: string,
+    path: string,
+    method = "GET",
+    body?: unknown,
+    revision = 1,
+  ) {
+    return route(
+      env,
+      new Request(`${ORIGIN}${path}`, {
+        method,
+        headers: {
+          Origin: ORIGIN,
+          Cookie: cookie,
+          "content-type": "application/json",
+          "if-match": `revision-${revision}`,
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }),
+    );
+  }
+  const content = (name: string) => ({
+    name,
+    description: "",
+    tags: [],
+    projectText: wiredProjectText(name),
+  });
+  async function draft(
+    env: Harness,
+    cookie: string,
+    name: string,
+    galleryEntryId?: string,
+  ) {
+    const response = await request(env, cookie, "/api/projects", "POST", {
+      ...content(name),
+      ...(galleryEntryId ? { galleryEntryId } : {}),
+    });
+    expect(response.status).toBe(201);
+    return (await response.json()).project;
+  }
+  async function open(env: Harness, cookie: string, id: string) {
+    return (await (await request(env, cookie, `/api/projects/${id}`)).json())
+      .project;
+  }
+
+  it("persists the link for both save/publish orders without changing private content", async () => {
+    const env = environment();
+    const cookie = await makerOf(env);
+    const saved = await draft(env, cookie, "Private draft");
+    const before = await open(env, cookie, saved.id);
+    const published = await request(
+      env,
+      cookie,
+      "/api/gallery/submissions",
+      "POST",
+      {
+        ...content("Public title"),
+        cloudProjectId: saved.id,
+        expectedGalleryEntryId: null,
+      },
+    );
+    expect(published.status).toBe(201);
+    const { id } = await published.json();
+    expect(await open(env, cookie, saved.id)).toEqual({
+      ...before,
+      galleryEntryId: id,
+    });
+    expect(
+      (await (await request(env, cookie, "/api/projects")).json()).projects[0]
+        .galleryEntryId,
+    ).toBe(id);
+    const update = await request(env, cookie, `/api/gallery/${id}`, "PUT", {
+      ...content("Public v2"),
+      cloudProjectId: saved.id,
+      expectedGalleryEntryId: id,
+    });
+    expect(update.status).toBe(200);
+    const stored = await request(
+      env,
+      cookie,
+      `/api/projects/${saved.id}`,
+      "PUT",
+      content("Private v2"),
+    );
+    expect(stored.status).toBe(200);
+    expect((await stored.json()).project.galleryEntryId).toBe(id);
+    const separate = await submitOne(env, "Publish first", { cookie });
+    expect(
+      (await draft(env, cookie, "Saved afterwards", separate)).galleryEntryId,
+    ).toBe(separate);
+    // Saving another private copy never silently takes over the public source.
+    expect(
+      (await draft(env, cookie, "Additional copy", separate)).galleryEntryId,
+    ).toBeNull();
+  });
+
+  it("changes source atomically while retaining both drafts, author, likes and history", async () => {
+    const env = environment();
+    const cookie = await makerOf(env);
+    const id = await submitOne(env, "Public", { cookie });
+    const first = await draft(env, cookie, "Original source", id);
+    const second = await draft(env, cookie, "Replacement source");
+    const firstBefore = await open(env, cookie, first.id);
+    const secondBefore = await open(env, cookie, second.id);
+    await request(env, cookie, `/api/gallery/${id}/like`, "POST");
+    const rowBefore = env.gallerySql
+      .exec<any>("SELECT * FROM gallery_entries WHERE id = ?", id)
+      .one();
+    const switched = await request(env, cookie, `/api/gallery/${id}`, "PUT", {
+      ...content("Updated public"),
+      cloudProjectId: second.id,
+      expectedGalleryEntryId: null,
+    });
+    expect(switched.status).toBe(200);
+    expect(await open(env, cookie, first.id)).toEqual({
+      ...firstBefore,
+      galleryEntryId: null,
+    });
+    expect(await open(env, cookie, second.id)).toEqual({
+      ...secondBefore,
+      galleryEntryId: id,
+    });
+    const rowAfter = env.gallerySql
+      .exec<any>("SELECT * FROM gallery_entries WHERE id = ?", id)
+      .one();
+    expect(rowAfter.owner_user_id).toBe(rowBefore.owner_user_id);
+    expect(rowAfter.author).toBe(rowBefore.author);
+    expect(
+      env.gallerySql
+        .exec<any>("SELECT * FROM gallery_likes WHERE entry_id = ?", id)
+        .toArray(),
+    ).toHaveLength(1);
+    expect(
+      env.gallerySql
+        .exec<any>(
+          "SELECT * FROM gallery_entry_versions WHERE entry_id = ?",
+          id,
+        )
+        .one().project_text,
+    ).toBe(rowBefore.project_text);
+    // A stale old-source tab cannot overwrite the new public revision or create a duplicate.
+    for (const [path, method] of [
+      [`/api/gallery/${id}`, "PUT"],
+      ["/api/gallery/submissions", "POST"],
+    ]) {
+      const stale = await request(env, cookie, path!, method!, {
+        ...content("Stale overwrite"),
+        cloudProjectId: first.id,
+        expectedGalleryEntryId: id,
+      });
+      expect(stale.status).toBe(409);
+      expect((await stale.json()).error).toBe("publication-link-conflict");
+    }
+    expect(
+      env.gallerySql.exec<any>("SELECT * FROM gallery_entries").toArray(),
+    ).toEqual([rowAfter]);
+    // Saving the old private draft is still allowed and does not reclaim publication.
+    const oldSave = await request(
+      env,
+      cookie,
+      `/api/projects/${first.id}`,
+      "PUT",
+      { ...content("Old draft edited"), galleryEntryId: id },
+    );
+    expect(oldSave.status).toBe(200);
+    expect((await oldSave.json()).project.galleryEntryId).toBeNull();
+    // Explicitly publishing as new moves only the current draft's link.
+    const fresh = await request(
+      env,
+      cookie,
+      "/api/gallery/submissions",
+      "POST",
+      {
+        ...content("New publication"),
+        cloudProjectId: second.id,
+        expectedGalleryEntryId: id,
+      },
+    );
+    expect(fresh.status).toBe(201);
+    const newId = (await fresh.json()).id;
+    expect(newId).not.toBe(id);
+    expect((await open(env, cookie, second.id)).galleryEntryId).toBe(newId);
+    expect(
+      env.gallerySql
+        .exec<any>("SELECT * FROM gallery_entries WHERE id = ?", id)
+        .one(),
+    ).toEqual(rowAfter);
+  });
+
+  it("cannot bind another account's draft or publication, even as administrator", async () => {
+    const env = environment();
+    const owner = await makerOf(env);
+    const stranger = await adminOf(env);
+    const saved = await draft(env, owner, "Private");
+    const before = await open(env, owner, saved.id);
+    const refused = await request(
+      env,
+      stranger,
+      "/api/gallery/submissions",
+      "POST",
+      {
+        ...content("Bad"),
+        cloudProjectId: saved.id,
+        expectedGalleryEntryId: null,
+      },
+    );
+    expect(refused.status).toBe(404);
+    expect(await open(env, owner, saved.id)).toEqual(before);
+    expect(
+      env.gallerySql.exec<any>("SELECT * FROM gallery_entries").toArray(),
+    ).toHaveLength(0);
+    const publicId = await submitOne(env, "Other author's work", {
+      cookie: stranger,
+    });
+    const badSave = await request(env, owner, "/api/projects", "POST", {
+      ...content("Private"),
+      galleryEntryId: publicId,
+    });
+    expect(badSave.status).toBe(403);
+    expect(
+      env.gallerySql.exec<any>("SELECT * FROM cloud_projects").toArray(),
+    ).toHaveLength(1);
+  });
+
+  it("rolls back publication and source changes together if storage fails", async () => {
+    const env = environment();
+    const cookie = await makerOf(env);
+    const id = await submitOne(env, "Stable public", { cookie });
+    const first = await draft(env, cookie, "Old source", id);
+    const second = await draft(env, cookie, "New source");
+    const originals = env.gallerySql
+      .exec<any>("SELECT * FROM cloud_projects ORDER BY id")
+      .toArray();
+    const publication = env.gallerySql
+      .exec<any>("SELECT * FROM gallery_entries WHERE id = ?", id)
+      .one();
+    // Fail after retiring the old source but before installing the new link.
+    const exec = env.gallerySql.exec.bind(env.gallerySql);
+    env.gallerySql.exec = ((query: string, ...bindings: unknown[]) => {
+      if (query.includes("UPDATE cloud_projects SET gallery_entry_id = ?"))
+        throw new Error("injected storage failure");
+      return exec(query, ...bindings);
+    }) as typeof env.gallerySql.exec;
+    await expect(
+      request(env, cookie, `/api/gallery/${id}`, "PUT", {
+        ...content("Must roll back"),
+        cloudProjectId: second.id,
+        expectedGalleryEntryId: null,
+      }),
+    ).rejects.toThrow("injected storage failure");
+    await expect(
+      request(env, cookie, "/api/gallery/submissions", "POST", {
+        ...content("Must not appear"),
+        cloudProjectId: first.id,
+        expectedGalleryEntryId: id,
+      }),
+    ).rejects.toThrow("injected storage failure");
+    expect(
+      exec<any>("SELECT * FROM cloud_projects ORDER BY id").toArray(),
+    ).toEqual(originals);
+    expect(exec<any>("SELECT * FROM gallery_entries").toArray()).toEqual([
+      publication,
+    ]);
+    expect(
+      exec<any>("SELECT * FROM gallery_entry_versions").toArray(),
+    ).toHaveLength(0);
+  });
+
+  it("favorites are account-scoped metadata, preserving drawing, publication, revisions and backup", async () => {
+    const env = environment();
+    const owner = await makerOf(env);
+    const stranger = await adminOf(env);
+    const publicId = await submitOne(env, "Public", { cookie: owner });
+    const saved = await draft(env, owner, "Private", publicId);
+    const before = await open(env, owner, saved.id);
+    expect(
+      (
+        await request(env, stranger, `/api/projects/${saved.id}`, "PATCH", {
+          favorite: true,
+        })
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await request(env, owner, `/api/projects/${saved.id}`, "PATCH", {
+          favorite: "true",
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await request(env, owner, `/api/projects/${saved.id}`, "PATCH", {
+          favorite: true,
+        })
+      ).status,
+    ).toBe(200);
+    expect(await open(env, owner, saved.id)).toEqual({
+      ...before,
+      favorite: true,
+    });
+    const backupResponse = await env.GALLERY.getByName("gallery").fetch(
+      "https://gallery/schema-backup",
+      { method: "POST", body: "{}" },
+    );
+    const backup = await backupResponse.json();
+    expect(backup.tables.cloudProjects[0].favorite).toBe(1);
+    await request(env, owner, `/api/projects/${saved.id}`, "PATCH", {
+      favorite: false,
+    });
+    await env.GALLERY.getByName("gallery").fetch(
+      "https://gallery/schema-restore",
+      { method: "POST", body: JSON.stringify({ backup }) },
+    );
+    expect(await open(env, owner, saved.id)).toEqual({
+      ...before,
+      favorite: true,
+    });
+    const renamed = await request(
+      env,
+      owner,
+      `/api/projects/${saved.id}`,
+      "PUT",
+      content("Renamed"),
+    );
+    expect(renamed.status).toBe(200);
+    expect((await renamed.json()).project).toMatchObject({
+      favorite: true,
+      galleryEntryId: publicId,
+    });
+  });
+
+  it("preserves old rows in the additive migration and includes links in full backups", async () => {
+    const state = sqliteState();
+    const original = wiredProjectText("Legacy private");
+    state.storage.sql.exec(
+      "CREATE TABLE cloud_projects (id TEXT PRIMARY KEY, user_id TEXT, name TEXT, created_at TEXT, updated_at TEXT, revision INTEGER, schema_version INTEGER, project_text TEXT, preview_svg TEXT DEFAULT '')",
+    );
+    state.storage.sql.exec(
+      "INSERT INTO cloud_projects VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "old",
+      "owner",
+      "Legacy private",
+      "before",
+      "before",
+      7,
+      CURRENT_PROJECT_FILE_VERSION,
+      original,
+      "<svg/>",
+    );
+    const durable = new GalleryDO(state);
+    expect(
+      state.storage.sql
+        .exec<any>("SELECT * FROM cloud_projects WHERE id = 'old'")
+        .one(),
+    ).toMatchObject({
+      project_text: original,
+      revision: 7,
+      gallery_entry_id: null,
+      favorite: 0,
+      preview_svg: "<svg/>",
+    });
+    state.storage.sql.exec(
+      "UPDATE cloud_projects SET gallery_entry_id = 'old-public' WHERE id = 'old'",
+    );
+    const call = async (action: string, body: unknown) => {
+      const response = await durable.fetch(
+        new Request(`https://gallery.internal/${action}`, {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+      );
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+    const backup = await call("schema-backup", {});
+    expect(backup.tables.cloudProjects[0].gallery_entry_id).toBe("old-public");
+    await call("schema-restore", { backup });
+    expect(
+      state.storage.sql
+        .exec<any>("SELECT * FROM cloud_projects WHERE id = 'old'")
+        .one(),
+    ).toMatchObject({
+      project_text: original,
+      revision: 7,
+      gallery_entry_id: "old-public",
+    });
+  });
+});
+
+/** One drawing whose device and supply labels have no format of their own. */
+/**
+ * An older drawing: it never chose a subscript slant, one Net is named V_b,
+ * and another label's subscript took the surrounding italic along.
+ */
+function legacyLabelLookProjectText(): string {
+  const project = parseProject(labelLookProjectText());
+  const document = project.documents[0]!;
+  delete document.presentation.labelSubscriptItalic;
+  const italic = (
+    value: string,
+    ...styles: ("bold" | "subscript")[]
+  ): RichTextRun => ({
+    kind: "span",
+    style: "italic",
+    children: [
+      styles.reduceRight<RichTextRun>(
+        (child, style) => ({ kind: "span", style, children: [child] }),
+        { kind: "text", value },
+      ),
+    ],
+  });
+  const labels: [string, string, RichTextDocument | undefined][] = [
+    ["b", "V_b", undefined],
+    [
+      "in",
+      "VIN",
+      {
+        runs: [
+          italic("V", "bold"),
+          {
+            kind: "span",
+            style: "subscript",
+            children: [italic("IN", "bold")],
+          },
+        ],
+      },
+    ],
+  ];
+  for (const [id, name, formatOverride] of labels) {
+    document.nets.push({ id: `net-${id}`, terminals: [] });
+    document.connectivityEvidence.push({
+      id: `claim-${id}`,
+      kind: "name-claim",
+      netId: `net-${id}`,
+      name,
+      scope: "local",
+      owner: { kind: "net-label", annotationId: `net-label-${id}` },
+    });
+    document.annotations.push({
+      id: `net-label-${id}`,
+      kind: "net-label",
+      binding: { kind: "net-name", netId: `net-${id}` },
+      netId: `net-${id}`,
+      ...(formatOverride ? { formatOverride } : {}),
+      anchor: { kind: "free", position: { x: 300, y: id === "b" ? 100 : 160 } },
+      alignment: "start",
+      rotation: 0,
+      locked: false,
+    });
+  }
+  return serializeProject(project);
+}
+
+function labelLookProjectText(): string {
+  const project = createEmptyProject("label-looks", "Label looks");
+  const document = project.documents[0]!;
+  document.instances.push(
+    {
+      id: "M1",
+      reference: "M1",
+      symbolId: "nmos",
+      placement: { position: { x: 100, y: 100 }, rotation: 0, mirror: "none" },
+    },
+    {
+      id: "VDD1",
+      symbolId: "vdd-port",
+      placement: { position: { x: 100, y: 40 }, rotation: 0, mirror: "none" },
+    },
+  );
+  document.nets.push({
+    id: "net-vdd",
+    terminals: [{ instanceId: "VDD1", pinName: "P" }],
+  });
+  document.connectivityEvidence.push({
+    id: "claim-vdd1",
+    kind: "name-claim",
+    netId: "net-vdd",
+    name: "VDD",
+    scope: "global",
+    powerDomain: "vdd",
+    owner: { kind: "power-marker", objectId: "VDD1" },
+  });
+  document.annotations.push(
+    {
+      id: "instance-label-M1",
+      kind: "instance-label",
+      binding: { kind: "instance-reference", instanceId: "M1" },
+      anchor: {
+        kind: "object",
+        objectId: "M1",
+        localOffset: { x: 20, y: 0 },
+        fallbackPosition: { x: 120, y: 100 },
+      },
+      alignment: "start",
+      rotation: 0,
+      locked: false,
+    },
+    {
+      id: "power-label-vdd1",
+      kind: "power-label",
+      binding: { kind: "net-name", netId: "net-vdd" },
+      netId: "net-vdd",
+      anchor: {
+        kind: "object",
+        objectId: "VDD1",
+        localOffset: { x: 20, y: 10 },
+        fallbackPosition: { x: 120, y: 50 },
+      },
+      alignment: "start",
+      rotation: 0,
+      locked: false,
+    },
+  );
+  return serializeProject(project);
+}
+
+describe("label-look maintenance", () => {
+  const endpoint = `${ORIGIN}/api/gallery/maintenance/label-looks`;
+  const entryRow = (env: Harness, id: string) =>
+    env.gallerySql
+      .exec<Record<string, any>>(
+        "SELECT * FROM gallery_entries WHERE id = ?",
+        id,
+      )
+      .one();
+  const versionCount = (env: Harness, id: string) =>
+    env.gallerySql
+      .exec<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM gallery_entry_versions WHERE entry_id = ?",
+        id,
+      )
+      .one().n;
+
+  it("previews, then applies stored standard looks without touching names or history", async () => {
+    const env = environment();
+    const cookie = await adminOf(env);
+    const id = await submitOne(env, "Label looks", {
+      cookie,
+      text: labelLookProjectText(),
+    });
+    const send = (body: unknown, headers = cookieHeaders(cookie)) =>
+      route(
+        env,
+        new Request(endpoint, {
+          method: "POST",
+          headers: { ...headers, "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+    expect((await send({ ids: [id] }, { Origin: ORIGIN })).status).toBe(401);
+    expect(
+      (
+        await send(
+          { ids: [id] },
+          { ...cookieHeaders(cookie), Origin: "https://untrusted.example" },
+        )
+      ).status,
+    ).toBe(403);
+    expect((await send({ ids: [] })).status).toBe(400);
+
+    const before = entryRow(env, id);
+    const versions = versionCount(env, id);
+    const preview = (await (await send({ ids: [id] })).json()) as {
+      results: Array<Record<string, any>>;
+    };
+    expect(preview.results[0]).toMatchObject({
+      id,
+      changed: true,
+      namesUnchanged: true,
+      netlistUnchanged: true,
+      labels: [
+        { id: "instance-label-M1", name: "M1", role: "device-reference" },
+        { id: "power-label-vdd1", name: "VDD", role: "supply" },
+      ],
+    });
+    // A preview writes nothing.
+    expect(entryRow(env, id)).toEqual(before);
+
+    // Applying requires the exact content the preview reported.
+    expect(
+      (await (await send({ ids: [id], apply: true })).json()).results[0],
+    ).toMatchObject({ skipped: "stale" });
+    const applied = (await (
+      await send({
+        ids: [id],
+        apply: true,
+        expected: { [id]: preview.results[0]!.sha },
+      })
+    ).json()) as { results: Array<Record<string, any>> };
+    expect(applied.results[0]).toMatchObject({ applied: true });
+
+    const after = entryRow(env, id);
+    expect(after.preview_revision).not.toBe(before.preview_revision);
+    expect(after.name).toBe(before.name);
+    expect(after.status).toBe(before.status);
+    expect(versionCount(env, id)).toBe(versions);
+    const stored = parseProject(after.project_text).documents[0]!;
+    expect(stored.instances.map((instance) => instance.reference)).toEqual([
+      "M1",
+      undefined,
+    ]);
+    expect(
+      stored.annotations.find((item) => item.id === "instance-label-M1")
+        ?.formatOverride,
+    ).toEqual(roleLabelFormat("device-reference", "M1"));
+    expect(
+      stored.annotations.find((item) => item.id === "power-label-vdd1")
+        ?.formatOverride,
+    ).toEqual(roleLabelFormat("supply", "VDD"));
+    // Nothing is left to change on a second pass.
+    expect((await (await send({ ids: [id] })).json()).results[0]).toMatchObject(
+      { changed: false, labels: [] },
+    );
+  });
+
+  it("accepts only bounded nudges of the labels it restyles", async () => {
+    const env = environment();
+    const cookie = await adminOf(env);
+    const id = await submitOne(env, "Label nudges", {
+      cookie,
+      text: labelLookProjectText(),
+    });
+    const send = (body: unknown) =>
+      route(
+        env,
+        new Request(endpoint, {
+          method: "POST",
+          headers: {
+            ...cookieHeaders(cookie),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
+        }),
+      );
+    for (const nudge of [
+      { label: "power-label-vdd1", dx: 0, dy: -40 },
+      { label: "not-a-restyled-label", dx: 0, dy: -3 },
+    ])
+      expect(
+        (await (await send({ ids: [id], nudges: { [id]: [nudge] } })).json())
+          .results[0],
+      ).toMatchObject({ skipped: `invalid-nudge:${nudge.label}` });
+    const preview = (await (await send({ ids: [id] })).json()) as {
+      results: Array<Record<string, any>>;
+    };
+    await send({
+      ids: [id],
+      apply: true,
+      expected: { [id]: preview.results[0]!.sha },
+      nudges: { [id]: [{ label: "power-label-vdd1", dx: 0, dy: -3 }] },
+    });
+    const label = parseProject(
+      entryRow(env, id).project_text,
+    ).documents[0]!.annotations.find((item) => item.id === "power-label-vdd1")!;
+    expect(label.anchor).toMatchObject({ localOffset: { x: 20, y: 7 } });
+  });
+
+  it("leaves the labels the planner keeps exactly as they are", async () => {
+    const env = environment();
+    const cookie = await adminOf(env);
+    const id = await submitOne(env, "Label keeps", {
+      cookie,
+      text: labelLookProjectText(),
+    });
+    const send = async (body: unknown) =>
+      (await (
+        await route(
+          env,
+          new Request(endpoint, {
+            method: "POST",
+            headers: {
+              ...cookieHeaders(cookie),
+              "content-type": "application/json",
+            },
+            body: JSON.stringify(body),
+          }),
+        )
+      ).json()) as { results: Array<Record<string, any>> };
+    expect(
+      (await send({ ids: [id], keep: { [id]: ["not-a-standard-label"] } }))
+        .results[0],
+    ).toMatchObject({ skipped: "invalid-keep:not-a-standard-label" });
+    const keep = { [id]: ["instance-label-M1"] };
+    const preview = await send({ ids: [id], keep });
+    expect(preview.results[0]).toMatchObject({
+      changed: true,
+      kept: 1,
+      labels: [{ id: "power-label-vdd1" }],
+    });
+    await send({
+      ids: [id],
+      apply: true,
+      keep,
+      expected: { [id]: preview.results[0]!.sha },
+    });
+    const stored = parseProject(entryRow(env, id).project_text).documents[0]!;
+    expect(
+      stored.annotations.find((item) => item.id === "instance-label-M1")
+        ?.formatOverride,
+    ).toBeUndefined();
+    expect(
+      stored.annotations.find((item) => item.id === "power-label-vdd1")
+        ?.formatOverride,
+    ).toEqual(roleLabelFormat("supply", "VDD"));
+  });
+
+  it("draws subscripts upright and straightens stored slants only when asked", async () => {
+    const env = environment();
+    const cookie = await adminOf(env);
+    const id = await submitOne(env, "Legacy looks", {
+      cookie,
+      text: legacyLabelLookProjectText(),
+    });
+    const send = async (body: unknown) =>
+      (await (
+        await route(
+          env,
+          new Request(endpoint, {
+            method: "POST",
+            headers: {
+              ...cookieHeaders(cookie),
+              "content-type": "application/json",
+            },
+            body: JSON.stringify(body),
+          }),
+        )
+      ).json()) as { results: Array<Record<string, any>> };
+    const documentId = parseProject(entryRow(env, id).project_text)
+      .documents[0]!.id;
+
+    // By default: standard looks for unformatted labels, and the drawing's
+    // own subscript default turns upright. A stored look is left alone.
+    const plain = (await send({ ids: [id] })).results[0]!;
+    expect(plain.uprightDocuments).toEqual([documentId]);
+    expect(plain.labels.map((label: { id: string }) => label.id)).toEqual([
+      "instance-label-M1",
+      "power-label-vdd1",
+    ]);
+
+    const legacy = (await send({ ids: [id], legacyLooks: true })).results[0]!;
+    expect(legacy.labels).toContainEqual(
+      expect.objectContaining({ id: "net-label-in", kind: "upright" }),
+    );
+    await send({
+      ids: [id],
+      apply: true,
+      legacyLooks: true,
+      expected: { [id]: legacy.sha },
+    });
+    const stored = parseProject(entryRow(env, id).project_text).documents[0]!;
+    expect(stored.presentation.labelSubscriptItalic).toBe(false);
+    const inFormat = stored.annotations.find(
+      (item) => item.id === "net-label-in",
+    )?.formatOverride;
+    expect(inFormat && hasItalicScripts(inFormat)).toBe(false);
+    expect(inFormat && flattenRichText(inFormat)).toBe("VIN");
+    expect(
+      (await send({ ids: [id], legacyLooks: true })).results[0],
+    ).toMatchObject({ changed: false });
   });
 });

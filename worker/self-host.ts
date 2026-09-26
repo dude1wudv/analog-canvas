@@ -1,5 +1,12 @@
 import worker from "./index";
-export { AnalyticsDO, AgentSessionDO, GalleryDO, AuthDO } from "./index";
+export {
+  AnalyticsDO,
+  AgentSessionDO,
+  GalleryDO,
+  AuthDO,
+  ComponentLibraryDO,
+  TopologyTaskDO,
+} from "./index";
 
 type SelfHostEnv = Parameters<typeof worker.fetch>[1] & {
   PUBLIC_ORIGIN: string;

@@ -110,15 +110,15 @@ test("a saved-folder batch prepares first and exposes each ordinary run", async 
     buffer: Buffer.from(JSON.stringify(project)),
   });
   await clickNetlistWorkflowCommand(page, "open-analog-simulation");
-  const panel = page.getByRole("region", { name: "Analog simulation" });
+  const panel = page.getByRole("region", { name: "模拟仿真" });
   const openEntry = async (name: string, folderId: string) => {
     const folder = panel.getByRole("treeitem", {
-      name: `Folder ${name}`,
+      name: `文件夹 ${name}`,
       exact: true,
     });
     if ((await folder.getAttribute("aria-expanded")) !== "true")
       await panel
-        .getByRole("button", { name: `Toggle ${name}`, exact: true })
+        .getByRole("button", { name: `展开或折叠 ${name}`, exact: true })
         .click();
     await panel
       .locator(
@@ -141,17 +141,15 @@ test("a saved-folder batch prepares first and exposes each ordinary run", async 
     "run.cir",
     deck.replace("divider", "divider FF draft"),
   );
-  await panel.getByRole("treeitem", { name: "Folder TT", exact: true }).click();
+  await panel.getByRole("treeitem", { name: "文件夹 TT", exact: true }).click();
   await panel
-    .getByRole("treeitem", { name: "Folder FF", exact: true })
+    .getByRole("treeitem", { name: "文件夹 FF", exact: true })
     .click({ modifiers: ["ControlOrMeta"] });
   await panel
-    .getByRole("treeitem", { name: "Folder FF", exact: true })
+    .getByRole("treeitem", { name: "文件夹 FF", exact: true })
     .click({ button: "right" });
-  await page
-    .getByRole("menuitem", { name: "Run selected folders (2)" })
-    .click();
-  await panel.getByTitle("Batch queue", { exact: true }).click();
+  await page.getByRole("menuitem", { name: "运行所选文件夹（2）" }).click();
+  await panel.getByTitle("批量队列", { exact: true }).click();
   const batch = panel.locator(".simulation-batch-menu-popover");
   await expect(batch).toContainText("Batch · finished");
   await expect(
@@ -165,7 +163,7 @@ test("a saved-folder batch prepares first and exposes each ordinary run", async 
   expect(executedDecks.some((text) => text.includes("FF draft"))).toBe(true);
   await batch.getByRole("button", { name: /FF finished/ }).click();
   await expect(
-    panel.getByRole("treeitem", { name: "Folder FF", exact: true }),
+    panel.getByRole("treeitem", { name: "文件夹 FF", exact: true }),
   ).toBeVisible();
   await expect(
     panel.getByRole("button", { name: "Run", exact: true }),
@@ -283,7 +281,7 @@ test("a saved Run Plan prepares without executing and Run starts its ordinary ba
     buffer: Buffer.from(JSON.stringify(project)),
   });
   await clickNetlistWorkflowCommand(page, "open-analog-simulation");
-  const panel = page.getByRole("region", { name: "Analog simulation" });
+  const panel = page.getByRole("region", { name: "模拟仿真" });
   config.runPlan = {
     mode: "sweep",
     axes: [
@@ -300,7 +298,7 @@ test("a saved Run Plan prepares without executing and Run starts its ordinary ba
     .getByRole("treeitem", { name: "Run", exact: true })
     .click({ button: "right" });
   await page.getByRole("menuitem", { name: "Preview input netlist…" }).click();
-  await panel.getByTitle("Batch queue", { exact: true }).click();
+  await panel.getByTitle("批量队列", { exact: true }).click();
   await expect(panel.locator(".simulation-batch-menu-popover")).toContainText(
     "Batch · prepared",
   );

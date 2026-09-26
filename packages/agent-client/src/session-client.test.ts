@@ -4,10 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentSessionError } from "./errors.js";
 import {
+  bootstrapSnapshotResponse,
   capabilitiesResponse,
   errorResponse,
   FakeAgentHttp,
+  folderDirectoryResponse,
   snapshotResponse,
+  stateSnapshotResponse,
   transactSuccessResponse,
 } from "./test-support/fake-relay.js";
 import { testSnapshot } from "./test-support/snapshot-fixture.js";
@@ -23,12 +26,584 @@ async function freshClient(
   const http = options.http ?? new FakeAgentHttp();
   const client = new AgentSessionClient({
     http,
+    sleep: async () => {},
     ...(options.now ? { now: options.now } : {}),
   });
   return { client, http };
 }
 
 describe("agent session client", () => {
+  it("submits explicit-ID wiring in one atomic request without downloading a Snapshot", async () => {
+    const { client, http } = await freshClient();
+    await client.connect("session-1.code");
+    const before = http.circuitCalls.length;
+    http.circuitHandler = async ({ request }) => {
+      if (request.operation !== "transact")
+        throw new Error("unexpected topology read");
+      expect(request.wireIntent).toMatchObject([
+        { from: { endpoint: { instanceId: "instance-1", pinName: "G" } } },
+        { to: { kind: "free", point: { x: 220, y: 200 } } },
+      ]);
+      return transactSuccessResponse(
+        request.requestId,
+        request.expectedRevision,
+      );
+    };
+    const from = {
+      kind: "pin",
+      instance: { kind: "instance", id: "instance-1" },
+      pin: "G",
+    };
+    expect(
+      await client.applyActions([
+        {
+          kind: "connect",
+          from,
+          to: {
+            kind: "pin",
+            instance: { kind: "instance", id: "instance-2" },
+            pin: "1",
+          },
+        },
+        { kind: "connect", from, to: { kind: "point", x: 220, y: 200 } },
+      ]),
+    ).toMatchObject({ ok: true });
+    expect(http.circuitCalls.length - before).toBe(1);
+  });
+  it("retries compact receipt projection only after an explicit pre-write schema rejection", async () => {
+    const { client, http } = await freshClient();
+    await client.connect("session-1.code");
+    let attempts = 0;
+    http.circuitHandler = async ({ request }) => {
+      if (request.operation !== "transact") throw new Error("unexpected read");
+      attempts++;
+      if (attempts === 1) {
+        expect(request.diagnosticDeltaDetail).toBe("compact");
+        return {
+          ...errorResponse(
+            request.requestId,
+            "transact",
+            "INVALID_REQUEST",
+            "schema",
+          ),
+          diagnostics: [
+            {
+              code: "SCHEMA_VIOLATION",
+              severity: "error",
+              message: "Remove unsupported field: diagnosticDeltaDetail",
+            },
+          ],
+        };
+      }
+      expect(request).not.toHaveProperty("diagnosticDeltaDetail");
+      return transactSuccessResponse(
+        request.requestId,
+        request.expectedRevision,
+      );
+    };
+    expect(
+      await client.advancedTransact(
+        {
+          edits: [
+            {
+              kind: "set_instance_reference",
+              instanceId: "instance-1",
+              reference: "M2",
+            },
+          ],
+        },
+        { diagnosticDeltaDetail: "compact" },
+      ),
+    ).toMatchObject({ ok: true });
+    expect(attempts).toBe(2);
+  });
+  it("binds one open working copy without changing the browser's active Project", async () => {
+    const http = new FakeAgentHttp({
+      projects: (request) => ({
+        apiVersion: "3.0",
+        requestId: request.requestId,
+        operation: "workspace",
+        ok: true,
+        result: {
+          action: "list",
+          activeWorkspaceId: "tab-a",
+          projects: [
+            {
+              workspaceId: "tab-a",
+              projectId: "project-a",
+              name: "Human",
+              cloudProjectId: null,
+              dirty: false,
+              structureRevision: 0,
+              cells: [{ documentId: "main", name: "A", revision: 0 }],
+            },
+            {
+              workspaceId: "tab-b",
+              projectId: "project-b",
+              name: "Agent",
+              cloudProjectId: null,
+              dirty: false,
+              structureRevision: 0,
+              cells: [{ documentId: "cell-b", name: "B", revision: 0 }],
+            },
+          ],
+        },
+      }),
+    });
+    const { client } = await freshClient({ http });
+    await client.connect("session-1.code");
+    expect(await client.bindWorkspace("tab-b")).toEqual({
+      workspaceId: "tab-b",
+      projectId: "project-b",
+      name: "Agent",
+    });
+    expect(http.workspaceId).toBe("tab-b");
+    expect((await client.status()).documentIds).toEqual(["cell-b"]);
+    const background = testSnapshot();
+    background.project.id = "project-b";
+    background.project.topDocumentId = "cell-b";
+    background.project.documents[0]!.id = "cell-b";
+    background.document.id = "cell-b";
+    http.circuitHandler = async ({ request }) =>
+      request.operation === "snapshot"
+        ? snapshotResponse(request.requestId, background)
+        : capabilitiesResponse(request.requestId);
+    expect((await client.snapshot()).documentId).toBe("cell-b");
+    await expect(client.bindWorkspace("missing")).rejects.toMatchObject({
+      code: "WORKSPACE_NOT_FOUND",
+    });
+    expect(client.workspaceId).toBe("tab-b");
+  });
+  it("reuses exact recent metadata only internally, with explicit refresh, TTL and context isolation", async () => {
+    let now = 1000;
+    const { client, http } = await freshClient({ now: () => now });
+    await client.connect("session-1.code");
+    const simulation = vi.spyOn(http, "simulation").mockImplementation(
+      async (_s, _t, request) =>
+        ({
+          apiVersion: "3.0",
+          requestId: request.requestId,
+          operation: request.operation,
+          ok: true,
+          capabilities: { profiles: [] },
+        }) as never,
+    );
+    const request = {
+      apiVersion: "3.0",
+      requestId: "discovery",
+      operation: "capabilities",
+      detail: "summary",
+    } as const;
+    await client.simulationResource(request);
+    expect(
+      await client.simulationMetadataResource({
+        requestId: "create",
+        detail: "summary",
+        operation: "capabilities",
+        apiVersion: "3.0",
+      }),
+    ).toMatchObject({ requestId: "create" });
+    expect(simulation).toHaveBeenCalledTimes(1);
+    await client.simulationMetadataResource({ ...request, detail: "full" });
+    expect(simulation).toHaveBeenCalledTimes(2);
+    await client.simulationResource(request);
+    await client.simulationMetadataResource(request, { refresh: true });
+    expect(simulation).toHaveBeenCalledTimes(4);
+    now += 30_000;
+    await client.simulationMetadataResource(request);
+    expect(simulation).toHaveBeenCalledTimes(5);
+    http.contextRevision = "next-project";
+    await client.simulationMetadataResource(request);
+    expect(simulation).toHaveBeenCalledTimes(6);
+    await client.connect("session-1.code");
+    await client.simulationMetadataResource(request);
+    expect(simulation).toHaveBeenCalledTimes(7);
+  });
+  it("does not reuse pending/partial catalogs and invalidates a complete one after export or failed refresh", async () => {
+    const { client, http } = await freshClient();
+    await client.connect("session-1.code");
+    let collection = "pending";
+    const simulation = vi.spyOn(http, "simulation").mockImplementation(
+      async (_s, _t, request) =>
+        ({
+          apiVersion: "3.0",
+          requestId: request.requestId,
+          operation: request.operation,
+          ok: true,
+          catalog: { execution: "completed", collection },
+        }) as never,
+    );
+    const request = {
+      apiVersion: "3.0",
+      requestId: "catalog",
+      operation: "catalog",
+      runId: "run",
+    } as const;
+    await client.simulationMetadataResource(request);
+    await client.simulationMetadataResource(request);
+    collection = "partial";
+    await client.simulationMetadataResource(request);
+    await client.simulationMetadataResource(request);
+    expect(simulation).toHaveBeenCalledTimes(4);
+    collection = "complete";
+    await client.simulationMetadataResource(request);
+    await client.simulationMetadataResource(request);
+    expect(simulation).toHaveBeenCalledTimes(5);
+    await client.simulationResource({ ...request, operation: "export" });
+    await client.simulationMetadataResource(request);
+    expect(simulation).toHaveBeenCalledTimes(7);
+    simulation.mockRejectedValueOnce(new Error("refresh failed"));
+    await expect(client.simulationResource(request)).rejects.toThrow(
+      "refresh failed",
+    );
+    await client.simulationMetadataResource(request);
+    expect(simulation).toHaveBeenCalledTimes(9);
+  });
+  it.each([false, true])(
+    "invalidates Project snapshots after file updates, uncertain=%s",
+    async (uncertain) => {
+      const { client, http } = await freshClient();
+      await client.connect("session-1.code");
+      await client.snapshot("main");
+      expect(client.cachedSnapshot("main")).not.toBeNull();
+      const files = vi.spyOn(http, "files");
+      if (uncertain) files.mockRejectedValueOnce(new Error("response lost"));
+      else files.mockResolvedValueOnce({ ok: true } as never);
+      const update = client.fileResource({
+        apiVersion: "3.0",
+        requestId: "update-source",
+        operation: "simulation-input",
+        input: {
+          action: "update",
+          owner: { kind: "project-folder", folderId: "folder" },
+          expectedRevision: 0,
+          writes: [{ path: "run.cir", text: "new" }],
+          removes: [],
+          patches: [],
+          circuitEdits: [],
+        },
+      });
+      if (uncertain) await expect(update).rejects.toThrow("response lost");
+      else await update;
+      expect(client.cachedSnapshot("main")).toBeNull();
+      const before = http.circuitCalls.length;
+      await client.snapshot("main");
+      expect(http.circuitCalls.length).toBe(before + 1);
+      files.mockResolvedValueOnce({ ok: true } as never);
+      await client.fileResource({
+        apiVersion: "3.0",
+        requestId: "list",
+        operation: "simulation-input",
+        input: { action: "list" },
+      });
+      expect(client.cachedSnapshot("main")).not.toBeNull();
+    },
+  );
+  it.each([false, true])(
+    "invalidates cached circuit state after staged Cell import, uncertain=%s",
+    async (uncertain) => {
+      const { client, http } = await freshClient();
+      await client.connect("session-1.code");
+      await client.snapshot("main");
+      const files = vi.spyOn(http, "files");
+      if (uncertain) files.mockRejectedValueOnce(new Error("response lost"));
+      else files.mockResolvedValueOnce({ ok: true } as never);
+      const update = client.fileResource({
+        apiVersion: "3.0",
+        requestId: "import",
+        operation: "import-cell",
+        candidateId: "c",
+        sourceDocumentId: "s",
+        targetDocumentId: "main",
+        mode: "replace-body",
+        expectedStructureRevision: 0,
+        expectedRevision: 0,
+      });
+      if (uncertain) await expect(update).rejects.toThrow("response lost");
+      else await update;
+      expect(client.cachedSnapshot("main")).toBeNull();
+    },
+  );
+  it.each([false, true])(
+    "invalidates Project snapshots after code replacement, uncertain=%s",
+    async (uncertain) => {
+      const { client, http } = await freshClient();
+      await client.connect("session-1.code");
+      await client.snapshot("main");
+      const projects = vi.spyOn(http, "projects");
+      if (uncertain) projects.mockRejectedValueOnce(new Error("response lost"));
+      else projects.mockResolvedValueOnce({ ok: true } as never);
+      const replace = client.projectResource({
+        apiVersion: "3.0",
+        requestId: "replace-code",
+        operation: "replace-project-code",
+        expectedStructureRevision: 0,
+        projectCode: "{}",
+      });
+      if (uncertain) await expect(replace).rejects.toThrow("response lost");
+      else await replace;
+      expect(client.cachedSnapshot("main")).toBeNull();
+      await client.snapshot("main");
+      projects.mockResolvedValueOnce({ ok: true } as never);
+      await client.projectResource({
+        apiVersion: "3.0",
+        requestId: "read-code",
+        operation: "read-project-code",
+      });
+      expect(client.cachedSnapshot("main")).not.toBeNull();
+    },
+  );
+  it("does not carry an offline request into a newly paired Project", async () => {
+    const http = new FakeAgentHttp();
+    const client = new AgentSessionClient({
+      http,
+      sleep: async () => {
+        vi.spyOn(http, "claim").mockResolvedValueOnce({
+          sessionId: "other-session",
+          projectId: "other-project",
+          documentIds: ["other"],
+          agentToken: "new-token",
+          tokenExpiresAt: Number.MAX_SAFE_INTEGER,
+          connectorToken: "new-connector",
+          connectorExpiresAt: Number.MAX_SAFE_INTEGER,
+          scopes: [],
+        });
+        await client.connect("other.claim");
+      },
+    });
+    await client.connect("session-1.code");
+    const method = vi
+      .spyOn(http, "projects")
+      .mockRejectedValue(
+        new AgentSessionError(
+          "EDITOR_OFFLINE",
+          "offline",
+          "editor-offline",
+          503,
+        ),
+      );
+    await expect(
+      client.projectResource({
+        apiVersion: "3.0",
+        requestId: "old-request",
+        operation: "list-projects",
+      }),
+    ).rejects.toMatchObject({ code: "SESSION_CHANGED" });
+    expect(method).toHaveBeenCalledTimes(1);
+  });
+  it.each(["files", "simulation", "projects"] as const)(
+    "%s retries only pre-dispatch offline rejection with the original request identity",
+    async (resource) => {
+      const http = new FakeAgentHttp();
+      const sleep = vi.fn(async (_ms: number) => {});
+      const client = new AgentSessionClient({ http, sleep });
+      await client.connect("session-1.code");
+      const method = vi.spyOn(http, resource);
+      method.mockRejectedValueOnce(
+        new AgentSessionError(
+          "EDITOR_OFFLINE",
+          "offline",
+          "editor-offline",
+          503,
+        ),
+      );
+      method.mockResolvedValueOnce({ ok: true } as never);
+      const envelope = { apiVersion: "3.0" as const, requestId: "stable-id" };
+      const call = () =>
+        resource === "files"
+          ? client.fileResource({
+              ...envelope,
+              operation: "simulation-input",
+              input: { action: "list" },
+            })
+          : resource === "simulation"
+            ? client.simulationResource({
+                ...envelope,
+                operation: "start",
+                preparedId: "prepared",
+                digest: "a".repeat(64),
+              })
+            : client.projectResource({
+                ...envelope,
+                operation: "list-projects",
+              });
+      await expect(call()).resolves.toEqual({ ok: true });
+      expect(sleep).toHaveBeenCalledWith(500);
+      expect(method.mock.calls[0]![2]).toEqual(method.mock.calls[1]![2]);
+      method.mockReset();
+      method.mockRejectedValue(
+        new AgentSessionError(
+          "EDITOR_DISCONNECTED",
+          "uncertain",
+          "editor-offline",
+          503,
+        ),
+      );
+      await expect(call()).rejects.toMatchObject({
+        code: "EDITOR_DISCONNECTED",
+      });
+      expect(method).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("bounds offline recovery and never retries explicit revocation", async () => {
+    const http = new FakeAgentHttp();
+    const sleep = vi.fn(async (_ms: number) => {});
+    const client = new AgentSessionClient({ http, sleep });
+    await client.connect("session-1.code");
+    const method = vi
+      .spyOn(http, "simulation")
+      .mockRejectedValue(
+        new AgentSessionError(
+          "EDITOR_OFFLINE",
+          "offline",
+          "editor-offline",
+          503,
+        ),
+      );
+    const request = {
+      apiVersion: "3.0" as const,
+      requestId: "start-id",
+      operation: "start" as const,
+      preparedId: "prepared",
+      digest: "a".repeat(64),
+    };
+    await expect(client.simulationResource(request)).rejects.toMatchObject({
+      code: "EDITOR_OFFLINE",
+    });
+    expect(method).toHaveBeenCalledTimes(4);
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([500, 1000, 2000]);
+    method.mockReset();
+    method.mockRejectedValue(
+      new AgentSessionError(
+        "SESSION_REVOKED",
+        "revoked",
+        "unrecoverable-credential",
+        410,
+      ),
+    );
+    await expect(client.simulationResource(request)).rejects.toMatchObject({
+      code: "SESSION_REVOKED",
+    });
+    expect(method).toHaveBeenCalledTimes(1);
+    expect((await client.status({ refresh: false })).sessionId).toBeNull();
+  });
+  it.each(["dirty", "other-project"])(
+    "does not submit a %s operation snapshot",
+    async (reason) => {
+      const { client, http } = await freshClient();
+      await client.connect("session-1.code");
+      const snapshot = structuredClone(await client.snapshot());
+      if (reason === "dirty") snapshot.dirty = true;
+      else snapshot.snapshot.project.id = "other-project";
+      http.circuitHandler = async ({ request }) => {
+        expect(request.operation).toBe("snapshot");
+        return snapshotResponse(request.requestId);
+      };
+      const report = await client.advancedTransact(
+        {
+          edits: [
+            {
+              kind: "set_instance_reference",
+              instanceId: "R1",
+              reference: "R2",
+            },
+          ],
+        },
+        { snapshot },
+      );
+      expect(report.ok).toBe(false);
+    },
+  );
+  it("reuses a composed operation's snapshot and preserves its revision on conflicts", async () => {
+    const { client, http } = await freshClient();
+    await client.connect("session-1.code");
+    const snapshot = await client.snapshot();
+    const calls: string[] = [];
+    http.circuitHandler = async ({ request }) => {
+      calls.push(request.operation);
+      if (request.operation === "transact") {
+        expect(request.expectedRevision).toBe(snapshot.revision);
+        return errorResponse(
+          request.requestId,
+          "transact",
+          "REVISION_CONFLICT",
+          "Human changed the document",
+        );
+      }
+      throw new Error("Unexpected refetch");
+    };
+    const report = await client.advancedTransact(
+      {
+        edits: [
+          { kind: "set_instance_reference", instanceId: "R1", reference: "R2" },
+        ],
+      },
+      { snapshot },
+    );
+    expect(report).toMatchObject({
+      ok: false,
+      stage: "commit",
+      code: "REVISION_CONFLICT",
+    });
+    expect(calls).toEqual(["transact"]);
+  });
+  it("waits for publication using fresh descriptor IDs without restarting the simulation", async () => {
+    const ids: string[] = [];
+    const http = new FakeAgentHttp({
+      files: async (request) => {
+        ids.push(request.requestId);
+        return {
+          apiVersion: "3.0",
+          requestId: request.requestId,
+          operation: "simulation-input",
+          ok: true,
+          result:
+            ids.length < 3
+              ? {
+                  ok: false,
+                  error: {
+                    code: "ARTIFACT_TRANSFER_PENDING",
+                    message: "Uploading",
+                    stage: "export",
+                    recovery: "retry-after",
+                    retryAfterMs: 2000,
+                  },
+                }
+              : {
+                  ok: true,
+                  artifact: {
+                    id: "file",
+                    name: "out.raw",
+                    mediaType: "text/plain",
+                    byteLength: 1,
+                    sha256: "a".repeat(64),
+                  },
+                  download: {
+                    path: "/api/agent/sessions/session-1/artifacts/file",
+                  },
+                },
+        };
+      },
+    });
+    const client = new AgentSessionClient({ http });
+    await client.connect("session-1.code");
+    const simulation = vi.spyOn(http, "simulation");
+    const sleep = vi.fn(async () => undefined);
+    expect(
+      await client.prepareArtifactDownload("file", "first", { sleep }),
+    ).toMatchObject({
+      result: {
+        ok: true,
+        download: { path: "/api/agent/sessions/session-1/artifacts/file" },
+      },
+    });
+    expect(ids[0]).toBe("first");
+    expect(new Set(ids).size).toBe(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(simulation).not.toHaveBeenCalled();
+    expect(http.claims).toHaveLength(1);
+  });
   it("retains a canonical request ID and payload through network recovery", async () => {
     const { client, http } = await freshClient();
     await client.connect("session-1.code");
@@ -70,22 +645,214 @@ describe("agent session client", () => {
       documentIds: [],
     });
   });
-  it("claims a code, caches capabilities, snapshots once, and reports online", async () => {
+  it("claims a code, caches capabilities, bootstraps once, and reports online", async () => {
     const { client, http } = await freshClient();
     const report = await client.connect("session-1.claim-code");
     expect(http.claims).toEqual(["session-1.claim-code"]);
     expect(report.mode).toBe("claimed");
     expect(report.projectId).toBe("project-1");
     expect(report.context?.revision).toBe(5);
+    expect(report.context?.byteLength).toBeGreaterThan(0);
+    expect(report.context?.diagnosticsLoaded).toBe(false);
+    expect(report.timing).toMatchObject({
+      credentialMs: expect.any(Number),
+      capabilitiesMs: expect.any(Number),
+      bootstrapSnapshotMs: expect.any(Number),
+      totalMs: expect.any(Number),
+    });
     expect(client.connection.snapshot.state).toBe("online");
     expect(http.circuitCalls.map((call) => call.request.operation)).toEqual([
       "capabilities",
       "snapshot",
     ]);
+    expect(http.circuitCalls[1]?.request).toMatchObject({
+      operation: "snapshot",
+      projection: "bootstrap",
+    });
+    expect(client.cachedSnapshot("main")).toBeNull();
     // A second capabilities call reuses the cache without another request.
     const calls = http.circuitCalls.length;
     await client.capabilities();
     expect(http.circuitCalls.length).toBe(calls);
+  });
+
+  it("starts capabilities and bootstrap Snapshot in the same post-claim wave", async () => {
+    let releaseCapabilities!: () => void;
+    let releaseBootstrap!: () => void;
+    const capabilitiesGate = new Promise<void>((resolve) => {
+      releaseCapabilities = resolve;
+    });
+    const bootstrapGate = new Promise<void>((resolve) => {
+      releaseBootstrap = resolve;
+    });
+    const http = new FakeAgentHttp({
+      circuit: async ({ request }) => {
+        if (request.operation === "capabilities") {
+          await capabilitiesGate;
+          return capabilitiesResponse(request.requestId);
+        }
+        if (
+          request.operation === "snapshot" &&
+          request.projection === "bootstrap"
+        ) {
+          await bootstrapGate;
+          return bootstrapSnapshotResponse(request.requestId);
+        }
+        return snapshotResponse(request.requestId);
+      },
+    });
+    const { client } = await freshClient({ http });
+    const pending = client.connect("session-1.claim-code");
+
+    await vi.waitFor(() => expect(http.circuitCalls).toHaveLength(2));
+    expect(
+      new Set(http.circuitCalls.map((call) => call.request.operation)),
+    ).toEqual(new Set(["capabilities", "snapshot"]));
+    releaseCapabilities();
+    releaseBootstrap();
+    await expect(pending).resolves.toMatchObject({ mode: "claimed" });
+  });
+
+  it("falls back to the established full Snapshot during a rolling deployment", async () => {
+    const http = new FakeAgentHttp({
+      circuit: async ({ request }) => {
+        if (request.operation === "capabilities") {
+          return capabilitiesResponse(request.requestId);
+        }
+        if (
+          request.operation === "snapshot" &&
+          request.projection === "bootstrap"
+        ) {
+          return errorResponse(
+            request.requestId,
+            "snapshot",
+            "INVALID_REQUEST",
+            "old Editor schema",
+          );
+        }
+        return snapshotResponse(request.requestId);
+      },
+    });
+    const { client } = await freshClient({ http });
+
+    await expect(client.connect("session-1.claim-code")).resolves.toMatchObject(
+      {
+        context: { documentId: "main", revision: 5 },
+      },
+    );
+    expect(
+      http.circuitCalls
+        .filter((call) => call.request.operation === "snapshot")
+        .map((call) => call.request),
+    ).toEqual([
+      expect.objectContaining({ projection: "bootstrap" }),
+      expect.not.objectContaining({ projection: "bootstrap" }),
+    ]);
+    expect(client.cachedSnapshot("main")?.dirty).toBe(false);
+  });
+
+  it("reads state and folder directory without a full Snapshot, then reuses a clean cache", async () => {
+    const { client, http } = await freshClient();
+    await client.connect("session-1.claim-code");
+    expect(await client.documentState()).toMatchObject({
+      projection: "state",
+      revision: 5,
+      counts: { errors: 0, warnings: 1 },
+    });
+    expect(await client.simulationFolderDirectory()).toMatchObject({
+      projection: "folder-directory",
+      folders: [],
+    });
+    expect(
+      http.circuitCalls
+        .filter((call) => call.request.operation === "snapshot")
+        .map((call) =>
+          call.request.operation === "snapshot"
+            ? call.request.projection
+            : undefined,
+        ),
+    ).toEqual(["bootstrap", "state", "folder-directory"]);
+    await client.refreshSnapshot("main");
+    const calls = http.circuitCalls.length;
+    await client.documentState();
+    await client.simulationFolderDirectory();
+    expect(http.circuitCalls).toHaveLength(calls);
+  });
+
+  it("falls back to full only when an older Editor rejects lightweight projections", async () => {
+    const http = new FakeAgentHttp({
+      circuit: async ({ request }) => {
+        if (request.operation === "capabilities")
+          return capabilitiesResponse(request.requestId);
+        if (request.operation === "snapshot") {
+          if (request.projection === "bootstrap")
+            return bootstrapSnapshotResponse(request.requestId);
+          if (
+            request.projection === "state" ||
+            request.projection === "folder-directory"
+          )
+            return errorResponse(
+              request.requestId,
+              "snapshot",
+              "INVALID_REQUEST",
+              "older Editor projection schema",
+            );
+          return snapshotResponse(request.requestId);
+        }
+        return errorResponse(
+          request.requestId,
+          "transact",
+          "UNSUPPORTED_EDIT",
+          "unexpected",
+        );
+      },
+    });
+    const { client } = await freshClient({ http });
+    await client.connect("session-1.claim-code");
+    expect(await client.documentState()).toMatchObject({ revision: 5 });
+    const calls = http.circuitCalls.length;
+    expect(await client.simulationFolderDirectory()).toMatchObject({
+      folders: [],
+    });
+    expect(http.circuitCalls).toHaveLength(calls);
+    expect(
+      http.circuitCalls
+        .filter((call) => call.request.operation === "snapshot")
+        .map((call) =>
+          call.request.operation === "snapshot"
+            ? call.request.projection
+            : undefined,
+        ),
+    ).toEqual(["bootstrap", "state", undefined]);
+  });
+
+  it("marks a cached full Snapshot dirty when a lightweight read observes a newer revision", async () => {
+    const { client, http } = await freshClient();
+    await client.connect("session-1.claim-code");
+    await client.refreshSnapshot("main");
+    const changed = testSnapshot();
+    changed.document.revision = 6;
+    http.circuitHandler = async ({ request }) => {
+      if (request.operation === "snapshot" && request.projection === "state")
+        return stateSnapshotResponse(request.requestId, changed);
+      if (
+        request.operation === "snapshot" &&
+        request.projection === "folder-directory"
+      )
+        return folderDirectoryResponse(request.requestId, changed);
+      if (request.operation === "snapshot")
+        return snapshotResponse(request.requestId, changed);
+      return capabilitiesResponse(request.requestId);
+    };
+    expect(
+      await client.documentState(undefined, { refresh: true }),
+    ).toMatchObject({
+      revision: 6,
+    });
+    expect(client.cachedSnapshot("main")?.dirty).toBe(true);
+    expect(await client.simulationFolderDirectory()).toMatchObject({
+      revision: 6,
+    });
   });
 
   it("reads relay observations without a Circuit probe and retains pairing on network failure", async () => {
@@ -143,10 +910,26 @@ describe("agent session client", () => {
   it("re-checks the active session without a new claim", async () => {
     const { client, http } = await freshClient();
     await client.connect("session-1.claim-code");
+    const capabilityCalls = http.circuitCalls.filter(
+      (call) => call.request.operation === "capabilities",
+    ).length;
+    const callsBeforeResume = http.circuitCalls.length;
     const report = await client.connect();
     expect(report.mode).toBe("resumed");
     expect(http.claims).toEqual(["session-1.claim-code"]);
-    expect(http.circuitCalls.at(-1)?.request.operation).toBe("capabilities");
+    expect(
+      http.circuitCalls.filter(
+        (call) => call.request.operation === "capabilities",
+      ),
+    ).toHaveLength(capabilityCalls);
+    expect(
+      http.circuitCalls.slice(callsBeforeResume).map((call) => call.request),
+    ).toEqual([
+      expect.objectContaining({
+        operation: "snapshot",
+        projection: "bootstrap",
+      }),
+    ]);
   });
 
   it("resumes a browser-approved connector in a new Helper process", async () => {
@@ -673,6 +1456,245 @@ describe("agent session client", () => {
     expect(report.ok).toBe(true);
     expect(report.revision).toBe(6);
     expect(client.summary("main")?.revision).toBe(6);
+  });
+
+  it("reuses bootstrap and transaction revisions for consecutive direct edits without a full snapshot", async () => {
+    const { client, http } = await freshClient();
+    await client.connect("session-1.code");
+    http.circuitHandler = async ({ request }) => {
+      if (request.operation === "transact")
+        return transactSuccessResponse(
+          request.requestId,
+          request.expectedRevision,
+        );
+      throw new Error(`unexpected ${request.operation} request`);
+    };
+    const transform = {
+      kind: "transform",
+      selection: { instanceIds: ["instance-1"] },
+      transform: { kind: "translate", delta: { x: 20, y: 0 } },
+    };
+    expect((await client.applyActions([transform])).revision).toBe(6);
+    expect((await client.applyActions([transform])).revision).toBe(7);
+    expect(
+      (
+        await client.advancedTransact([
+          {
+            kind: "move_instance",
+            instanceId: "instance-1",
+            position: { x: 40, y: 0 },
+          },
+        ])
+      ).revision,
+    ).toBe(8);
+    const calls = http.circuitCalls.map(({ request }) => request);
+    expect(
+      calls.filter((request) => request.operation === "snapshot"),
+    ).toHaveLength(1);
+    expect(
+      calls
+        .filter((request) => request.operation === "transact")
+        .map((request) => request.expectedRevision),
+    ).toEqual([5, 6, 7]);
+  });
+
+  it("does not reuse a revision across browser contexts", async () => {
+    const { client, http } = await freshClient();
+    await client.connect("session-1.code");
+    http.contextRevision = "new-browser-context";
+    http.circuitHandler = async ({ request }) => {
+      if (
+        request.operation === "snapshot" &&
+        request.projection === "bootstrap"
+      ) {
+        const response = bootstrapSnapshotResponse(request.requestId);
+        response.context.document.revision = 12;
+        return response;
+      }
+      if (request.operation === "transact") {
+        expect(request.expectedRevision).toBe(12);
+        return transactSuccessResponse(
+          request.requestId,
+          request.expectedRevision,
+        );
+      }
+      throw new Error(`unexpected ${request.operation} request`);
+    };
+    const report = await client.advancedTransact([
+      {
+        kind: "move_instance",
+        instanceId: "instance-1",
+        position: { x: 40, y: 0 },
+      },
+    ]);
+    expect(report).toMatchObject({ ok: true, revision: 13 });
+    expect(
+      http.circuitCalls.filter(
+        ({ request }) => request.operation === "snapshot",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("refreshes an implicit Snapshot after a Project switch without claiming again", async () => {
+    const { client, http } = await freshClient();
+    await client.connect("session-1.code");
+    const next = testSnapshot();
+    next.project.id = "project-2";
+    next.project.topDocumentId = "next-document";
+    next.project.documents[0]!.id = "next-document";
+    next.document.id = "next-document";
+    vi.spyOn(http, "status").mockImplementation(async () => {
+      http.contextRevision = "project-2-context";
+      return {
+        ok: true,
+        sessionId: "session-1",
+        projectId: "project-2",
+        documentIds: ["next-document"],
+        authorization: "active",
+        editor: "attached",
+        observedAt: 1000,
+        expiresAt: 999999,
+      };
+    });
+    http.circuitHandler = async ({ request }) =>
+      request.operation === "snapshot" && request.documentId === "main"
+        ? errorResponse(
+            request.requestId,
+            "snapshot",
+            "DOCUMENT_NOT_FOUND",
+            "Project changed",
+          )
+        : request.operation === "snapshot" &&
+            request.documentId === "next-document"
+          ? snapshotResponse(request.requestId, next)
+          : capabilitiesResponse(request.requestId);
+    expect((await client.refreshSnapshot()).documentId).toBe("next-document");
+    expect(http.claims).toHaveLength(1);
+    await expect(client.refreshSnapshot("main")).rejects.toMatchObject({
+      code: "DOCUMENT_NOT_FOUND",
+    });
+  });
+
+  it("refreshes on a stale direct edit without replaying the mutation", async () => {
+    const { client, http } = await freshClient();
+    await client.connect("session-1.code");
+    http.circuitHandler = async ({ request }) => {
+      if (request.operation === "transact")
+        return errorResponse(
+          request.requestId,
+          "transact",
+          "STALE_REVISION",
+          "human edit",
+        );
+      if (request.operation === "snapshot")
+        return snapshotResponse(request.requestId, testSnapshot(), 9);
+      throw new Error(`unexpected ${request.operation} request`);
+    };
+    const report = await client.applyActions([
+      {
+        kind: "transform",
+        selection: { instanceIds: ["instance-1"] },
+        transform: { kind: "translate", delta: { x: 20, y: 0 } },
+      },
+    ]);
+    expect(report).toMatchObject({
+      ok: false,
+      code: "STATE_CHANGED",
+      revision: 9,
+    });
+    expect(
+      http.circuitCalls.filter(
+        ({ request }) => request.operation === "transact",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("reads selected pins once and invalidates stale cached topology", async () => {
+    const { client, http } = await freshClient();
+    await client.connect("session-1.code");
+    await client.snapshot();
+    http.circuitHandler = async ({ request }) => ({
+      apiVersion: "3.0",
+      requestId: request.requestId,
+      operation: "snapshot",
+      ok: true,
+      projection: "pins",
+      projectId: "project-1",
+      structureRevision: 0,
+      documentId: "main",
+      revision: 6,
+      instances: [],
+      missingInstanceIds: ["absent"],
+    });
+    const before = http.circuitCalls.length;
+    expect(await client.pinsSnapshot(["absent"])).toMatchObject({
+      projection: "pins",
+      revision: 6,
+      missingInstanceIds: ["absent"],
+    });
+    expect(http.circuitCalls.length - before).toBe(1);
+    expect(client.cachedSnapshot()?.dirty).toBe(true);
+  });
+
+  it("falls back to a full read for geometry when an older Editor rejects the projection", async () => {
+    const { client, http } = await freshClient();
+    await client.connect("session-1.code");
+    http.circuitHandler = async ({ request }) => {
+      if (request.operation === "snapshot" && request.projection === "geometry")
+        return errorResponse(
+          request.requestId,
+          "snapshot",
+          "INVALID_REQUEST",
+          "unknown projection",
+        );
+      if (request.operation === "snapshot")
+        return snapshotResponse(request.requestId);
+      throw new Error(`unexpected ${request.operation} request`);
+    };
+    const geometry = await client.geometrySnapshot(["instance-1", "absent"]);
+    expect(geometry).toMatchObject({
+      projection: "geometry",
+      objects: [{ kind: "instance", id: "instance-1" }],
+      missingObjectIds: ["absent"],
+    });
+    expect(
+      http.circuitCalls.flatMap(({ request }) =>
+        request.operation === "snapshot" ? [request.projection ?? "full"] : [],
+      ),
+    ).toEqual(["bootstrap", "geometry", "full"]);
+  });
+
+  it("invalidates an older full Snapshot when focused geometry observes a newer revision", async () => {
+    const { client, http } = await freshClient();
+    await client.connect("session-1.code");
+    await client.snapshot();
+    http.circuitHandler = async ({ request }) => {
+      if (request.operation === "snapshot" && request.projection === "geometry")
+        return {
+          apiVersion: "3.0",
+          requestId: request.requestId,
+          operation: "snapshot",
+          ok: true,
+          projection: "geometry",
+          projectId: "project-1",
+          structureRevision: 0,
+          documentId: "main",
+          revision: 6,
+          objects: [{ kind: "instance", id: "instance-1", placement: null }],
+          missingObjectIds: [],
+        };
+      if (request.operation === "snapshot")
+        return snapshotResponse(request.requestId, testSnapshot(), 6);
+      throw new Error(`unexpected ${request.operation} request`);
+    };
+    expect((await client.geometrySnapshot(["instance-1"])).revision).toBe(6);
+    expect(client.cachedSnapshot()?.dirty).toBe(true);
+    await client.snapshot();
+    expect(
+      http.circuitCalls.filter(
+        ({ request }) => request.operation === "snapshot",
+      ),
+    ).toHaveLength(4);
   });
 
   it("does not silently rebase a source helper after a concurrent Project edit", async () => {

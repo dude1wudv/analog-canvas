@@ -9,19 +9,23 @@ import {
   type AgentFileResourceResponse,
 } from "@icm/agent-adapter";
 import { SimulationFiles } from "@icm/simulation-service/files";
+import type { ArtifactRef } from "@icm/simulation-service/contract";
 import type {
   ProjectTransaction,
   ProjectTransactionResult,
 } from "@icm/edit-engine";
+import { planProjectCellBodyImport } from "@icm/edit-engine";
 import { createSimulationProjectFileHost } from "../features/simulation/project-file-host";
-import { createFormalExportSource } from "@icm/exporters";
+import { createBrowserFormalExportSource } from "@icm/exporters";
 import { parseProject, serializeProject } from "@icm/project-protocol";
 import type { CircuitProject, SchematicDocument } from "@icm/model";
 import { importSpiceSources } from "@icm/spice";
+import { withImportedInstanceDisplays } from "../features/instance-display/imported-instance-displays";
 import type { SymbolResolver } from "@icm/symbols";
 import { prepareDocumentFormulaArtifacts } from "../features/text-editing/formula-artifacts";
 import { importChunk } from "../components/chunk-import";
 import { simulationFileEngine } from "../features/simulation/file-engine";
+import { createBrowserSimulationArtifactStore } from "../features/simulation/browser-simulation-artifact-store";
 
 type StoredCandidate = {
   project: CircuitProject;
@@ -29,6 +33,14 @@ type StoredCandidate = {
 };
 
 export interface BrowserAgentFileHostOptions {
+  getActiveDocumentId?: () => string;
+  commitProjectStructure?: (
+    project: CircuitProject,
+    activeDocumentId: string,
+  ) => void;
+  loadProjectCode?: () => Promise<
+    typeof import("../features/project-code/project-code")
+  >;
   fetch?: typeof fetch;
   transport?: "direct" | "managed";
   getProjectSessionId: () => string;
@@ -36,6 +48,10 @@ export interface BrowserAgentFileHostOptions {
   getDocument: (documentId: string) => SchematicDocument | null;
   getResolver: () => SymbolResolver;
   onApprovalRequested: (candidate: AgentFileCandidateSummary) => void;
+  openProjectInNewTab?: (
+    project: CircuitProject,
+    background?: boolean,
+  ) => Promise<boolean>;
   dispatchProjectTransaction?: (
     request: ProjectTransaction,
   ) => ProjectTransactionResult;
@@ -43,13 +59,19 @@ export interface BrowserAgentFileHostOptions {
 
 /**
  * Browser-only endpoint for named File Resource requests. It owns short-lived
- * candidate bytes and parsed projects; the Worker only forwards typed messages.
+ * candidate bytes and parsed projects. Simulation downloads register immutable
+ * byte replicas with the existing authorized relay storage.
  * A staged candidate has no authority to replace the live project by itself.
  */
 export class BrowserAgentFileHost {
   readonly simulationFiles: SimulationFiles;
   private readonly candidates = new Map<string, StoredCandidate>();
   private readonly boundProjectSessionId: string;
+  setArtifactPublisher(
+    publisher: (ref: ArtifactRef, text: string) => Promise<string>,
+  ) {
+    this.simulationFiles.setArtifactPublisher(publisher);
+  }
 
   constructor(private readonly options: BrowserAgentFileHostOptions) {
     this.boundProjectSessionId = options.getProjectSessionId();
@@ -64,6 +86,9 @@ export class BrowserAgentFileHost {
           })
         : undefined,
       simulationFileEngine(options),
+      createBrowserSimulationArtifactStore(options.getProject().id, undefined, {
+        retainSession: true,
+      }),
     );
   }
 
@@ -91,8 +116,21 @@ export class BrowserAgentFileHost {
         return this.download(request);
       case "stage":
         return this.stage(request);
+      case "import-cell":
+        return this.importCell(request);
       case "inspect": {
         const candidate = this.candidates.get(request.candidateId);
+        const document = request.documentId
+          ? candidate?.project.documents.find(
+              (d) => d.id === request.documentId,
+            )
+          : undefined;
+        if (candidate && request.documentId && !document)
+          return this.error(
+            request,
+            "DOCUMENT_NOT_FOUND",
+            "Cell is not present in this staged candidate",
+          );
         return candidate
           ? {
               apiVersion: AGENT_API_VERSION,
@@ -100,6 +138,7 @@ export class BrowserAgentFileHost {
               operation: "inspect",
               ok: true,
               candidate: candidate.summary,
+              ...(document ? { documentCode: JSON.stringify(document) } : {}),
             }
           : this.error(
               request,
@@ -141,6 +180,39 @@ export class BrowserAgentFileHost {
           approval: "pending-human",
         };
       }
+      case "open": {
+        const candidate = this.candidates.get(request.candidateId);
+        if (!candidate)
+          return this.error(
+            request,
+            "FILE_CANDIDATE_NOT_FOUND",
+            "Candidate is unavailable or expired",
+          );
+        if (!this.options.openProjectInNewTab)
+          return this.error(
+            request,
+            "FILE_OPEN_UNAVAILABLE",
+            "Opening a new Project tab is unavailable in this editor",
+          );
+        if (
+          !(await this.options.openProjectInNewTab(
+            candidate.project,
+            request.background,
+          ))
+        )
+          return this.error(
+            request,
+            "FILE_OPEN_BLOCKED",
+            "Finish the current edit before opening the imported Project",
+          );
+        this.candidates.delete(request.candidateId);
+        return {
+          apiVersion: AGENT_API_VERSION,
+          requestId: request.requestId,
+          operation: "open",
+          ok: true,
+        };
+      }
     }
   }
 
@@ -160,6 +232,110 @@ export class BrowserAgentFileHost {
   clear(): void {
     this.simulationFiles.clear();
     this.candidates.clear();
+  }
+
+  private async importCell(
+    request: Extract<AgentFileResourceRequest, { operation: "import-cell" }>,
+  ): Promise<AgentFileResourceResponse> {
+    if (!this.options.commitProjectStructure)
+      return this.error(
+        request,
+        "FILE_IMPORT_UNAVAILABLE",
+        "This Editor cannot commit a staged Cell",
+      );
+    let code: typeof import("../features/project-code/project-code");
+    try {
+      code = await importChunk(
+        "Project Code",
+        this.options.loadProjectCode ??
+          (() => import("../features/project-code/project-code")),
+      );
+    } catch {
+      return this.error(
+        request,
+        "PROJECT_FEATURE_LOAD_FAILED",
+        "Project Code could not load; no edit was attempted. Check connectivity and save before refreshing the Editor.",
+      );
+    }
+    // The lazy import may yield while the human replaces/edits the Project.
+    if (this.options.getProjectSessionId() !== this.boundProjectSessionId)
+      return this.error(
+        request,
+        "PROJECT_REPLACED",
+        "The bound Project was replaced before Cell import",
+      );
+    this.removeExpired();
+    const candidate = this.candidates.get(request.candidateId);
+    if (!candidate)
+      return this.error(
+        request,
+        "FILE_CANDIDATE_NOT_FOUND",
+        "Candidate is unavailable or expired",
+      );
+    const current = this.options.getProject();
+    if (current.structureRevision !== request.expectedStructureRevision)
+      return this.error(
+        request,
+        "STALE_STRUCTURE_REVISION",
+        "Project changed; inspect the target and submit a new request",
+      );
+    const target = current.documents.find(
+      (d) => d.id === request.targetDocumentId,
+    );
+    if (!target)
+      return this.error(
+        request,
+        "DOCUMENT_NOT_FOUND",
+        "Target Cell is not present in this Project",
+      );
+    if (target.revision !== request.expectedRevision)
+      return this.error(
+        request,
+        "STALE_REVISION",
+        "Target Cell changed; inspect it and submit a new request",
+      );
+    try {
+      const composed = planProjectCellBodyImport(
+        current,
+        candidate.project,
+        request.sourceDocumentId,
+        request.targetDocumentId,
+        request.mode,
+        request.candidateId,
+      );
+      const active =
+        this.options.getActiveDocumentId?.() ?? current.topDocumentId;
+      const planned = code.planProjectCodeCommit(
+        current,
+        code.formatProjectCode(composed.project),
+        active,
+      );
+      if (!planned.ok)
+        return this.error(request, "CELL_IMPORT_INVALID", planned.message);
+      this.options.commitProjectStructure(
+        planned.project,
+        planned.activeDocumentId,
+      );
+      this.candidates.delete(request.candidateId);
+      return {
+        apiVersion: AGENT_API_VERSION,
+        requestId: request.requestId,
+        operation: "import-cell",
+        ok: true,
+        targetDocumentId: request.targetDocumentId,
+        importedDocumentIds: composed.importedDocumentIds,
+        structureRevision: planned.project.structureRevision,
+        revision: planned.project.documents.find(
+          (d) => d.id === request.targetDocumentId,
+        )!.revision,
+      };
+    } catch (error) {
+      return this.error(
+        request,
+        "CELL_IMPORT_REJECTED",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   }
 
   private async download(
@@ -192,9 +368,9 @@ export class BrowserAgentFileHost {
           "Document is not present in this Project",
         );
       const prepared = await prepareDocumentFormulaArtifacts(document);
-      const source = (() => {
+      const source = await (async () => {
         try {
-          return createFormalExportSource(
+          return await createBrowserFormalExportSource(
             document,
             this.options.getResolver(),
             { title: this.options.getProject().name },
@@ -299,7 +475,7 @@ export class BrowserAgentFileHost {
             diagnostics[0]?.message ?? "Structural SPICE import failed",
           );
         }
-        project = result.project;
+        project = withImportedInstanceDisplays(result.project);
       }
       const candidateId = `candidate-${crypto.randomUUID()}`;
       const expiresAt = new Date(
@@ -315,6 +491,12 @@ export class BrowserAgentFileHost {
           (total, document) => total + document.instances.length,
           0,
         ),
+        documents: project.documents.map((d) => ({
+          id: d.id,
+          name: d.name,
+          instanceCount: d.instances.length,
+          terminalNames: d.netlist?.terminals.map((t) => t.name) ?? [],
+        })),
         diagnostics,
       };
       this.candidates.set(candidateId, { project, summary });

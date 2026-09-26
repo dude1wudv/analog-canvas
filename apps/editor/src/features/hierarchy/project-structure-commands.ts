@@ -19,7 +19,7 @@ import {
 } from "@icm/edit-engine";
 import type { ProjectStructureEdit, SchematicEdit } from "@icm/edit-engine";
 import {
-  createEmptyDocument,
+  createCellDocument,
   createId,
   CircuitProjectSchema,
   semanticTextDocument,
@@ -30,6 +30,7 @@ import type {
   Annotation,
   CircuitProject,
   ExternalSubcircuitDefinition,
+  PortLabelFormatOptions,
   SchematicDocument,
 } from "@icm/model";
 import type { SymbolResolver } from "@icm/symbols";
@@ -174,9 +175,11 @@ export function createProjectStructureCommands({
   const createCell = (inputName: string): void => {
     const name = inputName.trim();
     if (!name) return;
-    const child = createEmptyDocument(createDocumentId(), name);
-    child.netlist!.name = name;
-    child.presentation = structuredClone(activeDocument.presentation);
+    const child = createCellDocument(
+      createDocumentId(),
+      name,
+      activeDocument.presentation,
+    );
     if (commitStructure("create-cell", planCreateCell(child), child.id)) {
       onCellCreated();
       setStatus(`Created Cell ${name}`);
@@ -399,6 +402,7 @@ export function createProjectStructureCommands({
 
   const formatCellTerminalAnnotations = (
     targetDocumentId = activeDocument.id,
+    options?: PortLabelFormatOptions,
   ): void => {
     const targetDocument = project.documents.find(
       (candidate) => candidate.id === targetDocumentId,
@@ -411,9 +415,13 @@ export function createProjectStructureCommands({
       setStatus("This Cell has no Port labels");
       return;
     }
-    const edits = planFormatCellTerminalAnnotations(project, targetDocumentId);
+    const edits = planFormatCellTerminalAnnotations(
+      project,
+      targetDocumentId,
+      options,
+    );
     if (edits.length === 0) {
-      setStatus("All Port labels already use the standard format");
+      setStatus("All Port labels already use the selected format");
       return;
     }
     if (commitStructure("format-cell-port-labels", edits)) {

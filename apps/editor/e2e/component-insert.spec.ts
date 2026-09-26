@@ -38,6 +38,104 @@ async function openSelectionShelf(page: import("@playwright/test").Page) {
   }
 }
 
+for (const family of [
+  "and-gate",
+  "nand-gate",
+  "or-gate",
+  "nor-gate",
+  "xor-gate",
+  "xnor-gate",
+])
+  test(`${family} input count changes drawn pins and black-box target together`, async ({
+    page,
+  }) => {
+    const target = family.replace("-", "_");
+    await page.goto("/editor");
+    await chooseComponent(page, family);
+    await page
+      .getByTestId("schematic-canvas")
+      .click({ position: { x: 360, y: 230 } });
+    await page.keyboard.press("Escape");
+    await page.getByTestId("hit-X1").click();
+    await openSelectionShelf(page);
+    expect(JSON.parse(await readComponentPropertyCode(page)).inputs).toBe(2);
+    await editComponentPropertyCode(page, (code) => {
+      code.inputs = 4;
+    });
+    await expect(page.getByTestId("terminal-X1-C")).toHaveCount(1);
+    await expect(page.getByTestId("terminal-X1-D")).toHaveCount(1);
+    await expect
+      .poll(() => recoveryProjectTexts(page))
+      .toContain(`"name": "${target}_4"`);
+    await page.getByLabel("Inputs options").selectOption("3");
+    await expect(page.getByTestId("terminal-X1-D")).toHaveCount(0);
+    await expectComponentCodeField(page, "inputs", 3);
+  });
+
+for (const family of [
+  "and-gate",
+  "nand-gate",
+  "or-gate",
+  "nor-gate",
+  "xor-gate",
+  "xnor-gate",
+])
+  test(`${family} can shrink after its extra input wire is deleted`, async ({
+    page,
+  }) => {
+    const target = family.replace("-", "_");
+    const project = createEmptyProject("and-shrink", "AND shrink");
+    const document = project.documents[0]!;
+    document.instances.push({
+      id: "X1",
+      symbolId: `${family}-4`,
+      reference: "X1",
+      placement: { position: { x: 200, y: 100 }, rotation: 0, mirror: "none" },
+      netlist: {
+        binding: { kind: "unresolved-subcircuit", name: `${target}_4` },
+        parameters: {},
+      },
+    });
+    document.nets.push({
+      id: "net-D",
+      terminals: [{ instanceId: "X1", pinName: "D" }],
+    });
+    document.junctions.push({
+      id: "J-D",
+      netId: "net-D",
+      position: { x: 140, y: 112 },
+    });
+    document.routes.push(
+      createRoutePath({
+        id: "wire-D",
+        netId: "net-D",
+        start: { kind: "junction", junctionId: "J-D" },
+        end: { kind: "terminal", instanceId: "X1", pinName: "D" },
+        bends: [],
+        modes: ["manual"],
+      }),
+    );
+    await page.goto("/editor");
+    await page.getByTestId("project-file").setInputFiles({
+      name: "and-shrink.icproj.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify(project)),
+    });
+    await page.getByTestId("route-hit-wire-D").click({ force: true });
+    await page.keyboard.press("Delete");
+    await expect(page.getByTestId("route-hit-wire-D")).toHaveCount(0);
+    await page.getByTestId("hit-X1").click({ force: true });
+    await openSelectionShelf(page);
+    await editComponentPropertyCode(page, (code) => {
+      code.inputs = 2;
+    });
+    await expect(page.getByTestId("terminal-X1-D")).toHaveCount(0);
+    await expectComponentCodeField(page, "inputs", 2);
+    await expect
+      .poll(() => recoveryProjectTexts(page))
+      .toContain(`"name": "${target}"`);
+  });
+
 test("C copy shows alignment guides, commits the preview and clears guides on Escape", async ({
   page,
 }) => {
@@ -90,7 +188,7 @@ test("C copy shows alignment guides, commits the preview and clears guides on Es
     beforeRotation!,
   );
   await expect(
-    ghost.locator('[data-object-id="R1-copy-1"] > g').first(),
+    ghost.locator('[data-object-id="R1_2"] > g').first(),
   ).toHaveAttribute("transform", /rotate\(90\)/);
   await page.keyboard.press("Shift+r");
   await expect(page.getByTestId("snap-guide-y")).toHaveCount(1);
@@ -107,7 +205,7 @@ test("C copy shows alignment guides, commits the preview and clears guides on Es
     Number(await page.getByTestId("snap-guide-x").getAttribute("y2")),
   ).toBeGreaterThan(400);
   const preview = await ghost
-    .locator('[data-object-id="R1-copy-1"] > g')
+    .locator('[data-object-id="R1_2"] > g')
     .first()
     .evaluate((element) => {
       const p = new DOMPoint().matrixTransform(
@@ -117,7 +215,7 @@ test("C copy shows alignment guides, commits the preview and clears guides on Es
     });
   await page.mouse.click(vertical.x, vertical.y);
   const placed = await canvas
-    .locator('[data-layer="symbols"] [data-object-id="R1-copy-1"] > g')
+    .locator('[data-layer="symbols"] [data-object-id="R1_2"] > g')
     .first()
     .evaluate((element) => {
       const p = new DOMPoint().matrixTransform(
@@ -140,7 +238,7 @@ test("C copy shows alignment guides, commits the preview and clears guides on Es
   await page.keyboard.press("Escape");
   await expect(ghost).toHaveCount(0);
   await expect(page.locator(".smart-snap-guide")).toHaveCount(0);
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expect(page.getByTestId("instance-count")).toHaveText("1");
 });
 
@@ -229,7 +327,7 @@ test("blocks destructive browser refresh shortcuts and uses the stronger grid", 
   );
   await clickCommand(page, "File", "New Project");
   await expect(
-    page.getByRole("dialog", { name: "Unsaved changes" }),
+    page.getByRole("dialog", { name: "有未保存的更改" }),
   ).toHaveCount(0);
   await expect(page.locator('[data-canvas-hit-kind="instance"]')).toHaveCount(
     0,
@@ -298,7 +396,7 @@ test("mirrors component and copy placement previews before their commits", async
   await expect(copyPreview).toHaveAttribute("transform", /scale\(-1 -1\)/u);
   await canvas.click({ position: { x: 520, y: 220 } });
   await expect(
-    canvas.locator('[data-object-id="R1-copy-1"] > g').first(),
+    canvas.locator('[data-object-id="R1_2"] > g').first(),
   ).toHaveAttribute("transform", /scale\(-1 -1\)/u);
   await expect(canvas.getByText("R2", { exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
@@ -331,6 +429,28 @@ test("writes an Instance Reference through post-placement Properties", async ({
     .toContain('"reference": "R7"');
 });
 
+test("Battery receives a visible editable name without a simulation binding", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await chooseComponent(page, "battery");
+  const canvas = page.getByTestId("schematic-canvas");
+  await canvas.click({ position: { x: 360, y: 220 } });
+  await page.keyboard.press("Escape");
+  await expect(canvas.getByText("B1", { exact: true })).toBeVisible();
+
+  await page.getByTestId("hit-B1").click();
+  await revealPropertiesShelf(page);
+  await page.getByTestId("selection-shelf").click();
+  await editComponentPropertyCode(page, (code) => {
+    code.netlistName = "B7";
+  });
+  await expect(canvas.getByText("B7", { exact: true })).toBeVisible();
+  await expect
+    .poll(() => recoveryProjectTexts(page))
+    .toContain('"reference": "B7"');
+});
+
 test("keeps the Placement Tray out of the manual component workflow", async ({
   page,
 }) => {
@@ -346,104 +466,89 @@ test("keeps the Placement Tray out of the manual component workflow", async ({
   await expect(
     page.getByRole("button", { name: "Return component to Placement Tray" }),
   ).toHaveCount(0);
-  await expect(
-    page.getByRole("region", { name: "Placement Tray" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "待放置区" })).toHaveCount(0);
   await expect(page.getByTestId("hit-R1")).toBeVisible();
   await expect(page.getByTestId("revision")).toHaveText("1");
 });
 
-test("refreshes explicitly only after flushing and automatically restoring recovery", async ({
+test("new circuits open the Library and Netlist without replacing the saved Library preference", async ({
   page,
 }) => {
-  await page.goto("/editor");
-  await chooseComponent(page, "resistor");
-  await page
-    .getByTestId("schematic-canvas")
-    .click({ position: { x: 360, y: 230 } });
-  await page.keyboard.press("Escape");
-  await expect(page.getByTestId("hit-R1")).toBeVisible();
-  await expect(page.getByTestId("revision")).toHaveText("1");
+  await page.addInitScript(() => {
+    localStorage.setItem("icm.library-panel-open.v1", "false");
+  });
 
-  const navigated = page.waitForEvent("framenavigated");
-  await clickCommand(page, "File", "Refresh app");
-  await navigated;
-
-  await awaitEditorReady(page);
-  await expect(page.getByTestId("hit-R1")).toBeVisible();
-  await expect(page.getByTestId("revision")).toHaveText("1");
-  await expect(page.getByTestId("status")).toHaveText(
-    "Restored recovery revision 1",
-  );
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        sessionStorage.getItem("icm.restore-after-refresh.v1"),
-      ),
-    )
-    .toBeNull();
-});
-
-test("refresh restores the circuit when the session started from a boot-target URL", async ({
-  page,
-}) => {
-  // location.reload() keeps the entry URL, so the ?new=1 boot target re-runs
-  // on the refreshed page. It must yield to the pending restore instead of
-  // forking a fresh working copy that orphans the flushed snapshot.
   await page.goto("/editor?new=1");
   await awaitEditorReady(page);
-  await expect(page.getByTestId("status")).toHaveText("Created a new Project");
-  await chooseComponent(page, "resistor");
-  await page
-    .getByTestId("schematic-canvas")
-    .click({ position: { x: 360, y: 230 } });
-  await page.keyboard.press("Escape");
-  await expect(page.getByTestId("hit-R1")).toBeVisible();
-  await expect(page.getByTestId("revision")).toHaveText("1");
 
-  const navigated = page.waitForEvent("framenavigated");
-  await clickCommand(page, "File", "Refresh app");
-  await navigated;
-
-  await awaitEditorReady(page);
-  await expect(page.getByTestId("hit-R1")).toBeVisible();
-  await expect(page.getByTestId("revision")).toHaveText("1");
-  await expect(page.getByTestId("status")).toHaveText(
-    "Restored recovery revision 1",
+  await expect(page.getByTestId("shapes-library-panel")).toHaveAttribute(
+    "data-open",
+    "true",
+  );
+  await expect(page.getByTestId("refresh-netlist-panel")).toBeVisible();
+  await expect(page.getByTestId("library-toggle")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByTestId("netlist-panel-toggle")).toHaveAttribute(
+    "aria-pressed",
+    "true",
   );
   await expect
     .poll(() =>
-      page.evaluate(() =>
-        sessionStorage.getItem("icm.restore-after-refresh.v1"),
-      ),
+      page.evaluate(() => localStorage.getItem("icm.library-panel-open.v1")),
     )
-    .toBeNull();
+    .toBe("false");
 });
 
-test("keeps quick-start shortcuts in the upper-right corner until the first component is inserted", async ({
+test("keeps shortcuts hidden until the status-bar Hints control requests them", async ({
   page,
 }) => {
   await page.goto("/editor");
   await revealPropertiesShelf(page);
   await awaitEditorReady(page);
-  const quickStart = page.getByTestId("canvas-empty-state");
-  await expect(quickStart).toBeVisible();
-  await expect(quickStart).toHaveAttribute("aria-label", "快速入门快捷键");
-  await expect(quickStart).toContainText("快速开始");
-  await expect(quickStart).toContainText("全部快捷键");
-  await expect(quickStart.locator("li")).toHaveText([
-    "Ctrl/CmdFSelection filter",
-    "Ctrl/CmdShiftFSearch circuit",
+  const hintsButton = page.getByTestId("statusbar-shortcut-hints");
+  const shortcutHints = page.getByTestId("canvas-shortcut-hints");
+  await expect(shortcutHints).toHaveCount(0);
+  await expect(hintsButton).toHaveText("Hints");
+  await expect(hintsButton).toHaveAttribute("aria-pressed", "false");
+  const gridButton = page.getByTestId("statusbar-grid-toggle");
+  const [hintsBounds, gridBounds] = await Promise.all([
+    hintsButton.boundingBox(),
+    gridButton.boundingBox(),
+  ]);
+  if (!hintsBounds || !gridBounds) {
+    throw new Error("Status-bar controls are not measurable");
+  }
+  expect(hintsBounds.x + hintsBounds.width).toBeLessThan(gridBounds.x);
+
+  await hintsButton.click();
+  await expect(hintsButton).toHaveAttribute("aria-pressed", "true");
+  await expect(shortcutHints).toBeVisible();
+  await expect(shortcutHints).toHaveAttribute(
+    "aria-label",
+    "Keyboard shortcuts",
+  );
+  await expect(shortcutHints).toContainText("Keyboard shortcuts");
+  await expect(shortcutHints.locator("li")).toHaveText([
+    "Ctrl/CmdFFind in circuit",
+    "Ctrl/CmdShiftFChoose selectable objects",
     "FFit view",
     "HomeFit view",
     "Arrow keysPan view",
+    "GToggle Gallery",
+    "BToggle Component Library",
+    "NToggle Netlist",
     "IInsert component",
     "PPlace Cell Pin",
     "WDraw wire",
     "F3Wire options",
     "TAdd text",
     "ODisplay settings",
-    "CCopy and place selection",
+    "CCopy circuit selection",
+    "VPaste circuit selection",
+    "Ctrl/CmdCCopy circuit selection across tabs",
+    "Ctrl/CmdVPaste circuit selection",
     "MMove selection",
     "ShiftMMove without wires",
     "RRotate selection / next object",
@@ -472,13 +577,13 @@ test("keeps quick-start shortcuts in the upper-right corner until the first comp
   ]);
   expect(
     (
-      await quickStart
+      await shortcutHints
         .locator(".canvas-shortcut-list")
         .evaluate((element) => getComputedStyle(element).gridTemplateColumns)
     ).split(" ").length,
   ).toBeGreaterThan(1);
   expect(
-    await quickStart.evaluate((element) => {
+    await shortcutHints.evaluate((element) => {
       const style = getComputedStyle(element);
       const bounds = element.getBoundingClientRect();
       const canvasBounds = element.parentElement?.getBoundingClientRect();
@@ -500,22 +605,22 @@ test("keeps quick-start shortcuts in the upper-right corner until the first comp
   const initialViewport = page.viewportSize();
   if (!initialViewport) throw new Error("Viewport is not measurable");
   await page.setViewportSize({ width: 720, height: 720 });
-  const quickStartBox = await quickStart.boundingBox();
+  const shortcutHintsBox = await shortcutHints.boundingBox();
   const canvasPanelBox = await page.locator(".canvas-panel").boundingBox();
   const propertiesBox = await page
     .getByRole("complementary", { name: "属性" })
     .boundingBox();
-  if (!quickStartBox || !canvasPanelBox || !propertiesBox) {
+  if (!shortcutHintsBox || !canvasPanelBox || !propertiesBox) {
     throw new Error("Narrow editor chrome is not measurable");
   }
   expect(
-    Math.round(propertiesBox.x - (quickStartBox.x + quickStartBox.width)),
+    Math.round(propertiesBox.x - (shortcutHintsBox.x + shortcutHintsBox.width)),
   ).toBe(12);
-  expect(quickStartBox.x).toBeGreaterThanOrEqual(canvasPanelBox.x + 11.5);
+  expect(shortcutHintsBox.x).toBeGreaterThanOrEqual(canvasPanelBox.x + 11.5);
   await expect
     .poll(async () => {
       const [menu, panel] = await Promise.all([
-        quickStart.boundingBox(),
+        shortcutHints.boundingBox(),
         page.locator(".canvas-panel").boundingBox(),
       ]);
       if (!menu || !panel) return Number.POSITIVE_INFINITY;
@@ -557,7 +662,10 @@ test("keeps quick-start shortcuts in the upper-right corner until the first comp
   await canvas.click({ position: { x: 360, y: 230 } });
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("hit-R1")).toBeVisible();
-  await expect(quickStart).toHaveCount(0);
+  await expect(shortcutHints).toBeVisible();
+  await hintsButton.click();
+  await expect(shortcutHints).toHaveCount(0);
+  await expect(hintsButton).toHaveAttribute("aria-pressed", "false");
   await revealPropertiesShelf(page);
   await page.getByTestId("selection-shelf").click();
   await expect(page.getByTestId("selection-shelf")).toContainText(
@@ -722,7 +830,7 @@ test("groups drafting tools and editable polarity labels under Annotations", asy
 
   const annotations = page.getByTestId("shapes-category-annotations");
   await expect(annotations).toBeVisible();
-  await expect(annotations.locator(".shapes-category-count")).toHaveText("8");
+  await expect(annotations.locator(".shapes-category-count")).toHaveText("9");
   // Drawing tools lead; the polarity label and the standalone fixed marks
   // close the category. The one-sign-with-text variants no longer exist.
   expect(
@@ -734,6 +842,7 @@ test("groups drafting tools and editable polarity labels under Annotations", asy
   ).toEqual([
     "shapes-chip-annotation-arrow",
     "shapes-chip-annotation-line",
+    "shapes-chip-annotation-polyline",
     "shapes-chip-annotation-rectangle",
     "shapes-chip-annotation-circle",
     "shapes-chip-annotation-polarity-both",
@@ -975,8 +1084,13 @@ test("places a vertical Power Rail from I and renames it on the canvas", async (
   await canvas.click({ position: { x: 260, y: 380 } });
   await page.keyboard.press("Escape");
 
-  // The quick pick always lands the default VDD name. The visible label owns
-  // the formal Cell terminal, so editing it renames both the Pin and claim.
+  // The quick pick always lands the default VDD name, drawn in its standard
+  // look. The visible label owns the formal Cell terminal, so editing it
+  // renames both the Pin and claim, exactly as typed.
+  const railLabel = canvas.locator('[data-object-id="label-VDD1"]');
+  await expect(railLabel.locator('[data-text-run="subscript"]')).toHaveText(
+    "DD",
+  );
   await page.getByTestId("annotation-hit-label-VDD1").dblclick();
   const railEditor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await railEditor.fill("AVDD");
@@ -1070,10 +1184,11 @@ test("places the VDD power-port device as the default VDD entry", async ({
   const powerLabels = canvas.locator('[data-kind="power-label"]');
   await expect(powerLabels).toHaveCount(2);
   await expect(powerLabels).toHaveText(["VDD", "VDD"]);
-  await expect(powerLabels.locator('[data-text-run="subscript"]')).toHaveText([
-    "DD",
-    "DD",
-  ]);
+  // Each lands in the standard supply look: italic V, upright DD subscript.
+  const subscripts = powerLabels.locator('[data-text-run="subscript"]');
+  await expect(subscripts).toHaveText(["DD", "DD"]);
+  for (const subscript of await subscripts.all())
+    await expect(subscript).toHaveAttribute("style", /font-style:normal/u);
   await expect(page.getByTestId("instance-count")).toHaveText("2");
 
   const saved = parseSavedProject(
@@ -1197,6 +1312,12 @@ test("renames one supply marker without changing its same-name peer", async ({
       .locator('[data-object-id="power-label-vdd2"]')
       .locator('[data-text-run="subscript"]'),
   ).toHaveText("DD");
+  // AVDD has no V-led supply spelling, so it drops the supply look.
+  await expect(
+    canvas
+      .locator('[data-object-id="power-label-vdd1"]')
+      .locator('[data-text-run="subscript"]'),
+  ).toHaveCount(0);
 });
 
 test("reopens I and starts Copy from retained selection without stacking modes", async ({
@@ -1300,6 +1421,9 @@ test("publishes placement cancellation synchronously before rapid Copy", async (
       document.body.dispatchEvent(
         new KeyboardEvent("keydown", { key: "c", bubbles: true }),
       );
+      document.body.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "v", bubbles: true }),
+      );
     });
 
     await canvas.hover({ position: { x: 400 + index * 130, y: 380 } });
@@ -1327,7 +1451,7 @@ test("copies a MOS whose bulk belongs to a shared supply Net", async ({
   await canvas.hover({ position: { x: 620, y: 340 } });
   await expect(page.getByTestId("copy-placement-preview")).toBeVisible();
   await canvas.click({ position: { x: 620, y: 340 } });
-  await expect(page.getByTestId("hit-M1-copy-1")).toBeVisible();
+  await expect(page.getByTestId("hit-M1_2")).toBeVisible();
   await expect(canvas.getByText("M3", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Analog Canvas" }),
@@ -1397,15 +1521,13 @@ test("carries a default and manual Value through placement and Q property editin
   await expect(
     page.getByRole("button", { name: "Apply component properties" }),
   ).toHaveCount(0);
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expectComponentCodeField(page, "parameters.value", "1k");
   // Electrical renaming and the shared visual editor are distinct actions;
   // there is no second, plain-text Label field or heavyweight Identity card.
   await expect(page.getByText("Identity", { exact: true })).toHaveCount(0);
-  await expect(page.getByLabel("Component controls")).toHaveCount(0);
-  const componentCode = page.locator(
-    '[aria-label="Component properties"] > :last-child',
-  );
+  await expect(page.getByLabel("元件控件")).toHaveCount(0);
+  const componentCode = page.locator('[aria-label="器件属性"] > :last-child');
   await expect(componentCode).toHaveAttribute("aria-label", "画布属性代码");
   await expectComponentCodeField(page, "name", "R1");
   await expectComponentCodeField(page, "netlistName", "R1");
@@ -1466,55 +1588,80 @@ test("ordinary source property code switches waveforms without erasing inactive 
     .toContain('"waveform": "pulse"');
 });
 
-test("merges amplifier body marks into one Library entry and property", async ({
-  page,
-}) => {
-  await page.goto("/editor");
-  await chooseComponent(page, "opamp-differential");
-  await page
-    .getByTestId("schematic-canvas")
-    .click({ position: { x: 360, y: 230 } });
-  await page.keyboard.press("Escape");
-  await page.getByTestId("hit-X1").click();
-  await revealPropertiesShelf(page);
-  await page.getByTestId("selection-shelf").click();
+for (const family of [
+  "opamp",
+  "opamp-wide",
+  "opamp-differential",
+  "opamp-differential-wide",
+])
+  test(`merges ${family} body marks into one Library entry and property`, async ({
+    page,
+  }) => {
+    await page.goto("/editor");
+    await chooseComponent(page, `${family}`);
+    await page
+      .getByTestId("schematic-canvas")
+      .click({ position: { x: 360, y: 230 } });
+    await page.keyboard.press("Escape");
+    await page.getByTestId("hit-X1").click();
+    await revealPropertiesShelf(page);
+    await page.getByTestId("selection-shelf").click();
 
-  const amplifierActions = page.getByLabel("Amplifier placement actions");
-  await expect(amplifierActions).toHaveCount(0);
-  await expectComponentCodeField(page, "appearance.internalMark", "none");
-  await page.getByRole("button", { name: "Use A internal mark" }).click();
-  await expectComponentCodeField(page, "appearance.internalMark", "A");
-  await expect(page.locator("[data-symbol-id]").first()).toHaveAttribute(
-    "data-symbol-id",
-    "opamp-differential-lettered",
-  );
-  await setComponentCodeField(page, "appearance.internalMark", "G");
-  await expect(
-    page.locator('[data-symbol-id="opamp-differential-lettered"] text', {
-      hasText: "G",
-    }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Remove internal mark" }).click();
-  await expectComponentCodeField(page, "appearance.internalMark", "none");
-  await expect(page.locator("[data-symbol-id]").first()).toHaveAttribute(
-    "data-symbol-id",
-    "opamp-differential",
-  );
-  await expectComponentCodeField(page, "symbol", undefined);
-  await setComponentCodeField(page, "appearance.outputsSwapped", true);
-  await expect(page.locator("[data-symbol-id]").first()).toHaveAttribute(
-    "data-symbol-id",
-    "opamp-differential-crossed",
-  );
-  await setComponentCodeField(page, "appearance.inputsSwapped", true);
-  await expect(page.locator("[data-symbol-id]").first()).toHaveAttribute(
-    "data-symbol-id",
-    "opamp-differential-crossed-inputs-swapped",
-  );
-  await expect(
-    page.getByRole("button", { name: "Return component to Placement Tray" }),
-  ).toHaveCount(0);
-});
+    const amplifierActions = page.getByLabel("Amplifier placement actions");
+    await expect(amplifierActions).toHaveCount(0);
+    await expectComponentCodeField(page, "appearance.internalMark", "none");
+    await page.getByRole("button", { name: "Use A internal mark" }).click();
+    await expectComponentCodeField(page, "appearance.internalMark", "A");
+    await expect(page.locator("[data-symbol-id]").first()).toHaveAttribute(
+      "data-symbol-id",
+      `${family}-lettered`,
+    );
+    await setComponentCodeField(page, "appearance.internalMark", "G");
+    await expect(
+      page.locator(`[data-symbol-id="${family}-lettered"] text`, {
+        hasText: "G",
+      }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Remove internal mark" }).click();
+    await expectComponentCodeField(page, "appearance.internalMark", "none");
+    await expect(page.locator("[data-symbol-id]").first()).toHaveAttribute(
+      "data-symbol-id",
+      `${family}`,
+    );
+    await expectComponentCodeField(page, "symbol", undefined);
+    const swappedOutput = family.includes("differential")
+      ? `${family}-crossed`
+      : family;
+    if (family.includes("differential")) {
+      await setComponentCodeField(page, "appearance.outputsSwapped", true);
+      await expect(page.locator("[data-symbol-id]").first()).toHaveAttribute(
+        "data-symbol-id",
+        `${family}-crossed`,
+      );
+    }
+    await setComponentCodeField(page, "appearance.inputsSwapped", true);
+    await expect(page.locator("[data-symbol-id]").first()).toHaveAttribute(
+      "data-symbol-id",
+      `${swappedOutput}-inputs-swapped`,
+    );
+    await expect(
+      page.getByRole("button", { name: "Return component to Placement Tray" }),
+    ).toHaveCount(0);
+    const exported = await downloadBytes(page, "File", "Export Project File…");
+    const saved = parseSavedProject(exported.toString("utf8"));
+    expect(saved.documents[0].instances[0].symbolId).toBe(
+      `${swappedOutput}-inputs-swapped`,
+    );
+    await page.getByTestId("project-file").setInputFiles({
+      name: "amplifier.icproj.json",
+      mimeType: "application/json",
+      buffer: exported,
+    });
+    await expect(page.locator("[data-symbol-id]").first()).toHaveAttribute(
+      "data-symbol-id",
+      `${swappedOutput}-inputs-swapped`,
+    );
+  });
 
 test("keeps comparator polarity independent from input swapping", async ({
   page,
@@ -1638,10 +1785,10 @@ test("edits independent input and output swaps with undo, named connections and 
   expect(await terminalY("OUT+")).toBeLessThan(initialOutputY);
   await expect(amplifier.locator("text", { hasText: "G" })).toBeVisible();
 
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   await expect(outputs).toHaveAttribute("aria-checked", "false");
   await expect(inputs).toHaveAttribute("aria-checked", "true");
-  await clickCommand(page, "Edit", "Redo");
+  await page.getByTestId("draw-tool-redo").click();
   await expect(outputs).toHaveAttribute("aria-checked", "true");
   await setComponentCodeField(page, "appearance.inputsSwapped", false);
   await expect(amplifier).toHaveAttribute(
@@ -1689,6 +1836,7 @@ test("keeps the workspace inside the viewport and exposes low-interference zoom 
   page,
 }) => {
   await page.goto("/editor");
+  await awaitEditorReady(page);
 
   expect(
     await page.evaluate(() => ({
@@ -1867,7 +2015,13 @@ test("sets MOS parameters and orientation through the ghost and Properties", asy
   );
 });
 
-for (const symbolId of ["dac", "adc", "transconductance", "d-flip-flop"]) {
+for (const symbolId of [
+  "battery",
+  "dac",
+  "adc",
+  "transconductance",
+  "d-flip-flop",
+]) {
   test(`places ${symbolId} on the first click with slight pointer drift over its preview`, async ({
     page,
   }) => {
@@ -1901,7 +2055,13 @@ for (const symbolId of ["dac", "adc", "transconductance", "d-flip-flop"]) {
     // Upright formulas and pin names must be as transparent to input as the
     // body, including names away from the cursor at the symbol origin.
     const previewText = canvas.locator('[data-layer="editor-overlay"] text');
-    expect(await previewText.count()).toBeGreaterThan(0);
+    if (symbolId === "battery") {
+      // The placement ghost omits text, while the committed Instance gets a
+      // live B-series Reference label (covered by the naming test above).
+      expect(await previewText.count()).toBe(0);
+    } else {
+      expect(await previewText.count()).toBeGreaterThan(0);
+    }
     for (const text of await previewText.all()) {
       await expect(text).toHaveCSS("pointer-events", "none");
     }
@@ -1957,8 +2117,8 @@ test("shows the complete foldable categorized Library, quick-places a device, an
   await expect(panel).toHaveAttribute("data-open", "true");
   const libraryChipCount = await libraryChips.count();
   expect(libraryChipCount).toBeGreaterThanOrEqual(35);
-  await expect(categories).toHaveCount(11);
-  await expect(page.getByTestId("shapes-category-user-defined")).toBeVisible();
+  await expect(categories).toHaveCount(10);
+  await expect(page.getByTestId("shapes-category-user-defined")).toHaveCount(0);
   const transistorCategory = page.getByTestId("shapes-category-transistors");
   const transistorChips = transistorCategory.locator(
     '[data-testid^="shapes-chip-"]',
@@ -2084,7 +2244,7 @@ test("shows the complete foldable categorized Library, quick-places a device, an
     page
       .getByTestId("shapes-category-power-and-ports")
       .locator('[data-testid^="shapes-chip-"]'),
-  ).toHaveCount(5);
+  ).toHaveCount(6);
   await expect(
     page
       .getByTestId("shapes-category-passives")
@@ -2281,16 +2441,16 @@ test("keeps a usable canvas while toggling Library at the narrow breakpoint", as
   await awaitEditorReady(page);
 
   const chrome = page.locator(".app-chrome-main");
-  // The analytics readout lives in the statusbar now; the top bar ends
-  // with Help inside the chrome bounds.
-  const help = page.getByRole("button", { name: "帮助" });
-  await expect(help).toBeVisible();
+  // The analytics and Change Log live in the statusbar; the compact GitHub
+  // link remains inside the top chrome at the narrow breakpoint.
+  const repository = page.getByTestId("editor-repository-link");
+  await expect(repository).toBeVisible();
   const chromeBox = await chrome.boundingBox();
-  const helpBox = await help.boundingBox();
-  if (!chromeBox || !helpBox) {
+  const repositoryBox = await repository.boundingBox();
+  if (!chromeBox || !repositoryBox) {
     throw new Error("Top navigation is not measurable");
   }
-  expect(helpBox.x + helpBox.width).toBeLessThanOrEqual(
+  expect(repositoryBox.x + repositoryBox.width).toBeLessThanOrEqual(
     chromeBox.x + chromeBox.width,
   );
 
@@ -2460,7 +2620,7 @@ test("places every Library annotation from the compact Annotation menu", async (
       .evaluateAll((buttons) =>
         buttons.map((button) => button.getAttribute("aria-label")),
       ),
-  ).toEqual(libraryEntries);
+  ).toEqual(libraryEntries.map((label) => label!.replace(/^Place /u, "放置")));
   await page.keyboard.press("Escape");
   const drawingTools = [
     ["arrow", "arrow"],

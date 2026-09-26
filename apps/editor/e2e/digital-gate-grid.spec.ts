@@ -1,11 +1,11 @@
 import { parseSavedProject } from "./editor-fixtures";
 import { expect, test, type Page } from "@playwright/test";
 import { createEmptyProject } from "@icm/model";
+import { serializeProject } from "@icm/project-protocol";
 
 import {
   revealPropertiesShelf,
   awaitEditorReady,
-  clickCommand,
   clickDrawTool,
   downloadBytes,
   editComponentPropertyCode,
@@ -53,7 +53,9 @@ test("digital gates align from their left outline and keep wired terminals throu
   await page.getByTestId("project-file").setInputFiles({
     name: "digital-grid.icproj.json",
     mimeType: "application/json",
-    buffer: Buffer.from(JSON.stringify(project)),
+    // Written as a current Project file, so the editor opens it instead of
+    // announcing a schema upgrade.
+    buffer: Buffer.from(serializeProject(project)),
   });
   await expect(page.getByTestId("status")).toContainText(
     "Opened digital-grid.icproj.json",
@@ -209,9 +211,9 @@ test("digital gates align from their left outline and keep wired terminals throu
       });
     });
   expect(movedStarts.slice(7)).toEqual(terminalPoints);
-  await clickCommand(page, "Edit", "Undo");
+  await page.getByTestId("draw-tool-undo").click();
   expect(await exportStarts()).toEqual(initialStarts);
-  await clickCommand(page, "Edit", "Redo");
+  await page.getByTestId("draw-tool-redo").click();
 
   const saved = await downloadBytes(page, "File", "Export Project File…");
   const document = parseSavedProject(saved.toString("utf8")).documents[0];

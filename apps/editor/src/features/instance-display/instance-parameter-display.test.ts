@@ -13,6 +13,12 @@ import {
   instanceParameterVisibilityEdits,
 } from "./instance-parameter-display";
 import { copySelection, proposePaste } from "../clipboard/clipboard";
+import {
+  createTextEditingSession,
+  proposeTextEditingCommit,
+  resolveTextEditingTarget,
+  updateTextEditingSession,
+} from "../text-editing/text-editing";
 
 const resolver = new InMemorySymbolResolver(builtInSymbols);
 function fixture(symbolId = "xfmr") {
@@ -59,6 +65,135 @@ function show(document: SchematicDocument, desired: Record<string, boolean>) {
 }
 
 describe("magnetic parameter display", () => {
+  it.each(["xfmr", "tcoil"])(
+    "edits a %s parameter from its label without detaching or replacing its other parameters",
+    (symbolId) => {
+      const winding = symbolId === "xfmr" ? "lp" : "l1";
+      const windingLabel = symbolId === "xfmr" ? "Lp" : "L1";
+      const document = show(fixture(symbolId), { [winding]: true });
+      const annotation = document.annotations[0]!;
+      const original = createTextEditingSession(
+        { owner: "annotation", object: annotation },
+        document,
+      );
+      expect(proposeTextEditingCommit(document, original)).toEqual({
+        kind: "unchanged",
+      });
+      for (const value of [
+        "4.5n",
+        `${winding.toUpperCase()} = 4.5n`,
+        `${winding} = {inductance * 2}`,
+      ]) {
+        const session = updateTextEditingSession(original, {
+          content: { runs: [{ kind: "text", value }] },
+        });
+        const proposal = proposeTextEditingCommit(document, session);
+        expect(proposal.kind).toBe("update");
+        if (proposal.kind !== "update")
+          throw new Error("Expected value update");
+        const updated = apply(document, [
+          ...(proposal.beforeEdits ?? []),
+          proposal.edit,
+        ]);
+        expect(updated.instances[0]!.netlist).toEqual({
+          ...document.instances[0]!.netlist,
+          parameters: {
+            ...document.instances[0]!.netlist!.parameters,
+            [winding]: value.includes("{") ? "{inductance * 2}" : "4.5n",
+          },
+        });
+        expect(updated.annotations[0]!.binding).toEqual(annotation.binding);
+        expect(updated.annotations[0]!.content).toBeUndefined();
+        expect(updated.annotations[0]!.anchor).toEqual(annotation.anchor);
+      }
+      const labelOnly = proposeTextEditingCommit(
+        document,
+        updateTextEditingSession(original, {
+          content: {
+            runs: [{ kind: "text", value: windingLabel }],
+          },
+        }),
+      );
+      expect(labelOnly.kind).toBe("update");
+      if (labelOnly.kind !== "update") throw new Error(labelOnly.kind);
+      const withoutValue = apply(document, [labelOnly.edit]);
+      expect(withoutValue.instances[0]!.netlist).toEqual(
+        document.instances[0]!.netlist,
+      );
+      expect(withoutValue.annotations[0]!.binding).toEqual({
+        kind: "instance-value",
+        instanceId: "T1",
+        parameter: winding,
+        showValue: false,
+      });
+      expect(
+        flattenRichText(
+          resolveAnnotationText(withoutValue, withoutValue.annotations[0]!),
+        ),
+      ).toBe(windingLabel);
+
+      const restoredValue = proposeTextEditingCommit(
+        withoutValue,
+        updateTextEditingSession(
+          createTextEditingSession(
+            { owner: "annotation", object: withoutValue.annotations[0]! },
+            withoutValue,
+          ),
+          { content: { runs: [{ kind: "text", value: "6n" }] } },
+        ),
+      );
+      expect(restoredValue.kind).toBe("update");
+      if (restoredValue.kind !== "update") throw new Error(restoredValue.kind);
+      const withValue = apply(withoutValue, [
+        ...(restoredValue.beforeEdits ?? []),
+        restoredValue.edit,
+      ]);
+      expect(withValue.instances[0]!.netlist!.parameters[winding]).toBe("6n");
+      expect(withValue.annotations[0]!.binding).toEqual(annotation.binding);
+
+      const deletion = proposeTextEditingCommit(
+        document,
+        updateTextEditingSession(original, {
+          content: { runs: [{ kind: "text", value: "" }] },
+        }),
+      );
+      expect(deletion.kind).toBe("delete");
+      if (deletion.kind !== "delete") throw new Error(deletion.kind);
+      const hidden = apply(document, [deletion.edit]);
+      expect(hidden.annotations).toHaveLength(0);
+      expect(hidden.instances[0]!.netlist).toEqual(
+        document.instances[0]!.netlist,
+      );
+
+      for (const value of [`${winding} =`, "other = 9n"]) {
+        const proposal = proposeTextEditingCommit(
+          document,
+          updateTextEditingSession(original, {
+            content: { runs: [{ kind: "text", value }] },
+          }),
+        );
+        expect(proposal.kind).toBe("blocked");
+      }
+      expect(
+        resolveTextEditingTarget(
+          show(document, { [winding]: false }),
+          original,
+        ),
+      ).toBeNull();
+      expect(
+        resolveTextEditingTarget({ ...document, annotations: [] }, original),
+      ).toBeNull();
+      const cleared = apply(document, [
+        {
+          kind: "patch_instance_netlist_parameters",
+          instanceId: "T1",
+          unset: [winding],
+        },
+      ]);
+      expect(resolveTextEditingTarget(cleared, original)).toBeNull();
+    },
+  );
+
   it.each(["xfmr", "tcoil"])(
     "independently toggles K and winding labels on %s without changing electrical parameters",
     (symbolId) => {

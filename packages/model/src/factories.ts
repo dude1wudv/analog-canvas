@@ -33,12 +33,27 @@ export function createEmptyDocument(
       styleProfileId: "razavi-textbook-v1",
       grid: 10,
       compactness: "normal",
+      labelSubscriptAfterFirst: false,
+      labelSubscriptItalic: false,
     },
     layoutGroups: [],
     constraints: [],
     noConnects: [],
     drafting: { objects: [] },
   };
+}
+
+/** Inherit drawing preferences, never another Cell's terminal-bound symbol. */
+export function createCellDocument(
+  id: string,
+  name: string,
+  presentation: SchematicDocument["presentation"],
+): SchematicDocument {
+  const child = createEmptyDocument(id, name);
+  child.netlist!.name = name;
+  child.presentation = structuredClone(presentation);
+  delete child.presentation.cellSymbol;
+  return child;
 }
 
 export function createEmptyProject(

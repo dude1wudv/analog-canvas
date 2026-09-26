@@ -58,13 +58,13 @@ test("right-click on a device only offers direct selection actions", async ({
   const menu = page.getByTestId("canvas-context-menu");
   await expect(menu).toBeVisible();
   await expect(menu.getByRole("menuitem")).toHaveText([
-    "Edit Component Definition (E)",
-    "Properties (Q)",
-    "Duplicate (C)",
-    "Rotate 90° (R)",
-    "Mirror left/right (Shift+R)",
-    "Mirror top/bottom (Ctrl+R)",
-    "Delete",
+    "编辑元件定义（E）",
+    "属性（Q）",
+    "复制（C）",
+    "旋转 90°（R）",
+    "左右镜像（Shift+R）",
+    "上下镜像（Ctrl+R）",
+    "删除",
   ]);
   await expect(menu).not.toContainText("Swap device");
   await expect(menu).not.toContainText("New Testbench Cell");
@@ -72,14 +72,15 @@ test("right-click on a device only offers direct selection actions", async ({
   await expect(menu).not.toContainText("Copy as PNG");
   await expect(menu).not.toContainText("Copy as SVG");
 
-  await menu.getByRole("menuitem", { name: "Rotate 90° (R)" }).click();
+  await menu.getByRole("menuitem", { name: "旋转 90°（R）" }).click();
   await expect(
     page.locator('[data-layer="symbols"] [data-object-id] > g').first(),
   ).toHaveAttribute("transform", /rotate\(90\)/u);
 
   await instance.click({ button: "right" });
-  await menu.getByRole("menuitem", { name: "Duplicate (C)" }).click();
+  await menu.getByRole("menuitem", { name: "复制（C）" }).click();
   await expect(menu).toHaveCount(0);
+  await page.keyboard.press("v");
   await page
     .getByTestId("schematic-canvas")
     .click({ position: { x: 520, y: 300 } });
@@ -100,7 +101,7 @@ test("right-click on a multi-selection aligns bbox edges", async ({ page }) => {
 
   await instances.nth(1).click({ button: "right" });
   const menu = page.getByTestId("canvas-context-menu");
-  await expect(menu).toContainText("Align");
+  await expect(menu).toContainText("对齐");
   await page.getByTestId("context-align-left").click();
   await expect(page.getByTestId("status")).toContainText(
     "Aligned 2 selected objects",
@@ -224,9 +225,7 @@ for (const grid of [5, 10]) {
 
     // A second alignment is a true no-op; Undo still reverses the first one.
     await alignBottom();
-    await expect(page.getByTestId("status")).toContainText(
-      "Selection is already aligned",
-    );
+    await expect(page.getByTestId("status")).toContainText("所选对象已经对齐");
     await page.keyboard.press("ControlOrMeta+z");
     expect(await labelRects()).toEqual(before);
     await page.keyboard.press("ControlOrMeta+Shift+z");
@@ -256,9 +255,9 @@ test("drafting text shares device additive selection and context alignment", asy
   await page.goto("/editor");
   await placeComponent(page, "resistor", { x: 300, y: 220 });
   await placeText(page);
-  const input = page.getByRole("textbox", { name: "Canvas text editor" });
+  const input = page.getByRole("textbox", { name: "画布文本编辑器" });
   await input.fill("BIAS");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   const instance = page.locator('[data-canvas-hit-kind="instance"]').first();
   const text = page.locator('[data-canvas-hit-kind="drafting"]').first();
@@ -280,7 +279,7 @@ test("drafting text shares device additive selection and context alignment", asy
   // opens the same command surface as a device, without device-only variants.
   await text.click({ button: "right" });
   const menu = page.getByTestId("canvas-context-menu");
-  await expect(menu).toContainText("Align");
+  await expect(menu).toContainText("对齐");
   await expect(menu).not.toContainText("Swap device");
   await page.getByTestId("context-align-left").click();
   await expect(page.getByTestId("status")).toContainText(
@@ -294,9 +293,9 @@ test("dragging drafting text carries its mixed component selection as one body",
   await page.goto("/editor");
   await placeComponent(page, "resistor", { x: 300, y: 220 });
   await placeText(page);
-  const input = page.getByRole("textbox", { name: "Canvas text editor" });
+  const input = page.getByRole("textbox", { name: "画布文本编辑器" });
   await input.fill("BIAS");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("button", { name: "应用文本更改" }).click();
 
   const instance = page.locator('[data-canvas-hit-kind="instance"]').first();
   const text = page.locator('[data-canvas-hit-kind="drafting"]').first();
@@ -353,8 +352,8 @@ test("Ctrl+A and a marquee both move drafting texts as one selection", async ({
 }) => {
   await page.goto("/editor");
   const canvas = page.getByTestId("schematic-canvas");
-  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
-  const apply = page.getByRole("button", { name: "Apply text changes" });
+  const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
+  const apply = page.getByRole("button", { name: "应用文本更改" });
 
   await placeText(page);
   await editor.fill("LEFT");
@@ -470,9 +469,24 @@ test("multiple selected component annotations move as one text selection", async
       labelBoxes[0].y + labelBoxes[0].height,
       labelBoxes[1].y + labelBoxes[1].height,
     ) + 5;
-  await page.mouse.move(left, top);
+  // A left-to-right window selects only what it fully covers. Start it on
+  // empty canvas: the label's corner can sit on a pin's hit area, where the
+  // press would begin a wire instead of a window.
+  const startY = await page.evaluate(
+    ({ x, candidates }) =>
+      candidates.find(
+        (y) =>
+          !document
+            .elementFromPoint(x, y)
+            ?.closest(
+              '[data-testid^="terminal-"], [data-testid^="hit-"], [data-testid^="annotation-hit-"]',
+            ),
+      ) ?? candidates[0]!,
+    { x: left, candidates: [top, bottom, top - 8, bottom + 8] },
+  );
+  await page.mouse.move(left, startY);
   await page.mouse.down();
-  await page.mouse.move(right, bottom, { steps: 8 });
+  await page.mouse.move(right, startY >= bottom ? top : bottom, { steps: 8 });
   await page.mouse.up();
   await expect(first).toHaveClass(/selected/);
   await expect(second).toHaveClass(/selected/);
@@ -537,7 +551,7 @@ test("drafting shapes join device selection from either order", async ({
   const menu = page.getByTestId("canvas-context-menu");
   await expect(menu).toBeVisible();
   await expect(menu).not.toContainText("Swap device");
-  await expect(menu.getByRole("menuitem", { name: "Delete" })).toBeEnabled();
+  await expect(menu.getByRole("menuitem", { name: "删除" })).toBeEnabled();
   await expect(rectangle).toHaveClass(/selected/);
   await expect(instance).toHaveClass(/selected/);
   await page.keyboard.press("Escape");
@@ -575,7 +589,7 @@ test("device annotation shares device additive selection and context menu", asyn
   const menu = page.getByTestId("canvas-context-menu");
   await expect(menu).toBeVisible();
   await expect(menu).not.toContainText("Swap device");
-  await expect(menu.getByRole("menuitem", { name: "Delete" })).toBeEnabled();
+  await expect(menu.getByRole("menuitem", { name: "删除" })).toBeEnabled();
 });
 
 test("visual clipboard preserves mixed selection and exports only its formal SVG", async ({
@@ -586,8 +600,8 @@ test("visual clipboard preserves mixed selection and exports only its formal SVG
   await placeComponent(page, "resistor", { x: 280, y: 220 });
   await placeComponent(page, "capacitor", { x: 540, y: 320 });
   await placeText(page);
-  await page.getByRole("textbox", { name: "Canvas text editor" }).fill("BIAS");
-  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await page.getByRole("textbox", { name: "画布文本编辑器" }).fill("BIAS");
+  await page.getByRole("button", { name: "应用文本更改" }).click();
   const resistor = page.locator('[data-canvas-hit-kind="instance"]').first();
   const text = page.locator('[data-canvas-hit-kind="drafting"]').first();
   await resistor.click();
@@ -601,7 +615,7 @@ test("visual clipboard preserves mixed selection and exports only its formal SVG
   await page.keyboard.press("Escape");
   const editMenu = await openMenu(page, "Edit");
   await editMenu
-    .getByRole("button", { name: "Copy selection as SVG", exact: true })
+    .getByRole("button", { name: "复制选区为 SVG", exact: true })
     .click();
   await expect(page.getByTestId("status")).toHaveText(
     "Copied selection as SVG",
@@ -659,7 +673,7 @@ test("visual clipboard rasterizes an independent Wire as transparent PNG without
   await page.keyboard.press("Escape");
   const editMenu = await openMenu(page, "Edit");
   await editMenu
-    .getByRole("button", { name: "Copy selection as PNG", exact: true })
+    .getByRole("button", { name: "复制选区为 PNG", exact: true })
     .click();
   await expect(page.getByTestId("status")).toHaveText(
     "Copied selection as PNG",
@@ -708,16 +722,16 @@ test("visual clipboard reports denied access and empty selection without downloa
   const emptyEditMenu = await openMenu(page, "Edit");
   await expect(
     emptyEditMenu.getByRole("button", {
-      name: "Copy selection as PNG",
+      name: "复制选区为 PNG",
       exact: true,
     }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   await expect(
     emptyEditMenu.getByRole("button", {
-      name: "Copy selection as SVG",
+      name: "复制选区为 SVG",
       exact: true,
     }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   await emptyEditMenu.locator("summary").click();
   await placeComponent(page, "resistor", { x: 300, y: 220 });
   const downloads: string[] = [];
@@ -731,7 +745,7 @@ test("visual clipboard reports denied access and empty selection without downloa
   await page.keyboard.press("Escape");
   const selectedEditMenu = await openMenu(page, "Edit");
   await selectedEditMenu
-    .getByRole("button", { name: "Copy selection as PNG", exact: true })
+    .getByRole("button", { name: "复制选区为 PNG", exact: true })
     .click();
   await expect(page.getByTestId("status")).toContainText(
     "Clipboard access was denied",
@@ -748,27 +762,29 @@ test("Netlist keeps format selection in the project panel while File keeps drawi
   await page.locator('[data-canvas-hit-kind="instance"]').first().click();
   const menu = await openMenu(page, "File");
   await expect(
-    menu.getByRole("button", { name: "Export SVG", exact: true }),
+    menu.getByRole("button", { name: "导出 SVG", exact: true }),
   ).toBeHidden();
+  const importMenu = menu.getByRole("button", { name: "导入", exact: true });
+  await expect(importMenu).toHaveAttribute("aria-expanded", "false");
+  await importMenu.click();
   await expect(
-    menu.getByRole("button", { name: "Copy SPICE netlist", exact: true }),
-  ).toHaveCount(0);
+    menu.locator("label.file-import", { hasText: "项目文件…" }),
+  ).toBeVisible();
   await expect(
-    menu.getByRole("button", { name: "Copy Spectre netlist", exact: true }),
+    menu.locator("label.file-import", { hasText: "SPICE / SCS 文件…" }),
+  ).toBeVisible();
+  await expect(
+    menu.locator("label.file-import", {
+      hasText: "Cadence SPICE（`!` 全局节点）…",
+    }),
+  ).toBeVisible();
+  await expect(
+    menu.getByRole("button", { name: "复制网表", exact: true }),
   ).toHaveCount(0);
   const netlistMenu = await openMenu(page, "Netlist");
   await expect(
-    netlistMenu.getByRole("button", {
-      name: "Copy SPICE netlist",
-      exact: true,
-    }),
-  ).toHaveCount(0);
-  await expect(
-    netlistMenu.getByRole("button", {
-      name: "Copy Spectre netlist",
-      exact: true,
-    }),
-  ).toHaveCount(0);
+    netlistMenu.getByRole("button", { name: "复制网表", exact: true }),
+  ).toHaveCount(1);
   if (
     (await page
       .getByTestId("netlist-panel-toggle")
@@ -802,32 +818,30 @@ test("Netlist keeps format selection in the project panel while File keeps drawi
       .getByRole("tab"),
   ).toHaveCount(0);
   await openMenu(page, "File");
-  await menu
-    .getByRole("button", { name: "Export drawing", exact: true })
-    .click();
+  await menu.getByRole("button", { name: "导出", exact: true }).click();
   await expect(
-    menu.getByRole("button", { name: "Export SVG", exact: true }),
+    menu.getByRole("button", { name: "导出 SVG", exact: true }),
   ).toBeVisible();
   const viewBox = await page
     .getByTestId("schematic-canvas")
     .getAttribute("viewBox");
   await menu
-    .getByRole("button", { name: "Export drawing", exact: true })
+    .getByRole("button", { name: "导出", exact: true })
     .press("ArrowRight");
   await expect(
-    menu.getByRole("button", { name: "Export SVG", exact: true }),
+    menu.getByRole("button", { name: "导出项目文件…", exact: true }),
   ).toBeFocused();
   expect(
     await page.getByTestId("schematic-canvas").getAttribute("viewBox"),
   ).toBe(viewBox);
   await menu
-    .getByRole("button", { name: "Export SVG", exact: true })
+    .getByRole("button", { name: "导出项目文件…", exact: true })
     .press("ArrowLeft");
   await expect(
-    menu.getByRole("button", { name: "Export drawing", exact: true }),
+    menu.getByRole("button", { name: "导出", exact: true }),
   ).toBeFocused();
   await expect(
-    menu.getByRole("button", { name: "Export SVG", exact: true }),
+    menu.getByRole("button", { name: "导出 SVG", exact: true }),
   ).toBeHidden();
   const download = page.waitForEvent("download");
   await clickCommand(page, "File", "Export SVG");

@@ -33,7 +33,7 @@ describe("ProjectSearchDialog", () => {
         onClose={() => undefined}
       />,
     );
-    expect(markup).toContain("via XBIAS2");
+    expect(markup).toContain("经由 XBIAS2");
     expect(markup).toContain(
       'data-testid="project-search-result-RCHILD-XBIAS2"',
     );

@@ -1,79 +1,258 @@
 import { describe, expect, it } from "vitest";
 
 import { createEmptyDocument, plainNameDocument } from "@icm/model";
+import { executeTransaction } from "@icm/edit-engine";
+import { builtInSymbols, InMemorySymbolResolver } from "@icm/symbols";
 
 import { planComponentPropertyCodeEdits } from "./component-property-code-edits";
 import { componentPropertyCodeValue } from "./component-property-code";
+import { configurableLogicGateIds } from "./logic-gate-input-count";
 
 describe("planComponentPropertyCodeEdits", () => {
-  it("composes both swap axes and custom marks into one symbol edit across all variants", () => {
-    const document = createEmptyDocument("main", "Main");
-    for (const sourceInputs of [false, true])
-      for (const sourceOutputs of [false, true])
-        for (const sourceMark of ["none", "A", "G"]) {
-          const source = {
-            id: "X1",
-            symbolId: `opamp-differential${sourceOutputs ? "-crossed" : ""}${sourceMark !== "none" ? "-lettered" : ""}${sourceInputs ? "-inputs-swapped" : ""}`,
-            placement: {
-              position: { x: 200, y: 200 },
-              rotation: 90 as const,
-              mirror: "horizontal" as const,
+  it.each(configurableLogicGateIds)(
+    "retires only a cut wire's anonymous singleton input before shrinking %s",
+    (family) => {
+      const document = createEmptyDocument("main", "Main");
+      const instance = {
+        id: "X1",
+        symbolId: `${family}-4`,
+        reference: "X1",
+        placement: null,
+        netlist: {
+          binding: {
+            kind: "unresolved-subcircuit" as const,
+            name: `${family.replace("-", "_")}_4`,
+          },
+          parameters: {},
+        },
+      };
+      document.instances.push(instance);
+      document.nets.push({
+        id: "orphan-D",
+        terminals: [{ instanceId: "X1", pinName: "D" }],
+      });
+      const value = {
+        ...componentPropertyCodeValue({
+          instance,
+          referenceVisible: null,
+          valueVisible: null,
+          details: { parameters: [] },
+        }),
+        inputs: 2 as const,
+      };
+      const edits = planComponentPropertyCodeEdits(document, instance, value);
+      expect(edits).toEqual([
+        {
+          kind: "disconnect_endpoint",
+          endpoint: {
+            kind: "terminal",
+            instanceId: "X1",
+            pinName: "D",
+          },
+        },
+        { kind: "set_instance_symbol", instanceId: "X1", symbolId: family },
+        {
+          kind: "set_instance_binding",
+          instanceId: "X1",
+          binding: {
+            kind: "unresolved-subcircuit",
+            name: family.replace("-", "_"),
+          },
+        },
+      ]);
+      const applied = executeTransaction(
+        document,
+        {
+          transactionId: "and-shrink",
+          documentId: document.id,
+          expectedRevision: document.revision,
+          actor: { kind: "human", id: "test" },
+          edits,
+        },
+        { symbolResolver: new InMemorySymbolResolver(builtInSymbols) },
+      );
+      expect(applied.ok).toBe(true);
+      if (!applied.ok) return;
+      expect(applied.document.instances[0]?.symbolId).toBe(family);
+      expect(applied.document.nets).toEqual([]);
+
+      for (const protectedDocument of [
+        {
+          ...document,
+          junctions: [
+            { id: "J1", netId: "orphan-D", position: { x: 0, y: 0 } },
+          ],
+        },
+        {
+          ...document,
+          noConnects: [
+            {
+              id: "NC1",
+              endpoint: {
+                kind: "terminal" as const,
+                instanceId: "X1",
+                pinName: "D",
+              },
             },
-            ...(sourceMark === "G"
-              ? { signalFlowParameters: { formula: "G" } }
-              : {}),
-          };
-          const baseline = componentPropertyCodeValue({
-            instance: source,
-            referenceVisible: null,
-            valueVisible: null,
-          });
-          expect(
-            planComponentPropertyCodeEdits(document, source, baseline),
-          ).toEqual([]);
-          for (const inputsSwapped of [false, true])
-            for (const outputsSwapped of [false, true])
-              for (const internalMark of ["none", "A", "G"]) {
-                const symbolId = `opamp-differential${outputsSwapped ? "-crossed" : ""}${internalMark !== "none" ? "-lettered" : ""}${inputsSwapped ? "-inputs-swapped" : ""}`;
-                const edits = planComponentPropertyCodeEdits(document, source, {
-                  ...baseline,
-                  appearance: {
-                    color: "auto",
-                    inputsSwapped,
-                    outputsSwapped,
-                    internalMark,
-                  },
-                });
-                expect(
-                  edits.filter((edit) => edit.kind === "set_instance_symbol"),
-                ).toEqual(
-                  symbolId === source.symbolId
-                    ? []
-                    : [
-                        {
-                          kind: "set_instance_symbol",
-                          instanceId: "X1",
-                          symbolId,
-                        },
-                      ],
-                );
-                expect(
-                  edits.every((edit) =>
-                    [
-                      "set_instance_symbol",
-                      "set_instance_signal_flow_parameters",
-                    ].includes(edit.kind),
-                  ),
-                ).toBe(true);
-                if (internalMark === "G" && sourceMark !== "G")
-                  expect(edits).toContainEqual({
-                    kind: "set_instance_signal_flow_parameters",
-                    instanceId: "X1",
-                    parameters: { formula: "G" },
-                  });
-              }
-        }
-  });
+          ],
+        },
+        {
+          ...document,
+          connectivityEvidence: [
+            {
+              id: "source-D",
+              kind: "spice-source" as const,
+              netId: "orphan-D",
+              sourceNetId: "imported-D",
+            },
+          ],
+        },
+      ]) {
+        expect(
+          planComponentPropertyCodeEdits(
+            protectedDocument,
+            instance,
+            value,
+          ).some((edit) => edit.kind === "disconnect_endpoint"),
+        ).toBe(false);
+      }
+    },
+  );
+  it.each(configurableLogicGateIds)(
+    "switches %s arity and its default black-box target in one edit batch",
+    (family) => {
+      const document = createEmptyDocument("main", "Main");
+      const instance = {
+        id: "X1",
+        symbolId: family,
+        placement: null,
+        netlist: {
+          binding: {
+            kind: "unresolved-subcircuit" as const,
+            name: family.replace("-", "_"),
+          },
+          parameters: {},
+        },
+      };
+      const value = componentPropertyCodeValue({
+        instance,
+        referenceVisible: null,
+        valueVisible: null,
+        details: { parameters: [] },
+      });
+      expect(
+        planComponentPropertyCodeEdits(document, instance, {
+          ...value,
+          inputs: 4,
+        }),
+      ).toEqual([
+        {
+          kind: "set_instance_symbol",
+          instanceId: "X1",
+          symbolId: `${family}-4`,
+        },
+        {
+          kind: "set_instance_binding",
+          instanceId: "X1",
+          binding: {
+            kind: "unresolved-subcircuit",
+            name: `${family.replace("-", "_")}_4`,
+          },
+        },
+      ]);
+      expect(() =>
+        planComponentPropertyCodeEdits(
+          document,
+          {
+            ...instance,
+            netlist: {
+              binding: {
+                kind: "unresolved-subcircuit" as const,
+                name: "custom_and",
+              },
+              parameters: {},
+            },
+          },
+          { ...value, inputs: 4 },
+        ),
+      ).toThrow("Restore the default logic gate target");
+    },
+  );
+  it.each(["opamp-differential", "opamp-differential-wide"])(
+    "composes both swap axes and custom marks for %s",
+    (family) => {
+      const document = createEmptyDocument("main", "Main");
+      for (const sourceInputs of [false, true])
+        for (const sourceOutputs of [false, true])
+          for (const sourceMark of ["none", "A", "G"]) {
+            const source = {
+              id: "X1",
+              symbolId: `${family}${sourceOutputs ? "-crossed" : ""}${sourceMark !== "none" ? "-lettered" : ""}${sourceInputs ? "-inputs-swapped" : ""}`,
+              placement: {
+                position: { x: 200, y: 200 },
+                rotation: 90 as const,
+                mirror: "horizontal" as const,
+              },
+              ...(sourceMark === "G"
+                ? { signalFlowParameters: { formula: "G" } }
+                : {}),
+            };
+            const baseline = componentPropertyCodeValue({
+              instance: source,
+              referenceVisible: null,
+              valueVisible: null,
+            });
+            expect(
+              planComponentPropertyCodeEdits(document, source, baseline),
+            ).toEqual([]);
+            for (const inputsSwapped of [false, true])
+              for (const outputsSwapped of [false, true])
+                for (const internalMark of ["none", "A", "G"]) {
+                  const symbolId = `${family}${outputsSwapped ? "-crossed" : ""}${internalMark !== "none" ? "-lettered" : ""}${inputsSwapped ? "-inputs-swapped" : ""}`;
+                  const edits = planComponentPropertyCodeEdits(
+                    document,
+                    source,
+                    {
+                      ...baseline,
+                      appearance: {
+                        color: "auto",
+                        inputsSwapped,
+                        outputsSwapped,
+                        internalMark,
+                      },
+                    },
+                  );
+                  expect(
+                    edits.filter((edit) => edit.kind === "set_instance_symbol"),
+                  ).toEqual(
+                    symbolId === source.symbolId
+                      ? []
+                      : [
+                          {
+                            kind: "set_instance_symbol",
+                            instanceId: "X1",
+                            symbolId,
+                          },
+                        ],
+                  );
+                  expect(
+                    edits.every((edit) =>
+                      [
+                        "set_instance_symbol",
+                        "set_instance_signal_flow_parameters",
+                      ].includes(edit.kind),
+                    ),
+                  ).toBe(true);
+                  if (internalMark === "G" && sourceMark !== "G")
+                    expect(edits).toContainEqual({
+                      kind: "set_instance_signal_flow_parameters",
+                      instanceId: "X1",
+                      parameters: { formula: "G" },
+                    });
+                }
+          }
+    },
+  );
 
   it("combines comparator mark visibility with input swapping in one edit", () => {
     const document = createEmptyDocument("main", "Main");

@@ -20,7 +20,7 @@ describe("shapes quick-place", () => {
       }),
     );
 
-    expect(symbols).toHaveLength(67);
+    expect(symbols).toHaveLength(70);
     expect(markup).toContain("所有器件");
     expect(markup.match(/data-testid="shapes-chip-/g)).toHaveLength(
       symbols.length,
@@ -34,13 +34,13 @@ describe("shapes quick-place", () => {
     ).toEqual([
       ["Transistors", 4],
       ["Passives", 4],
-      ["Power and Ports", 5],
-      ["Sources", 3],
+      ["Power and Ports", 6],
+      ["Sources", 2],
       ["Switches", 6],
-      ["Analog Blocks", 8],
+      ["Analog Blocks", 10],
       ["Logic Gates", 12],
       ["Signal Flow", 6],
-      ["Annotations", 8],
+      ["Annotations", 9],
       ["Extended Devices", 11],
     ]);
     const categoryTestIds = [
@@ -69,7 +69,7 @@ describe("shapes quick-place", () => {
     expect(markup.match(/class="shapes-category" open=""/g)).toHaveLength(10);
     expect(markup.match(/class="shapes-category-header"/g)).toHaveLength(10);
     expect(markup).toContain('aria-label="Place Independent Voltage Source"');
-    expect(markup).toContain('aria-label="Place Digital Clock"');
+    expect(markup).not.toContain('aria-label="Place Digital Clock"');
     expect(markup).toContain('title="Place Capacitor"');
     expect(markup).toContain('aria-label="Place T-Coil"');
     expect(markup).toContain('aria-label="Place XFMR"');
@@ -87,18 +87,24 @@ describe("shapes quick-place", () => {
     );
     expect(markup).toContain('aria-label="Place N-channel DMOS"');
     expect(markup).toContain('aria-label="Place P-channel DMOS"');
+    expect(markup).toContain('aria-label="Place Bias Voltage Port"');
+    expect(markup).toContain(
+      'title="A solid bias-voltage port, typically used for VB-style bias nodes"',
+    );
     expect(markup).toContain(
       'aria-label="Place Discrete-Time Integrator (z⁻¹/(1−z⁻¹))"',
     );
     expect(markup).not.toContain("High-voltage devices");
     expect(markup).toContain(">V Src</span>");
-    expect(markup).toContain(">Clock</span>");
+    expect(markup).not.toContain(">Clock</span>");
     expect(markup).toContain(">Cap</span>");
     expect(markup).toContain(">Var Res</span>");
     expect(markup).toContain(">Inv</span>");
     expect(markup).not.toContain(">Comp U</span>");
     expect(markup).toContain(">NOR</span>");
     expect(markup).toContain(">DT Int</span>");
+    expect(markup).toContain(">Bias</span>");
+    expect(markup).not.toContain(">Pin •</span>");
     expect(markup).not.toContain('data-testid="shapes-example-');
   });
 
@@ -146,6 +152,7 @@ describe("shapes quick-place", () => {
     for (const [symbolId, symbolName, tool] of [
       ["annotation-arrow", "Arrow", "arrow"],
       ["annotation-line", "Line", "construction-line"],
+      ["annotation-polyline", "Polyline", "polyline"],
       ["annotation-rectangle", "Rectangle", "rectangle"],
       ["annotation-circle", "Circle", "circle"],
     ] as const) {
@@ -205,7 +212,7 @@ describe("shapes quick-place", () => {
     });
   });
 
-  it("places both Cell Pin artworks without a setup dialog", () => {
+  it("places the Cell Pin and Bias Voltage Port without a setup dialog", () => {
     expect(quickPlaceRequest("razavi", "port")).toMatchObject({
       kind: "symbol",
       symbolId: "port",
@@ -214,6 +221,7 @@ describe("shapes quick-place", () => {
     });
     expect(quickPlaceRequest("razavi", "port-filled")).toMatchObject({
       symbolId: "port-filled",
+      symbolName: "Bias Voltage Port",
       portDirection: "passive",
     });
     expect(quickPlaceRequest("razavi", "cell-pin")).toBeNull();

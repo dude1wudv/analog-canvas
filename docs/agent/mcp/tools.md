@@ -1,4 +1,38 @@
-# MCP editing and recovery tools
+# MCP editing tools and local inspection
+
+Use the listed tool schema directly. `describe_tool` offers offline, versioned
+discovery from the same canonical definitions: no selectors lists tools and
+operations; `tool` + `operations` selects complete call envelopes; adding `field`
+returns argument fields and parent context. Array elements use `*`, for example
+`{"tool":"circuit_wire","operations":["connect"],"field":"/actions/*/from"}`.
+`editKind` selects a low-level edit, not a high-level action. Resource alternatives
+remain `analog-canvas://contract/edits/{kind}` and
+`analog-canvas://contract/tools/{name}`; the latter also accepts `operations`
+(comma-separated) and `field` query parameters. These are optional lookups, not
+steps required before calls. Unknown selectors fail explicitly; overly broad
+queries return a narrower-selection hint, never a silently truncated schema.
+
+Focused circuit tools retain the `{documentId?, actions:[...]}` call envelope:
+
+| Tool                 | Scope                                                             |
+| -------------------- | ----------------------------------------------------------------- |
+| `circuit_place`      | Built-in symbol, Cell and existing-instance placement; power rail |
+| `circuit_wire`       | Connect and disconnect                                            |
+| `circuit_transform`  | Individual move/rotate/mirror, arrange and detach-move            |
+| `circuit_selection`  | Selection transform, copy and align                               |
+| `circuit_text`       | Labels, annotations, text changes and annotation movement         |
+| `circuit_properties` | References, parameters, model selection and display flags         |
+
+Each is a projection and forwarding entry, not a separate edit engine. Existing
+batch compatibility and transaction boundaries still apply; membership in one
+tool does not make every combination atomic or supported. `apply_actions`
+retains all actions, including mixed families, Cell structure, reset and history.
+`advanced_transact` retains full editing authority. Neither is hidden dynamically.
+The focused text declaration keeps common fields and plain strings directly
+callable; recursive RichText details remain in its exact operation/field contract.
+Runtime validation is always complete, including constraints not expressible in
+JSON Schema. Native host conversion can still vary; an offline contract response
+is data, not another automatically converted tool declaration.
 
 ## Create and edit
 
@@ -12,22 +46,24 @@ private state and committed once, with one Undo; a failure leaves no partial
 wiring. The existing `wireIntent` transaction field accepts one intent or an
 ordered array (up to 64); the combined generated edits still obey the session's
 edit limit. Mixed placement/wire/command calls still need separate phases.
+Multiple taps on one original Route may use the same pre-batch Route/leg IDs;
+the planner follows the split children within that batch.
+For a new trunk created earlier in the same batch, use
+`{kind:"wire-at",point:{x,y},member:{instanceId,pinName}}` (or optional `net`)
+instead of fetching its generated Route IDs. Existing Junctions are reused.
+`{kind:"net",net:"name-or-id"}` resolves the nearest conductor on that same
+draft. Ordinary `point` remains a free endpoint. A tap at a different-Net
+crossing is rejected even with a qualifier: a Junction there would short Nets.
 
-| Action                                        | Key arguments                                                                 |
-| --------------------------------------------- | ----------------------------------------------------------------------------- |
-| `set-model`                                   | `instanceId`, exact `model` target (empty clears it)                          |
-| `copy`                                        | `selection`, `offset:{x,y}`; internal wires and references follow GUI copy    |
-| `transform`                                   | `selection`, `transform:{kind:"rotate",degrees:90}`, mirror or translate      |
-| `align`                                       | `selection`, `mode:left/right/top/bottom/center-x/center-y`                   |
-| `detach-move`                                 | `instanceIds`, `delta`; wires stay behind                                     |
-| `unplace`                                     | `instanceIds`; retain electrical facts in Placement Tray                      |
-| `reset-cell`                                  | `mode:clear-drawing/reset-placement/reset-body`                               |
-| `create-cell` / `rename-cell` / `delete-cell` | Cell `id`, plus `name` for create/rename                                      |
-| `undo` / `redo`                               | Shared editor history, not a private Agent stack                              |
-| `focus`                                       | `intent`: select, highlight-net, activate-document, fit-document, clear-focus |
+`copy` follows GUI copy for internal wires and references. `detach-move` leaves
+wires behind; `unplace` retains electrical facts in the Placement Tray.
+`undo`/`redo` share Editor history, not a private Agent stack. Routine layout
+work should use move/transform/align rather than reset; choose a `reset-cell`
+mode deliberately when discarding drawing state.
 
 For reviewed targets, `set-model` uses the GUI's semantic planner and leaves
-binding and invocation generation to the netlist generator. Use raw binding
+binding and invocation generation to the netlist generator; an empty model
+target clears the binding. Use raw binding
 edits only for custom or unreviewed definitions.
 
 `selection` accepts `instanceIds`, `routeIds`, `junctionIds`,
@@ -41,13 +77,14 @@ partially transforming a mixed selection.
 and a `point`; the server owns splitting and Junction creation.
 Name Nets through labels/markers, never raw Base-Net fields.
 
-`advanced_transact` accepts exactly one of `edits`, `structureEdits`,
-`wireIntent`, `semanticIntent`, or `command`. The Helper supplies IDs and
-Document/Project revisions. Read `analog-canvas://contract/edits/{kind}`
-for one edit schema (for example `set_instance_style_override`), avoiding the
-large `analog-canvas://contract/advanced-edits` resource meant for offline tooling.
-Reading is advisory, not a permission gate.
+`advanced_transact` is the full transaction escape hatch for typed edits not
+covered by common actions, not a separate permission tier. It uses the same
+validation and revision guards. Its listed schema/help describes the exclusive
+payload forms; the Helper supplies IDs and Document/Project revisions.
 Nested `transact_document` entries use their target Document revisions.
+The complete `analog-canvas://contract/advanced-edits` resource is the HTTP
+request envelope for offline tooling, not the MCP tool's argument schema.
+Do not load it merely to perform one edit.
 
 Use `project_cells` to list the signed-in user's Cloud Projects, inspect their
 Cell interfaces, and import one Cell into the open Project. Import copies the
@@ -56,12 +93,49 @@ it does not create a live cross-Project link. The helper refreshes the Project
 structure revision when the caller omits it. Sign-in, stale-revision, and
 library-compatibility failures are recoverable and do not revoke the session.
 
+`project_cells` with `action:"workspace"` exposes `request.action`:
+`list` live Project tabs and Cell revisions; `activate` a tab; `open` a saved
+Cloud Project (use `background:true` to leave the human's tab selected);
+`save` (or `asNew:true`); `copy` a selection or whole Cell into
+an explicit live target and offset. Copy follows the same atomic, undoable GUI
+planner including dependencies. Live tab contents include unsaved work; the
+existing Cloud list/inspect/import actions read saved versions.
+
+To work on another open Project without selecting its tab, call `project_cells`
+with `action:"bind-workspace",workspaceId` from `list` or `open`. The binding
+belongs to this MCP client and applies to Circuit, Project, File and Simulation
+requests. Pass `workspaceId:null` to return to the human's active tab. A closed
+target fails with `WORKSPACE_NOT_FOUND`; list and bind another copy rather than
+silently redirecting an edit. `workspace.activate` remains an explicit request
+to show a Project in the editor.
+
+Use `gallery_circuits` to traverse the complete public Gallery. `list` is
+cursor-paged; continue with `nextCursor` until it is `null`. `read` returns one
+entry's complete canonical Project Code and, by default, its generated SPICE
+netlist. `read-many` accepts up to 12 listed IDs and reads them concurrently;
+continue any returned `remainingEntryIds` when the response-size guard stops a
+batch early. Select Spectre explicitly or pass `netlistFormat:null` when only
+the Project Code is needed. This reads the same public Gallery records as the
+UI; it does not copy them into the active Project.
+
+Use `project_code` to read or replace the complete open Project. A replacement
+is parsed and committed through the same revision-guarded, undoable Project
+Code path as the Editor panel, so adding, updating or removing Cells and
+objects has one source of truth. Use `netlist_code` to read generated SPICE or
+Spectre and to replace the text-editable device names, model targets and
+parameter values. Topology, ports and connectivity remain Project Code or
+structured-edit operations; the Netlist tool does not maintain a second
+netlist-import interpretation of the circuit.
+
 Colors use existing `set_instance_style_override`, `set_route_style_override`,
 `set_presentation_style` and annotation `textColor` edits. Full inspection
 returns these fields, `signalFlowParameters`, Cell interfaces, and external
 Model definitions. Netlist parameter values are strings, for example `"1u"`.
 
 `annotate` and `edit-text` accept plain text or canonical RichText.
+For bound Cell Pin and Value labels, `edit-text` changes the look only and
+requires the same displayed characters. A Value look follows later parameter
+changes; the electrical parameter remains authoritative.
 
 `connect`/`disconnect` pin targets accept an Instance Reference string or
 `instance:{kind:"instance",id:"…"}`; use the latter for imported formal Cell Pins.
@@ -106,13 +180,23 @@ For example, a formula annotation:
 
 ## Verify and recover
 
-Mutation receipts already include authoritative changed objects, edit kinds,
+Mutation receipts already include authoritative changed-object IDs, edit kinds,
 diagnostics and diagnostic deltas. Do not reconstruct the change from a partial
 Snapshot or count the same diagnostics twice. Use `verify` for a fresh check
 when needed and `render` when visual review matters. On `STATE_CHANGED`,
 refresh and re-plan; never blindly replay a changed payload.
 
-`inspect` with `detail:"full"` returns complete Document facts.
+`inspect` with `target:{kind:"document"},detail:"full"` returns complete
+Document facts.
+`inspect` with `target:{kind:"geometry",objectIds:["…"]}` reads up to 64
+specific authored objects (placement, routes, junctions, annotation anchors,
+drafting and no-connect objects). It returns current revision and missing IDs
+without resolving the full circuit. Use it after local movement; use the full
+inspection for pins, Nets and connectivity. `get_context` and
+`target:{kind:"diagnostics"}` use lightweight server reads for revision/counts
+and diagnostic items. `simulation_folder` list reads folder metadata without
+source bodies; get/edit still load the required Project. An older Editor may
+fall back to the full read while the deployment rolls out.
 `target:{kind:"activity"}` returns recent successful receipts in the current
 MCP process, not persistent history or other people's edits.
 `search` with `scope:"project"` searches currently authorized Cells.
@@ -120,15 +204,54 @@ MCP process, not persistent history or other people's edits.
 cross-Cell/global-Net trace. Supply `hierarchyPath` for a particular reused
 Cell occurrence; do not infer cross-Cell connectivity from names yourself.
 
-`disconnect` revokes the session. A Project replacement invalidates the old
-binding. Newly created/deleted Cells are synchronized by the trusted browser,
-without requiring another claim exchange.
+`disconnect` revokes the workspace session. Project/Cell switching and Gallery
+navigation do not. `PROJECT_CONTEXT_STALE` requires refreshed context and a new
+plan, not another Claim; `NO_ACTIVE_PROJECT` means the browser is in Gallery.
+The client carries context stamps automatically and never redirects old writes.
 
 ## Files and boundaries
 
+For a read-only milestone, `verify` optionally accepts
+`expectedNetlist:{text:"<structural SPICE>",cell:"<reference root>"}` and
+`details:true`. Omit it to retain the ordinary Snapshot-only check. Comparison
+reads the existing structural netlist, pairs unique device References and pin
+positions, and compares formal port order, targets, literal parameters, scope
+and endpoint membership; internal auto Net names do not matter. It recursively
+checks matched child definitions, without flattening or guessing renamed devices.
+Counts are default; details includes at most 200 differences with an explicit
+truncation flag. A difference may affect several endpoint memberships.
+Parameterized hierarchy, expressions, model bodies, unresolved or preserved
+statements yield `inconclusive`, possibly alongside known differences.
+SPICE has no Port direction metadata: this comparison does not test directions,
+library model internals or simulated performance. Snapshot diagnostics and the
+subsequent structural export are separate reads, not an atomic revision snapshot.
+No import reference is rewritten and no verification call is required before edits.
+
 `export_file` writes Project/SVG/PNG/PDF to an explicit local path.
-`import_file` stages a Project or structural SPICE bundle; inspect it and
-request browser approval. Staging is not a completed import.
+`import_file` stages a Project or structural SPICE bundle. Inspect the candidate,
+then use `action:"open"` to open it in a new Project tab without replacing the
+current work. Staging alone is not a completed import. Use
+`action:"inspect",candidateId,documentId` to read one staged Cell as
+`documentCode`; stage summaries list Cell IDs. `action:"import-cell"` with
+`sourceDocumentId,targetDocumentId,mode:"replace-body"|"append"` commits into
+an existing Cell, including its dependency closure, in one undoable Project
+edit. The shared client supplies missing `expectedRevision` and
+`expectedStructureRevision`; explicit stale values reject. The candidate is
+consumed only on success. This operation requires `project.import` and the
+existing geometry/connectivity/presentation edit scopes, not a GUI approval.
+It preserves the target Cell ID, formal terminal IDs/order, symbol pin layout
+and parent callers. An uncalled Cell with no terminals can adopt the imported
+interface. Otherwise named terminals must match (append may use a subset), and
+parameters must already be compatible. Append retains existing interface
+owners, joins only declared matching terminals or compatible global Nets,
+and rejects local-name/Reference conflicts rather than guessing a rename.
+Resolve missing MOS bulk first; append does not retarget existing bulk.
+Append retains the destination's frozen import-reference baseline and source
+status becomes modified; it does not silently redefine a verification target.
+Geometry is not auto-arranged. Use whole-Project
+`action:"request-approval"` only when the human wants to replace the current
+Project in the browser. After either Project switch, refresh connection status
+and read the new Document context; the existing pairing remains valid.
 For Cadence globals, use `action:"stage-spice", namingProfile:"cadence-bang"`.
 
 Exporting a Project file is not Cloud Save or Gallery publication. Account

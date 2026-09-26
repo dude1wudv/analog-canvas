@@ -16,7 +16,6 @@ describe("DrawingToolbar", () => {
         documentSettingsOpen
         undo={{ enabled: true, execute: vi.fn() }}
         redo={{ enabled: true, execute: vi.fn() }}
-        simulation={{ open: true, onToggle: vi.fn() }}
         onToggleExamples={vi.fn()}
         onToggleLibrary={vi.fn()}
         onToggleNetlist={vi.fn()}
@@ -29,6 +28,9 @@ describe("DrawingToolbar", () => {
 
     expect(markup).toContain('data-testid="draw-toolbar"');
     expect(markup).toContain('data-testid="examples-toggle"');
+    expect(markup).toContain('aria-keyshortcuts="G"');
+    expect(markup).toContain('aria-keyshortcuts="B"');
+    expect(markup).toContain('aria-keyshortcuts="N"');
     expect(markup).toContain('data-testid="netlist-panel-toggle"');
     expect(markup).toContain('data-testid="project-code-toggle"');
     expect(markup).toContain('data-testid="draw-tool-wire"');
@@ -38,10 +40,11 @@ describe("DrawingToolbar", () => {
     expect(markup).not.toContain('data-testid="draw-tool-line"');
     expect(markup).not.toContain('data-testid="draw-tool-rectangle"');
     expect(markup).not.toContain('data-testid="draw-tool-circle"');
-    expect(markup).toContain("文档设置");
-    expect(markup).toContain('data-testid="digital-simulation-toggle"');
-    expect(markup).toContain("数字仿真");
-    expect(markup).toContain('aria-label="Panels"');
-    expect(markup).toContain('aria-label="Annotation tools"');
+    expect(markup).toContain("属性：端口、画布与所选对象");
+    expect(markup).toContain("属性</span>");
+    expect(markup).not.toContain('data-testid="digital-simulation-toggle"');
+    expect(markup).not.toContain("Digital Simulation");
+    expect(markup).toContain('aria-label="面板"');
+    expect(markup).toContain('aria-label="标注工具"');
   });
 });

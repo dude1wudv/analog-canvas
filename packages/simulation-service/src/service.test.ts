@@ -43,6 +43,87 @@ const caps: Capabilities = {
   maxOutputBytes: 1048576,
   cancel: true,
 };
+
+it("offers compact Profile discovery and an explicit complete query without losing model access", async () => {
+  const f = fixture("ngspice");
+  const summary = await f.service.handle(
+    { operation: "capabilities", detail: "summary" },
+    "summary",
+  );
+  if (!summary.ok || !("capabilities" in summary))
+    throw Error("Missing capabilities");
+  expect(summary.capabilities.profiles[0]?.dependencies).toBeUndefined();
+  expect(summary.capabilities.profiles[0]?.corners).toEqual(["tt"]);
+  const full = await f.service.handle(
+    summary.capabilities.discovery!.fullRequest,
+    "full",
+  );
+  if (!full.ok || !("capabilities" in full))
+    throw Error("Missing capabilities");
+  expect(full.capabilities.profiles[0]?.dependencies).toEqual(
+    caps.profiles[0]!.dependencies,
+  );
+});
+
+it("retries failed evidence storage through export without executing or duplicating files", async () => {
+  const f = fixture("ngspice");
+  vi.mocked(f.executor.execute).mockImplementation(async (input) => ({
+    result: await ngspiceResult(input),
+    rawfile: "retained raw",
+  }));
+  const { prepared } = await prepareRaw(f);
+  const originalPutMany = f.files.putMany.bind(f.files);
+  let unavailable = true;
+  vi.spyOn(f.files, "putMany").mockImplementation(async (entries) => {
+    if (entries.some((entry) => entry.name === "result.json") && unavailable)
+      throw Error("ARTIFACT_STORAGE_UNAVAILABLE");
+    return originalPutMany(entries);
+  });
+  const run = unwrap(
+    await f.service.handle(
+      { operation: "start", preparedId: prepared.id, digest: prepared.digest },
+      "start",
+    ),
+    "run",
+  );
+  await vi.waitFor(async () => {
+    const receipt = unwrap(
+      await f.service.handle({ operation: "read", runId: run.id }, "read"),
+      "run",
+    );
+    expect(receipt.state).toBe("finished");
+    expect(receipt.error?.code).toBe("ARTIFACT_STORAGE_UNAVAILABLE");
+    expect(receipt.result?.data).toBeUndefined();
+    expect(receipt.details?.timing).toMatchObject({
+      executionWaitMs: expect.any(Number),
+      resultMaterializationMs: expect.any(Number),
+      catalogSaveMs: expect.any(Number),
+      totalMs: expect.any(Number),
+    });
+  });
+  unavailable = false;
+  const exported = await f.service.handle(
+    { operation: "export", runId: run.id },
+    "retry-files",
+  );
+  if (!exported.ok || !("artifacts" in exported))
+    throw Error("Missing recovered files");
+  expect(new Set(exported.artifacts.map((a) => a.name)).size).toBe(
+    exported.artifacts.length,
+  );
+  const saved = await f.files.readArtifact(
+    exported.artifacts.find((a) => a.name === "result.json")!.id,
+  );
+  if (!saved.ok) throw Error("Missing recovered result");
+  expect(JSON.parse(saved.text).data.analyses).toHaveLength(1);
+  expect(f.executor.execute).toHaveBeenCalledTimes(1);
+  expect(
+    unwrap(
+      await f.service.handle({ operation: "read", runId: run.id }, "after"),
+      "run",
+    ).error,
+  ).toBeUndefined();
+});
 const deck = readFileSync(
   new URL("../../../netlists/vacask-divider/divider.sim", import.meta.url),
   "utf8",
@@ -184,8 +265,8 @@ function unwrap<T extends "prepared" | "run">(reply: SimulationReply, key: T) {
   if (!reply.ok || !(key in reply)) throw Error(JSON.stringify(reply));
   return (reply as Extract<SimulationReply, Record<T, unknown>>)[key];
 }
-function fixture(engine: "ngspice" | "vacask" = "vacask") {
-  const files = new SimulationFiles();
+function fixture(engine: "ngspice" | "vacask" = "vacask", now = Date.now) {
+  const files = new SimulationFiles(now);
   let release: () => void = () => {};
   const wait = new Promise<void>((r) => (release = r));
   const executor: Executor = {
@@ -202,7 +283,7 @@ function fixture(engine: "ngspice" | "vacask" = "vacask") {
     }),
   };
   const project = createEmptyProject("p", "test", "doc");
-  const service = new SimulationService(files, executor, () => project);
+  const service = new SimulationService(files, executor, () => project, now);
   return { files, executor, service, project, release };
 }
 async function prepareRaw(f: ReturnType<typeof fixture>, source = deck) {
@@ -241,6 +322,334 @@ async function prepareRaw(f: ReturnType<typeof fixture>, source = deck) {
   return { prepared, workspaceId: created.workspace.id };
 }
 describe("shared simulation lifecycle", () => {
+  it("retains failed direct-run input and retries only evidence publication", async () => {
+    const f = fixture();
+    saveSource(f.project, {
+      entry: "run.sim",
+      files: [{ path: "run.sim", text: deck }],
+      dependencies: [],
+    });
+    vi.mocked(f.executor.execute).mockRejectedValue(
+      new ExecutionFailure(
+        {
+          code: "NETWORK_UNKNOWN",
+          message: "Unknown acceptance",
+          stage: "start",
+          recovery: "retry-after",
+        },
+        true,
+      ),
+    );
+    const put = f.files.putMany.bind(f.files);
+    let unavailable = true;
+    vi.spyOn(f.files, "putMany").mockImplementation(async (entries) => {
+      if (unavailable) throw Error("ARTIFACT_STORAGE_UNAVAILABLE");
+      return put(entries);
+    });
+    const run = unwrap(
+      await f.service.handle(
+        {
+          operation: "run",
+          source: {
+            kind: "project-folder",
+            folderId: SETUP_ID,
+            expectedStructureRevision: f.project.structureRevision,
+          },
+        },
+        "failed-once",
+      ),
+      "run",
+    );
+    await f.service.handle({ operation: "read", runId: run.id }, "wait", {
+      waitMs: 1000,
+    });
+    unavailable = false;
+    const exported = await f.service.handle(
+      { operation: "export", runId: run.id },
+      "export",
+    );
+    expect(exported).toMatchObject({
+      ok: true,
+      artifacts: expect.arrayContaining([
+        expect.objectContaining({ name: "prepared.cir", role: "prepared" }),
+      ]),
+    });
+    expect(f.executor.execute).toHaveBeenCalledOnce();
+    expect(
+      unwrap(
+        await f.service.handle({ operation: "read", runId: run.id }, "read"),
+        "run",
+      ),
+    ).toMatchObject({
+      state: "lost",
+      error: { code: "NETWORK_UNKNOWN" },
+    });
+  });
+  it("reports invalid authored configuration without probing unrelated runtimes", async () => {
+    const f = fixture();
+    saveSource(f.project, {
+      entry: "run.sim",
+      files: [{ path: "run.sim", text: deck }],
+      dependencies: [],
+    });
+    f.project.simulationFolders[0]!.input.files.find(
+      (file) => file.path === "experiment.json",
+    )!.text = "{";
+    const discovery = vi.spyOn(f.executor, "capabilities");
+    expect(
+      await f.service.handle(
+        {
+          operation: "run",
+          source: {
+            kind: "project-folder",
+            folderId: SETUP_ID,
+            expectedStructureRevision: f.project.structureRevision,
+          },
+        },
+        "invalid-config",
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "SIMULATION_COMPILE_REFUSED", recovery: "fix-input" },
+    });
+    expect(discovery).not.toHaveBeenCalled();
+    expect(f.executor.execute).not.toHaveBeenCalled();
+  });
+  it("submits once, captures before discovery, and publishes evidence only after dispatch", async () => {
+    const f = fixture("ngspice");
+    const original = "RC\nV1 in 0 1\nR1 in 0 1k\n.control\nop\n.endc\n.end\n";
+    saveSource(f.project, {
+      entry: "run.cir",
+      files: [{ path: "run.cir", text: original }],
+      dependencies: [],
+    });
+    let ready!: () => void;
+    const wait = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const discovery = vi
+      .spyOn(f.executor, "capabilities")
+      .mockImplementation(async () => {
+        await wait;
+        return { ...caps, rawfileCollection: "declared-single-ascii" };
+      });
+    vi.mocked(f.executor.execute).mockImplementation(async (input) => {
+      expect(publish).not.toHaveBeenCalled();
+      return { result: await ngspiceResult(input) };
+    });
+    const publish = vi.spyOn(f.files, "putMany");
+    const request = {
+      operation: "run",
+      source: {
+        kind: "project-folder",
+        folderId: SETUP_ID,
+        expectedStructureRevision: f.project.structureRevision,
+      },
+    };
+    const first = f.service.handle(request, "submit");
+    const repeated = f.service.handle(request, "submit");
+    expect(
+      await f.service.handle(
+        {
+          operation: "start",
+          preparedId: "another-preparation",
+          digest: "a".repeat(64),
+        },
+        "submit",
+      ),
+    ).toMatchObject({ ok: false, error: { code: "REQUEST_ID_REUSED" } });
+    f.project.simulationFolders[0]!.input.files.find(
+      (file) => file.path === "run.cir",
+    )!.text = "changed after submit";
+    ready();
+    const a = unwrap(await first, "run");
+    expect(unwrap(await repeated, "run").id).toBe(a.id);
+    expect(discovery).toHaveBeenCalledExactlyOnceWith("test");
+    expect(f.executor.execute).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(f.executor.execute).mock.calls[0]![0].testbench).toBe(
+      original,
+    );
+    await f.service.handle({ operation: "read", runId: a.id }, "wait", {
+      waitMs: 1000,
+    });
+    const catalog = await f.files.catalog(a.id);
+    expect(catalog?.files.some((file) => file.name === "prepared.cir")).toBe(
+      true,
+    );
+    expect(unwrap(await f.service.handle(request, "submit"), "run").id).toBe(
+      a.id,
+    );
+    expect(
+      await f.service.handle({ ...request, timeoutMs: 12 }, "submit"),
+    ).toMatchObject({ ok: false, error: { code: "REQUEST_ID_REUSED" } });
+  });
+  it("does not submit a captured input into a replacement session", async () => {
+    const f = fixture();
+    saveSource(f.project, {
+      entry: "run.sim",
+      files: [{ path: "run.sim", text: deck }],
+      dependencies: [],
+    });
+    let ready!: () => void;
+    vi.spyOn(f.executor, "capabilities").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          ready = () => resolve(caps);
+        }),
+    );
+    const pending = f.service.handle(
+      {
+        operation: "run",
+        source: {
+          kind: "project-folder",
+          folderId: SETUP_ID,
+          expectedStructureRevision: f.project.structureRevision,
+        },
+      },
+      "switch",
+    );
+    await f.service.clear();
+    ready();
+    expect(await pending).toMatchObject({
+      ok: false,
+      error: { code: "SESSION_CHANGED" },
+    });
+    expect(f.executor.execute).not.toHaveBeenCalled();
+  });
+  it("waits inside one bounded read without starting or polling another run", async () => {
+    const f = fixture();
+    const { prepared } = await prepareRaw(f);
+    const run = unwrap(
+      await f.service.handle(
+        {
+          operation: "start",
+          preparedId: prepared.id,
+          digest: prepared.digest,
+        },
+        "start-wait",
+      ),
+      "run",
+    );
+    let settled = false;
+    const waiting = f.service
+      .handle({ operation: "read", runId: run.id }, "read-wait", {
+        waitMs: 1_000,
+      })
+      .then((reply) => {
+        settled = true;
+        return reply;
+      });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    f.release();
+    expect(unwrap(await waiting, "run").state).toBe("finished");
+    expect(f.executor.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true, false])(
+    "publishes terminal state after the directory save resolves (%s)",
+    async (saved) => {
+      const f = fixture();
+      let finish!: (saved: boolean) => void;
+      const persist = vi.spyOn(f.files, "saveCatalog").mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      const { prepared } = await prepareRaw(f);
+      const run = unwrap(
+        await f.service.handle(
+          {
+            operation: "start",
+            preparedId: prepared.id,
+            digest: prepared.digest,
+          },
+          "start",
+        ),
+        "run",
+      );
+      f.release();
+      await vi.waitFor(() => expect(persist).toHaveBeenCalledTimes(1));
+      expect(
+        unwrap(
+          await f.service.handle(
+            { operation: "read", runId: run.id },
+            "before",
+          ),
+          "run",
+        ).state,
+      ).toBe("running");
+      finish(saved);
+      await vi.waitFor(async () => {
+        const reply = unwrap(
+          await f.service.handle({ operation: "read", runId: run.id }, "after"),
+          "run",
+        );
+        expect(reply.state).toBe("finished");
+        expect(reply.error?.code).toBe(
+          saved ? undefined : "RUN_CATALOG_STORAGE_UNAVAILABLE",
+        );
+      });
+      expect(f.executor.execute).toHaveBeenCalledTimes(1);
+    },
+  );
+  it("retains completed receipts, catalogs and evidence after preparation expiry without rerunning", async () => {
+    let now = 0;
+    const f = fixture("ngspice", () => now);
+    const log = "log line\n".repeat(16000);
+    vi.mocked(f.executor.execute).mockImplementation(async (input) => ({
+      result: { ...(await ngspiceResult(input)), log },
+      rawfile: "original raw",
+    }));
+    const { prepared } = await prepareRaw(
+      f,
+      "Fixture\nV1 out 0 1\nR1 out 0 1k\n.end\n",
+    );
+    const start = {
+      operation: "start" as const,
+      preparedId: prepared.id,
+      digest: prepared.digest,
+    };
+    const run = unwrap(await f.service.handle(start, "once"), "run");
+    await vi.waitFor(async () => {
+      expect(
+        unwrap(
+          await f.service.handle({ operation: "read", runId: run.id }, "poll"),
+          "run",
+        ).state,
+      ).toBe("finished");
+    });
+    now = 24 * 60 * 60 * 1000;
+    const retained = unwrap(
+      await f.service.handle({ operation: "read", runId: run.id }, "later"),
+      "run",
+    );
+    expect(retained.resultPreview).toBe(true);
+    expect(retained.inputStatus).toBe("unchanged");
+    expect(
+      await f.service.handle(
+        { operation: "catalog", runId: run.id },
+        "catalog-later",
+      ),
+    ).toMatchObject({
+      ok: true,
+      catalog: { collection: "complete", datasets: [{ analysis: "op" }] },
+    });
+    const evidence = await f.files.readArtifact(
+      retained.artifacts.find((item) => item.role === "result")!.id,
+    );
+    if (!evidence.ok) throw Error(evidence.error.message);
+    expect(JSON.parse(evidence.text).log).toBe(log);
+    expect(unwrap(await f.service.handle(start, "once"), "run").id).toBe(
+      run.id,
+    );
+    expect(f.executor.execute).toHaveBeenCalledTimes(1);
+    expect(await f.service.handle(start, "new-start")).toMatchObject({
+      ok: false,
+      error: { code: "PREPARED_INPUT_UNAVAILABLE" },
+    });
+  });
   it("advertises the session concurrency limit and sequential batch path", async () => {
     const f = fixture("ngspice");
     expect(
@@ -254,80 +663,157 @@ describe("shared simulation lifecycle", () => {
     });
   });
 
-  it("delivers the same captured Spec report through run reads and artifacts", async () => {
-    const f = fixture("ngspice");
-    const source =
-      "Spec fixture\nV1 out 0 1\nR1 out 0 1k\n* @spec peak <= 2 unit=V\n.control\nop\nmeas tran peak MAX v(out)\nwrite out.raw all\n.endc\n.end\n";
-    vi.mocked(f.executor.execute).mockImplementation(async (input) => ({
-      result: { ...(await ngspiceResult(input)), log: "peak = 1.8" },
-      rawfile: "raw numbers",
-    }));
-    const { prepared } = await prepareRaw(f, source);
-    const started = unwrap(
-      await f.service.handle(
-        {
-          operation: "start",
-          preparedId: prepared.id,
-          digest: prepared.digest,
-        },
-        "spec-start",
-      ),
-      "run",
-    );
-    await vi.waitFor(async () =>
+  it.each(["complete", "partial"] as const)(
+    "delivers captured Specs and %s collection status through run reads and artifacts",
+    async (collectionStatus) => {
+      const f = fixture("ngspice");
+      const source =
+        "Spec fixture\nV1 out 0 1\nR1 out 0 1k\n* @spec peak <= 2 unit=V\n.control\nop\nmeas tran peak MAX v(out)\nwrite out.raw all\n.endc\n.end\n";
+      vi.mocked(f.executor.execute).mockImplementation(async (input) => ({
+        result: { ...(await ngspiceResult(input)), log: "peak = 1.8" },
+        rawfile: "raw numbers",
+        collectionStatus,
+      }));
+      const { prepared } = await prepareRaw(f, source);
+      const started = unwrap(
+        await f.service.handle(
+          {
+            operation: "start",
+            preparedId: prepared.id,
+            digest: prepared.digest,
+          },
+          "spec-start",
+        ),
+        "run",
+      );
+      await vi.waitFor(async () =>
+        expect(
+          unwrap(
+            await f.service.handle(
+              { operation: "read", runId: started.id },
+              "spec-read",
+            ),
+            "run",
+          ).state,
+        ).toBe("finished"),
+      );
+      const finished = unwrap(
+        await f.service.handle(
+          { operation: "read", runId: started.id },
+          "spec-final",
+        ),
+        "run",
+      );
+      const specFile = finished.artifacts.find((a) => a.name === "specs.json")!;
+      const specRead = await f.files.readArtifact(specFile.id);
+      if (!specRead.ok) throw Error("Missing Spec artifact");
+      const fullSpecs = JSON.parse(specRead.text);
+      expect(fullSpecs).toMatchObject({
+        runId: started.id,
+        preparedId: prepared.id,
+        inputDigest: prepared.digest,
+        results: [{ name: "peak", value: 1.8, judgment: "pass" }],
+      });
+      const artifact = finished.artifacts.find((a) => a.name === "specs.json")!;
+      const catalogReply = await f.service.handle(
+        { operation: "catalog", runId: finished.id },
+        "catalog",
+      );
+      if (!catalogReply.ok || !("catalog" in catalogReply))
+        throw Error("Missing catalog");
+      expect(catalogReply.catalog).toMatchObject({
+        runId: finished.id,
+        execution: "completed",
+        collection: collectionStatus,
+        files: expect.arrayContaining([
+          expect.objectContaining({ id: artifact.id, role: "specs" }),
+          expect.objectContaining({ name: "prepared.cir", role: "prepared" }),
+          expect.objectContaining({ name: "deck.cir", role: "source" }),
+        ]),
+      });
       expect(
-        unwrap(
-          await f.service.handle(
-            { operation: "read", runId: started.id },
-            "spec-read",
-          ),
-          "run",
-        ).state,
-      ).toBe("finished"),
-    );
-    const finished = unwrap(
-      await f.service.handle(
-        { operation: "read", runId: started.id },
-        "spec-final",
-      ),
-      "run",
-    );
-    expect(finished.outputData?.specs).toMatchObject({
-      runId: started.id,
-      preparedId: prepared.id,
-      inputDigest: prepared.digest,
-      results: [{ name: "peak", value: 1.8, judgment: "pass" }],
-    });
-    const artifact = finished.artifacts.find((a) => a.name === "specs.json")!;
-    const read = await f.files.handle({
-      action: "artifact",
-      artifactId: artifact.id,
-    });
-    if (!read.ok || !("text" in read)) throw Error("Missing Spec artifact");
-    expect(JSON.parse(read.text)).toEqual(finished.outputData?.specs);
-    expect(finished.artifacts.map((a) => a.name)).toEqual(
-      expect.arrayContaining(["out.raw", "specs.csv", "log.txt"]),
-    );
-    expect(finished.outputData).toEqual({
-      schemaVersion: 1,
-      analyses: [],
-      diagnostics: [],
-      specs: finished.outputData!.specs,
-    });
-    expect(
-      finished.artifacts
-        .filter((a) => a.name.endsWith(".csv"))
-        .map((a) => a.name)
-        .sort(),
-    ).toEqual(["op-0.csv", "specs.csv"]);
-    expect(finished.artifacts.map((a) => a.name)).not.toEqual(
-      expect.arrayContaining(["outputs.json"]),
-    );
-    expect(finished.artifacts.map((a) => a.name)).not.toEqual(
-      expect.arrayContaining(["native-measurements.json"]),
-    );
-    await f.service.clear();
-  });
+        await f.service.handle(
+          { operation: "catalog", runId: finished.id },
+          "catalog",
+        ),
+      ).toEqual(catalogReply);
+      const firstPage = await f.service.handle(
+        {
+          operation: "catalog",
+          runId: finished.id,
+          section: "files",
+          limit: 1,
+        },
+        "catalog-page",
+      );
+      expect(firstPage).toMatchObject({
+        ok: true,
+        catalog: { files: [catalogReply.catalog.files[0]], datasets: [] },
+        page: {
+          section: "files",
+          total: catalogReply.catalog.files.length,
+          nextOffset: 1,
+        },
+      });
+      const lastPage = await f.service.handle(
+        {
+          operation: "catalog",
+          runId: finished.id,
+          section: "files",
+          offset: catalogReply.catalog.files.length,
+        },
+        "catalog-last",
+      );
+      expect(lastPage).toMatchObject({
+        ok: true,
+        catalog: { files: [] },
+        page: { nextOffset: null },
+      });
+      expect(finished.catalog).toBeUndefined();
+      expect(finished.details).toMatchObject({
+        collection: collectionStatus,
+        datasetCount: 1,
+      });
+      const manifest = await f.files.handle({
+        action: "artifact",
+        artifactId: finished.artifacts.find((a) => a.role === "manifest")!.id,
+      });
+      if (!manifest.ok || !("text" in manifest))
+        throw Error("Missing manifest");
+      expect(JSON.parse(manifest.text).catalog.collection).toBe(
+        collectionStatus,
+      );
+      const read = await f.files.handle({
+        action: "artifact",
+        artifactId: artifact.id,
+      });
+      if (!read.ok || !("text" in read)) throw Error("Missing Spec artifact");
+      expect(JSON.parse(read.text)).toEqual(fullSpecs);
+      expect(finished.artifacts.map((a) => a.name)).toEqual(
+        expect.arrayContaining(["out.raw", "specs.csv", "log.txt"]),
+      );
+      expect(finished.outputData).toBeUndefined();
+      expect(finished.details?.specs).toMatchObject({
+        available: true,
+        total: 1,
+        passed: 1,
+        failed: 0,
+      });
+      expect(
+        finished.artifacts
+          .filter((a) => a.name.endsWith(".csv"))
+          .map((a) => a.name)
+          .sort(),
+      ).toEqual(["op-0.csv", "specs.csv"]);
+      expect(finished.artifacts.map((a) => a.name)).not.toEqual(
+        expect.arrayContaining(["outputs.json"]),
+      );
+      expect(finished.artifacts.map((a) => a.name)).not.toEqual(
+        expect.arrayContaining(["native-measurements.json"]),
+      );
+      await f.service.clear();
+    },
+  );
   it("hands off one complete AC CSV and only authored metrics, with no automatic summaries", async () => {
     const f = fixture("ngspice");
     const source =
@@ -384,12 +870,19 @@ describe("shared simulation lifecycle", () => {
       ),
       "run",
     );
-    expect(finished.result?.data?.analyses).toEqual([analysis]);
-    expect(finished.outputData).toEqual({
-      schemaVersion: 1,
-      analyses: [],
-      diagnostics: [],
-      specs: expect.objectContaining({
+    expect(finished.result?.data).toBeUndefined();
+    expect(finished.outputData).toBeUndefined();
+    const full = await f.files.readArtifact(
+      finished.artifacts.find((a) => a.name === "result.json")!.id,
+    );
+    if (!full.ok) throw Error("Missing full result");
+    expect(JSON.parse(full.text).data.analyses).toEqual([analysis]);
+    const spec = await f.files.readArtifact(
+      finished.artifacts.find((a) => a.name === "specs.json")!.id,
+    );
+    if (!spec.ok) throw Error("Missing full Specs");
+    expect(JSON.parse(spec.text)).toEqual(
+      expect.objectContaining({
         results: [
           expect.objectContaining({
             name: "gain_at_fc",
@@ -398,7 +891,7 @@ describe("shared simulation lifecycle", () => {
           }),
         ],
       }),
-    });
+    );
     expect(
       finished.artifacts
         .filter((a) => a.name.endsWith(".csv"))
@@ -418,7 +911,8 @@ describe("shared simulation lifecycle", () => {
   it.each([false, true])(
     "runs a recoverable sequential batch (first run fails: %s)",
     async (firstRunFails) => {
-      const files = new SimulationFiles();
+      let now = 0;
+      const files = new SimulationFiles(() => now);
       const project = createEmptyProject("batch-project", "Batch", "doc");
       project.simulationFolders = ["A", "B"].map((name) =>
         sourceFolder(`folder-${name.toLowerCase()}`, name, {
@@ -455,7 +949,12 @@ describe("shared simulation lifecycle", () => {
         ),
         cancel: vi.fn(async () => releases.at(-1)?.()),
       };
-      const service = new SimulationService(files, executor, () => project);
+      const service = new SimulationService(
+        files,
+        executor,
+        () => project,
+        () => now,
+      );
       const preparedReply = await service.handle(
         {
           operation: "prepare-batch",
@@ -493,6 +992,11 @@ describe("shared simulation lifecycle", () => {
         batch: { id: preparedReply.batch.id, state: "running" },
       });
       await vi.waitFor(() => expect(executor.execute).toHaveBeenCalledTimes(1));
+      now = 60 * 60 * 1000;
+      await service.handle(
+        { operation: "read-batch", batchId: preparedReply.batch.id },
+        "late-poll",
+      );
       releases[0]!();
       await vi.waitFor(() => expect(executor.execute).toHaveBeenCalledTimes(2));
       releases[1]!();
@@ -514,6 +1018,7 @@ describe("shared simulation lifecycle", () => {
         }),
       );
       expect(maxActive).toBe(1);
+      now += 24 * 60 * 60 * 1000;
       // Recover identifiers from the existing Batch resource rather than
       // submitting another start after a caller loses its transient Run IDs.
       const recovered = await service.handle(
@@ -522,6 +1027,7 @@ describe("shared simulation lifecycle", () => {
       );
       if (!recovered.ok || !("batch" in recovered))
         throw Error(JSON.stringify(recovered));
+      expect(recovered.batch.expiresAt).toBeNull();
       expect(
         new Set(recovered.batch.items.map((item) => item.runId)).size,
       ).toBe(2);
@@ -622,6 +1128,77 @@ describe("shared simulation lifecycle", () => {
         "native-invalid-point",
       ),
     ).toMatchObject({ ok: false, error: { recovery: "fix-input" } });
+    expect(f.executor.execute).not.toHaveBeenCalled();
+  });
+
+  it("prepares native ngspice PVT and source-parameter points through the existing batch", async () => {
+    const project = CircuitProjectSchema.parse(
+      currentFiveTransistorOtaCircuitSource(),
+    );
+    const folder = createSimulationFolder({
+      id: SETUP_ID,
+      name: "ngspice PVT",
+      profileId: "test",
+      engine: "ngspice",
+      documentId: project.topDocumentId,
+    });
+    const entry = folder.input.files.find(
+      (file) => file.path === folder.input.entry,
+    )!;
+    entry.text = entry.text.replace(
+      '.include "circuit.spice"',
+      '.param BIAS=0.9\n.include "circuit.spice"',
+    );
+    project.simulationFolders = [folder];
+    const document = project.documents.find((item) =>
+      item.instances.some((instance) => instance.netlist?.parameters.w),
+    )!;
+    const instance = document.instances.find(
+      (item) => item.netlist?.parameters.w,
+    )!;
+    const before = structuredClone(project);
+    const f = fixture("ngspice");
+    f.executor.capabilities = async () => ({
+      ...caps,
+      rawfileCollection: "declared-single-ascii",
+      profiles: [{ ...caps.profiles[0]!, corners: ["tt", "ff"] }],
+      modelLibrary: { path: "models.lib", section: "tt" },
+    });
+    const service = new SimulationService(f.files, f.executor, () => project);
+    const reply = await service.handle(
+      {
+        operation: "prepare-sweep",
+        folderId: folder.id,
+        expectedStructureRevision: project.structureRevision,
+        axes: [
+          { kind: "corner", values: ["tt", "ff"] },
+          { kind: "temperature", values: [27, 125] },
+          { kind: "variable", variableId: "BIAS", values: ["0.8", "0.9"] },
+          {
+            kind: "parameter",
+            documentId: document.id,
+            instanceId: instance.id,
+            parameter: "w",
+            values: ["33u", "44u"],
+          },
+        ],
+      },
+      "ngspice-native-pvt",
+    );
+    if (!reply.ok || !("batch" in reply)) throw Error(JSON.stringify(reply));
+    expect(reply.batch.items).toHaveLength(16);
+    expect(
+      new Set(reply.batch.items.map((item) => item.prepared.digest)).size,
+    ).toBe(16);
+    expect(reply.batch.items[0]!.prepared.environment).toMatchObject({
+      corner: "tt",
+      temperatureC: 27,
+    });
+    expect(reply.batch.items[15]!.prepared.environment).toMatchObject({
+      corner: "ff",
+      temperatureC: 125,
+    });
+    expect(project).toEqual(before);
     expect(f.executor.execute).not.toHaveBeenCalled();
   });
 
@@ -763,6 +1340,7 @@ describe("shared simulation lifecycle", () => {
         ok: true,
         batch: {
           state: "cancelled",
+          expiresAt: null,
           items: [{ state: "finished" }, { state: "cancelled" }],
         },
       }),
@@ -1074,6 +1652,7 @@ describe("shared simulation lifecycle", () => {
       error: {
         code: "PROJECT_STRUCTURE_REVISION_CONFLICT",
         recovery: "reprepare",
+        currentRevision: f.project.structureRevision,
       },
     });
   });
@@ -1100,6 +1679,7 @@ describe("shared simulation lifecycle", () => {
   it("start returns immediately; exact retries never execute twice, and another run can follow completion", async () => {
     const f = fixture(),
       { prepared } = await prepareRaw(f);
+    const resultBatches = vi.spyOn(f.files, "putMany");
     const op = {
       operation: "start",
       preparedId: prepared.id,
@@ -1134,6 +1714,11 @@ describe("shared simulation lifecycle", () => {
       await f.service.handle({ operation: "read", runId: run.id }, "read"),
       "run",
     );
+    expect(resultBatches).toHaveBeenCalledTimes(2);
+    expect(resultBatches.mock.calls[0]![0].length).toBeGreaterThan(1);
+    expect(resultBatches.mock.calls[1]![0]).toEqual([
+      expect.objectContaining({ name: "evidence-manifest.json" }),
+    ]);
     expect(finished.artifacts.map((a) => a.name)).toEqual(
       expect.arrayContaining([
         "raw/divider_op.raw",
@@ -1250,6 +1835,14 @@ describe("shared simulation lifecycle", () => {
     await f.service.clear();
     expect(
       await f.service.handle({ operation: "read", runId: run.id }, "r2"),
+    ).toMatchObject({
+      ok: true,
+      run: { state: "lost", error: { code: "NETWORK_UNKNOWN" } },
+    });
+    expect(f.executor.execute).toHaveBeenCalledTimes(1);
+    f.files.clear();
+    expect(
+      await f.service.handle({ operation: "read", runId: run.id }, "r3"),
     ).toMatchObject({ ok: false, error: { code: "RUN_STATE_LOST" } });
   });
   it("cancel requests executor cleanup, and a late successful completion is not mislabeled cancelled", async () => {

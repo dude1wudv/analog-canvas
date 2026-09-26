@@ -36,6 +36,28 @@ export const agentRazaviAuthoringCatalog = {
       variants: [],
     },
     {
+      symbolId: "battery",
+      name: "Battery",
+      category: "source",
+      defaultVariantId: null,
+      labelVisibility: "shown",
+      pins: [
+        {
+          name: "+",
+          role: "positive",
+          direction: "north",
+          visibility: "visible",
+        },
+        {
+          name: "-",
+          role: "negative",
+          direction: "south",
+          visibility: "visible",
+        },
+      ],
+      variants: [],
+    },
+    {
       symbolId: "buffer",
       name: "Buffer",
       category: "logic",
@@ -809,8 +831,70 @@ export const agentRazaviAuthoringCatalog = {
       variants: [],
     },
     {
+      symbolId: "opamp-wide",
+      name: "Op Amp Wide",
+      category: "analog-block",
+      defaultVariantId: null,
+      labelVisibility: "shown",
+      pins: [
+        {
+          name: "IN+",
+          role: "non-inverting-input",
+          direction: "west",
+          visibility: "visible",
+        },
+        {
+          name: "IN-",
+          role: "inverting-input",
+          direction: "west",
+          visibility: "visible",
+        },
+        {
+          name: "OUT",
+          role: "output",
+          direction: "east",
+          visibility: "visible",
+        },
+      ],
+      variants: [],
+    },
+    {
       symbolId: "opamp-differential",
       name: "Differential Op Amp",
+      category: "analog-block",
+      defaultVariantId: null,
+      labelVisibility: "shown",
+      pins: [
+        {
+          name: "IN+",
+          role: "non-inverting-input",
+          direction: "west",
+          visibility: "visible",
+        },
+        {
+          name: "IN-",
+          role: "inverting-input",
+          direction: "west",
+          visibility: "visible",
+        },
+        {
+          name: "OUT+",
+          role: "output",
+          direction: "east",
+          visibility: "visible",
+        },
+        {
+          name: "OUT-",
+          role: "output",
+          direction: "east",
+          visibility: "visible",
+        },
+      ],
+      variants: [],
+    },
+    {
+      symbolId: "opamp-differential-wide",
+      name: "FD Amp Wide",
       category: "analog-block",
       defaultVariantId: null,
       labelVisibility: "shown",
@@ -955,7 +1039,7 @@ export const agentRazaviAuthoringCatalog = {
     },
     {
       symbolId: "port-filled",
-      name: "Filled Port",
+      name: "Bias Voltage Port",
       category: "interface",
       defaultVariantId: null,
       labelVisibility: "shown",

@@ -1,7 +1,7 @@
 import { createRoutePath } from "@icm/model";
 import { resolveDocumentRoutingGeometry } from "@icm/derived";
-import { createEmptyProject } from "@icm/model";
-import type { Annotation } from "@icm/model";
+import { createEmptyProject, roleLabelFormat } from "@icm/model";
+import type { Annotation, Point } from "@icm/model";
 import { builtInSymbols, InMemorySymbolResolver } from "@icm/symbols";
 import { describe, expect, it, vi } from "vitest";
 
@@ -30,22 +30,15 @@ function fixture() {
   };
 }
 
-function routedFixture() {
+function routedFixture(
+  start: Point = { x: 0, y: 0 },
+  end: Point = { x: 100, y: 0 },
+) {
   const input = fixture();
   input.document.nets.push({ id: "net", terminals: [] });
   input.document.junctions.push(
-    {
-      id: "j1",
-      netId: "net",
-      position: { x: 0, y: 0 },
-      role: "route-anchor",
-    },
-    {
-      id: "j2",
-      netId: "net",
-      position: { x: 100, y: 0 },
-      role: "route-anchor",
-    },
+    { id: "j1", netId: "net", position: start, role: "route-anchor" },
+    { id: "j2", netId: "net", position: end, role: "route-anchor" },
   );
   input.document.routes.push(
     createRoutePath({
@@ -212,6 +205,35 @@ describe("property edit planner", () => {
     );
   });
 
+  it("gives a new V-led Net Label its voltage-node look and shows other names as written", () => {
+    const route = routedFixture().document.routes[0]!;
+    const labelFor = (name: string, input = routedFixture()) =>
+      createPropertyEditPlanner(input)
+        .netLabelEditsForRoute(route, name)
+        ?.flatMap((edit) =>
+          edit.kind === "upsert_schematic_annotation" ? [edit.annotation] : [],
+        )[0];
+    expect(labelFor("VBP")?.formatOverride).toEqual(
+      roleLabelFormat("voltage-node", "VBP"),
+    );
+    expect(labelFor("Vcasn")?.formatOverride).toEqual(
+      roleLabelFormat("voltage-node", "Vcasn"),
+    );
+    expect(labelFor("OUT")?.formatOverride).toBeUndefined();
+    // An existing label without a look of its own keeps the historical rule.
+    const imported = routedFixture();
+    imported.document.annotations.push({
+      id: "imported-label",
+      kind: "net-label",
+      netId: "net",
+      anchor: { kind: "free", position: { x: 80, y: 20 } },
+      alignment: "start",
+      rotation: 0,
+      locked: false,
+    });
+    expect(labelFor("VBP", imported)?.formatOverride).toBeUndefined();
+  });
+
   it("commits the same route attachment resolved by the L-command preview", () => {
     const input = routedFixture();
     const planner = createPropertyEditPlanner(input);
@@ -255,6 +277,23 @@ describe("property edit planner", () => {
         }),
       ]),
     );
+  });
+
+  it("puts a new label above a horizontal wire and right of a vertical one, however drawn", () => {
+    for (const [start, end, normalOffset, alignment] of [
+      [{ x: 100, y: 0 }, { x: 0, y: 0 }, 8, "middle"],
+      [{ x: 0, y: 100 }, { x: 0, y: 0 }, 8, "start"],
+      [{ x: 0, y: 0 }, { x: 0, y: 100 }, -8, "start"],
+    ] as const) {
+      const input = routedFixture(start, end);
+      const label = createPropertyEditPlanner(input)
+        .netLabelEditsForRoute(input.document.routes[0]!, "SIGNAL")
+        ?.flatMap((edit) =>
+          edit.kind === "upsert_schematic_annotation" ? [edit.annotation] : [],
+        )[0];
+      expect(label?.alignment).toBe(alignment);
+      expect(label?.anchor).toMatchObject({ kind: "route", normalOffset });
+    }
   });
 
   it("renames a free L-command label without moving it back onto a Route", () => {

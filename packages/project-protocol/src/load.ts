@@ -6,7 +6,6 @@ import type { CircuitProject } from "@icm/model";
 
 import {
   ProjectFormatError,
-  type ProjectDiagnostic,
   type ProjectLoadResult,
   type ProjectParseResult,
 } from "./diagnostics.js";
@@ -39,7 +38,6 @@ import {
   upgradeSchema48To49,
 } from "./previous-to-current.js";
 import { repairBoundFormatOverrides } from "./transforms/bound-format-override.js";
-import { repairLegacyReviewedExternalReferences } from "./transforms/reviewed-external-reference.js";
 import { OLDEST_SUPPORTED_PROJECT_SCHEMA_VERSION } from "./version.js";
 import { upgradeSchema49To50 } from "./transforms/simulation-folders.js";
 import { upgradeSchema50To51 } from "./transforms/drafting-shape-paint.js";
@@ -103,26 +101,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function invalidProjectDiagnostics(
-  input: unknown,
-): readonly ProjectDiagnostic[] {
-  const result = CircuitProjectSchema.safeParse(input);
-  if (result.success) return [];
-  return result.error.issues.map((issue) => ({
-    code: "INVALID_PROJECT" as const,
-    message: issue.message,
-    path: issue.path.map((segment) =>
-      typeof segment === "symbol" ? (segment.description ?? "symbol") : segment,
-    ),
-  }));
-}
-
 export function tryValidateProject(input: unknown): ProjectLoadResult {
-  const diagnostics = invalidProjectDiagnostics(input);
-  if (diagnostics.length > 0) return { ok: false, diagnostics };
+  const result = CircuitProjectSchema.safeParse(input);
+  if (!result.success)
+    return {
+      ok: false,
+      diagnostics: result.error.issues.map((issue) => ({
+        code: "INVALID_PROJECT" as const,
+        message: issue.message,
+        path: issue.path.map((segment) =>
+          typeof segment === "symbol"
+            ? (segment.description ?? "symbol")
+            : segment,
+        ),
+      })),
+    };
   return {
     ok: true,
-    project: CircuitProjectSchema.parse(input),
+    project: result.data,
     sourceSchemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
     migrated: false,
   };
@@ -221,16 +217,11 @@ export function tryParseProjectWithMetadata(
   // overrides already written and published — restore the text instead of
   // refusing the Project, because a file that will not open is, to its
   // author, a file that is gone.
-  const reviewedReferenceRepair =
-    repairLegacyReviewedExternalReferences(current);
-  current = reviewedReferenceRepair.project;
-  // The reviewed-reference repair can rename a legacy external instance
-  // (M1 -> XM1). Reconcile bound presentation only after that semantic rename
-  // so its format override is rewritten to the final reference as well.
+  // SPICE invocation prefixes belong to export, never to file loading.
   current = repairBoundFormatOverrides(current);
-  const diagnostics = invalidProjectDiagnostics(current);
-  if (diagnostics.length > 0) return { ok: false, diagnostics };
-  const project = CircuitProjectSchema.parse(current);
+  const validated = tryValidateProject(current);
+  if (!validated.ok) return validated;
+  const project = validated.project;
   if (project.componentDefinitions) {
     const definitions = new Map(
       project.componentDefinitions.map((definition) => [

@@ -4,14 +4,61 @@ import { createRoot } from "react-dom/client";
 import { useVisitStats } from "../analytics/client";
 import { EditorErrorBoundary } from "./components/editor-error-boundary";
 import { guardedRouteChunk } from "./components/route-chunk-loader";
+import {
+  loadGalleryFeed,
+  galleryTagScope,
+  loadGalleryTagSummary,
+  type GalleryLandingPreload,
+} from "./gallery-client";
+import { GALLERY_FILTERS_KEY, resolveGalleryFilters } from "./gallery-filters";
 import "../analytics/analytics.css";
 import "./styles.css";
+import { hasAgentSessionRecovery } from "./agent/session-recovery-presence";
+
+const WorkspaceAgentProvider = lazy(() =>
+  guardedRouteChunk(() => import("./app/App"))().then((module) => ({
+    default: module.WorkspaceAgentProvider,
+  })),
+);
+// Unpaired Gallery visitors must not download the Editor/Agent runtime.
+const needsAgentWorkspace =
+  !/^\/(?:analytics|moderation|mine)?\/?$/.test(window.location.pathname) ||
+  hasAgentSessionRecovery(window.sessionStorage);
 
 const container = document.getElementById("root");
 
 if (!container) {
   throw new Error("Editor root element is missing");
 }
+
+function galleryLandingPreload(): GalleryLandingPreload | undefined {
+  if (!/^\/?$/.test(window.location.pathname)) return undefined;
+  let storedFilters: string | null = null;
+  try {
+    storedFilters = localStorage.getItem(GALLERY_FILTERS_KEY);
+  } catch {
+    // An explicit URL filter still works when browser storage is disabled.
+  }
+  const filters = resolveGalleryFilters(window.location.search, storedFilters);
+  const tagFilters = {
+    netlistable: filters.netlistable,
+    liked: filters.liked,
+    attention: filters.attention,
+  };
+  const tags = loadGalleryTagSummary(fetch, tagFilters);
+  return {
+    tags,
+    tagsScope: galleryTagScope(tagFilters),
+    ...(!window.location.search && !storedFilters
+      ? { feed: loadGalleryFeed() }
+      : {}),
+  };
+}
+
+// Start public Gallery data beside the route chunk, before React mounts. A
+// remembered or linked filter still waits for GalleryFeed to request its exact
+// query; only the default wall reuses the unfiltered request.
+const initialGalleryPreload = galleryLandingPreload();
 
 const EditorApp = lazy(
   guardedRouteChunk(() =>
@@ -77,7 +124,10 @@ function Root() {
       <Suspense
         fallback={<div className="analytics-loading">正在加载画廊…</div>}
       >
-        <GalleryFeed visitStats={stats} />
+        <GalleryFeed
+          visitStats={stats}
+          {...(initialGalleryPreload ? { preload: initialGalleryPreload } : {})}
+        />
       </Suspense>
     );
   }
@@ -114,7 +164,17 @@ function Root() {
 createRoot(container).render(
   <StrictMode>
     <EditorErrorBoundary>
-      <Root />
+      {needsAgentWorkspace ? (
+        <Suspense
+          fallback={<div className="analytics-loading">Loading workspace…</div>}
+        >
+          <WorkspaceAgentProvider>
+            <Root />
+          </WorkspaceAgentProvider>
+        </Suspense>
+      ) : (
+        <Root />
+      )}
     </EditorErrorBoundary>
   </StrictMode>,
 );

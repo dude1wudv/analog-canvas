@@ -24,6 +24,7 @@
   --icm-accent-tint: #e7f3fc;
   --icm-error: #eb5757;
   --icm-warning: #9a6700;
+  --icm-warning-rgb: 234 179 8;
   --icm-marquee-crossing: #3fa34d;
   --icm-marquee-crossing-soft: rgb(63 163 77 / 10%);
   --icm-grid-dot: #c4c7c9;
@@ -231,14 +232,8 @@ body {
   height: 22px;
   flex: 0 0 auto;
   border-radius: 6px;
-  background: linear-gradient(
-    145deg,
-    #2f3437 0%,
-    #37352f 55%,
-    #2383e2 55%,
-    #2383e2 100%
-  );
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 8%);
+  background: #fff url("/icon.svg?v=nmos-4") center / cover no-repeat;
+  box-shadow: none;
 }
 
 /* The wordmark is the shared two-way gallery/editor switch. Keep this beside
@@ -284,7 +279,7 @@ body {
 }
 
 /* The menubar yields before the right-hand chrome does: at narrow widths it
-   scrolls its own row rather than pushing Analytics/About/Help off-screen. */
+   scrolls its own row rather than pushing compact support links off-screen. */
 .app-command-surface {
   display: flex;
   flex: 0 1 auto;
@@ -321,6 +316,26 @@ body {
   align-items: center;
   gap: var(--icm-space-2);
   margin-left: auto;
+}
+
+.app-repository-link {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: var(--icm-control-h);
+  height: var(--icm-control-h);
+  place-items: center;
+  border-radius: var(--icm-radius-sm);
+  color: var(--icm-text-muted);
+}
+
+.app-repository-link:hover {
+  color: var(--icm-text);
+  background: var(--icm-surface-hover);
+}
+
+.app-repository-link svg {
+  width: 18px;
+  height: 18px;
 }
 
 /* One public support path across Gallery, Editor, Analytics, and crash UI. */
@@ -363,7 +378,7 @@ body {
   line-height: 1;
 }
 
-/* Owner credit: paired with analytics at gallery center; after Help in editor. */
+/* Owner credit: paired with analytics at gallery center and kept in editor chrome. */
 .tokenzhang-credit {
   display: inline-flex;
   align-items: center;
@@ -371,15 +386,33 @@ body {
   white-space: nowrap;
 }
 
+/* The gallery header's middle takes the room left between the brand and the
+   actions and centres in it. Floating over the header's centre instead, it
+   ran under a signed-in account chip at every width from half screen to
+   about 1300px. In the row it cannot; whatever does not fit wraps onto a
+   second line the band clips, so the count, then the credit, drops out whole
+   instead of being covered or cut mid-number. */
 .gallery-credit-group {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  display: inline-flex;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--icm-space-3);
-  transform: translate(-50%, -50%);
+  align-content: flex-start;
+  justify-content: center;
+  height: var(--icm-control-h);
+  overflow: hidden;
   white-space: nowrap;
+}
+
+/* A first line that is never empty, so the credit, too, can wrap away. */
+.gallery-credit-group::before {
+  content: "";
+  height: var(--icm-control-h);
+}
+
+.gallery-credit-group > * + * {
+  margin-left: var(--icm-space-3);
 }
 
 /* One line, even if long: "Presented by [Z] TokenZhang" never wraps. */
@@ -540,35 +573,4 @@ body {
 html.light .analytics-loading {
   color: #68738a;
   background: #ffffff;
-}
-
-/* Owner-only heavy tools live behind one collapsed disclosure so the
-   moderation page leads with the work lists. */
-.owner-settings {
-  margin: 4px 0 10px;
-  border: 1px solid var(--icm-border);
-  border-radius: 10px;
-  background: var(--icm-surface);
-}
-
-.owner-settings > summary {
-  padding: 10px 14px;
-  color: var(--icm-text-muted);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.owner-settings[open] > summary {
-  border-bottom: 1px solid var(--icm-border);
-  color: var(--icm-text);
-}
-
-.owner-settings > *:not(summary) {
-  padding-right: 14px;
-  padding-left: 14px;
-}
-
-.owner-settings > *:last-child {
-  padding-bottom: 12px;
 }

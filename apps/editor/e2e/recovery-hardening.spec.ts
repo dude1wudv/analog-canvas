@@ -41,14 +41,14 @@ async function restoreThroughDialog(
 ): Promise<void> {
   const fileMenu = await page
     .locator("summary")
-    .filter({ hasText: "File" })
-    .filter({ hasText: /^File$/u })
+    .filter({ hasText: "文件" })
+    .filter({ hasText: /^文件$/u })
     .locator("..");
   if ((await fileMenu.getAttribute("open")) === null) {
     await fileMenu.locator("summary").click();
   }
-  await fileMenu.getByRole("button", { name: "Recover Local Work…" }).click();
-  const dialog = page.getByRole("dialog", { name: "Recover recent work" });
+  await fileMenu.getByRole("button", { name: "恢复未保存的内容…" }).click();
+  const dialog = page.getByRole("dialog", { name: "恢复最近工作" });
   await expect(dialog).toBeVisible();
   const card = dialog
     .getByTestId("recovery-session-card")
@@ -214,11 +214,11 @@ test("quota-exceeded keeps the editor alive with a persistent warning", async ({
   await expect(page.getByTestId("revision")).toHaveText("1");
 
   await expect(page.getByTestId("recovery-state")).toHaveText(
-    "Recovery full — download now",
+    "恢复存储已满，请立即下载",
   );
   const warning = page.getByTestId("recovery-failure-banner");
   await expect(warning).toBeVisible();
-  await expect(warning).toContainText("full");
+  await expect(warning).toContainText("浏览器存储空间已满");
 
   // The editor keeps working and the warning stays.
   await placeResistor(page, 500, 230);
@@ -226,7 +226,7 @@ test("quota-exceeded keeps the editor alive with a persistent warning", async ({
   await expect(warning).toBeVisible();
 
   const downloadPromise = page.waitForEvent("download");
-  await warning.getByRole("button", { name: "Download Backup" }).click();
+  await warning.getByRole("button", { name: "下载备份" }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toContain(".icproj.json");
 });

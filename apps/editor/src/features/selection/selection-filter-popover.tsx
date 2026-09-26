@@ -80,11 +80,15 @@ export function SelectionFilterPopover({
     >
       <header>
         <div>
-          <p className="selection-filter-kicker">选择</p>
-          <h2 id="selection-filter-title">选择筛选器</h2>
+          <p className="selection-filter-kicker">Advanced selection</p>
+          <h2 id="selection-filter-title">Choose Selectable Objects</h2>
         </div>
-        <button type="button" onClick={onClose} aria-label="关闭选择筛选器">
-          关闭
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close selectable-object choices"
+        >
+          Close
         </button>
       </header>
       <div className="selection-filter-presets" aria-label="筛选预设">

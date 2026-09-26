@@ -1,8 +1,9 @@
-import type { SchematicDocument, StyleOverrides } from "@icm/model";
+import { type SchematicDocument, type StyleOverrides } from "@icm/model";
 
 import {
   logicalNetChoiceForNet,
   logicalNetChoices,
+  logicalSupplyNetChoice,
 } from "../logical-net-choices";
 import { STYLE_KNOBS, styleOverrideDraft } from "./style-knobs";
 
@@ -16,11 +17,23 @@ export interface CanvasPreferenceCodeValue {
 export interface DocumentSettingsCodeValue {
   appearance: Record<keyof StyleOverrides, number>;
   bulkDefaults: {
-    nmosNet: string | null;
-    pmosNet: string | null;
+    nmos: string;
+    pmos: string;
+  };
+  labels: {
+    first_letter_italic: boolean;
+    subscript_after_first: boolean;
+    subscript_case: "preserve" | "uppercase" | "lowercase";
+    subscript_italic: boolean;
+    underscore_subscript: boolean;
   };
   canvas: CanvasPreferenceCodeValue;
 }
+
+export const DEFAULT_MOS_BULK_RAIL = {
+  nmos: "VSS",
+  pmos: "VDD",
+} as const;
 
 export type DocumentSettingsCodeParseResult =
   | { ok: true; value: DocumentSettingsCodeValue }
@@ -42,24 +55,60 @@ function exactKeys(
   return missing ? `${path}.${missing} is required` : null;
 }
 
-/** The complete, copyable code surface for Document appearance and canvas UI. */
+/** The sole copyable code surface for Document-wide and editor preferences. */
 export function documentSettingsCodeValue(
   document: SchematicDocument,
   canvas: CanvasPreferenceCodeValue,
 ): DocumentSettingsCodeValue {
   const netChoices = logicalNetChoices(document);
+  const bulkValue = (kind: "nmos" | "pmos"): string => {
+    const configuredId =
+      kind === "nmos"
+        ? document.mosBulkDefaults?.nmosNetId
+        : document.mosBulkDefaults?.pmosNetId;
+    const configured = logicalNetChoiceForNet(netChoices, configuredId);
+    const supply = logicalSupplyNetChoice(
+      document,
+      kind === "nmos" ? "ground" : "vdd",
+    );
+    return !configured || configured.netId === supply?.netId
+      ? DEFAULT_MOS_BULK_RAIL[kind]
+      : configured.netId;
+  };
   return {
     appearance: styleOverrideDraft(document.presentation.styleOverrides),
     bulkDefaults: {
-      nmosNet:
-        logicalNetChoiceForNet(netChoices, document.mosBulkDefaults?.nmosNetId)
-          ?.netId ?? null,
-      pmosNet:
-        logicalNetChoiceForNet(netChoices, document.mosBulkDefaults?.pmosNetId)
-          ?.netId ?? null,
+      nmos: bulkValue("nmos"),
+      pmos: bulkValue("pmos"),
+    },
+    labels: {
+      first_letter_italic: document.presentation.labelFirstLetterItalic ?? true,
+      subscript_after_first:
+        document.presentation.labelSubscriptAfterFirst ?? false,
+      subscript_case: document.presentation.labelSubscriptCase ?? "preserve",
+      subscript_italic: document.presentation.labelSubscriptItalic ?? true,
+      underscore_subscript:
+        document.presentation.labelUnderscoreSubscript ?? true,
     },
     canvas,
   };
+}
+
+/** Resolve the reader-facing VSS/VDD policy or one explicit custom Net. */
+export function mosBulkDefaultNetIdFromCode(
+  document: SchematicDocument,
+  kind: "nmos" | "pmos",
+  value: string,
+): string | null {
+  if (value === DEFAULT_MOS_BULK_RAIL[kind]) {
+    return (
+      logicalSupplyNetChoice(document, kind === "nmos" ? "ground" : "vdd")
+        ?.netId ?? null
+    );
+  }
+  return (
+    logicalNetChoiceForNet(logicalNetChoices(document), value)?.netId ?? null
+  );
 }
 
 export function serializeDocumentSettingsCode(
@@ -87,6 +136,13 @@ export function defaultDocumentSettingsCode(
     appearance: Object.fromEntries(
       STYLE_KNOBS.map((knob) => [knob.key, 1]),
     ) as DocumentSettingsCodeValue["appearance"],
+    labels: {
+      first_letter_italic: true,
+      subscript_after_first: false,
+      subscript_case: "preserve",
+      subscript_italic: false,
+      underscore_subscript: true,
+    },
   });
 }
 
@@ -98,14 +154,19 @@ export function parseDocumentSettingsCode(
   try {
     raw = JSON.parse(source);
   } catch {
-    return { ok: false, message: "Style code must be valid JSON" };
+    return { ok: false, message: "Properties code must be valid JSON" };
   }
   if (!isRecord(raw))
-    return { ok: false, message: "Style code must be an object" };
+    return { ok: false, message: "Properties code must be an object" };
   const rootError = exactKeys(
     raw,
-    ["appearance", "bulkDefaults", "canvas"],
-    "style",
+    [
+      "appearance",
+      "bulkDefaults",
+      "canvas",
+      ...(raw.labels !== undefined ? ["labels"] : []),
+    ],
+    "properties",
   );
   if (rootError) return { ok: false, message: rootError };
 
@@ -139,7 +200,7 @@ export function parseDocumentSettingsCode(
     return { ok: false, message: "bulkDefaults must be an object" };
   const bulkError = exactKeys(
     raw.bulkDefaults,
-    ["nmosNet", "pmosNet"],
+    ["nmos", "pmos"],
     "bulkDefaults",
   );
   if (bulkError) return { ok: false, message: bulkError };
@@ -148,19 +209,70 @@ export function parseDocumentSettingsCode(
   );
   const bulkDefaults = {} as DocumentSettingsCodeValue["bulkDefaults"];
   for (const [field, value] of Object.entries(raw.bulkDefaults)) {
-    if (value !== null && typeof value !== "string") {
+    const kind = field as "nmos" | "pmos";
+    if (typeof value !== "string") {
       return {
         ok: false,
-        message: `bulkDefaults.${field} must be a Net id or null`,
+        message: `bulkDefaults.${field} must be ${DEFAULT_MOS_BULK_RAIL[kind]} or a Net id`,
       };
     }
-    if (typeof value === "string" && !validNetIds.has(value)) {
+    if (value !== DEFAULT_MOS_BULK_RAIL[kind] && !validNetIds.has(value)) {
       return {
         ok: false,
-        message: `bulkDefaults.${field} does not name a Net in this Cell`,
+        message: `bulkDefaults.${field} must be ${DEFAULT_MOS_BULK_RAIL[kind]} or name a Net in this Cell`,
       };
     }
-    bulkDefaults[field as keyof typeof bulkDefaults] = value as string | null;
+    bulkDefaults[kind] = value;
+  }
+
+  const labels = raw.labels ?? {
+    first_letter_italic: document.presentation.labelFirstLetterItalic ?? true,
+    subscript_after_first:
+      document.presentation.labelSubscriptAfterFirst ?? false,
+    subscript_case: document.presentation.labelSubscriptCase ?? "preserve",
+    subscript_italic: document.presentation.labelSubscriptItalic ?? true,
+    underscore_subscript:
+      document.presentation.labelUnderscoreSubscript ?? true,
+  };
+  if (!isRecord(labels))
+    return { ok: false, message: "labels must be an object" };
+  const labelError = exactKeys(
+    labels,
+    [
+      ...["first_letter_italic", "subscript_after_first"].filter(
+        (key) => key in labels,
+      ),
+      "subscript_case",
+      "subscript_italic",
+      ...["underscore_subscript"].filter((key) => key in labels),
+    ],
+    "labels",
+  );
+  if (labelError) return { ok: false, message: labelError };
+  if (
+    !["preserve", "uppercase", "lowercase"].includes(
+      labels.subscript_case as string,
+    )
+  )
+    return {
+      ok: false,
+      message:
+        'labels.subscript_case must be "preserve", "uppercase", or "lowercase"',
+    };
+
+  if (typeof labels.subscript_italic !== "boolean")
+    return {
+      ok: false,
+      message: "labels.subscript_italic must be true or false",
+    };
+
+  for (const key of [
+    "underscore_subscript",
+    "subscript_after_first",
+    "first_letter_italic",
+  ] as const) {
+    if (labels[key] !== undefined && typeof labels[key] !== "boolean")
+      return { ok: false, message: `labels.${key} must be true or false` };
   }
 
   if (!isRecord(raw.canvas))
@@ -191,6 +303,22 @@ export function parseDocumentSettingsCode(
     value: {
       appearance,
       bulkDefaults,
+      labels: {
+        first_letter_italic:
+          labels.first_letter_italic ??
+          document.presentation.labelFirstLetterItalic ??
+          true,
+        subscript_after_first:
+          labels.subscript_after_first ??
+          document.presentation.labelSubscriptAfterFirst ??
+          false,
+        subscript_case: labels.subscript_case,
+        subscript_italic: labels.subscript_italic,
+        underscore_subscript:
+          labels.underscore_subscript ??
+          document.presentation.labelUnderscoreSubscript ??
+          true,
+      } as DocumentSettingsCodeValue["labels"],
       canvas: raw.canvas as unknown as CanvasPreferenceCodeValue,
     },
   };

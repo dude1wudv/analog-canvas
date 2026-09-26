@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { executeTransaction, SchematicEditSchema } from "@icm/edit-engine";
-import { createEmptyDocument } from "@icm/model";
+import { createEmptyDocument, createSimulationFolder } from "@icm/model";
 import { parseProject } from "@icm/project-protocol";
 import type { CircuitProject } from "@icm/model";
 import {
@@ -112,6 +112,82 @@ function serviceFixture(
 }
 
 describe("current Agent Circuit API service", () => {
+  it("compacts removed diagnostic bodies without changing the preview or current diagnostics", () => {
+    const full = serviceFixture();
+    const compact = serviceFixture();
+    const placement = full
+      .getDocument()
+      .instances.find((i) => i.id === "M1")!.placement!;
+    full.getDocument().instances.find((i) => i.id === "M1")!.placement = null;
+    compact.getDocument().instances.find((i) => i.id === "M1")!.placement =
+      null;
+    full.getProject().documents[0] = full.getDocument();
+    compact.getProject().documents[0] = compact.getDocument();
+    const request = {
+      apiVersion: "3.0",
+      operation: "transact",
+      documentId: full.getDocument().id,
+      expectedRevision: 0,
+      dryRun: true,
+      edits: [{ kind: "place_instance", instanceId: "M1", placement }],
+    };
+    const a = full.service.handle({
+      ...request,
+      requestId: "full",
+      transactionId: "full",
+    });
+    const b = compact.service.handle({
+      ...request,
+      requestId: "compact",
+      transactionId: "compact",
+      diagnosticDeltaDetail: "compact",
+    });
+    expect(a).toMatchObject({ ok: true });
+    expect(b).toMatchObject({ ok: true });
+    if (
+      !a.ok ||
+      a.operation !== "transact" ||
+      !b.ok ||
+      b.operation !== "transact"
+    )
+      throw new Error("commit failed");
+    expect(a.diagnosticDelta!.removed.length).toBeGreaterThan(0);
+    expect(b.diagnosticDelta!.removed).toEqual([]);
+    expect(b.diagnosticDelta!.removedIds).toHaveLength(
+      a.diagnosticDelta!.removed.length,
+    );
+    expect(b.diagnostics).toEqual(a.diagnostics);
+    expect(b.diff).toEqual(a.diff);
+    expect(compact.getDocument()).toEqual(full.getDocument());
+  });
+  it("provides bounded real pin/bulk facts and rejects contradictory selectors", () => {
+    const fixture = serviceFixture();
+    const document = fixture.getDocument();
+    const request = {
+      apiVersion: "3.0",
+      requestId: "pins",
+      operation: "snapshot",
+      documentId: document.id,
+      projection: "pins",
+      instanceIds: [document.instances[0]!.id, "missing"],
+    };
+    const reply = fixture.service.handle(request);
+    expect(reply).toMatchObject({
+      ok: true,
+      projection: "pins",
+      revision: document.revision,
+      instances: [{ id: document.instances[0]!.id, pins: expect.any(Array) }],
+      missingInstanceIds: ["missing"],
+    });
+    expect(reply).not.toHaveProperty("snapshot");
+    expect(
+      fixture.service.handle({
+        ...request,
+        requestId: "pins-invalid",
+        projection: "full",
+      }),
+    ).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST" } });
+  });
   it("rejects a schema-invalid request without changing the revision", () => {
     const fixture = serviceFixture();
     const before = fixture.getDocument().revision;
@@ -189,6 +265,7 @@ describe("current Agent Circuit API service", () => {
     expect(Object.keys(agentCircuitOpenApi.paths).sort()).toEqual([
       "/api/agent/claims",
       "/api/agent/connectors/resume",
+      "/api/agent/sessions/{sessionId}/artifacts/{fileId}",
       "/api/agent/sessions/{sessionId}/circuit",
       "/api/agent/sessions/{sessionId}/files",
       "/api/agent/sessions/{sessionId}/projects",
@@ -278,13 +355,23 @@ describe("current Agent Circuit API service", () => {
     // Project source-file provenance is now an editable structural record so
     // imported Cell closures can remain source-addressable without bypassing
     // the canonical transaction contract.
+    // The Simulation Resource read envelope adds one bounded wait hint while
+    // retaining the complete operation union and runtime validation. Keep the
+    // allowance close to the measured projection so accidental unfolding is
+    // still caught.
+    // Pin-anchored placement and route-net add real input contracts (172,484
+    // characters after shared field schemas). This complete offline/HTTP
+    // union is not a discovery declaration; focused MCP tools retain their
+    // separate unchanged 5,000-byte normalized budget.
     expect(JSON.stringify(AgentCircuitRequestJsonSchema).length).toBeLessThan(
-      172_000,
+      174_000,
     );
     expect(JSON.stringify(AgentCircuitResponseJsonSchema).length).toBeLessThan(
       180_000,
     );
-    expect(JSON.stringify(agentCircuitOpenApi).length).toBeLessThan(500_000);
+    // Complete OpenAPI including staged Cell composition: 531,880 characters,
+    // not a token count or a host discovery payload.
+    expect(JSON.stringify(agentCircuitOpenApi).length).toBeLessThan(533_000);
   });
 
   it("publishes the flat Snapshot workflow and returns complete facts", () => {
@@ -346,6 +433,253 @@ describe("current Agent Circuit API service", () => {
     );
   });
 
+  it("returns bootstrap context without resolving full symbol geometry", () => {
+    let resolveCalls = 0;
+    const countingResolver: SymbolResolver = {
+      resolve(symbolId, variantId) {
+        resolveCalls += 1;
+        return resolver.resolve(symbolId, variantId);
+      },
+    };
+    const fixture = serviceFixture(allPermissions, {}, countingResolver);
+    const response = fixture.service.handle({
+      apiVersion: "3.0",
+      requestId: "snapshot-bootstrap",
+      operation: "snapshot",
+      documentId: fixture.getDocument().id,
+      projection: "bootstrap",
+    });
+
+    expect(response).toMatchObject({
+      ok: true,
+      operation: "snapshot",
+      projection: "bootstrap",
+      revision: 0,
+      context: {
+        project: { id: expect.any(String), documents: expect.any(Array) },
+        document: {
+          id: fixture.getDocument().id,
+          revision: fixture.getDocument().revision,
+          instanceCount: fixture.getDocument().instances.length,
+          netCount: fixture.getDocument().nets.length,
+        },
+      },
+    });
+    expect(response).not.toHaveProperty("snapshot");
+    expect(response).not.toHaveProperty("diagnostics");
+    expect(resolveCalls).toBe(0);
+
+    expect(
+      fixture.service.handle({
+        apiVersion: "3.0",
+        requestId: "bootstrap-move",
+        operation: "transact",
+        documentId: fixture.getDocument().id,
+        transactionId: "bootstrap-move",
+        expectedRevision: fixture.getDocument().revision,
+        edits: [
+          {
+            kind: "move_instance",
+            instanceId: "M1",
+            position: { x: 200, y: 220 },
+          },
+        ],
+      }),
+    ).toMatchObject({ ok: true, revision: 1 });
+    expect(
+      fixture.service.handle({
+        apiVersion: "3.0",
+        requestId: "snapshot-bootstrap-after-move",
+        operation: "snapshot",
+        documentId: fixture.getDocument().id,
+        projection: "bootstrap",
+      }),
+    ).toMatchObject({
+      ok: true,
+      revision: 1,
+      context: { document: { revision: 1 } },
+    });
+  });
+
+  it("rejects full-only Snapshot options on the bootstrap projection", () => {
+    const fixture = serviceFixture();
+    expect(
+      fixture.service.handle({
+        apiVersion: "3.0",
+        requestId: "snapshot-bootstrap-trace",
+        operation: "snapshot",
+        documentId: fixture.getDocument().id,
+        projection: "bootstrap",
+        traceNet: { netId: "net-vinp" },
+      }),
+    ).toMatchObject({
+      ok: false,
+      operation: "snapshot",
+      error: { code: "INVALID_REQUEST" },
+    });
+  });
+
+  it("reads only selected authored geometry without resolving the full circuit", () => {
+    let resolveCalls = 0;
+    const countingResolver: SymbolResolver = {
+      resolve(symbolId, variantId) {
+        resolveCalls += 1;
+        return resolver.resolve(symbolId, variantId);
+      },
+    };
+    const fixture = serviceFixture(allPermissions, {}, countingResolver);
+    const documentId = fixture.getDocument().id;
+    const read = (requestId: string) =>
+      fixture.service.handle({
+        apiVersion: "3.0",
+        requestId,
+        operation: "snapshot",
+        documentId,
+        projection: "geometry",
+        geometryIds: ["M1", "route-vinp", "absent"],
+      });
+    expect(read("geometry-before")).toMatchObject({
+      ok: true,
+      projection: "geometry",
+      revision: 0,
+      objects: [
+        { kind: "instance", id: "M1" },
+        { kind: "route", id: "route-vinp", legs: expect.any(Array) },
+      ],
+      missingObjectIds: ["absent"],
+    });
+    expect(resolveCalls).toBe(0);
+    expect(
+      fixture.service.handle({
+        apiVersion: "3.0",
+        requestId: "geometry-move",
+        operation: "transact",
+        documentId,
+        transactionId: "geometry-move",
+        expectedRevision: 0,
+        edits: [
+          {
+            kind: "move_instance",
+            instanceId: "M1",
+            position: { x: 200, y: 220 },
+          },
+        ],
+      }),
+    ).toMatchObject({ ok: true, revision: 1 });
+    expect(read("geometry-after")).toMatchObject({
+      ok: true,
+      revision: 1,
+      objects: [
+        {
+          kind: "instance",
+          id: "M1",
+          placement: { position: { x: 200, y: 220 } },
+        },
+        { kind: "route", id: "route-vinp", legs: expect.any(Array) },
+      ],
+    });
+    expect(
+      fixture.service.handle({
+        apiVersion: "3.0",
+        requestId: "geometry-invalid",
+        operation: "snapshot",
+        documentId,
+        projection: "geometry",
+        geometryIds: ["M1"],
+        traceNet: { netId: "net-vinp" },
+      }),
+    ).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST" } });
+  });
+
+  it("reads current state and the saved folder directory without returning source bodies", () => {
+    const fixture = serviceFixture();
+    const documentId = fixture.getDocument().id;
+    const folder = createSimulationFolder({
+      id: "large-experiment",
+      name: "Large experiment",
+      profileId: "test-profile",
+      documentId,
+    });
+    folder.input.files[0]!.text = "source-sentinel-".repeat(12_000);
+    fixture.getProject().simulationFolders.push(folder);
+    const directory = fixture.service.handle({
+      apiVersion: "3.0",
+      requestId: "folder-directory",
+      operation: "snapshot",
+      documentId,
+      projection: "folder-directory",
+    });
+    expect(directory).toMatchObject({
+      ok: true,
+      projection: "folder-directory",
+      folders: [
+        {
+          id: folder.id,
+          name: folder.name,
+          entry: folder.input.entry,
+          circuitBindings: folder.input.circuitBindings,
+        },
+      ],
+    });
+    expect(JSON.stringify(directory)).not.toContain("source-sentinel-");
+    expect(JSON.stringify(directory)).not.toContain('"files"');
+
+    const state = fixture.service.handle({
+      apiVersion: "3.0",
+      requestId: "state-counts",
+      operation: "snapshot",
+      documentId,
+      projection: "state",
+    });
+    const detailed = fixture.service.handle({
+      apiVersion: "3.0",
+      requestId: "state-items",
+      operation: "snapshot",
+      documentId,
+      projection: "state",
+      diagnosticDetail: "items",
+    });
+    const full = fixture.service.handle({
+      apiVersion: "3.0",
+      requestId: "state-full-comparison",
+      operation: "snapshot",
+      documentId,
+    });
+    expect(state).toMatchObject({
+      ok: true,
+      projection: "state",
+      revision: fixture.getDocument().revision,
+      counts: { errors: expect.any(Number), warnings: expect.any(Number) },
+    });
+    expect(state).not.toHaveProperty("diagnostics");
+    if (
+      !detailed.ok ||
+      detailed.operation !== "snapshot" ||
+      !("projection" in detailed) ||
+      detailed.projection !== "state" ||
+      !full.ok ||
+      full.operation !== "snapshot" ||
+      !("snapshot" in full)
+    )
+      throw new Error("Expected state and full Snapshots");
+    expect(detailed.diagnostics).toEqual(full.diagnostics);
+    expect(detailed.netCount).toBe(full.snapshot.document.nets.length);
+    expect(JSON.stringify(detailed)).not.toContain("source-sentinel-");
+    expect(JSON.stringify(full).length).toBeGreaterThan(
+      JSON.stringify(detailed).length * 10,
+    );
+    expect(
+      fixture.service.handle({
+        apiVersion: "3.0",
+        requestId: "directory-trace-invalid",
+        operation: "snapshot",
+        documentId,
+        projection: "folder-directory",
+        traceNet: { netId: "net-vinp" },
+      }),
+    ).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST" } });
+  });
+
   it("rejects Snapshots above the server-owned byte limit", () => {
     const fixture = serviceFixture(allPermissions, { maxSnapshotBytes: 10 });
     expect(
@@ -389,8 +723,10 @@ describe("current Agent Circuit API service", () => {
     if (
       !first.ok ||
       first.operation !== "snapshot" ||
+      !("snapshot" in first) ||
       !second.ok ||
-      second.operation !== "snapshot"
+      second.operation !== "snapshot" ||
+      !("snapshot" in second)
     ) {
       return;
     }

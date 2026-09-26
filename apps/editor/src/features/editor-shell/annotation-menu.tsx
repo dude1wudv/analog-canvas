@@ -28,20 +28,20 @@ export function AnnotationMenu({
       name="editor-command-menu"
       data-testid="annotation-menu"
     >
-      <summary className="draw-tool" aria-label="Annotation" title="Annotation">
+      <summary className="draw-tool" aria-label="标注" title="标注">
         <ToolIcon name="rectangle" />
-        <span>Annotation</span>
+        <span>标注</span>
       </summary>
       <div
         className="command-popover annotation-palette"
         role="group"
-        aria-label="Annotation tools"
+        aria-label="标注工具"
       >
         {symbols.map((symbol) => (
           <button
             key={symbol.id}
             type="button"
-            aria-label={`Place ${symbol.name}`}
+            aria-label={`放置${symbol.name}`}
             title={symbol.name}
             data-testid={`annotation-shortcut-${symbol.id}`}
             onClick={() => {

@@ -19,11 +19,11 @@ import {
   createRoutingOperationPlan,
   executeTransaction,
   gateRoutingOperationPlan,
+  planCellSelectionDeletion,
   planRoutingDeletion,
   planRoutingTransform,
   type RoutingOperationIntent,
   type SchematicEdit,
-  type ProjectStructureEdit,
   type WireSource,
 } from "@icm/edit-engine";
 import {
@@ -141,7 +141,9 @@ export interface UseSelectionInteractionOptions {
     edits: SchematicEdit[],
     options?: { preserveInteraction?: boolean },
   ) => TransactionResult;
-  transactCopy: (edits: readonly ProjectStructureEdit[]) => TransactionResult;
+  transactCopy: (
+    plan: ReturnType<typeof planProjectCopyPlacement>,
+  ) => TransactionResult;
   commitCellTerminalSelection: (
     terminalIds: readonly string[],
     documentEdits: readonly SchematicEdit[],
@@ -1469,35 +1471,27 @@ export function useSelectionInteraction(
           ? "Deleted component selection; connected wires remain dangling"
           : "Deleted selected schematic objects";
     let deletionPlan;
+    let terminalIds: string[];
     try {
-      deletionPlan = planRoutingDeletion(
+      const selectionPlan = planCellSelectionDeletion(
         options.document,
         options.resolver,
         deletionSeed,
         options.nextUniqueSuffix(),
       );
+      deletionPlan = selectionPlan.routing;
+      terminalIds = selectionPlan.terminalIds;
     } catch (error) {
       options.setStatus(
         error instanceof Error ? error.message : "Delete failed",
       );
       return;
     }
-    const formalTerminals = (options.document.netlist?.terminals ?? []).filter(
-      (terminal) =>
-        terminal.interfaceInstanceIds.some((instanceId) =>
-          deletionSeed.instanceIds.includes(instanceId),
-        ) ||
-        (terminal.interfaceAnnotationId !== undefined &&
-          deletionPlan.affected.electricalAnnotationIds.includes(
-            terminal.interfaceAnnotationId,
-          )),
-    );
-    if (formalTerminals.length > 0) {
+    if (terminalIds.length > 0) {
       if (
-        options.commitCellTerminalSelection(
-          formalTerminals.map((terminal) => terminal.id),
-          [...deletionPlan.edits],
-        )
+        options.commitCellTerminalSelection(terminalIds, [
+          ...deletionPlan.edits,
+        ])
       ) {
         options.resetSelection();
         options.setSelectedEndpoint(null);
@@ -1596,7 +1590,7 @@ export function useSelectionInteraction(
         },
         copyPlacement.sequence,
       );
-      result = options.transactCopy(proposal.edits);
+      result = options.transactCopy(proposal);
     } catch (error) {
       options.setStatus(error instanceof Error ? error.message : String(error));
       return;

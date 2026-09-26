@@ -1,23 +1,19 @@
 import { convertImportSources } from "../netlist-export/convert-import-sources";
-import type {
-  NetlistFormat,
-  NetlistNamingProfile,
-  NetlistPortCase,
-} from "@icm/netlist";
-import { CircuitProjectSchema } from "@icm/model";
+import type { NetlistFormat, NetlistNamingProfile } from "@icm/netlist";
 import type { CircuitProject, GridRect, SchematicDocument } from "@icm/model";
 import { importSpiceSources } from "@icm/spice";
-import { builtInSymbols, createProjectSymbolResolver } from "@icm/symbols";
 import type { SymbolResolver } from "@icm/symbols";
+import { safeExportBaseName } from "@icm/exporters";
+import type { EditorExportDelivery } from "../../hosts/export-delivery";
 
-import { materializeDefaultInstanceDisplays } from "../instance-display/default-instance-display";
+import { withImportedInstanceDisplays } from "../instance-display/imported-instance-displays";
 
 import {
   createVisualExportArtifact,
   createSvgExportArtifact,
   describeExportFailure,
   planDesignNetlistExport,
-  requestBrowserDownload,
+  type EditorExportArtifact,
 } from "./editor-export-commands";
 
 type SpiceImportResult = Awaited<ReturnType<typeof importSpiceSources>>;
@@ -31,8 +27,8 @@ export interface EditorFileCommandDependencies {
   document: SchematicDocument;
   resolver: SymbolResolver;
   defaultViewBox: GridRect;
+  exportDelivery: EditorExportDelivery;
   electricalWarningsPresent: () => boolean;
-  netlistPortCase?: NetlistPortCase;
   netlistRootDocumentId?: string | undefined;
   netlistConfigurationError?: string | null;
   guardDirtyReplacement: (
@@ -56,33 +52,14 @@ export interface EditorFileCommandDependencies {
   onChunkLoadFailure?: (feature: string) => void;
 }
 
-/**
- * An import arrives drawn, so it also arrives labelled: every imported
- * Instance gets the default designator and value projections an ordinary
- * placement writes, instead of standing on the canvas anonymously.
- */
-function withImportedInstanceDisplays(project: CircuitProject): CircuitProject {
-  const candidate = structuredClone(project);
-  const resolver = createProjectSymbolResolver(candidate, builtInSymbols);
-  let added = 0;
-  for (const document of candidate.documents) {
-    added += materializeDefaultInstanceDisplays(
-      document,
-      document.instances,
-      resolver,
-    );
-  }
-  return added === 0 ? project : CircuitProjectSchema.parse(candidate);
-}
-
 /** File import/export commands and their user-facing gate/status policy. */
 export function createEditorFileCommands({
   project,
   document,
   resolver,
   defaultViewBox,
+  exportDelivery,
   electricalWarningsPresent,
-  netlistPortCase,
   netlistRootDocumentId,
   netlistConfigurationError,
   guardDirtyReplacement,
@@ -94,22 +71,35 @@ export function createEditorFileCommands({
   setStatus,
   onChunkLoadFailure,
 }: EditorFileCommandDependencies) {
-  const exportSvg = (): void => {
-    setStatus("正在准备导出 SVG");
-    void createSvgExportArtifact(document, resolver, project.name)
-      .then((artifact) => {
-        requestBrowserDownload(artifact, project.name);
-        setStatus(artifact.report);
-      })
-      .catch((error: unknown) => {
-        setStatus(error instanceof Error ? error.message : "导出失败");
-      });
+  const deliverArtifact = async (artifact: EditorExportArtifact) => {
+    const result = await exportDelivery.deliverFile({
+      bytes: artifact.bytes,
+      mediaType: artifact.mediaType,
+      suggestedName: `${safeExportBaseName(project.name)}.${artifact.extension}`,
+    });
+    setStatus(
+      result.status === "cancelled" ? "Export cancelled" : artifact.report,
+    );
   };
 
-  const exportDesignNetlist = (
+  const exportSvg = async (): Promise<void> => {
+    setStatus("Preparing SVG export");
+    try {
+      const artifact = await createSvgExportArtifact(
+        document,
+        resolver,
+        project.name,
+      );
+      await deliverArtifact(artifact);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Export failed");
+    }
+  };
+
+  const exportDesignNetlist = async (
     format: NetlistFormat,
     namingProfile: NetlistNamingProfile = "native",
-  ): void => {
+  ): Promise<void> => {
     showNetlist(format, namingProfile);
     if (netlistConfigurationError) {
       setStatus(`Fix Netlist configuration: ${netlistConfigurationError}`);
@@ -122,23 +112,20 @@ export function createEditorFileCommands({
       ...(netlistRootDocumentId
         ? { rootDocumentId: netlistRootDocumentId }
         : {}),
-      ...(netlistPortCase ? { portCase: netlistPortCase } : {}),
       electricalWarningsPresent: electricalWarningsPresent(),
     });
     if (plan.status === "blocked") {
       setStatus(plan.message);
       return;
     }
-    void (async () => {
-      try {
-        await navigator.clipboard.writeText(String(plan.artifact.bytes));
-        setStatus(plan.artifact.report);
-      } catch {
-        setStatus(
-          "Clipboard unavailable; select the netlist in the sidebar and copy it",
-        );
-      }
-    })();
+    try {
+      await exportDelivery.copyText(String(plan.artifact.bytes));
+      setStatus(plan.artifact.report);
+    } catch {
+      setStatus(
+        "Clipboard unavailable; select the netlist in the sidebar and copy it",
+      );
+    }
   };
 
   const exportRaster = async (format: "png" | "pdf"): Promise<void> => {
@@ -150,8 +137,7 @@ export function createEditorFileCommands({
         resolver,
         project.name,
       );
-      requestBrowserDownload(artifact, project.name);
-      setStatus(artifact.report);
+      await deliverArtifact(artifact);
     } catch (error) {
       const failure = describeExportFailure(error);
       setStatus(failure.status);
@@ -192,7 +178,7 @@ export function createEditorFileCommands({
         convertImportSources(sourceInputs),
         entryCandidates[0]!.path,
         {},
-        { namingProfile },
+        { namingProfile, originalSources: sourceInputs },
       );
       const nextImportReport: SpiceImportReport = {
         entryPath: entryCandidates[0]!.path,

@@ -17,6 +17,7 @@ import {
   deriveCrossings,
   deriveFlightlines,
   deriveImportedRoutingGuidance,
+  mosBulkShouldBeVisible,
   resolveRouteGeometry,
   resolveEndpointConnection,
   resolveDocumentLogicalNets,
@@ -2839,7 +2840,7 @@ describe("routing Edit Engine", () => {
     }
   });
 
-  it("does not couple same-named Cell Pins when a route is cut", () => {
+  it("splits Base Nets on a cut while same-named Cell Pins stay logically connected", () => {
     const document = createEmptyDocument(
       "independent-cell-pin-cut",
       "Independent Cell pin cut",
@@ -2933,6 +2934,14 @@ describe("routing Edit Engine", () => {
     expect(first.netId).not.toBe(second.netId);
     expect(netOf("R1")?.id).not.toBe(first.netId);
     expect(netOf("R1")?.id).not.toBe(second.netId);
+    const logical = resolveDocumentLogicalNets(result.document);
+    expect(logical.byBaseNetId.get(first.netId)).toBe(
+      logical.byBaseNetId.get(second.netId),
+    );
+    expect(logical.byBaseNetId.get(first.netId)?.name).toBe("VIN");
+    expect(logical.byBaseNetId.get(netOf("R1")!.id)).not.toBe(
+      logical.byBaseNetId.get(first.netId),
+    );
   });
 
   it("removes redundant cycle geometry without splitting the Net", () => {
@@ -3048,6 +3057,19 @@ describe("routing Edit Engine", () => {
       netId: "net-h",
       sourceNetId: "source-horizontal",
     });
+    document.importReference = {
+      files: [],
+      nets: [
+        {
+          id: "source-horizontal",
+          name: "horizontal",
+          scope: "local",
+          terminals: structuredClone(
+            document.nets.find((n) => n.id === "net-h")!.terminals,
+          ),
+        },
+      ],
+    };
     document.routes = [
       createRoutePath({
         id: "route-partial",
@@ -3106,9 +3128,12 @@ describe("routing Edit Engine", () => {
       ),
     ).toHaveLength(3);
     expect(deriveFlightlines(result.document, resolver)).toHaveLength(1);
+    // Current electrical Nets split; frozen reference still guides the
+    // original three members without rejoining them electrically.
     expect(
       deriveImportedRoutingGuidance(result.document, resolver),
     ).toHaveLength(2);
+    expect(result.document.importReference).toEqual(document.importReference);
     expect(result.document.sourceStatus).toBe("connectivity-modified");
   });
 
@@ -3225,105 +3250,256 @@ describe("routing Edit Engine", () => {
     ).toHaveLength(1);
   });
 
-  it("deletes an entire split bulk route family and restores the default without orphaning ordinary wire", () => {
-    const document = createEmptyDocument("bulk-delete", "Bulk Delete");
+  it("keeps an imported unbound B on VSS when an ordinary wire is cut", () => {
+    const document = createEmptyDocument(
+      "imported-bulk-split",
+      "Imported Bulk Split",
+    );
     document.instances.push(
       {
         id: "M1",
         symbolId: "nmos",
         symbolVariantId: "textbook-3terminal",
-        placement: {
-          position: { x: 100, y: 100 },
-          rotation: 0,
-          mirror: "none",
-        },
-        mosBulkBinding: { origin: "cell-default", netId: "net-vss" },
-      },
-      {
-        id: "GND1",
-        symbolId: "ground",
-        placement: {
-          position: { x: 300, y: 110 },
-          rotation: 0,
-          mirror: "none",
+        placement: null,
+        sourceRef: {
+          fileId: "main-spi",
+          start: { offset: 0, line: 1, column: 1 },
+          end: { offset: 1, line: 1, column: 2 },
         },
       },
+      { id: "VSS1", symbolId: "port", placement: null },
+      { id: "A", symbolId: "resistor", placement: null },
+      { id: "B", symbolId: "resistor", placement: null },
     );
     document.nets.push({
       id: "net-vss",
       terminals: [
         { instanceId: "M1", pinName: "B" },
-        { instanceId: "GND1", pinName: "0" },
+        { instanceId: "VSS1", pinName: "P" },
+        { instanceId: "A", pinName: "1" },
+        { instanceId: "B", pinName: "1" },
       ],
     });
-    document.junctions.push(
-      { id: "J1", netId: "net-vss", position: { x: 150, y: 100 } },
-      { id: "J2", netId: "net-vss", position: { x: 200, y: 100 } },
-    );
     document.routes.push(
       createRoutePath({
-        id: "bulk-near",
+        id: "ordinary-wire",
         netId: "net-vss",
-        start: { kind: "terminal", instanceId: "M1", pinName: "B" },
-        end: { kind: "junction", junctionId: "J1" },
-        bends: [{ x: 100, y: 100 }],
-        modes: ["escape", "manual"],
-        presentation: "bulk-dashed",
-      }),
-      createRoutePath({
-        id: "bulk-distal",
-        netId: "net-vss",
-        start: { kind: "junction", junctionId: "J1" },
-        end: { kind: "junction", junctionId: "J2" },
-        bends: [],
-        modes: ["manual"],
-        presentation: "bulk-dashed",
-      }),
-      createRoutePath({
-        id: "route-ui-112",
-        netId: "net-vss",
-        start: { kind: "junction", junctionId: "J2" },
-        end: { kind: "terminal", instanceId: "GND1", pinName: "0" },
+        start: { kind: "terminal", instanceId: "A", pinName: "1" },
+        end: { kind: "terminal", instanceId: "B", pinName: "1" },
         bends: [],
         modes: ["manual"],
       }),
     );
-    document.connectivityEvidence.push({
-      id: "claim-ground",
-      kind: "name-claim",
-      netId: "net-vss",
-      name: "0",
-      scope: "global",
-      powerDomain: "ground",
-      owner: { kind: "power-marker", objectId: "GND1" },
-    });
+    document.netlist = {
+      name: "amp",
+      terminals: [
+        {
+          id: "cell-vss",
+          name: "VSS",
+          netId: "net-vss",
+          direction: "passive",
+          interfaceInstanceIds: ["VSS1"],
+        },
+      ],
+      formalParameters: [],
+    };
+    document.connectivityEvidence.push(
+      {
+        id: "source-vss",
+        kind: "spice-source",
+        netId: "net-vss",
+        sourceNetId: "source-vss",
+      },
+      {
+        id: "hint-vss",
+        kind: "net-name-hint",
+        netId: "net-vss",
+        sourceName: "VSS",
+        origin: "spice-import",
+      },
+    );
     document.mosBulkDefaults = { nmosNetId: "net-vss" };
 
-    const deletion = proposeVisualRouteDeletion(document, ["bulk-distal"], []);
-    expect(deletion.routeIds).toEqual(["bulk-distal", "bulk-near"]);
     const result = executeTransaction(
       document,
-      transaction(document.id, 0, deletion.edits),
+      transaction(document.id, 0, [
+        { kind: "cut_connection", routeId: "ordinary-wire" },
+      ]),
       context,
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ ok: true });
     if (!result.ok) return;
-    expect(result.document.routes).toMatchObject([{ id: "route-ui-112" }]);
-    const defaultNetId = result.document.mosBulkDefaults?.nmosNetId;
-    expect(
-      result.document.instances.find((instance) => instance.id === "M1")
-        ?.mosBulkBinding,
-    ).toEqual({ origin: "cell-default", netId: defaultNetId });
-    expect(
-      result.document.nets.find((net) => net.id === defaultNetId)?.terminals,
-    ).toEqual(
+    const defaultNet = result.document.nets.find(
+      (net) => net.id === result.document.mosBulkDefaults?.nmosNetId,
+    );
+    expect(defaultNet?.terminals).toEqual(
       expect.arrayContaining([
+        { instanceId: "VSS1", pinName: "P" },
         { instanceId: "M1", pinName: "B" },
-        { instanceId: "GND1", pinName: "0" },
       ]),
     );
+    expect(mosBulkShouldBeVisible(result.document, "M1")).toBe(false);
+    expect(
+      result.document.instances.find((item) => item.id === "M1")
+        ?.mosBulkBinding,
+    ).toBeUndefined();
+    expect(
+      result.document.nets.filter((net) =>
+        net.terminals.some(
+          (terminal) =>
+            terminal.instanceId === "M1" && terminal.pinName === "B",
+        ),
+      ),
+    ).toHaveLength(1);
   });
+
+  it.each(["cell", "supply", "formal"] as const)(
+    "deletes an entire split bulk route family and restores the %s default without orphaning ordinary wire",
+    (policy) => {
+      const document = createEmptyDocument("bulk-delete", "Bulk Delete");
+      const supplyPinName = policy === "formal" ? "P" : "0";
+      document.instances.push(
+        {
+          id: "M1",
+          symbolId: "nmos",
+          symbolVariantId: "textbook-3terminal",
+          placement: {
+            position: { x: 100, y: 100 },
+            rotation: 0,
+            mirror: "none",
+          },
+          ...(policy === "cell"
+            ? {
+                mosBulkBinding: {
+                  origin: "cell-default" as const,
+                  netId: "net-vss",
+                },
+              }
+            : {
+                importProvenance: {
+                  kind: "model" as const,
+                  sourceMasterName: "nch",
+                  sourceTarget: "nch",
+                },
+              }),
+        },
+        {
+          id: "GND1",
+          symbolId: policy === "formal" ? "port" : "ground",
+          placement: {
+            position: { x: 300, y: 110 },
+            rotation: 0,
+            mirror: "none",
+          },
+        },
+      );
+      document.nets.push({
+        id: "net-vss",
+        terminals: [
+          { instanceId: "M1", pinName: "B" },
+          { instanceId: "GND1", pinName: supplyPinName },
+        ],
+      });
+      document.junctions.push(
+        { id: "J1", netId: "net-vss", position: { x: 150, y: 100 } },
+        { id: "J2", netId: "net-vss", position: { x: 200, y: 100 } },
+      );
+      document.routes.push(
+        createRoutePath({
+          id: "bulk-near",
+          netId: "net-vss",
+          start: { kind: "terminal", instanceId: "M1", pinName: "B" },
+          end: { kind: "junction", junctionId: "J1" },
+          bends: [{ x: 100, y: 100 }],
+          modes: ["escape", "manual"],
+          presentation: "bulk-dashed",
+        }),
+        createRoutePath({
+          id: "bulk-distal",
+          netId: "net-vss",
+          start: { kind: "junction", junctionId: "J1" },
+          end: { kind: "junction", junctionId: "J2" },
+          bends: [],
+          modes: ["manual"],
+          presentation: "bulk-dashed",
+        }),
+        createRoutePath({
+          id: "route-ui-112",
+          netId: "net-vss",
+          start: { kind: "junction", junctionId: "J2" },
+          end: { kind: "terminal", instanceId: "GND1", pinName: supplyPinName },
+          bends: [],
+          modes: ["manual"],
+        }),
+      );
+      if (policy === "formal") {
+        document.netlist = {
+          name: "bulk-delete",
+          formalParameters: [],
+          terminals: [
+            {
+              id: "formal-vss",
+              name: "VSS",
+              netId: "net-vss",
+              direction: "passive",
+              interfaceInstanceIds: ["GND1"],
+            },
+          ],
+        };
+      } else {
+        document.connectivityEvidence.push({
+          id: "claim-ground",
+          kind: "name-claim",
+          netId: "net-vss",
+          name: "0",
+          scope: "global",
+          powerDomain: "ground",
+          owner: { kind: "power-marker", objectId: "GND1" },
+        });
+      }
+      if (policy === "cell")
+        document.mosBulkDefaults = { nmosNetId: "net-vss" };
+
+      const deletion = proposeVisualRouteDeletion(
+        document,
+        ["bulk-distal"],
+        [],
+      );
+      expect(deletion.routeIds).toEqual(["bulk-distal", "bulk-near"]);
+      const result = executeTransaction(
+        document,
+        transaction(document.id, 0, deletion.edits),
+        context,
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.document.routes).toMatchObject([{ id: "route-ui-112" }]);
+      const defaultNetId =
+        policy === "cell"
+          ? result.document.mosBulkDefaults?.nmosNetId
+          : result.document.nets.find((net) =>
+              net.terminals.some((terminal) => terminal.instanceId === "GND1"),
+            )?.id;
+      expect(
+        result.document.instances.find((instance) => instance.id === "M1")
+          ?.mosBulkBinding,
+      ).toEqual(
+        policy === "cell"
+          ? { origin: "cell-default", netId: defaultNetId }
+          : undefined,
+      );
+      expect(
+        result.document.nets.find((net) => net.id === defaultNetId)?.terminals,
+      ).toEqual(
+        expect.arrayContaining([
+          { instanceId: "M1", pinName: "B" },
+          { instanceId: "GND1", pinName: supplyPinName },
+        ]),
+      );
+    },
+  );
 
   it("keeps an imported global declaration only on the primary component after a cut", () => {
     const document = documentFixture();

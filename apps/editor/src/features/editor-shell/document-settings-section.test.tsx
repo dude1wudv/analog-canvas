@@ -53,13 +53,18 @@ describe("DocumentSettingsSection", () => {
     );
 
     expect(markup).not.toContain('role="dialog"');
-    expect(markup).toContain('aria-label="Document settings"');
+    expect(markup).toContain('aria-label="文档设置"');
     expect(markup).toContain('data-testid="document-settings-code-editor"');
-    expect(markup).toContain('aria-label="Loading document Style code"');
+    expect(markup).toContain('aria-label="正在加载属性代码"');
+    expect(markup).toContain("属性代码");
     expect(markup).toContain("&quot;appearance&quot;");
     expect(markup).toContain("&quot;bulkDefaults&quot;");
+    expect(markup).toContain("&quot;labels&quot;");
     expect(markup).toContain("&quot;canvas&quot;");
-    expect(markup).toContain("Copy Style JSON");
-    expect(markup).toContain("Defaults");
+    expect(markup).toContain("复制属性 JSON");
+    expect(markup).toContain("恢复默认值");
+    expect(markup).not.toContain("Format all Port labels in this Cell");
+    expect(markup).not.toContain("Existing suffix case");
+    expect(markup).not.toContain("Existing suffix position");
   });
 });

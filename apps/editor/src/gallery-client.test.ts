@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   announceGalleryChange,
   galleryPreviewUrl,
+  loadGalleryTagSummary,
   primeGalleryPreview,
   subscribeGalleryRefresh,
 } from "./gallery-client";
@@ -54,13 +55,34 @@ afterEach(() => {
   FakeBroadcastChannel.channels.clear();
 });
 
+it("requests tag counts for the same netlist scope as the Gallery wall", async () => {
+  const payload = {
+    tags: [{ tag: "ota", count: 2 }],
+    groups: [{ group: "Amplifiers", count: 2 }],
+  };
+  const fetchLike = vi
+    .fn<typeof fetch>()
+    .mockImplementation(async () => Response.json(payload));
+  expect(await loadGalleryTagSummary(fetchLike, { netlistable: true })).toEqual(
+    payload,
+  );
+  expect(fetchLike).toHaveBeenLastCalledWith(
+    "/api/gallery/tags?netlistable=1",
+    { credentials: "same-origin" },
+  );
+  await loadGalleryTagSummary(fetchLike, { netlistable: false });
+  expect(fetchLike).toHaveBeenLastCalledWith("/api/gallery/tags", {
+    credentials: "same-origin",
+  });
+});
+
 describe("Gallery preview caching", () => {
   it("uses one immutable URL per preview revision", () => {
     expect(galleryPreviewUrl("entry-1", "revision 0")).toBe(
-      "/api/gallery/entry-1/preview.svg?v=revision%200",
+      "/api/gallery/entry-1/preview.svg?v=revision%200&render=formula-sans-v2",
     );
     expect(galleryPreviewUrl("entry-1", "revision-7")).toBe(
-      "/api/gallery/entry-1/preview.svg?v=revision-7",
+      "/api/gallery/entry-1/preview.svg?v=revision-7&render=formula-sans-v2",
     );
     expect(galleryPreviewUrl("entry-1")).toBe(
       "/api/gallery/entry-1/preview.svg",
@@ -80,7 +102,7 @@ describe("Gallery preview caching", () => {
     expect(fetchLike).toHaveBeenCalledTimes(2);
     expect(fetchLike).toHaveBeenNthCalledWith(
       1,
-      "/api/gallery/entry-1/preview.svg?v=revision-3",
+      "/api/gallery/entry-1/preview.svg?v=revision-3&render=formula-sans-v2",
       { credentials: "same-origin", cache: "reload" },
     );
   });

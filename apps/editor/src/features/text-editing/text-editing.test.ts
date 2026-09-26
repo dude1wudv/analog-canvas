@@ -1,12 +1,31 @@
 import { describe, expect, it } from "vitest";
 
-import { createEmptyDocument, semanticTextDocument } from "@icm/model";
-import type { Annotation, DraftingObject } from "@icm/model";
+import {
+  createEmptyDocument,
+  flattenRichText,
+  semanticTextDocument,
+  defaultDraftTextDocument,
+  roleLabelFormat,
+  supplyLabelFormat,
+} from "@icm/model";
+import type {
+  Annotation,
+  DraftingObject,
+  Instance,
+  RichTextDocument,
+  RichTextRun,
+  SchematicDocument,
+} from "@icm/model";
+import { signalFlowBodyTextDocument } from "@icm/symbols";
 
 import {
   createTextEditingSession,
+  editedBoundAnnotationName,
   proposeTextEditingCommit,
+  editedRoleLabelFormat,
   resolveTextEditingTarget,
+  roleLabelDefault,
+  spliceVisibleEdit,
   textDeletionEdit,
   updateTextEditingSession,
 } from "./text-editing";
@@ -35,6 +54,141 @@ const draftingText = (): Extract<DraftingObject, { kind: "text" }> => ({
 });
 
 describe("unified text editing", () => {
+  it("interprets bound Instance and Cell Pin edits through the same name rule", () => {
+    const document = createEmptyDocument("bound", "Bound");
+    document.instances.push({
+      id: "M1",
+      reference: "M1",
+      symbolId: "nmos",
+      placement: null,
+    });
+    document.netlist!.terminals.push({
+      id: "pin-vout",
+      name: "Vout",
+      netId: "net-vout",
+      direction: "output",
+      interfaceInstanceIds: [],
+    });
+    const instanceLabel: Annotation = {
+      ...annotation(),
+      kind: "instance-label",
+      content: undefined,
+      netId: undefined,
+      binding: { kind: "instance-reference", instanceId: "M1" },
+    };
+    const pinLabel: Annotation = {
+      ...instanceLabel,
+      id: "pin-label",
+      binding: { kind: "cell-terminal-name", terminalId: "pin-vout" },
+    };
+    // Names are exactly what was typed; no underscore is ever inserted.
+    const cases = [
+      { label: instanceLabel, current: "M1", typed: "M2", expected: "M2" },
+      { label: pinLabel, current: "Vout", typed: "Vin", expected: "Vin" },
+    ];
+    for (const { label, current, typed, expected } of cases) {
+      const session = createTextEditingSession(
+        { owner: "annotation", object: label },
+        document,
+      );
+      expect(editedBoundAnnotationName(document, label, session, current)).toBe(
+        current,
+      );
+      expect(
+        editedBoundAnnotationName(
+          document,
+          label,
+          updateTextEditingSession(session, {
+            content: { runs: [{ kind: "text", value: typed }] },
+          }),
+          current,
+        ),
+      ).toBe(expected);
+      expect(
+        editedBoundAnnotationName(
+          document,
+          label,
+          updateTextEditingSession(session, {
+            content: {
+              runs: [
+                { kind: "span", style: "bold", children: session.content.runs },
+              ],
+            },
+          }),
+          current,
+        ),
+      ).toBe(current);
+    }
+  });
+  it("edits a scalar Value at its source and leaves compound MOS values to Properties", () => {
+    const document = createEmptyDocument("value", "Value");
+    document.instances.push({
+      id: "R1",
+      symbolId: "resistor",
+      placement: null,
+      netlist: { parameters: { value: "1k", tc: "0.01" } },
+    });
+    const label: Annotation = {
+      ...annotation(),
+      kind: "instance-value",
+      binding: { kind: "instance-value", instanceId: "R1" },
+    };
+    document.annotations = [label];
+    const edit = (value: string) =>
+      proposeTextEditingCommit(
+        document,
+        updateTextEditingSession(
+          createTextEditingSession(
+            { owner: "annotation", object: label },
+            document,
+          ),
+          { content: { runs: [{ kind: "text", value }] } },
+        ),
+      );
+    expect(edit("10k")).toMatchObject({
+      kind: "update",
+      beforeEdits: [
+        {
+          kind: "patch_instance_netlist_parameters",
+          instanceId: "R1",
+          set: { value: "10k" },
+        },
+      ],
+    });
+    expect(edit("Value")).toMatchObject({
+      kind: "update",
+      beforeEdits: [
+        {
+          kind: "patch_instance_netlist_parameters",
+          instanceId: "R1",
+          set: { value: "Value" },
+        },
+      ],
+      edit: {
+        annotation: {
+          binding: { kind: "instance-value", instanceId: "R1" },
+        },
+      },
+    });
+    expect(edit("")).toMatchObject({
+      kind: "delete",
+      edit: {
+        kind: "remove_schematic_annotation",
+        annotationId: label.id,
+      },
+    });
+    document.instances[0] = {
+      id: "R1",
+      symbolId: "nmos",
+      placement: null,
+      netlist: { parameters: { w: "1u", l: "150n" } },
+    };
+    expect(edit("10u")).toMatchObject({
+      kind: "blocked",
+      message: expect.stringContaining("Properties"),
+    });
+  });
+
   it("creates one session shape from semantic annotations and drafting text", () => {
     const annotationSession = createTextEditingSession({
       owner: "annotation",
@@ -210,6 +364,173 @@ describe("unified text editing", () => {
     expect(manual.formatEdited).toBe(true);
   });
 
+  it("keeps a stored standard look as a default whose text renames verbatim", () => {
+    const document = createEmptyDocument("text", "Text");
+    document.netlist!.terminals.push({
+      id: "terminal-vdd",
+      name: "VDD",
+      netId: "net-vdd",
+      direction: "inout",
+      interfaceInstanceIds: [],
+    });
+    document.instances.push({
+      id: "M1",
+      reference: "M1",
+      symbolId: "nmos",
+      placement: null,
+    });
+    const supply: Annotation = {
+      id: "label-VDD1",
+      kind: "power-label",
+      binding: { kind: "cell-terminal-name", terminalId: "terminal-vdd" },
+      formatOverride: supplyLabelFormat("VDD")!,
+      netId: "net-vdd",
+      anchor: { kind: "free", position: { x: 10, y: 20 } },
+      alignment: "start",
+      rotation: 0,
+      locked: false,
+    };
+    const device: Annotation = {
+      id: "instance-label-M1",
+      kind: "instance-label",
+      binding: { kind: "instance-reference", instanceId: "M1" },
+      formatOverride: roleLabelFormat("device-reference", "M1")!,
+      anchor: { kind: "free", position: { x: 40, y: 20 } },
+      alignment: "start",
+      rotation: 0,
+      locked: false,
+    };
+    const cases = [
+      { label: supply, role: "supply" as const, name: "VDD", typed: "VDDH" },
+      {
+        label: device,
+        role: "device-reference" as const,
+        name: "M1",
+        typed: "M12",
+      },
+    ];
+    for (const { label, role, name, typed } of cases) {
+      const session = createTextEditingSession(
+        { owner: "annotation", object: label },
+        document,
+      );
+      expect(session.formatEdited).toBeUndefined();
+      expect(roleLabelDefault(document, label)).toEqual({ role, name });
+
+      // Typing keeps the characters exactly and regenerates the look.
+      const edited = updateTextEditingSession(session, {
+        content: roleLabelFormat(role, typed)!,
+      });
+      const renamed = editedBoundAnnotationName(document, label, edited, name);
+      expect(renamed).toBe(typed);
+      expect(editedRoleLabelFormat(document, label, edited, renamed)).toEqual({
+        format: roleLabelFormat(role, typed),
+      });
+
+      // Restyling alone never renames, and the author's look is kept.
+      const flat = { runs: [{ kind: "text" as const, value: name }] };
+      const restyled = updateTextEditingSession(session, { content: flat });
+      expect(restyled.formatEdited).toBe(true);
+      expect(editedBoundAnnotationName(document, label, restyled, name)).toBe(
+        name,
+      );
+      expect(editedRoleLabelFormat(document, label, restyled, name)).toEqual({
+        format: flat,
+      });
+
+      // An author's own format is not treated as the default.
+      const authored = { ...label, formatOverride: flat };
+      expect(roleLabelDefault(document, authored)).toBeUndefined();
+      expect(
+        createTextEditingSession(
+          { owner: "annotation", object: authored },
+          document,
+        ).formatEdited,
+      ).toBe(true);
+    }
+    // A name without a standard form returns to the ordinary rules.
+    expect(
+      editedRoleLabelFormat(
+        document,
+        supply,
+        updateTextEditingSession(
+          createTextEditingSession(
+            { owner: "annotation", object: supply },
+            document,
+          ),
+          { content: { runs: [{ kind: "text", value: "AVDD" }] } },
+        ),
+        "AVDD",
+      ),
+    ).toEqual({ format: undefined });
+  });
+
+  it("never turns a subscript or overbar into characters of the name", () => {
+    const document = createEmptyDocument("text", "Text");
+    document.netlist!.terminals.push({
+      id: "pin-clk",
+      name: "CLK1",
+      netId: "net-clk",
+      direction: "input",
+      interfaceInstanceIds: [],
+    });
+    const pin: Annotation = {
+      ...annotation(),
+      kind: "instance-label",
+      content: undefined,
+      netId: undefined,
+      binding: { kind: "cell-terminal-name", terminalId: "pin-clk" },
+    };
+    const session = createTextEditingSession(
+      { owner: "annotation", object: pin },
+      document,
+    );
+    const text = (value: string) => ({ kind: "text" as const, value });
+    for (const content of [
+      // CLK with a subscript 1 is still CLK1, not CLK_1.
+      {
+        runs: [
+          text("CLK"),
+          {
+            kind: "span" as const,
+            style: "subscript" as const,
+            children: [text("1")],
+          },
+        ],
+      },
+      // An overbar is the label's look, not a _bar suffix.
+      {
+        runs: [
+          {
+            kind: "span" as const,
+            style: "overbar" as const,
+            children: [text("CLK1")],
+          },
+        ],
+      },
+    ])
+      expect(
+        editedBoundAnnotationName(
+          document,
+          pin,
+          updateTextEditingSession(session, { content }),
+          "CLK1",
+        ),
+      ).toBe("CLK1");
+  });
+
+  it("splices a text edit into the name around characters the look hid", () => {
+    // Plain names change exactly as typed.
+    expect(spliceVisibleEdit("VDD", "VDD", "VDDA")).toBe("VDDA");
+    expect(spliceVisibleEdit("M1", "M1", "M12")).toBe("M12");
+    // A hidden underscore before a subscript stays in place.
+    expect(spliceVisibleEdit("V_ref", "Vref", "Vrefx")).toBe("V_refx");
+    expect(spliceVisibleEdit("V_ref", "Vref", "Vout")).toBe("V_out");
+    // A hidden trailing _bar stays after the edited characters.
+    expect(spliceVisibleEdit("D_bar", "D", "Dx")).toBe("Dx_bar");
+    expect(spliceVisibleEdit("D_bar", "D", "E")).toBe("E_bar");
+  });
+
   it("resolves only the tagged target kind", () => {
     const document = {
       ...createEmptyDocument("text", "Text"),
@@ -347,59 +668,95 @@ describe("unified text editing", () => {
   });
 });
 
-describe("Symbol body text edits in place", () => {
-  const dac = (formula?: string) => ({
+describe("Symbol body text edits like a label", () => {
+  const dacPresentation = {
+    defaultFormula: "DAC",
+    supportsCoefficient: false,
+    center: { x: 0, y: 0 },
+    fontSize: 12,
+  };
+  const delayPresentation = {
+    defaultFormula: "z^-1",
+    supportsCoefficient: true,
+    center: { x: 0, y: 0 },
+    fontSize: 12,
+    adaptiveFrame: {
+      minBodyWidth: 40,
+      minBodyHeight: 30,
+      horizontalPadding: 8,
+      verticalPadding: 4,
+      leadLength: 10,
+    },
+  };
+  type Parameters = NonNullable<Instance["signalFlowParameters"]>;
+  const block = (symbolId: string, signalFlowParameters?: Parameters) => ({
     id: "X1",
-    symbolId: "dac",
+    symbolId,
     placement: {
       position: { x: 100, y: 100 },
       rotation: 0 as const,
       mirror: "none" as const,
     },
-    ...(formula ? { signalFlowParameters: { formula } } : {}),
+    ...(signalFlowParameters ? { signalFlowParameters } : {}),
   });
-
-  // The text inside a Symbol body is a plain string with its own compact
-  // script syntax, not a RichText document. It rides the same session so the
-  // canvas overlay can host it, carried as one text run.
-  it("opens a session on the Symbol's own default text", () => {
-    const session = createTextEditingSession({
-      owner: "instance-formula",
-      object: dac(),
-      defaultFormula: "DAC",
-    });
-
-    expect(session).toMatchObject({
-      owner: "instance-formula",
-      id: "X1",
-      content: { runs: [{ kind: "text", value: "DAC" }] },
-    });
-  });
-
-  it("opens a session on the override once the person has set one", () => {
-    const session = createTextEditingSession({
-      owner: "instance-formula",
-      object: dac("8-bit"),
-      defaultFormula: "DAC",
-    });
-
-    expect(session.content).toEqual({
-      runs: [{ kind: "text", value: "8-bit" }],
-    });
-  });
-
-  // Editing in place writes the same field the Properties panel writes, so the
-  // two surfaces cannot drift: there is one value, not two copies of it.
-  it("commits the edited text as a signal-flow parameter override", () => {
+  const drawingWith = (instance: Instance) => {
     const document = createEmptyDocument("main", "Main");
-    document.instances.push(dac());
-    const session = updateTextEditingSession(
-      createTextEditingSession({
+    document.instances.push(instance);
+    return document;
+  };
+  const open = (
+    document: SchematicDocument,
+    presentation: typeof dacPresentation | typeof delayPresentation,
+  ) =>
+    createTextEditingSession(
+      {
         owner: "instance-formula",
-        object: dac(),
-        defaultFormula: "DAC",
+        object: document.instances[0]!,
+        presentation,
+      },
+      document,
+    );
+  const bold = (...children: RichTextRun[]): RichTextDocument => ({
+    runs: [{ kind: "span", style: "bold", children }],
+  });
+  const text = (value: string): RichTextRun => ({ kind: "text", value });
+
+  // What the editor opens on is what the canvas draws, word or formula. A
+  // converter's word stands upright; only a single-letter quantity slants.
+  it("opens on a body word in the drawing's label look, upright", () => {
+    const document = drawingWith(block("dac"));
+    const session = open(document, dacPresentation);
+
+    expect(session.content).toEqual(
+      signalFlowBodyTextDocument(
+        dacPresentation,
+        undefined,
+        document.presentation,
+      ),
+    );
+    expect(flattenRichText(session.content)).toBe("DAC");
+    expect(session).toMatchObject({ defaultBold: true, defaultItalic: false });
+  });
+
+  it("opens on a transfer function with its superscript", () => {
+    const session = open(drawingWith(block("unit-delay")), delayPresentation);
+
+    expect(session.content).toEqual(
+      bold(text("z"), {
+        kind: "span",
+        style: "superscript",
+        children: [text("-1")],
       }),
-      { content: { runs: [{ kind: "text", value: "8-bit DAC" }] } },
+    );
+  });
+
+  it("stores only the text when it keeps the look plain text draws in", () => {
+    const document = drawingWith(block("unit-delay"));
+    const session = updateTextEditingSession(
+      open(document, delayPresentation),
+      {
+        content: bold(text("H(s)")),
+      },
     );
 
     expect(proposeTextEditingCommit(document, session)).toEqual({
@@ -408,24 +765,109 @@ describe("Symbol body text edits in place", () => {
       edit: {
         kind: "set_instance_signal_flow_parameters",
         instanceId: "X1",
-        parameters: { formula: "8-bit DAC" },
+        parameters: { formula: "H(s)" },
       },
     });
   });
 
-  // Typing the Symbol's own default back is not an override: storing it would
-  // freeze a copy of a default that is allowed to change.
-  it("clears the override when the text returns to the Symbol default", () => {
-    const document = createEmptyDocument("main", "Main");
-    document.instances.push(dac("8-bit"));
+  // Typed text is source, as a label's name is: the drawing's label rules
+  // keep drawing it, so a typed underscore becomes a subscript by rule.
+  it("stores typed text as source that the drawing's rules keep drawing", () => {
+    const lettered = {
+      defaultFormula: "A",
+      supportsCoefficient: false,
+      center: { x: 0, y: 0 },
+      fontSize: 16,
+    };
+    const document = drawingWith(block("opamp-lettered"));
+    const session = updateTextEditingSession(open(document, lettered), {
+      content: { runs: [text("A_gain")] },
+    });
+
+    expect(proposeTextEditingCommit(document, session)).toMatchObject({
+      edit: { parameters: { formula: "A_gain" } },
+    });
+    expect(proposeTextEditingCommit(document, session)).not.toMatchObject({
+      edit: { parameters: { formulaFormat: expect.anything() } },
+    });
+  });
+
+  it("spells a transfer function's scripts back into its source", () => {
+    const document = drawingWith(block("unit-delay"));
     const session = updateTextEditingSession(
-      createTextEditingSession({
-        owner: "instance-formula",
-        object: dac("8-bit"),
-        defaultFormula: "DAC",
-      }),
-      { content: { runs: [{ kind: "text", value: "DAC" }] } },
+      open(document, delayPresentation),
+      {
+        content: bold(
+          text("z"),
+          { kind: "span", style: "superscript", children: [text("-1")] },
+          text("+1"),
+        ),
+      },
     );
+
+    expect(proposeTextEditingCommit(document, session)).toMatchObject({
+      edit: { parameters: { formula: "z^-1+1" } },
+    });
+  });
+
+  // The owner's request: slant, scripts and every other format a label
+  // keeps, the body text keeps too, once the author sets them.
+  it("stores the author's look beside its text and reopens on it", () => {
+    const document = drawingWith(block("dac"));
+    const italic = (...children: RichTextRun[]): RichTextDocument => ({
+      runs: [
+        { kind: "span", style: "italic", children: bold(...children).runs },
+      ],
+    });
+    const look = italic(text("DAC"), {
+      kind: "span",
+      style: "subscript",
+      children: [text("1")],
+    });
+    // A slanted DAC first (a formatting command), then its subscript.
+    const slanted = updateTextEditingSession(open(document, dacPresentation), {
+      content: italic(text("DAC")),
+    });
+    const session = updateTextEditingSession(slanted, { content: look });
+
+    expect(proposeTextEditingCommit(document, session)).toMatchObject({
+      kind: "update",
+      edit: { parameters: { formula: "DAC1", formulaFormat: look } },
+    });
+    const reopened = open(
+      drawingWith(block("dac", { formula: "DAC1", formulaFormat: look })),
+      dacPresentation,
+    );
+    expect(reopened.content).toEqual(look);
+    expect(reopened.formatEdited).toBe(true);
+  });
+
+  it("keeps the block's other parameters when its text changes", () => {
+    const document = drawingWith(
+      block("unit-delay", { formula: "z^-2", coefficient: "K", bodyWidth: 60 }),
+    );
+    const session = updateTextEditingSession(
+      open(document, delayPresentation),
+      {
+        content: bold(text("H(s)")),
+      },
+    );
+
+    expect(proposeTextEditingCommit(document, session)).toMatchObject({
+      edit: {
+        parameters: { coefficient: "K", bodyWidth: 60, formula: "H(s)" },
+      },
+    });
+  });
+
+  // The Symbol's own text in its own look is not an override: storing it
+  // would freeze a copy of a default that is allowed to change.
+  it("clears the override when the Symbol's own text and look return", () => {
+    const document = drawingWith(block("dac", { formula: "8-bit" }));
+    const own = open(drawingWith(block("dac")), dacPresentation).content;
+    const session = updateTextEditingSession(open(document, dacPresentation), {
+      content: own,
+    });
 
     expect(proposeTextEditingCommit(document, session)).toMatchObject({
       kind: "update",
@@ -434,18 +876,134 @@ describe("Symbol body text edits in place", () => {
   });
 
   it("reports no change when the text is untouched", () => {
-    const document = createEmptyDocument("main", "Main");
-    document.instances.push(dac("8-bit"));
+    const document = drawingWith(block("dac", { formula: "8-bit" }));
 
     expect(
-      proposeTextEditingCommit(
-        document,
-        createTextEditingSession({
-          owner: "instance-formula",
-          object: dac("8-bit"),
-          defaultFormula: "DAC",
-        }),
-      ),
+      proposeTextEditingCommit(document, open(document, dacPresentation)),
     ).toEqual({ kind: "unchanged" });
   });
+});
+
+it("changing typography on a historical subscript does not rename the instance", () => {
+  const document = createEmptyDocument("old", "Old");
+  document.instances.push({
+    id: "M1",
+    reference: "M1",
+    symbolId: "nmos",
+    placement: null,
+  });
+  const label: Annotation = {
+    ...annotation(),
+    kind: "instance-label",
+    netId: undefined,
+    content: undefined,
+    binding: { kind: "instance-reference", instanceId: "M1" },
+    formatOverride: defaultDraftTextDocument("M1"),
+  };
+  document.annotations.push(label);
+  const session = createTextEditingSession(
+    { owner: "annotation", object: label },
+    document,
+  );
+  const edited = updateTextEditingSession(session, {
+    content: {
+      runs: [
+        { kind: "text", value: "M" },
+        {
+          kind: "span",
+          style: "subscript",
+          children: [{ kind: "text", value: "1" }],
+        },
+      ],
+    },
+  });
+  const proposal = proposeTextEditingCommit(document, edited);
+  expect(proposal.kind).toBe("update");
+  if (proposal.kind === "update")
+    expect(proposal.beforeEdits ?? []).toEqual([]);
+});
+
+it("keeps an overbar as the label's look without renaming the instance", () => {
+  const document = createEmptyDocument("bar", "Bar");
+  document.instances.push({
+    id: "M1",
+    reference: "M1",
+    symbolId: "nmos",
+    placement: null,
+  });
+  const label: Annotation = {
+    ...annotation(),
+    kind: "instance-label",
+    netId: undefined,
+    content: undefined,
+    binding: { kind: "instance-reference", instanceId: "M1" },
+  };
+  document.annotations.push(label);
+  const original = createTextEditingSession(
+    { owner: "annotation", object: label },
+    document,
+  );
+  const edited = updateTextEditingSession(original, {
+    content: {
+      runs: [
+        { kind: "span", style: "overbar", children: original.content.runs },
+      ],
+    },
+  });
+  const barred = proposeTextEditingCommit(document, edited);
+  expect(barred.kind).toBe("update");
+  if (barred.kind === "update") {
+    // The Reference stays M1; the bar is stored as the label's format.
+    expect(barred.beforeEdits ?? []).toEqual([]);
+    expect(barred.edit).toMatchObject({
+      kind: "upsert_schematic_annotation",
+      annotation: { formatOverride: edited.content },
+    });
+  }
+  const alias = proposeTextEditingCommit(document, {
+    ...edited,
+    displayAlias: true,
+  });
+  expect(alias.kind).toBe("update");
+  if (alias.kind === "update") expect(alias.beforeEdits ?? []).toEqual([]);
+});
+
+it("shows the underscore again when its subscript is removed, without renaming", () => {
+  const document = createEmptyDocument("manual", "Manual");
+  document.presentation.labelSubscriptAfterFirst = true;
+  document.instances.push({
+    id: "M1",
+    reference: "M_load",
+    symbolId: "nmos",
+    placement: null,
+  });
+  const label: Annotation = {
+    ...annotation(),
+    kind: "instance-label",
+    netId: undefined,
+    content: undefined,
+    binding: { kind: "instance-reference", instanceId: "M1" },
+  };
+  document.annotations.push(label);
+  const session = createTextEditingSession(
+    { owner: "annotation", object: label },
+    document,
+  );
+  const content = { runs: [{ kind: "text" as const, value: "Mload" }] };
+  const proposal = proposeTextEditingCommit(
+    document,
+    updateTextEditingSession(session, { content }),
+  );
+  // Restyling never renames: M_load keeps its underscore, which is shown
+  // once no subscript hides it. Renaming goes through the name itself.
+  expect(proposal.kind).toBe("update");
+  if (proposal.kind === "update") {
+    expect(proposal.beforeEdits ?? []).toEqual([]);
+    expect(proposal.edit).toMatchObject({
+      kind: "upsert_schematic_annotation",
+      annotation: {
+        formatOverride: { runs: [{ kind: "text", value: "M_load" }] },
+      },
+    });
+  }
 });

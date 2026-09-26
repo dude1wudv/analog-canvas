@@ -18,7 +18,7 @@ The implementation has these boundaries:
   preparation module resolves capabilities and immutable input identity.
 - SimulationService owns preparation and the session-facing run presentation.
   Its Executor is the execution port; GUI and MCP use the same service and File
-  Resource. On both hosted channels, the managed control plane owns authoritative run
+  Resource. On Production, the managed control plane owns authoritative run
   admission, idempotency, queueing, retry, cancellation and retention. Local
   direct transports keep the same semantic service contract.
 - spice-run separates request/result types, deck assembly, metadata and terminal
@@ -73,9 +73,10 @@ the same native contract. These are execution locations, not alternative
 engines; missing targets never cause fallback. Without a configured Profile
 and native executor, native capabilities remain unconfigured and editing
 remains usable.
-Existing ngspice deployment configuration is not a native registration. The
-[migration roadmap](../roadmap/vacask-migration.md) owns isolated cloud delivery;
-this route change does not qualify or modify existing hosted environments.
+An ngspice target alone does not register VACASK. [Deployment](../deployment.md)
+owns hosted registration and verification; the
+[qualification roadmap](../roadmap/vacask-migration.md) owns evidence required
+for runtime/model scope changes.
 
 Worker and harness share `validateNativeExecutionInput`: revision, entry bytes,
 portable disjoint file/dependency paths, registry digests and byte/count bounds.
@@ -86,9 +87,39 @@ executed file bytes and the runtime fingerprint against admission, withholding
 mismatched evidence rather than retrying the process. Cancellation bypasses
 readiness checks; bounded refusal details and Retry-After remain available.
 
-The model-library and legacy container sections below describe the retained
-ngspice baseline, not this native route. Their replacement Profile/image remains
-a separate migration obligation; they must not be used to register VACASK.
+Native executors attach an internal `x-analog-simulation-receipt` HTTP header
+to canonical run responses. It contains bounded, URI-encoded JSON (at most
+8192 ASCII characters): run token, terminal outcome, collection completeness,
+input/environment metadata, executed-file digest, body byte length and digest.
+It contains no waveforms and is not a second Run/Dataset/File catalog. The
+existing JSON response body and authenticated endpoints remain unchanged.
+The producer validates result/file relationships before emitting the receipt;
+the Worker checks its admission identity, input evidence and measured runtime
+before forwarding the length-bounded body stream. ngspice receipts match the
+bundled approved Profile facts directly, without a post-run `/health` request.
+Native VACASK capability facts are scoped to executor binding/URL, credential
+and Profile and reused for at most 30 seconds; explicit discovery refreshes,
+and execution/protocol failures invalidate that cache. Every result still
+matches its selected environment identity. The managed dispatcher writes
+that stream directly to R2 with its expected SHA-256, so corruption fails the
+write before the run can advertise retained results. This digest is transfer
+integrity, not an extra deployment-provenance check. The operator gateway
+preserves the receipt and applies backpressure and its configured byte limit.
+
+During rolling upgrades, an executor without this header still uses the
+existing bounded JSON validation path. Malformed or mismatched receipts fail;
+they do not silently fall back. Body interruption is an uncertain response,
+never permission to execute the run again. These streaming changes alone do
+not qualify large simulations. Updated callers negotiate `receipt-v1` with the
+`x-analog-execution-transfer` request header: the receipt-bound response ceiling
+is 256 MiB, while old buffered readers remain limited to 8 MiB. The operator
+gateway must forward that opt-in and allow 256 MiB streams. Collector budgets
+are separately advertised by the accepted runtime configuration; a client must
+not override them. The local configuration example budgets 64 MiB for collected
+output, leaving envelope space for parsed representations and JSON escaping.
+
+The model-library and container sections below describe the ngspice engine,
+not the VACASK route; one engine's configuration cannot register the other.
 
 ## Ngspice baseline model-library selection
 
@@ -183,57 +214,23 @@ configuration metadata then reports `modelLibrary: null`.
 
 ## Run metadata V1
 
-Every completed, failed, dropped-input, or timed-out simulator run carries one
-transient metadata envelope:
+Each run's transient metadata records input identity, model-library selection
+and observed execution environment. The executable
+[SimulationRunMetadata contract](../../packages/spice-run/src/contract.ts)
+owns the exact fields, including the `ngspice`/`vacask` engine identity;
+[metadata validation](../../packages/spice-run/src/metadata.ts) owns integrity
+and fingerprint checks.
 
-```ts
-interface SimulationRunMetadata {
-  schemaVersion: 1;
-  input: {
-    inputRevision: string | null;
-    netlistSha256: string;
-    testbenchSha256: string;
-    deckSha256: string;
-  };
-  configuration: {
-    modelLibrary:
-      | { directive: "include"; section: null }
-      | { directive: "lib"; section: string }
-      | null;
-  };
-  environment: {
-    fingerprint: string;
-    executor: "hosted-container" | "local-host";
-    reproducibility: "observed" | "pinned";
-    profileId: string | null;
-    platform: string;
-    simulator: {
-      name: "ngspice";
-      version: string;
-      binarySha256: string | null;
-    };
-    models: { id: string; contentSha256: string } | null;
-    startupSha256: string | null;
-  };
-}
-```
+Input digests identify the authored and executed bytes. `inputRevision` is
+opaque caller state for freshness, not a durable Project identity.
+Environment facts identify the simulator, platform, models, startup policy
+and Profile. A hosted executor reports `pinned` only after matching its
+qualified Profile; an explicitly configured local adapter reports its actual
+environment. Unconfigured execution supplies no fabricated metadata.
 
-The three input hashes cover the exact authored netlist, testbench, and final
-deck bytes separately. `inputRevision` is opaque caller state used to reject a
-stale result; it is not a durable Project identity. The model-library path is
-not returned because it may reveal a local directory, while the deck hash
-still covers its exact emitted spelling.
-
-An environment fingerprint is the SHA-256 of canonical environment facts. A
-consumer verifies that fingerprint before accepting a runner response. The
-hosted container reports `pinned` only after matching the Profile at startup;
-an explicitly configured local adapter must report its actual environment,
-using `observed` unless it satisfies a pinned Profile. The unconfigured local
-host produces no simulation metadata. Metadata plumbing alone never claims reproducibility.
-
-This envelope establishes provenance only. The numbers themselves are
-[Result data](simulation-results.md#result-data). Bindings from a probe back to circuit objects
-are produced at compile time and are not part of reading a rawfile.
+This envelope establishes provenance, not numerical correctness.
+[Result data](simulation-results.md#result-data) owns the numbers; probe-to-Canvas
+bindings come from compilation, not inference while reading a rawfile.
 
 ## Execution boundary
 
@@ -321,24 +318,42 @@ deadline.
 
 **Limits.**
 
-| Limit             | Value                    | Enforced by                                |
-| ----------------- | ------------------------ | ------------------------------------------ |
-| Deck size         | 2 MiB                    | rejected `413 deck-too-large`              |
-| Request body      | 4 MiB                    | connection closed, `413 request-too-large` |
-| Returned output   | 1 MiB per run            | truncation, reported                       |
-| Default deadline  | 30 s                     | applied when the caller names none         |
-| Maximum deadline  | 120 s                    | a longer request is clamped to it          |
-| Lifecycle grace   | 10 s                     | hard lease watchdog after the run deadline |
-| Identity probe    | 5 s                      | given up on, not waited for                |
-| Processes         | 128 (`RLIMIT_NPROC`)     | image-set `ulimit` before `exec`           |
-| Written file size | 256 MiB (`RLIMIT_FSIZE`) | image-set `ulimit` before `exec`           |
+| Limit                   | Value                        | Enforced by                                                                       |
+| ----------------------- | ---------------------------- | --------------------------------------------------------------------------------- |
+| Deck size               | 2 MiB                        | rejected `413 deck-too-large`                                                     |
+| Request envelope        | 8 MiB                        | connection closed, `413 request-too-large`; deck content remains limited to 2 MiB |
+| Raw waveform collection | 64 MiB per run               | incomplete collection is reported; never certified as complete                    |
+| Simulator logs          | 1 MiB per run, independently | truncation, reported                                                              |
+| Default deadline        | 30 s                         | applied when the caller names none                                                |
+| Maximum deadline        | 120 s                        | a longer request is clamped to it                                                 |
+| Lifecycle grace         | 10 s                         | hard lease watchdog after the run deadline                                        |
+| Identity probe          | 5 s                          | given up on, not waited for                                                       |
+| Processes               | 128 (`RLIMIT_NPROC`)         | image-set `ulimit` before `exec`                                                  |
+| Written file size       | 256 MiB (`RLIMIT_FSIZE`)     | image-set `ulimit` before `exec`                                                  |
 
-The returned-output cap is divided between the simulator's two streams, so a
+The independent log cap is divided between the simulator's two streams, so a
 flood of printed values on one cannot push the single line that explains the
 run off the end of the other. The two kernel limits are set by the image
 rather than defaulted by the harness, because `RLIMIT_NPROC` counts every
 process the account owns and a number chosen for a container that runs one
 simulator is wrong anywhere else.
+
+Ngspice defaults are shared in `packages/spice-run`: 64 MiB collected waveform
+and 1 MiB combined logs. `SIMULATION_MAX_OUTPUT_BYTES` configures only waveform
+collection; `SIMULATION_MAX_LOG_BYTES` configures logs. Capabilities use the running
+harness's `limits.outputBytes` when available, including during rolling upgrades.
+The numeric completeness check remains mandatory: a cut waveform cannot certify
+a complete result, even when the log contains successful scalar measurements.
+
+The ngspice executor now uses the same result assembler as the legacy Worker path.
+It parses numbers on the operator host and attaches the existing receipt-bound
+256 MiB transport envelope. The gateway streams that envelope with backpressure;
+the Worker checks run/input, configuration, executed files and measured runtime,
+then managed retention streams it to R2. The Worker does not materialize these
+large numerical arrays. Legacy replies remain bounded to 8 MiB; exceeding that
+limit is an explicit transport failure, not a silently shortened waveform.
+Raw, JSON and parsed representations share the transfer envelope, so a 64 MiB
+collector allowance is not a guarantee that every possible output fits in 256 MiB.
 
 **Added response fields.** A consumer that does not read these is unaffected.
 
@@ -417,8 +432,7 @@ continue. Cancellation terminates the active member and marks queued members
 cancelled. Batch start follows the same request-ID idempotency rule as a normal
 start.
 
-For legacy version-1 experiment configurations, `prepare-sweep` is the shared
-execution primitive used by a saved Run Plan
+`prepare-sweep` is the shared execution primitive used by a legacy saved Run Plan
 over corner, temperature, Design Variable, or one or more exact
 instance-parameter axes. It
 expands the Cartesian product into the same bounded 1–16 member batch before
@@ -428,9 +442,17 @@ Instance, and netlist parameter. Variable axes address a stable Setup-local
 variable ID; preparation fans each point value out to all of that variable's
 exact bindings. Sweep members keep their ordinary prepared
 identity, result, and artifact interfaces, so no second executor or result
-protocol is introduced. Source-native version-2 folders reject these run-only
-variants: their control flow belongs in native SPICE. Saved-folder batches
-remain available independently of the configuration version.
+protocol is introduced. Source-native version-2 folders also accept explicit
+run-only points without persisting a second nominal configuration. A native
+variable axis names one reachable, unconditional top-level source parameter;
+corner and temperature points require an unambiguous qualified model section
+and ambient declaration. Exact Instance axes project through the ordinary
+Canvas parameter contract. For ngspice, a corner point changes only the
+Profile model dependency's section-selected `.lib` in the prepared source; it
+does not rewrite unrelated model loads or silently reinterpret a plain
+`.include`. Native control loops remain one program inside each Batch member.
+Saved-folder batches remain available independently of the configuration
+version.
 
 ## Resources and presentation
 
@@ -484,9 +506,28 @@ it returns revision/entry/expiry metadata, not file bodies.
 The browser owns its presentation receipts, not execution authority. On the
 managed hosted transport, tab loss does not stop an admitted run: the owner can
 list its server records, and bounded immutable input/result evidence remains in
-the artifact store for one day. The queue admits at most 50 waiting runs, one
+the artifact store for one day. The controller admits at most 50 waiting runs, one
 queued and one active per owner, waits at most five minutes, and dispatches only
-the operator host's one declared slot. On direct/local transport, the earlier
+the operator host's one declared slot. In `SIMULATION_DISPATCH=alarm` deployments,
+admission durably schedules an immediate control-DO alarm. The alarm owns execution
+independently of the submitting HTTP request and drains up to four runs before
+rearming. Busy work waits in existing Run records; the control transaction grants
+only one global lease, also fencing legacy Queue deliveries during rollout.
+Queue dispatch remains an explicit rollback setting, not an additional normal
+execution path. Drain admitted alarm-mode work before switching back to Queue;
+changing the setting does not manufacture Queue messages for existing records.
+Readiness and terminal-result persistence retain their existing
+authority; uncertain leases are not automatically re-executed.
+Normal Agent submissions use `run` with the revisioned source. It captures the
+input before capability waits, queries only the selected Profile, and retains
+one request identity across compilation and admission. Explicit `prepare/start`
+remains available for inspection/reuse. Input browsing artifacts publish with
+the results rather than blocking direct submission; the managed executor still
+persists immutable execution input before admission.
+Timing distinguishes controller wait, input read, upstream request through
+validated response headers, and result stream commit through terminal timestamp.
+The upstream phase is not pure simulation time; result commit includes body
+transfer/storage and may include recovery delay. On direct/local transport, the earlier
 session deadline and 15-minute File Resource retention remain unchanged.
 Revoking a live browser session requests cancellation of active work and clears
 its local drafts/evidence. One active session run, eight raw workspaces (24 files
@@ -543,8 +584,11 @@ and diagnostic export, not duplicated beside its CSV in Explorer. Archived
 legacy output artifacts remain readable/exportable without being regenerated.
 
 Automatic retention and **Archive current run** capture a run's verified artifact
-set and compact presentation metadata in browser IndexedDB. At most ten runs
-per Project and 32 MiB per run are accepted. Opening an archive republishes its
+set and compact presentation metadata in browser IndexedDB. Saving a new run
+does not evict older run records, including session-only results whose storage
+failed. Archives accept up to 512 MiB per run, within browser quota and the shared
+1 GiB Project evidence budget. Individual evidence files allow 256 MiB, with
+only a bounded cache held in memory. Opening an archive republishes its
 verified files into the current session File Resource and decodes the ordinary
 result contracts; it does not rerun ngspice or silently substitute the current
 Project revision. Complete-run ZIP remains the portable/Agent-accessible
@@ -561,7 +605,7 @@ Deterministic acceptance is split by boundary: shared lifecycle tests, MCP ↔
 browser-host ↔ Worker tests using recorded numeric fixtures, browser WebSocket
 receipt/export tests, and Linux process cancellation tests. Recorded fixtures
 prove protocol/data handling, not a new electrical simulation or cloud deployment.
-Real Preview qualification must use the candidate commit and declared Profile;
+Real hosted qualification must use the candidate commit and declared Profile;
 local tests must not be reported as that cloud acceptance.
 
 Release availability and the operator-host gateway configuration follow
@@ -593,5 +637,5 @@ failure.
 - Container Profile/build tests verify actual simulator/model/startup identity
   against the pinned Profile. A locally available PDK or skipped local ngspice
   test is not hosted qualification.
-- [Deployment](../deployment.md) owns exact-candidate Preview evidence and
-  Production promotion. A green parser/unit test cannot stand in for that gate.
+- [Deployment](../deployment.md) owns Production verification and rollback.
+  A green parser/unit test cannot stand in for live execution evidence.

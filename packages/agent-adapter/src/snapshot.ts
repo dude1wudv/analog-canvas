@@ -6,8 +6,9 @@ import {
   resolveDraftingObjectGeometry,
   resolveDocumentRoutingGeometry,
   buildProjectConnectivityIndex,
+  resolveAnnotationText,
 } from "@icm/derived";
-import { transformPoint } from "@icm/model";
+import { transformPoint, flattenRichText } from "@icm/model";
 import type {
   CircuitProject,
   Point,
@@ -23,9 +24,12 @@ import {
 } from "./diagnostics.js";
 import {
   AGENT_SNAPSHOT_VERSION,
+  AgentBootstrapSnapshotSchema,
+  AgentGeometryObjectSchema,
   AgentSessionSnapshotSchema,
 } from "./schema.js";
 import type {
+  AgentBootstrapSnapshot,
   AgentDiagnostic,
   AgentSessionSnapshot,
   AgentSnapshotDocument,
@@ -36,6 +40,75 @@ export interface BuildAgentSessionSnapshotOptions {
   document: SchematicDocument;
   resolver: SymbolResolver;
   includeSourceSpans?: boolean;
+}
+
+export interface BuildAgentBootstrapSnapshotOptions {
+  project?: CircuitProject;
+  document: SchematicDocument;
+}
+
+/** Read authored geometry by stable ID without resolving topology or rendering. */
+export function selectAgentGeometry(
+  document: SchematicDocument,
+  objectIds: readonly string[],
+): {
+  objects: Array<ReturnType<typeof AgentGeometryObjectSchema.parse>>;
+  missingObjectIds: string[];
+} {
+  const objects: Array<ReturnType<typeof AgentGeometryObjectSchema.parse>> = [];
+  const missingObjectIds: string[] = [];
+  for (const id of [...new Set(objectIds)]) {
+    const instance = document.instances.find((item) => item.id === id);
+    if (instance) {
+      objects.push({ kind: "instance", id, placement: instance.placement });
+      continue;
+    }
+    const route = document.routes.find((item) => item.id === id);
+    if (route) {
+      objects.push({
+        kind: "route",
+        id,
+        netId: route.netId,
+        start: route.start,
+        legs: route.legs,
+        ...(route.presentation ? { presentation: route.presentation } : {}),
+      });
+      continue;
+    }
+    const junction = document.junctions.find((item) => item.id === id);
+    if (junction) {
+      objects.push({
+        kind: "junction",
+        id,
+        netId: junction.netId,
+        position: junction.position,
+      });
+      continue;
+    }
+    const annotation = document.annotations.find((item) => item.id === id);
+    if (annotation) {
+      objects.push({
+        kind: "annotation",
+        id,
+        anchor: annotation.anchor,
+        rotation: annotation.rotation,
+        alignment: annotation.alignment,
+      });
+      continue;
+    }
+    const drafting = document.drafting?.objects.find((item) => item.id === id);
+    if (drafting) {
+      objects.push({ kind: "drafting", id, object: drafting });
+      continue;
+    }
+    const noConnect = document.noConnects.find((item) => item.id === id);
+    if (noConnect) {
+      objects.push({ kind: "no-connect", id, object: noConnect });
+      continue;
+    }
+    missingObjectIds.push(id);
+  }
+  return { objects, missingObjectIds };
 }
 
 function stableValue(input: unknown): unknown {
@@ -53,6 +126,57 @@ function stableValue(input: unknown): unknown {
 
 export function canonicalSnapshotContent(input: unknown): string {
   return JSON.stringify(stableValue(input));
+}
+
+/**
+ * Small authoritative context used while connecting. It intentionally avoids
+ * connectivity resolution, geometry, diagnostics, source spans, and authored
+ * simulation bodies; those remain available through a full Snapshot on demand.
+ */
+export function buildAgentBootstrapSnapshot(
+  options: BuildAgentBootstrapSnapshotOptions,
+): AgentBootstrapSnapshot {
+  const project = options.project;
+  const documents = project
+    ? project.documents.map((document) =>
+        document.id === options.document.id ? options.document : document,
+      )
+    : [options.document];
+  const content = {
+    snapshotVersion: AGENT_SNAPSHOT_VERSION,
+    project: {
+      id: project?.id ?? `project-${options.document.id}`,
+      name: project?.name ?? options.document.name,
+      structureRevision: project?.structureRevision ?? 0,
+      topDocumentId: project?.topDocumentId ?? options.document.id,
+      simulationFolderCount: project?.simulationFolders.length ?? 0,
+      documents: documents
+        .map((document) => ({
+          id: document.id,
+          name: document.name,
+          revision: document.revision,
+          instanceCount: document.instances.length,
+          netCount: document.nets.length,
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id, "en")),
+    },
+    document: {
+      id: options.document.id,
+      name: options.document.name,
+      revision: options.document.revision,
+      instanceCount: options.document.instances.length,
+      netCount: options.document.nets.length,
+      routeCount: options.document.routes.length,
+      junctionCount: options.document.junctions.length,
+      annotationCount: options.document.annotations.length,
+      noConnectCount: options.document.noConnects.length,
+      draftingObjectCount: options.document.drafting?.objects.length ?? 0,
+    },
+  };
+  return AgentBootstrapSnapshotSchema.parse({
+    ...content,
+    byteLength: utf8ByteLength(canonicalSnapshotContent(content)),
+  });
 }
 
 function pointBounds(point: Point): Rect {
@@ -238,11 +362,13 @@ function diagnosticSnapshot(
     : agentVisualDiagnostics(document, resolver);
 }
 
-function documentSnapshot(
+/** Resolve only selected instances; no route rendering, diagnostics or source tree. */
+export function selectAgentInstances(
   options: BuildAgentSessionSnapshotOptions,
-): AgentSnapshotDocument {
+  instanceIds?: readonly string[],
+  logicalNets = resolveDocumentLogicalNets(options.document),
+): AgentSnapshotDocument["instances"] {
   const { document, resolver } = options;
-  const logicalNets = resolveDocumentLogicalNets(document);
   const terminalNetByKey = new Map<string, string>();
   for (const net of document.nets) {
     for (const terminal of net.terminals) {
@@ -253,6 +379,7 @@ function documentSnapshot(
     }
   }
   const instances = [...document.instances]
+    .filter((instance) => !instanceIds || instanceIds.includes(instance.id))
     .sort((left, right) => left.id.localeCompare(right.id, "en"))
     .map((instance) => {
       const resolved = resolver.resolve(
@@ -384,6 +511,15 @@ function documentSnapshot(
       };
     });
 
+  return instances;
+}
+
+function documentSnapshot(
+  options: BuildAgentSessionSnapshotOptions,
+): AgentSnapshotDocument {
+  const { document, resolver } = options;
+  const logicalNets = resolveDocumentLogicalNets(document);
+  const instances = selectAgentInstances(options, undefined, logicalNets);
   const routingGeometry = resolveDocumentRoutingGeometry(document, resolver);
   const routes = [...document.routes]
     .sort((left, right) => left.id.localeCompare(right.id, "en"))
@@ -484,7 +620,12 @@ function documentSnapshot(
       .map((noConnect) => structuredClone(noConnect)),
     annotations: [...document.annotations]
       .sort((left, right) => left.id.localeCompare(right.id, "en"))
-      .map((annotation) => structuredClone(annotation)),
+      .map((annotation) => ({
+        ...structuredClone(annotation),
+        resolvedText: flattenRichText(
+          resolveAnnotationText(document, annotation, logicalNets),
+        ),
+      })),
     // ADR 0010 WP-R4: each drafting object carries its canonical shape plus the
     // derived resolved geometry (position(s)/bounds/diagnostics) from the
     // single resolveDraftingObjectGeometry entry; the Document's anchor JSON is

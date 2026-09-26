@@ -13,6 +13,7 @@ tmp/
 *.tsbuildinfo
 .vite/
 .wrangler/
+.DS_Store
 
 # Razavi fidelity diff generated output
 fixtures/visual-reference/razavi-reference-v1/diff/
@@ -32,6 +33,7 @@ netlists/*/agent-*-layout.svg
 
 # Target plans are a local working area, not a published artifact.
 plan/
+containers/ngspice/runtime/
 
 # Sky130 model files staged by the preview deploy for the container image.
 pdk/

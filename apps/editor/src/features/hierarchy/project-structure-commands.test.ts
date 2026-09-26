@@ -1,3 +1,4 @@
+import { executeProjectTransaction } from "@icm/edit-engine";
 import type { ProjectStructureEdit } from "@icm/edit-engine";
 import {
   canonicalPortTextDocument,
@@ -212,6 +213,26 @@ describe("Project structure commands", () => {
   it("creates a trimmed Cell with inherited presentation and activates it", () => {
     const input = dependencies();
     input.activeDocument.presentation.grid = 25;
+    input.activeDocument.instances.push({
+      id: "P1",
+      symbolId: "port",
+      placement: null,
+    });
+    input.activeDocument.nets.push({
+      id: "net-in",
+      terminals: [{ instanceId: "P1", pinName: "P" }],
+    });
+    input.activeDocument.netlist!.terminals.push({
+      id: "old-terminal",
+      name: "IN",
+      netId: "net-in",
+      direction: "input",
+      interfaceInstanceIds: ["P1"],
+    });
+    input.activeDocument.presentation.cellSymbol = {
+      minimumBodySize: { width: 100, height: 80 },
+      pinPlacements: [{ terminalId: "old-terminal", side: "west", offset: 0 }],
+    };
     const commands = createProjectStructureCommands(input);
 
     commands.createCell("  Child  ");
@@ -233,6 +254,18 @@ describe("Project structure commands", () => {
     ]);
     expect(input.onCellCreated).toHaveBeenCalledOnce();
     expect(input.setStatus).toHaveBeenCalledWith("Created Cell Child");
+    expect(edits[0]).toMatchObject({ kind: "add_document" });
+    if (edits[0]?.kind !== "add_document") return;
+    expect(edits[0].document.presentation.cellSymbol).toBeUndefined();
+    expect(
+      executeProjectTransaction(input.project, {
+        transactionId: "create-cell-test",
+        projectId: input.project.id,
+        expectedStructureRevision: input.project.structureRevision,
+        actor: { kind: "human", id: "test" },
+        edits,
+      }).ok,
+    ).toBe(true);
   });
 
   it("deletes a Cell through the project structure boundary", () => {
@@ -396,8 +429,12 @@ describe("Project structure commands", () => {
     });
     input.project.documents.push(child);
     const commands = createProjectStructureCommands(input);
+    const options = {
+      suffixCase: "lowercase",
+      suffixPlacement: "baseline",
+    } as const;
 
-    commands.formatCellTerminalAnnotations(child.id);
+    commands.formatCellTerminalAnnotations(child.id, options);
 
     expect(input.commitStructure).toHaveBeenCalledWith(
       "format-cell-port-labels",
@@ -408,7 +445,7 @@ describe("Project structure commands", () => {
           edits: [
             expect.objectContaining({
               annotation: expect.objectContaining({
-                formatOverride: canonicalPortTextDocument("IN"),
+                formatOverride: canonicalPortTextDocument("IN", options),
               }),
             }),
           ],

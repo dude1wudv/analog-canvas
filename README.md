@@ -2,8 +2,8 @@
 
 Analog Canvas 是一款本地优先、感知电气连接关系的 Web 原理图编辑器。你可以绘制并组织层次化电路，导入结构化 SPICE，导出确定性的 SPICE/Spectre 网表和矢量 SVG/PDF，将选定作品发布到社区画廊，并让已授权的 Agent 通过同一套强类型编辑模型连接项目。
 
-[浏览画廊](https://analog.sunmmyapi.xyz/) ·
-[打开编辑器](https://analog.sunmmyapi.xyz/editor) ·
+[浏览画廊](https://analog.microedulab.com/) ·
+[打开编辑器](https://analog.microedulab.com/editor) ·
 [项目文档](docs/README.md) ·
 [GitHub 仓库](https://github.com/dude1wudv/analog-canvas)
 
@@ -32,13 +32,31 @@ Analog Canvas 是一款本地优先、感知电气连接关系的 Web 原理图�
 
 ## 项目归属与隐私
 
-明确执行 **文件 / 保存** 会原地更新一个私有云项目。本地 `.icproj.json` 文件是可移植的导入、导出与备份产物；浏览器恢复数据则是保存在当前站点下的崩溃保护副本。两者都不会与正式的云端保存混淆，社区画廊条目也始终是独立的公开发布内容。托管服务仅使用第一方访客统计，并遵循浏览器的“请勿跟踪”（Do Not Track）设置，不嵌入第三方分析器。
+An explicit **File / Save** updates one private Cloud Project in place. Local
+`.icproj.json` files are portable import/export and backup artifacts; browser
+recovery is an origin-local crash-safety copy. Neither is confused with formal
+Cloud Save, and Community Gallery entries remain separate public publications.
+Shelf cards offer **Version history** for the latest three earlier saves: compare
+component changes, restore with conflict protection, or create an independent
+private branch. Restoring a draft never updates its Gallery publication.
+Refreshing the editor restores that browser window’s open project tabs,
+including unsaved circuit content, the active tab, and view positions. This
+browser-local workspace does not replace Cloud Save or portable file backups;
+undo stacks and unfinished text-field edits are not restored.
+Hosted topology checks run against the clicked snapshot in a private background
+task. Refreshing or closing the page does not cancel it; reopen the editor to
+view progress/results. Results remain available for seven days. Comparisons
+use bounded search and explicitly mark incomplete coverage; the best 20
+results are retained within an 8 MiB result budget. Vite without the hosted
+backend shows a local-only fallback that requires keeping its page open.
+The hosted service keeps its visitor reporting first-party and honors browser
+Do Not Track instead of embedding a third-party analytics tracker.
 
 **检查并保存** 会按需运行 ERC 和视觉检查，在“问题”列表与画布上显示结果，并通过同一个云项目服务保存。检查结果不会阻止保存；继续编辑会使上次检查失效，但不会自动重新运行。文件 / 保存和 Ctrl+S 始终只执行保存。
 
 ## 快速开始
 
-- **使用在线版本：** 浏览[社区画廊](https://analog.sunmmyapi.xyz/)，或[新建电路](https://analog.sunmmyapi.xyz/editor)。
+- **使用在线版本：** 浏览[社区画廊](https://analog.microedulab.com/)，或[新建电路](https://analog.microedulab.com/editor)。
 - **学习编辑器：** 阅读[入门指南](docs/user/getting-started.md)、[原理图层次结构](docs/user/schematic-hierarchy.md)、[兼容性说明](docs/user/project-compatibility.md)和[故障排查](docs/user/troubleshooting.md)。
 - **了解项目：** 查看[当前架构](docs/overall-product-plan.md)和[文档索引](docs/README.md)。
 - **开发或贡献：** 阅读[工作规则](AGENTS.md)、[当前开发阅读清单](docs/README.md#contributor-reading-order)和[测试系统](docs/testing/README.md)。
@@ -71,13 +89,11 @@ also ends local sessions;
 after restarting it, create a new connection. Cloud account, Gallery, and
 hosted simulation services are not started by this local relay.
 
-Development follows three stages: iterate locally with focused checks and
-local commits; deliver a pull request, which deploys directly to Production
-unless it carries the `preview` label, in which case it goes to Preview; then
-promote Preview-accepted work to Production when that release is authorized.
-Each local edit ends at the local stage by default. See the
-[working rules](AGENTS.md#three-stage-development-and-delivery)
-and [delivery cadence](docs/deployment.md#development-and-publication-cadence).
+Development follows two stages: iterate locally with focused checks and local
+commits, then deliver a pull request whose merge deploys directly to
+Production. See the
+[working rules](AGENTS.md#development-and-delivery)
+and [delivery cadence](docs/deployment.md#development-and-delivery-cadence).
 
 ## What the repository contains
 
@@ -114,13 +130,13 @@ and [delivery cadence](docs/deployment.md#development-and-publication-cadence).
 - `worker/`: Cloudflare Worker host and Durable Objects for static hosting,
   Gallery, accounts, Cloud Projects, simulation, and Agent relay sessions.
 - `containers/`: simulator images, gateways, and operator-host topologies for
-  ngspice and the Preview VACASK candidate.
+  ngspice and the historically named VACASK candidate used by Production.
 - `netlists/`: one circuit per directory for the SPICE import corpus,
   simulation examples and qualification, and Agent layout evaluation.
 - `fixtures/`: Project, SPICE, rawfile, export, Agent API, and visual-reference
   test inputs and goldens.
 - `scripts/` and `config/`: build, generation, validation-gate, release, and
-  deployment tooling, with the gate catalog and pinned MCP and VACASK Preview
+  deployment tooling, with the gate catalog and pinned MCP and VACASK
   declarations.
 - `tools/`, `skills/`, and `references/`: manual Razavi calibration and PDF
   extraction tools, the repository-local `circuit-layout` Agent Skill, and the
@@ -129,9 +145,9 @@ and [delivery cadence](docs/deployment.md#development-and-publication-cadence).
   delivery plans.
 
 The [Razavi reference manifest](fixtures/visual-reference/razavi-reference-v1/)
-is the sole visual authority. A merge to `main` deploys to Production, or to
-Preview when its pull request is labeled `preview`; Preview-accepted work is
-promoted with a release tag or explicit dispatch.
+is the sole visual authority. Every non-documentation merge to `main` deploys
+to Production; release tags and explicit dispatches may redeploy a commit that
+is already on `main`.
 See [deployment](docs/deployment.md) for the release and recovery contract.
 
 ## Netlist conversion
