@@ -130,7 +130,7 @@ export default function UserComponentsLibrary({
               Create Component…
             </button>
             <button type="button" onClick={onClose}>
-              关闭
+              Close
             </button>
           </div>
         </header>

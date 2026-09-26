@@ -47,7 +47,7 @@ export function GalleryTopologyCheck({ project }: { project: CircuitProject }) {
             className="publish-duplicate-cancel"
             onClick={stop}
           >
-            取消
+            Cancel
           </button>
         ) : null}
       </div>

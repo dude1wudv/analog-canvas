@@ -130,7 +130,7 @@ function ConnectionControls(
           data-testid="agent-new-connection"
           onClick={props.onNewConnection}
         >
-          新建连接
+          New connection
         </button>
       </div>
     );
@@ -160,7 +160,7 @@ function ConnectionControls(
           onClick={props.onPause}
           disabled={Boolean(props.pendingOperation)}
         >
-          暂停
+          Pause
         </button>
       ) : null}
       {props.status === "paused" ? (
@@ -170,7 +170,7 @@ function ConnectionControls(
           onClick={props.onResume}
           disabled={Boolean(props.pendingOperation)}
         >
-          继续
+          Resume
         </button>
       ) : null}
       {props.status === "offline" || props.status === "reconnecting" ? (
@@ -179,7 +179,7 @@ function ConnectionControls(
           data-testid="agent-reconnect"
           onClick={props.onReconnect}
         >
-          重试中继
+          Retry relay
         </button>
       ) : null}
       <button
@@ -187,7 +187,7 @@ function ConnectionControls(
         data-testid="agent-new-connection"
         onClick={props.onNewConnection}
       >
-        新建连接
+        New connection
       </button>
       <button type="button" data-testid="agent-revoke" onClick={props.onRevoke}>
         Disconnect

@@ -6290,7 +6290,7 @@ function WorkspaceEditor({
           />
         ) : (
           <Suspense
-            fallback={<aside className="shapes-panel" aria-label="画廊" />}
+            fallback={<aside className="shapes-panel" aria-label="Gallery" />}
           >
             <ExamplesPanel
               open={visibleLibraryPanelOpen}

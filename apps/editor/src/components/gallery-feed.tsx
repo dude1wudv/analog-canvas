@@ -1071,7 +1071,7 @@ export function GalleryFeed({
                   data-testid="gallery-filter-clear"
                   onClick={() => selectAuthor(null)}
                 >
-                  显示所有作者
+                  Show everyone
                 </button>
               </div>
             ) : null}
@@ -1085,12 +1085,12 @@ export function GalleryFeed({
               (bundledFallback.status === "idle" ||
                 bundledFallback.status === "loading")) ? (
               <p className="gallery-status" data-testid="gallery-loading">
-                正在加载画廊…
+                Loading gallery…
               </p>
             ) : (
               <section className="gallery-wall">
                 <Masonry
-                  aria-label="已发布电路"
+                  aria-label="Published circuits"
                   items={[
                     ...visibleEntries.map((entry) => ({
                       key: entry.id,
@@ -1134,8 +1134,8 @@ export function GalleryFeed({
                                   <span
                                     className="gallery-tile-netlist"
                                     data-testid={`gallery-netlist-${entry.id}`}
-                                    title="可提取为 SPICE 网表"
-                                    aria-label="可提取为 SPICE 网表"
+                                    title="Extracts to a SPICE netlist"
+                                    aria-label="Extracts to a SPICE netlist"
                                   >
                                     <NetlistIcon />
                                   </span>
@@ -1289,7 +1289,7 @@ export function GalleryFeed({
                                 />
                                 <span className="gallery-tile-copy">
                                   <span className="gallery-tile-kicker">
-                                    内置示例
+                                    Built-in example
                                   </span>
                                   <span className="gallery-tile-name">
                                     {tile.name}
@@ -1363,7 +1363,7 @@ export function GalleryFeed({
                       className="gallery-status"
                       data-testid="gallery-search-pending"
                     >
-                      暂无匹配项——正在搜索更早的电路…
+                      No matches yet — searching older circuits…
                     </p>
                   ) : (
                     <p

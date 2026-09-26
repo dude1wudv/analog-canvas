@@ -138,7 +138,7 @@ export function ProjectCodePanel({
           onClick={apply}
           disabled={!dirty || !parsed.ok || changedOutsideDraft}
         >
-          应用
+          Apply
         </button>
       </div>
       <Suspense

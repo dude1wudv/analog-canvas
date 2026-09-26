@@ -41,7 +41,7 @@ export function GalleryOwnerMenu({
           href={`/g/${entry.id}`}
           data-testid={`gallery-owner-edit-${entry.id}`}
         >
-          编辑并替换
+          Edit and replace
         </a>
         <InlineConfirm
           disabled={busy}
@@ -49,7 +49,7 @@ export function GalleryOwnerMenu({
           confirmLabel="Really withdraw"
           onConfirm={onWithdraw}
         >
-          撤回
+          Withdraw
         </InlineConfirm>
       </div>
     </details>
@@ -88,7 +88,7 @@ export function GalleryWithdrawMenu({
           confirmLabel="Really withdraw"
           onConfirm={onWithdraw}
         >
-          撤回
+          Withdraw
         </InlineConfirm>
       </div>
     </details>
@@ -191,13 +191,13 @@ export function RejectEntryDialog({
             id="gallery-reject-note"
             value={note}
             maxLength={360}
-            placeholder="为提交者补充说明…"
+            placeholder="Add context for the submitter…"
             data-testid="gallery-owner-reject-note"
             onChange={(event) => setNote(event.currentTarget.value)}
           />
           <div className="gallery-owner-dialog-actions">
             <button type="button" disabled={busy} onClick={onClose}>
-              取消
+              Cancel
             </button>
             <button
               type="submit"

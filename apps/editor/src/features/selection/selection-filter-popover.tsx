@@ -88,7 +88,7 @@ export function SelectionFilterPopover({
           onClick={onClose}
           aria-label="Close selectable-object choices"
         >
-          关闭
+          Close
         </button>
       </header>
       <div className="selection-filter-presets" aria-label="筛选预设">

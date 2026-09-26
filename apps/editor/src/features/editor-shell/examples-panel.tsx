@@ -227,7 +227,7 @@ export function ExamplesPanel({
               className="examples-panel-search"
               value={searchQuery}
               placeholder="Search Gallery…"
-              aria-label="搜索电路"
+              aria-label="Search circuits"
               data-testid="examples-panel-search"
               onChange={(event) => setSearchQuery(event.target.value)}
             />

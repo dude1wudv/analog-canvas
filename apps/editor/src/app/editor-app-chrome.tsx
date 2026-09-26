@@ -213,7 +213,7 @@ export function EditorAppChrome({
                 </button>
                 {placeProjectCell.enabled ? (
                   <button type="button" onClick={placeProjectCell.execute}>
-                    从此项目放置 Cell…
+                    Place Cell from this Project…
                   </button>
                 ) : null}
                 <button
@@ -227,10 +227,10 @@ export function EditorAppChrome({
                 </button>
                 {hasSelectionActions ? (
                   <>
-                    <span className="command-group-label">选择</span>
+                    <span className="command-group-label">Selection</span>
                     {deleteSelection.enabled ? (
                       <button type="button" onClick={deleteSelection.execute}>
-                        删除
+                        Delete
                       </button>
                     ) : null}
                     {copySelectionImages.map((action) =>
@@ -247,7 +247,7 @@ export function EditorAppChrome({
                     {rotate.enabled ? (
                       <button type="button" onClick={rotate.execute}>
                         <ToolIcon name="rotate" />
-                        旋转
+                        Rotate
                       </button>
                     ) : null}
                     {mirrorLeftRight.enabled ? (

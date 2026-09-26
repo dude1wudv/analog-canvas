@@ -1088,7 +1088,7 @@ function SimulationSurface(props: SpiceSimulationSurfaceProps) {
                     aria-label={`Delete result ${item.id}`}
                     onClick={() => void deleteArchivedRun(item.id)}
                   >
-                    删除
+                    Delete
                   </button>
                 </li>
               ))}

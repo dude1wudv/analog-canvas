@@ -141,7 +141,7 @@ function EntryMenu({
             data-testid={`${prefix}-delete-${entry.id}`}
             onConfirm={() => act("delete")}
           >
-            永久删除
+            Delete forever
           </InlineConfirm>
         ) : (
           <button
@@ -358,7 +358,7 @@ export function Moderation() {
             : "review-page"
       }
     >
-      <GalleryChrome subtitle="内容审核" />
+      <GalleryChrome subtitle="Moderation" />
       <div className="page-body moderation-body">
         {state.status !== "ready" ? (
           <p className="gallery-status">

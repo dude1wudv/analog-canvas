@@ -289,7 +289,7 @@ export function VersionHistoryDialog({
                     disabled={busy}
                     onClick={() => void run(() => restore(version.versionId))}
                   >
-                    恢复
+                    Restore
                   </button>
                 </div>
               </article>

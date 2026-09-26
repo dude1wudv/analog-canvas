@@ -164,7 +164,7 @@ export function ExternalCircuitEditor({
                 Confirm delete
               </button>
               <button type="button" onClick={() => setConfirmDelete(false)}>
-                取消
+                Cancel
               </button>
             </>
           ) : (

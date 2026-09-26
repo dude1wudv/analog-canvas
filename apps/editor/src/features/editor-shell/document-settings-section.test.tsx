@@ -53,7 +53,7 @@ describe("DocumentSettingsSection", () => {
     );
 
     expect(markup).not.toContain('role="dialog"');
-    expect(markup).toContain('aria-label="文档设置"');
+    expect(markup).toContain('aria-label="Document settings"');
     expect(markup).toContain('data-testid="document-settings-code-editor"');
     expect(markup).toContain('aria-label="Loading Properties code"');
     expect(markup).toContain("Properties code");

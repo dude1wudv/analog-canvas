@@ -255,13 +255,13 @@ export function PublishGalleryDialog({
                 href="/api/auth/github/start"
                 data-testid="publish-signin-github"
               >
-                使用 GitHub 继续
+                Continue with GitHub
               </a>
               <a
                 href="/api/auth/google/start"
                 data-testid="publish-signin-google"
               >
-                使用 Google 继续
+                Continue with Google
               </a>
             </div>
             <p className="publish-gallery-signin-note">
@@ -370,7 +370,7 @@ export function PublishGalleryDialog({
                 电路名称
                 <input
                   dir="auto"
-                  aria-label="电路名称"
+                  aria-label="Circuit name"
                   autoComplete="off"
                   value={name}
                   maxLength={120}
@@ -388,7 +388,7 @@ export function PublishGalleryDialog({
                 </span>
                 <textarea
                   dir="auto"
-                  aria-label="说明"
+                  aria-label="Description"
                   aria-describedby="publish-gallery-description-count"
                   aria-invalid={descriptionTooLong}
                   value={description}
@@ -422,7 +422,7 @@ export function PublishGalleryDialog({
                         type="button"
                         className="publish-gallery-tag"
                         data-testid={`publish-tag-${tag}`}
-                        title="移除标签"
+                        title="Remove tag"
                         onClick={() => {
                           setTagsEdited(true);
                           setTags((previous) =>
@@ -437,9 +437,9 @@ export function PublishGalleryDialog({
                 ) : null}
                 <input
                   dir="auto"
-                  aria-label="添加标签"
+                  aria-label="Add tag"
                   autoComplete="off"
-                  placeholder="输入标签后按 Enter"
+                  placeholder="Type a tag and press Enter"
                   value={tagDraft}
                   maxLength={32}
                   onChange={(event) => setTagDraft(event.currentTarget.value)}

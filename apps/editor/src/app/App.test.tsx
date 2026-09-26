@@ -178,7 +178,7 @@ describe("editor shell", () => {
     expect(markup).toContain('data-testid="hierarchy-entry"');
     expect(markup).toContain('data-testid="cell-navigation"');
     expect(markup).toContain("Enter Cell");
-    expect(markup).toContain("Manage Cells…");
+    expect(markup).toContain("管理 Cell…");
   });
 
   it("links GitHub and the change log directly without a Help surface", () => {
@@ -186,10 +186,10 @@ describe("editor shell", () => {
     const markup = renderToStaticMarkup(<App project={project} />);
 
     expect(markup).not.toContain(">About</button>");
-    expect(markup).not.toContain(">帮助</button>");
+    expect(markup).not.toContain(">Help</button>");
     expect(markup).not.toContain('id="editor-help-dialog"');
     expect(markup).toContain('data-testid="editor-report-bug"');
-    expect(markup).toContain("Report bug");
+    expect(markup).toContain("报告问题");
     expect(markup).toContain('data-testid="editor-repository-link"');
     expect(markup).toContain('aria-label="GitHub repository"');
     expect(markup).toContain(
@@ -260,7 +260,7 @@ describe("editor shell", () => {
     const project = createEmptyProject("timing-flag", "Timing Flag");
     const markup = renderToStaticMarkup(<App project={project} />);
 
-    expect(markup).not.toContain('title="数字仿真"');
+    expect(markup).not.toContain('title="Digital Simulation"');
     expect(markup).not.toContain('data-testid="timing-simulation-panel"');
   });
 
@@ -292,7 +292,7 @@ describe("editor shell", () => {
     // The toolbar button that opens a panel is the one that closes it.
     expect(markup).not.toContain('aria-label="Close project tools"');
     expect(markup).not.toContain('data-testid="selection-shelf"');
-    expect(markup).not.toContain('aria-label="属性"');
+    expect(markup).not.toContain('aria-label="Properties"');
     // The panel toggles live in the horizontal toolbar; there is no rail.
     expect(markup).not.toContain('aria-label="Tool rail"');
     expect(markup).toContain('aria-label="图形"');

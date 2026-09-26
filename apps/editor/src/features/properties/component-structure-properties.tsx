@@ -109,7 +109,7 @@ export function CellSymbolLayoutProperties({
                     <option value="auto">Auto</option>
                     <option value="west">Left</option>
                     <option value="east">Right</option>
-                    <option value="north">顶层</option>
+                    <option value="north">Top</option>
                     <option value="south">Bottom</option>
                   </select>
                 </td>

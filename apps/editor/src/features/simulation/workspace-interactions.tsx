@@ -393,7 +393,7 @@ function NameInput() {
             ))}
           </select>
           <button type="button" onClick={() => finish(false, true)}>
-            创建
+            Create
           </button>
         </div>
       ) : null}

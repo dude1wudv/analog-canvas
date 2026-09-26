@@ -66,14 +66,14 @@ export function HierarchyToolbar({
         </button>
         <div className="cell-command-row" data-testid="cell-command-menu">
           <button type="button" onClick={onManageCells}>
-            选中层次化模块
+            管理 Cell…
           </button>
           <button
             type="button"
             onClick={onPlaceCell}
             disabled={documents.length < 2}
           >
-            选中层次化模块
+            Place Cell
           </button>
         </div>
       </div>

@@ -91,7 +91,7 @@ export function ProjectTabs({
                   }
                 }}
               >
-                {tab.dirty ? <span aria-label="未保存">● </span> : null}
+                {tab.dirty ? <span aria-label="Unsaved">● </span> : null}
                 {tab.name}
               </button>
               <button

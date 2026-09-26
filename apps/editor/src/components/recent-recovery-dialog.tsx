@@ -193,7 +193,7 @@ export function RecentRecoveryDialog({
                           : `Restore ${session.projectName}`
                       }
                     >
-                      恢复
+                      Restore
                       {restorable === "previous" ? " previous copy" : ""}
                     </button>
                     <button

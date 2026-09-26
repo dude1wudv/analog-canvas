@@ -202,7 +202,7 @@ export function ComponentPropertyCodeEditor({
               change(projection.format(defaultComponentPropertyCode(context)))
             }
           >
-            默认值
+            Defaults
           </button>
           {(!parsed.ok || rejected) && (
             <button

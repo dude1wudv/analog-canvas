@@ -250,7 +250,7 @@ export function EditorStatusbar({
           target="_blank"
           rel="noreferrer"
         >
-          更新记录
+          Change Log
         </a>
         <button
           type="button"

@@ -76,8 +76,8 @@ export function ProjectMenu({
           <span
             className="project-unsaved-indicator"
             data-testid="project-unsaved-indicator"
-            aria-label="会丢弃最新编辑"
-            title="会丢弃最新编辑"
+            aria-label="Unsaved changes"
+            title="Unsaved changes"
           >
             ●
           </span>
@@ -148,7 +148,7 @@ export function ProjectMenu({
                   {tab.dirty ? (
                     <span
                       className="project-menu-dirty"
-                      aria-label="会丢弃最新编辑"
+                      aria-label="Unsaved changes"
                     >
                       ●
                     </span>

@@ -107,7 +107,7 @@ export function CellParametersEditor({
   return (
     <section className="cell-interface-section" aria-label="Cell parameters">
       <header>
-        <h3>参数</h3>
+        <h3>Parameters</h3>
         <span className="cell-count-badge">{parameters.length}</span>
       </header>
       <div
@@ -117,7 +117,7 @@ export function CellParametersEditor({
       >
         <div className="cell-parameter-row" role="row">
           <span role="columnheader">Name</span>
-          <span role="columnheader">默认</span>
+          <span role="columnheader">Default</span>
           <span />
         </div>
         {parameters.map((parameter) => (

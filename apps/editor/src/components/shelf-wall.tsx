@@ -309,7 +309,7 @@ export function ShelfWall() {
         已保存 {state.projects.length} / {CLOUD_PROJECT_LIMIT} 个 · 仅你可见
       </p>
       <Masonry
-        aria-label="收藏架上的电路"
+        aria-label="Circuits on your shelf"
         items={[...state.projects]
           .sort(
             (a, b) =>
@@ -424,7 +424,7 @@ export function ShelfWall() {
                   disabled={busyId !== null}
                   onConfirm={() => removeProject(project)}
                 >
-                  删除
+                  Delete
                 </InlineConfirm>
               </div>
             ),

@@ -244,7 +244,7 @@ export function MySubmissions() {
                       disabled={busy === entry.id}
                       onConfirm={() => remove(entry)}
                     >
-                      删除
+                      Delete
                     </InlineConfirm>
                     {entry.status === "recycled" && !entry.rejectReason ? (
                       <button

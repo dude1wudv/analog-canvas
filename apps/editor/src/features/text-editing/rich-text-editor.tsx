@@ -983,7 +983,7 @@ export function RichTextEditor({
           <>
             <button
               type="button"
-              aria-label="粗体"
+              aria-label="Bold"
               aria-pressed={activeStyles.bold}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
@@ -993,7 +993,7 @@ export function RichTextEditor({
             </button>
             <button
               type="button"
-              aria-label="斜体"
+              aria-label="Italic"
               aria-pressed={activeStyles.italic}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
@@ -1003,7 +1003,7 @@ export function RichTextEditor({
             </button>
             <button
               type="button"
-              aria-label="下标"
+              aria-label="Subscript"
               aria-pressed={activeStyles.subscript}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
@@ -1013,7 +1013,7 @@ export function RichTextEditor({
             </button>
             <button
               type="button"
-              aria-label="上标"
+              aria-label="Superscript"
               aria-pressed={activeStyles.superscript}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
@@ -1023,7 +1023,7 @@ export function RichTextEditor({
             </button>
             <button
               type="button"
-              aria-label="上划线"
+              aria-label="Overbar"
               aria-pressed={activeStyles.overbar}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
@@ -1057,7 +1057,7 @@ export function RichTextEditor({
               ref={symbolButtonRef}
               className="rich-text-symbol-button"
               type="button"
-              aria-label="插入电路符号"
+              aria-label="Insert circuit symbol"
               aria-haspopup="menu"
               aria-expanded={symbolMenuOpen}
               title="Greek letters and symbols · or type \phi then Space"
@@ -1076,7 +1076,7 @@ export function RichTextEditor({
                     // leaving the text, which would commit and close it.
                     data-canvas-text-editor-part=""
                     role="menu"
-                    aria-label="电路符号"
+                    aria-label="Circuit symbols"
                     onMouseDown={(event) => event.preventDefault()}
                   >
                     {(

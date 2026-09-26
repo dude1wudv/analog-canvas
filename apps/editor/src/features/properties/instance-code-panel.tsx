@@ -49,7 +49,7 @@ export function InstanceCodePanel({
   }
   return (
     <section className="netlist-profile-code" aria-label="Instance code">
-      <h2>实例</h2>
+      <h2>Instances</h2>
       <p>
         Edit or paste JSON to update the circuit. Keys are Cell and instance
         IDs; symbol is read-only. Omitted instances stay unchanged. Removing a

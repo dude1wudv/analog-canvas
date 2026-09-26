@@ -169,7 +169,7 @@ export function DrawingToolbar({
           onClick={onToggleExamples}
         >
           <ToolIcon name="examples" />
-          <span>画廊</span>
+          <span>Gallery</span>
         </ImmediatePanelButton>
         <ImmediatePanelButton
           testId="library-toggle"
@@ -274,7 +274,7 @@ export function DrawingToolbar({
         onClick={onOpenDocumentSettings}
       >
         <ToolIcon name="style" />
-        <span>属性</span>
+        <span>Properties</span>
       </button>
     </div>
   );

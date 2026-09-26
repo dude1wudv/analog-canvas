@@ -83,7 +83,7 @@ describe("gallery panel view", () => {
 
   it("says the wall's size from the server, never a guess", () => {
     expect(deriveGalleryPanelView(feed, { searchQuery: "" }).countLabel).toBe(
-      "120 circuits",
+      "120 个电路",
     );
     // A pre-totals API answers null; the panel then says nothing at all.
     expect(
@@ -144,7 +144,7 @@ describe("gallery panel view", () => {
       selectedTags: ["clock", "bias"],
     });
     expect(view.visibleEntries.map((e) => e.id)).toEqual(["g-2"]);
-    expect(view.countLabel).toBe("120 circuits · 1 match");
+    expect(view.countLabel).toBe("120 个电路 · 1 个匹配");
   });
 
   it("keeps filtered zero results in the Gallery and searches remaining pages", () => {
@@ -161,7 +161,7 @@ describe("gallery panel view", () => {
     const done = deriveGalleryPanelView(feed, filters);
     expect(done.showGallery).toBe(true);
     expect(done.emptyMessage).toBe("No circuits match these filters.");
-    expect(done.countLabel).toBe("120 circuits · 0 matches");
+    expect(done.countLabel).toBe("120 个电路 · 0 个匹配");
   });
 
   it("stands the bundled circuits in while the feed is unavailable", () => {

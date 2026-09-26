@@ -20,9 +20,9 @@ describe("SelectionFilterPopover", () => {
     expect(markup).toContain("Wires");
     expect(markup).toContain("Net / power names");
     expect(markup).toContain("Note text / callouts");
-    expect(markup).toContain(">全部<");
-    expect(markup).toContain(">无<");
-    expect(markup).toContain(">默认<");
+    expect(markup).toContain(">All<");
+    expect(markup).toContain(">None<");
+    expect(markup).toContain(">Default<");
   });
 
   it("renders nothing while closed", () => {

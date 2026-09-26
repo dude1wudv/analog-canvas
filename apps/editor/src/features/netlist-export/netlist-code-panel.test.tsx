@@ -42,9 +42,9 @@ describe("live netlist controls", () => {
     expect(markup).toContain('aria-label="L netlist target"');
     expect(markup.match(/<select/g)).toHaveLength(7);
     expect(markup).not.toContain("<input");
-    expect(markup).toContain(">默认</button>");
+    expect(markup).toContain(">Default</button>");
     expect(markup).toMatch(
-      /aria-label="Netlist output options"[\s\S]*>默认<\/button><\/div>/u,
+      /aria-label="Netlist output options"[\s\S]*>Default<\/button><\/div>/u,
     );
     expect(markup).toContain('class="netlist-code-viewport"');
     expect(markup).not.toContain("<h2>Netlist</h2>");

@@ -238,7 +238,7 @@ export function CellManagerDialog({
             onClick={onClose}
             aria-label="Close Cell Manager"
           >
-            关闭
+            Close
           </button>
         </header>
 
@@ -345,7 +345,7 @@ export function CellManagerDialog({
                     >
                       <span>
                         <strong>{cell.name}</strong>
-                        {cell.isTop ? <em>顶层</em> : null}
+                        {cell.isTop ? <em>Top</em> : null}
                       </span>
                       <small>
                         {cell.portCount} ports · {cell.callers.length} callers
@@ -501,7 +501,7 @@ export function CellManagerDialog({
                       }
                       onClick={() => setDeleteId(selectedEntry.id)}
                     >
-                      删除
+                      Delete
                     </button>
                   </div>
                 </header>
@@ -622,7 +622,7 @@ export function CellManagerDialog({
                 </div>
                 <footer className="editor-action-dialog-actions">
                   <button type="button" onClick={dismissActionDialog}>
-                    取消
+                    Cancel
                   </button>
                   <button
                     type="button"
@@ -670,7 +670,7 @@ export function CellManagerDialog({
                 </div>
                 <footer className="editor-action-dialog-actions">
                   <button type="button" autoFocus onClick={dismissActionDialog}>
-                    取消
+                    Cancel
                   </button>
                   <button
                     type="button"
@@ -718,14 +718,14 @@ export function CellManagerDialog({
                 </div>
                 <footer className="editor-action-dialog-actions">
                   <button type="button" onClick={dismissActionDialog}>
-                    取消
+                    Cancel
                   </button>
                   <button
                     type="submit"
                     className="primary"
                     disabled={draftName.trim().length === 0}
                   >
-                    创建
+                    Create
                   </button>
                 </footer>
               </form>

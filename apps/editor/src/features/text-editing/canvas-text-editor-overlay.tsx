@@ -335,7 +335,7 @@ export function CanvasTextEditorOverlay({
             autoFocus
             className="inline-canvas-text-editor"
             autoComplete="off"
-            aria-label="画布文本编辑器"
+            aria-label="Canvas text editor"
             data-editor-kind={session.plainTextKind}
             disabled={disabled}
             value={flattenRichText(session.content)}

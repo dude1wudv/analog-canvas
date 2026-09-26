@@ -97,8 +97,8 @@ export function GalleryTagSidebar({
           autoComplete="off"
           type="search"
           value={search}
-          placeholder="名称、作者、标签…"
-          aria-label="搜索电路"
+          placeholder="Name, author, tag…"
+          aria-label="Search circuits"
           data-testid="gallery-search"
           onChange={(event) => onSearchChange(event.currentTarget.value)}
         />

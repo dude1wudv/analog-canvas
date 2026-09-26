@@ -608,7 +608,7 @@ export function NetlistCodePanel({
               if (applyProcess(profiles[fallback.selected])) onReset();
             }}
           >
-            默认
+            Default
           </button>
         </div>
       </div>

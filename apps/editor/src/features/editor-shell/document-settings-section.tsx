@@ -116,7 +116,7 @@ export function DocumentSettingsSection({
   return (
     <section
       className="component-property-code-editor document-settings-code-editor"
-      aria-label="文档设置"
+      aria-label="Document settings"
       data-testid="document-settings-code-editor"
     >
       <header>
@@ -129,7 +129,7 @@ export function DocumentSettingsSection({
               change(defaultDocumentSettingsCode(document, canvas))
             }
           >
-            默认值
+            Defaults
           </button>
           {(!parsed.ok || rejected) && (
             <button
