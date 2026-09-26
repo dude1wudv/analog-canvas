@@ -148,9 +148,7 @@ test("a saved-folder batch prepares first and exposes each ordinary run", async 
   await panel
     .getByRole("treeitem", { name: "文件夹 FF", exact: true })
     .click({ button: "right" });
-  await page
-    .getByRole("menuitem", { name: "Run selected folders (2)" })
-    .click();
+  await page.getByRole("menuitem", { name: "运行所选文件夹（2）" }).click();
   await panel.getByTitle("批量队列", { exact: true }).click();
   const batch = panel.locator(".simulation-batch-menu-popover");
   await expect(batch).toContainText("Batch · finished");

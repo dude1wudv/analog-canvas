@@ -63,10 +63,10 @@ test("canvas edits one visual annotation without changing the Netlist Reference"
     cancelControl,
     deleteControl,
   ] = await Promise.all([
-    controlBounds("Decrease text size"),
-    controlBounds("Increase text size"),
-    controlBounds("Apply text changes"),
-    controlBounds("Cancel text changes"),
+    controlBounds("减小字号"),
+    controlBounds("增大字号"),
+    controlBounds("应用文本更改"),
+    controlBounds("取消文本更改"),
     controlBounds("Delete text"),
   ]);
   const actionControls = [applyControl, cancelControl, deleteControl];

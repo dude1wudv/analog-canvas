@@ -869,9 +869,7 @@ test("a power rail drawn across the tops of wires connects to them", async ({
   await expect(page.locator('[data-canvas-hit-kind="route"]')).toHaveCount(5);
   await page.keyboard.press("Escape");
   await clickNetlistWorkflowCommand(page, "check-and-save");
-  await expect(page.getByTestId("statusbar-issues")).toHaveText(
-    "No issues found",
-  );
+  await expect(page.getByTestId("statusbar-issues")).toHaveText("未发现问题");
 });
 
 test("a component dragged onto a wire lands and connects", async ({ page }) => {
@@ -911,14 +909,14 @@ test("a component dragged onto a wire lands and connects", async ({ page }) => {
   await page.mouse.move(cx, cy + travel, { steps: 6 });
   await page.mouse.up();
 
-  await expect(page.getByTestId("status")).toContainText("connected them");
+  await expect(page.getByTestId("status")).toContainText(
+    "已吸附引脚端点并直接连接",
+  );
   // The pin became a real endpoint on the conductor, so the wire is now two
   // pieces meeting at it.
   await expect(page.locator('[data-canvas-hit-kind="route"]')).toHaveCount(2);
   await clickNetlistWorkflowCommand(page, "check-and-save");
-  await expect(page.getByTestId("statusbar-issues")).toHaveText(
-    "No issues found",
-  );
+  await expect(page.getByTestId("statusbar-issues")).toHaveText("未发现问题");
 });
 
 test("the preview draws the wire the release commits, contacts and all", async ({

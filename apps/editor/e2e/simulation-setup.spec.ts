@@ -443,7 +443,7 @@ test("one Testbench persists several independently named folders", async ({
   await page.getByRole("menuitem", { name: "删除…" }).click();
   await page
     .getByRole("dialog", { name: "Delete folder Bias sweep?" })
-    .getByRole("button", { name: "Cancel" })
+    .getByRole("button", { name: "取消", exact: true })
     .click();
   await expect(
     folders.getByRole("treeitem", { name: "文件夹 Bias sweep", exact: true }),

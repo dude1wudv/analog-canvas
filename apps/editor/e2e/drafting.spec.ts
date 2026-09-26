@@ -629,7 +629,7 @@ test("authors one validated formula through the canonical text editor", async ({
   await expect(source).toHaveValue(/\\prod/u);
   await expect(source).toHaveValue(/\\mathrm\{d\}/u);
 
-  const moreSymbols = page.getByText("More symbols", { exact: true });
+  const moreSymbols = page.getByText("更多符号", { exact: true });
   await expect(page.getByRole("toolbar", { name: "Greek" })).not.toBeVisible();
   await moreSymbols.click();
   const formulaScroll = page.getByTestId("formula-scroll-region");

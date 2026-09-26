@@ -193,9 +193,7 @@ test("simulation examples confirm whole-Project replacement and protect existing
     .click();
   const confirmation = page.getByRole("dialog", { name: "Open RC Filters?" });
   await expect(confirmation).toContainText("entire Project");
-  await confirmation
-    .getByRole("button", { name: "Cancel", exact: true })
-    .click();
+  await confirmation.getByRole("button", { name: "取消", exact: true }).click();
   await expect(cards).toBeVisible();
   await expect
     .poll(async () =>
@@ -1571,7 +1569,7 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
   await runFiles
     .getByRole("treeitem", { name: "Run", exact: true })
     .click({ button: "right" });
-  const visibleEntries = await menuZip("Download…");
+  const visibleEntries = await menuZip("下载…");
   expect(
     Object.keys(visibleEntries).some((path) => path.startsWith("run/logs/")),
   ).toBe(true);
@@ -1640,7 +1638,7 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
   );
   await downloadBytes(page, "File", "Export Project File…");
   await expect(panel.locator(".simulation-code-status")).toContainText(
-    "earlier Project revision",
+    "较早的项目版本",
   );
   await panel
     .getByRole("treeitem", { name: "Run", exact: true })
@@ -1709,7 +1707,7 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
   await expect(
     panel.getByRole("textbox", { name: "仿真源代码编辑器" }),
   ).toContainText(".temp 30");
-  await expect(panel.getByRole("status")).toHaveText("No run yet");
+  await expect(panel.getByRole("status")).toHaveText("尚未运行");
   await panel.locator(".simulation-run-history > summary").click();
   const savedArchives = panel.getByRole("region", {
     name: "Saved folder results",
@@ -1789,7 +1787,7 @@ test("Simulation defaults a new experiment to an ordinary authored Cell", async 
   expect(statusBox!.x).toBeGreaterThanOrEqual(runBox!.x + runBox!.width);
   expect(Math.abs(statusBox!.y - runBox!.y)).toBeLessThanOrEqual(2);
   await expect(taskbar).toHaveCount(1);
-  for (const name of ["Explorer", "Save source"]) {
+  for (const name of ["资源管理器", "Save source"]) {
     const box = await taskbar
       .getByRole("button", { name, exact: true })
       .boundingBox();
@@ -1869,7 +1867,7 @@ test("Simulation defaults a new experiment to an ordinary authored Cell", async 
   await page.getByRole("button", { name: "Minimize simulation" }).click();
   await expect(page.getByTestId("library-toggle")).toBeEnabled();
   await expect(page.getByTestId("open-analog-simulation")).toContainText(
-    "Minimized",
+    "已最小化",
   );
   await clickNetlistWorkflowCommand(page, "open-analog-simulation");
   await page.getByRole("button", { name: "Exit simulation" }).click();
@@ -1877,7 +1875,7 @@ test("Simulation defaults a new experiment to an ordinary authored Cell", async 
     name: "Exit Simulation?",
   });
   await expect(exitConfirmation).toContainText("temporary run files");
-  await exitConfirmation.getByRole("button", { name: "Cancel" }).click();
+  await exitConfirmation.getByRole("button", { name: "取消" }).click();
   await expect(page.getByRole("region", { name: "模拟仿真" })).toBeVisible();
   await page.getByRole("button", { name: "Exit simulation" }).click();
   await page
@@ -2140,7 +2138,9 @@ test("workspace menus, selection, empty editors and resizing share non-destructi
       .getByRole("tab"),
   ).toHaveCount(0);
   await expect(
-    workspace.getByText("Select a file to edit.", { exact: false }),
+    workspace.getByText("请选择要编辑的文件。关闭标签页不会删除文件。", {
+      exact: true,
+    }),
   ).toBeVisible();
   await alpha.press("ArrowRight");
   await files
@@ -2211,7 +2211,7 @@ test("Explorer context downloads preserve multi-selection and directory contents
     workspace.getByRole("button", { name: "资源管理器", exact: true }),
   ).toHaveCount(1);
   await expect(
-    workspace.getByRole("button", { name: /Download selected/ }),
+    workspace.getByRole("button", { name: /下载所选项/ }),
   ).toHaveCount(0);
   await expect(
     alphaFiles.getByRole("treeitem", { name: "Source", exact: true }),
@@ -2230,7 +2230,7 @@ test("Explorer context downloads preserve multi-selection and directory contents
   ).toHaveAttribute("aria-selected", "true");
   await run.click({ button: "right" });
   const pending = page.waitForEvent("download");
-  await page.getByRole("menuitem", { name: "Download selected (2)…" }).click();
+  await page.getByRole("menuitem", { name: "下载所选项（2）…" }).click();
   const stream = await (await pending).createReadStream();
   const chunks: Buffer[] = [];
   for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
@@ -2284,7 +2284,7 @@ test("Explorer context downloads preserve multi-selection and directory contents
   await alpha.click({ modifiers: ["ControlOrMeta"] });
   await alpha.click({ button: "right" });
   const folderDownload = page.waitForEvent("download");
-  await page.getByRole("menuitem", { name: "Download selected (2)…" }).click();
+  await page.getByRole("menuitem", { name: "下载所选项（2）…" }).click();
   const folderStream = await (await folderDownload).createReadStream();
   const folderChunks: Buffer[] = [];
   for await (const chunk of folderStream!)
@@ -2401,7 +2401,7 @@ test("inline naming commits once on blur, cancels on Escape, and deletion uses a
   const dialog = page.getByRole("dialog", { name: "Delete folder Renamed?" });
   await expect(dialog).toBeVisible();
   await expect(
-    dialog.getByRole("button", { name: "Cancel", exact: true }),
+    dialog.getByRole("button", { name: "取消", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(renamed).toBeVisible();

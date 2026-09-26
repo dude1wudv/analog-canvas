@@ -272,9 +272,7 @@ test("preserves the original import reference through portable save and distingu
   expect(await copyNetlistText(page)).toBe(beforeNetlist);
   await clickNetlistWorkflowCommand(page, "check-and-save");
   await page.getByTestId("statusbar-issues").click();
-  await page
-    .getByRole("button", { name: /Show non-blocking observations/ })
-    .click();
+  await page.getByTestId("diagnostic-observations-toggle").click();
   await expect(page.getByTestId("project-diagnostics")).toContainText(
     "Original import reference is unavailable",
   );

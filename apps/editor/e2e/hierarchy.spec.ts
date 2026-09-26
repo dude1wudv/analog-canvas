@@ -287,10 +287,10 @@ test("traces a parent Net through the second Cell occurrence and returns to its 
     "data-net-id",
     "IN",
   );
-  await expect(
-    page.getByRole("button", { name: /Return: X1\.IN/ }),
-  ).toHaveCount(0);
-  await page.getByRole("button", { name: /Return: X2\.IN/ }).click();
+  await expect(page.getByRole("button", { name: /返回: X1\.IN/ })).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: /返回: X2\.IN/ }).click();
   await expect(page.getByTestId("active-document-id")).toHaveText(parent.id);
   await expect(page.getByTestId("net-highlight-overlay")).toHaveAttribute(
     "data-net-id",
@@ -1044,11 +1044,10 @@ test("keeps Hierarchy discoverable and restores the operation row on demand", as
   await expect(entry).toHaveText("Hierarchy");
   await expect(toolbar).toHaveCount(0);
   await expect(entry).toHaveAttribute("aria-expanded", "false");
-
   await createCell(page, "FirstStage");
   await expect(toolbar).toBeVisible();
   await expect(
-    toolbar.getByRole("button", { name: "Manage Cells…" }),
+    toolbar.getByRole("button", { name: "管理 Cell…" }),
   ).toBeVisible();
   await expect(
     toolbar.getByRole("button", { name: "Place Cell" }),

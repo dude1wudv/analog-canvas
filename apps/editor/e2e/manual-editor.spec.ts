@@ -2398,7 +2398,7 @@ test("keeps Bulk status and its prominent draw action on one compact row", async
   const draw = bulk.getByRole("button", { name: "绘制体端连接" });
   await expect(draw).toBeVisible();
   await expect(draw).toHaveText("连接");
-  await expect(bulk.locator(".mos-bulk-status")).toHaveText("Unconnected");
+  await expect(bulk.locator(".mos-bulk-status")).toHaveText("未连接");
   await expect(bulk).not.toContainText("unresolved");
   const layout = await bulk.evaluate((section) => {
     const heading = section.querySelector("h2")!.getBoundingClientRect();
@@ -2499,7 +2499,7 @@ test("initializes NMOS bulk from the first explicitly placed Ground", async ({
     "M1.B → 0 · Cell 默认值",
   );
   await expect(bulk.getByRole("button", { name: "绘制体端连接" })).toHaveText(
-    "Draw",
+    "绘制",
   );
 
   const saved = parseSavedProject(
@@ -5129,17 +5129,13 @@ test("shows first-party visitor analytics without tracking the dashboard itself"
   await expect(
     page.getByRole("link", { name: "Back to editor" }),
   ).toHaveAttribute("href", "/");
-  await expect(page.getByRole("textbox", { name: "From" })).toHaveValue(
-    "2026-05-15",
-  );
-  await expect(
-    page.getByRole("textbox", { name: "To", exact: true }),
-  ).toHaveValue("2026-08-12");
+  await expect(page.getByLabel("开始日期")).toHaveValue("2026-05-15");
+  await expect(page.getByLabel("结束日期")).toHaveValue("2026-08-12");
   await expect(
     page.getByRole("button", { name: "Last 90 days" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "ISO 3166 Code" }),
+    page.getByRole("heading", { name: "ISO 3166 代码" }),
   ).toBeVisible();
   await expect(page.getByText("China")).toBeVisible();
   await expect(page.getByText("New Zealand")).toHaveCount(0);
@@ -5238,7 +5234,7 @@ test("opens selectable-object choices with Ctrl+Shift+F and filters Select All",
 
   await page.getByTestId("selection-filter-status").click();
   await filter.getByRole("button", { name: "无" }).click();
-  await filter.getByLabel("Instances").check();
+  await filter.getByLabel("实例", { exact: true }).check();
   await filter.getByRole("button", { name: "Close" }).click();
   await expect(page.locator(".route-handle")).toHaveCount(0);
   await page.keyboard.press("Control+d");
@@ -5781,7 +5777,7 @@ test("docked Properties JSON is the only global configuration surface", async ({
     .press("Enter");
   expect(await readDocumentStyleCode(page)).toBe(styleSource);
 
-  await settings.getByRole("button", { name: "默认值", exact: true }).click();
+  await settings.getByRole("button", { name: "Defaults", exact: true }).click();
   await expect(label).toHaveAttribute("font-size", "15.116");
   expect(
     JSON.parse(await readDocumentStyleCode(page)).appearance.fontScale,

@@ -62,7 +62,7 @@ test("right-click on a device only offers direct selection actions", async ({
     "Properties (Q)",
     "Copy (C)",
     "Rotate 90° (R)",
-    "Mirror left/right (Shift+R)",
+    "左右镜像（Shift+R）",
     "Mirror top/bottom (Ctrl+R)",
     "Delete",
   ]);
@@ -762,7 +762,7 @@ test("Netlist keeps format selection in the project panel while File keeps drawi
   await page.locator('[data-canvas-hit-kind="instance"]').first().click();
   const menu = await openMenu(page, "File");
   await expect(
-    menu.getByRole("button", { name: "Export SVG", exact: true }),
+    menu.getByRole("button", { name: "导出 SVG", exact: true }),
   ).toBeHidden();
   const importMenu = menu.getByRole("button", { name: "Import", exact: true });
   await expect(importMenu).toHaveAttribute("aria-expanded", "false");
@@ -832,7 +832,7 @@ test("Netlist keeps format selection in the project panel while File keeps drawi
   await openMenu(page, "File");
   await menu.getByRole("button", { name: "Export", exact: true }).click();
   await expect(
-    menu.getByRole("button", { name: "Export SVG", exact: true }),
+    menu.getByRole("button", { name: "导出 SVG", exact: true }),
   ).toBeVisible();
   const viewBox = await page
     .getByTestId("schematic-canvas")
@@ -853,7 +853,7 @@ test("Netlist keeps format selection in the project panel while File keeps drawi
     menu.getByRole("button", { name: "Export", exact: true }),
   ).toBeFocused();
   await expect(
-    menu.getByRole("button", { name: "Export SVG", exact: true }),
+    menu.getByRole("button", { name: "导出 SVG", exact: true }),
   ).toBeHidden();
   const download = page.waitForEvent("download");
   await clickCommand(page, "File", "Export SVG");

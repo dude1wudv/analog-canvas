@@ -73,9 +73,7 @@ test("connection controls recover across dialog and Properties while old request
   const panel = page.getByTestId("connect-agent-panel");
   await expect.poll(() => relay.creates.length).toBe(1);
   await relay.complete(0);
-  await expect(panel.getByTestId("agent-status")).toHaveText(
-    "Waiting for Agent",
-  );
+  await expect(panel.getByTestId("agent-status")).toHaveText("正在等待 Agent");
   // Leave Pause and Revoke unanswered. Neither may mutate the replacement.
   await panel.getByTestId("agent-pause").click();
   await expect.poll(() => relay.controls.length).toBe(1);
@@ -90,7 +88,7 @@ test("connection controls recover across dialog and Properties while old request
   await properties.getByTestId("agent-new-connection").click();
   await expect.poll(() => relay.creates.length).toBe(2);
   await relay.complete(1);
-  await expect(properties).toContainText("Waiting for Agent");
+  await expect(properties).toContainText("正在等待 Agent");
   await relay.controls[0]!.fulfill({ json: { ok: true } }).catch(
     () => undefined,
   );
@@ -103,9 +101,9 @@ test("connection controls recover across dialog and Properties while old request
   await expect.poll(() => relay.controls.length).toBe(3);
   expect(relay.controls[2]!.request().url()).toContain("controlled-1/control");
   await relay.controls[2]!.fulfill({ json: { ok: true } });
-  await expect(panel.getByTestId("agent-status")).toHaveText("Paused");
+  await expect(panel.getByTestId("agent-status")).toHaveText("已暂停");
   await panel.getByRole("button", { name: "Close Agent dialog" }).click();
-  await properties.getByRole("button", { name: "Manage", exact: true }).click();
+  await properties.getByRole("button", { name: "管理", exact: true }).click();
   await properties.getByTestId("agent-new-connection").click();
   await expect.poll(() => relay.creates.length).toBe(3);
   await relay.creates[2]!.fulfill({
@@ -142,9 +140,7 @@ test("new connection can be cancelled and retried after a hung create without re
   await panel.getByTestId("agent-connect").click();
   await expect.poll(() => relay.creates.length).toBe(3);
   await relay.complete(2);
-  await expect(panel.getByTestId("agent-status")).toHaveText(
-    "Waiting for Agent",
-  );
+  await expect(panel.getByTestId("agent-status")).toHaveText("正在等待 Agent");
   await relay.complete(0).catch(() => undefined);
   await relay.complete(1).catch(() => undefined);
   await expect(panel.getByTestId("agent-copy-text")).toHaveValue(
@@ -411,9 +407,7 @@ test("retries a failed Agent connection without a permission picker", async ({
   await page.getByRole("button", { name: "Agent", exact: true }).click();
   const panel = page.getByTestId("connect-agent-panel");
   await expect(panel).toBeVisible();
-  await expect(panel.getByTestId("agent-status")).toHaveText(
-    "Creating connection…",
-  );
+  await expect(panel.getByTestId("agent-status")).toHaveText("正在创建连接…");
   releaseCreation();
   await expect(panel.getByRole("alert")).toContainText("restart pnpm dev");
   expect(creates).toBe(1);
@@ -572,7 +566,7 @@ test("grants a browser Agent, edits through the live host, and shares undo", asy
       payload: { type: "session.ready", sessionId },
     }),
   );
-  await expect(page.getByTestId("agent-status")).toContainText("Connected");
+  await expect(page.getByTestId("agent-status")).toContainText("已连接");
 
   const sendCircuitRequest = async (
     requestId: string,
@@ -941,17 +935,17 @@ test("grants a browser Agent, edits through the live host, and shares undo", asy
   await page.getByRole("button", { name: "Agent", exact: true }).click();
   const panel = page.getByTestId("connect-agent-panel");
   await expect(panel).toBeVisible();
-  await expect(panel.getByTestId("agent-status")).toContainText("Connected");
+  await expect(panel.getByTestId("agent-status")).toContainText("已连接");
   expect(sessionCreates).toBe(1);
   const originalSocket = browserSocket as WebSocketRoute | null;
   if (!originalSocket) throw new Error("Agent WebSocket was not connected");
   originalSocket.close();
   await expect.poll(() => browserSocket !== originalSocket).toBe(true);
-  await expect(panel.getByTestId("agent-status")).toContainText("Connected");
+  await expect(panel.getByTestId("agent-status")).toContainText("已连接");
   await panel.getByTestId("agent-pause").click();
-  await expect(panel.getByTestId("agent-status")).toContainText("Paused");
+  await expect(panel.getByTestId("agent-status")).toContainText("已暂停");
   await panel.getByTestId("agent-resume").click();
-  await expect(panel.getByTestId("agent-status")).toContainText("Connected");
+  await expect(panel.getByTestId("agent-status")).toContainText("已连接");
   await panel.getByTestId("agent-new-connection").click();
   await expect.poll(() => sessionCreates).toBe(2);
   await expect.poll(() => revokeControls).toBe(1);
@@ -959,14 +953,14 @@ test("grants a browser Agent, edits through the live host, and shares undo", asy
     .poll(() => panel.getByTestId("agent-copy-text").inputValue())
     .toContain(JSON.stringify({ claimCode: `${sessionId}.one-time-claim` }));
   await expect(panel.getByTestId("agent-status")).toContainText(
-    "Waiting for Agent",
+    "正在等待 Agent",
   );
   await panel.getByTestId("agent-revoke").click();
-  await expect(panel.getByTestId("agent-status")).toContainText("Disconnected");
+  await expect(panel.getByTestId("agent-status")).toContainText("已断开");
   await panel.getByRole("button", { name: "Close Agent dialog" }).click();
   await page.getByRole("button", { name: "Agent", exact: true }).click();
   await expect(panel.getByTestId("agent-status")).toContainText(
-    "Waiting for Agent",
+    "正在等待 Agent",
   );
   expect(sessionCreates).toBe(3);
 });
@@ -1016,7 +1010,7 @@ test("restores the same paired working copy through refresh and Gallery without 
   });
   await expect(page.getByTestId("active-instance-count")).toHaveText("1");
   await panel.getByTestId("agent-pause").click();
-  await expect(panel.getByTestId("agent-status")).toHaveText("Paused");
+  await expect(panel.getByTestId("agent-status")).toHaveText("已暂停");
   // The existing explicit refresh flushes recovery before navigation.
   await panel.getByRole("button", { name: "Close Agent dialog" }).click();
   // Let the existing durable recovery scheduler finish, not a second snapshot store.
@@ -1033,7 +1027,7 @@ test("restores the same paired working copy through refresh and Gallery without 
   await page.reload();
   await expect(page.getByTestId("active-instance-count")).toHaveText("1");
   await page.getByTestId("open-agent").click();
-  await expect(panel.getByTestId("agent-status")).toHaveText("Paused");
+  await expect(panel.getByTestId("agent-status")).toHaveText("已暂停");
   expect(
     await client.status(session.sessionId, session.agentToken),
   ).toMatchObject({ authorization: "paused", editor: "attached" });
@@ -1049,7 +1043,7 @@ test("restores the same paired working copy through refresh and Gallery without 
   await page.getByTestId("gallery-editor-link").click();
   await expect(page.getByTestId("active-instance-count")).toHaveText("1");
   await page.getByTestId("open-agent").click();
-  await expect(panel.getByTestId("agent-status")).toHaveText("Paused");
+  await expect(panel.getByTestId("agent-status")).toHaveText("已暂停");
   await panel.getByTestId("agent-resume").click();
   const snapshot = await client.circuit(session.sessionId, session.agentToken, {
     apiVersion: "3.0",
@@ -1916,7 +1910,7 @@ test("copies a working handoff through the normal local dev relay", async ({
     operation: "snapshot",
     revision: 0,
   });
-  await expect(panel.getByTestId("agent-status")).toContainText("Connected");
+  await expect(panel.getByTestId("agent-status")).toContainText("已连接");
   await expect
     .poll(readIdleDeadline)
     .toBeGreaterThan(session.connectorExpiresAt);
@@ -2118,9 +2112,9 @@ test("copies a working handoff through the normal local dev relay", async ({
     (await readSnapshot("after-wire-undo")).snapshot.document.routes,
   ).toHaveLength(0);
   await page.getByTestId("open-agent").click();
-  await expect(panel.getByTestId("agent-status")).toContainText("Connected");
+  await expect(panel.getByTestId("agent-status")).toContainText("已连接");
   await panel.getByTestId("agent-revoke").click();
-  await expect(panel.getByTestId("agent-status")).toContainText("Disconnected");
+  await expect(panel.getByTestId("agent-status")).toContainText("已断开");
   await expect(
     client.circuit(session.sessionId, session.agentToken, {
       apiVersion: "3.0",
