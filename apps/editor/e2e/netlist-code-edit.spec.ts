@@ -745,10 +745,10 @@ test("subscript controls immediately update labels and names and survive reopen 
   await expect.poll(slant).toBe("italic");
   await expect(
     page.getByText(
-      "labels.subscript_italic must be true or false · Canvas keeps the last valid edit",
+      "labels.subscript_italic must be true or false · 画布将保留上次有效的修改",
     ),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Discard Properties draft" }).click();
+  await page.getByRole("button", { name: "放弃属性草稿" }).click();
   await page.getByTestId("project-file").setInputFiles({
     name: "subscript-reopened.icproj.json",
     mimeType: "application/json",

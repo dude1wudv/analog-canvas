@@ -1042,7 +1042,7 @@ test("keeps the netlist live and selectable when clipboard access fails", async 
     buffer: Buffer.from("\n.subckt live a b\nR1 a b 2k\n.ends live\n"),
   });
   await expect(
-    page.getByRole("region", { name: "Import Review", exact: true }),
+    page.getByRole("region", { name: "导入检查", exact: true }),
   ).toBeVisible();
   await page.getByTestId("netlist-panel-toggle").click();
   await expect(code).toContainText(/R1 a b 2k/iu);

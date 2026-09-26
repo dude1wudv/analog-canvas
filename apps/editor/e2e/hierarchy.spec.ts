@@ -593,7 +593,7 @@ test("protects reviewed External interfaces and navigates their callers", async 
     .getByLabel("External subcircuit terminals")
     .fill(reviewed.terminals.map((item) => item.targetName).join(", "));
   await manager
-    .getByRole("button", { name: "新建外部电路定义", exact: true })
+    .getByRole("button", { name: "Create External Circuit Def", exact: true })
     .click();
   await expect(
     manager.getByLabel("External subcircuit target"),
@@ -1041,7 +1041,7 @@ test("keeps Hierarchy discoverable and restores the operation row on demand", as
   const entry = page.getByTestId("hierarchy-entry");
   const toolbar = page.locator('.toolbar-row[aria-label="文档层次结构"]');
   await expect(entry).toBeVisible({ timeout: 15_000 });
-  await expect(entry).toHaveText("Hierarchy");
+  await expect(entry).toHaveText("层次结构");
   await expect(toolbar).toHaveCount(0);
   await expect(entry).toHaveAttribute("aria-expanded", "false");
   await createCell(page, "FirstStage");
@@ -1050,10 +1050,10 @@ test("keeps Hierarchy discoverable and restores the operation row on demand", as
     toolbar.getByRole("button", { name: "管理 Cell…" }),
   ).toBeVisible();
   await expect(
-    toolbar.getByRole("button", { name: "Place Cell" }),
+    toolbar.getByRole("button", { name: "放置 Cell" }),
   ).toBeEnabled();
   await expect(entry).toBeVisible();
-  await toolbar.getByRole("button", { name: "Place Cell" }).click();
+  await toolbar.getByRole("button", { name: "放置 Cell" }).click();
   await expect(
     page.getByRole("dialog", { name: "放置层次化 Cell" }),
   ).toBeVisible();

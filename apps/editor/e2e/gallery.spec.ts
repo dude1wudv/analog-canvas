@@ -691,7 +691,7 @@ test("Publish checks exact and nearest duplicates without adding a Gallery contr
   );
   await expect(publish).toBeEnabled();
   await dialog
-    .getByRole("button", { name: "Cancel", exact: true })
+    .getByRole("button", { name: "取消", exact: true })
     .first()
     .click();
   await expect(dialog).toHaveCount(0);
@@ -777,7 +777,7 @@ test("Publish checks exact and nearest duplicates without adding a Gallery contr
   await expect(page.getByTestId("instance-count")).toHaveText("2");
   // Editing the live Project and revising a candidate cannot rewrite completed comparisons.
   await dialog
-    .getByRole("button", { name: "Cancel", exact: true })
+    .getByRole("button", { name: "取消", exact: true })
     .first()
     .click();
   projects.set("nearest", galleryResistorProject("99k"));
@@ -3497,7 +3497,7 @@ test("a mistaken click beside the publish form keeps what was written", async ({
 
   // Cancelling is a decision, and it still closes — but reopening comes back
   // to the draft rather than to an empty form.
-  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await dialog.getByRole("button", { name: "取消" }).click();
   await expect(dialog).toHaveCount(0);
   await page.getByTestId("publish-gallery-button").click();
   await expect(dialog).toBeVisible();
@@ -3572,7 +3572,7 @@ test("Cloud Save updates one stable private Project", async ({ page }) => {
 
   const reopenedMenu = await openMenu(page, "File");
   await expect(
-    reopenedMenu.getByText(`Cloud Projects (1/${CLOUD_PROJECT_LIMIT})`),
+    reopenedMenu.getByText(`云项目 (1/${CLOUD_PROJECT_LIMIT})`),
   ).toBeVisible();
   await expect(
     reopenedMenu.getByTestId("cloud-project-cloud-1"),
@@ -4235,7 +4235,7 @@ test("an opened gallery entry offers updating in place", async ({ page }) => {
   await expect(publishMode).toHaveCSS("display", "flex");
   await expect(publishMode).toHaveCSS("flex-direction", "column");
   const updateChoice = publishMode
-    .getByRole("radio", { name: /^Update /u })
+    .getByRole("radio", { name: /^更新/u })
     .locator("..");
   const newChoice = publishMode
     .getByRole("radio", { name: "发布为新作品", exact: true })
@@ -4252,7 +4252,7 @@ test("an opened gallery entry offers updating in place", async ({ page }) => {
   expect(historyBox!.y).toBeGreaterThanOrEqual(newBox!.y + newBox!.height);
   // The update option names exactly what it will replace.
   await expect(publishMode).toContainText(ENTRY.name);
-  await expect(dialog.getByText("updates the entry in place")).toBeVisible();
+  await expect(dialog.getByText(/替换该作品/u)).toBeVisible();
 
   await dialog.getByRole("button", { name: "更新作品" }).click();
   await expect(page.getByTestId("status")).toContainText(
@@ -4795,7 +4795,7 @@ for (const scenario of [
         dialog.getByRole("button", { name: "发布", exact: true }),
       ).toBeDisabled();
       failDetail = false;
-      await dialog.getByRole("button", { name: "Retry", exact: true }).click();
+      await dialog.getByRole("button", { name: "重试", exact: true }).click();
       await expect(
         dialog.getByRole("button", { name: "更新作品" }),
       ).toBeEnabled();
@@ -5085,10 +5085,10 @@ test("Shelf cards duplicate, rename, export and keep account favorites without e
     "off",
   );
   await expect(
-    page.getByRole("textbox", { name: "项目名称", exact: true }),
+    page.getByRole("textbox", { name: "Project name", exact: true }),
   ).toHaveAttribute("autocomplete", "off");
   await page
-    .getByRole("textbox", { name: "项目名称", exact: true })
+    .getByRole("textbox", { name: "Project name", exact: true })
     .fill("Experiment B");
   await page.getByRole("button", { name: "Save name", exact: true }).click();
   await expect(page.getByTestId("shelf-tile-copy")).toContainText(
@@ -5106,7 +5106,7 @@ test("Shelf cards duplicate, rename, export and keep account favorites without e
   await page.getByTestId("shelf-actions-copy").click();
   await page.screenshot({ path: "plan/shelf-card-actions.png" });
   const downloadPromise = page.waitForEvent("download");
-  await page.getByRole("menuitem", { name: "导出", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Export", exact: true }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("Experiment B.icproj.json");
   expect(readFileSync((await download.path())!, "utf8")).toBe(
@@ -5127,7 +5127,7 @@ test("Shelf cards duplicate, rename, export and keep account favorites without e
   await page.getByTestId("shelf-actions-copy").click();
   await page.getByRole("menuitem", { name: "Rename", exact: true }).click();
   await page
-    .getByRole("textbox", { name: "项目名称", exact: true })
+    .getByRole("textbox", { name: "Project name", exact: true })
     .fill("VeryLongCircuitName".repeat(6));
   expect(
     await page
@@ -5452,7 +5452,7 @@ test("Shelf save history compares, branches privately and restores with the list
     await page.getByTestId("shelf-actions-draft").click();
     await page.getByRole("menuitem", { name: "Version history" }).click();
     await expect(page.getByTestId("version-history-dialog")).toContainText(
-      "current draft kept separately",
+      "当前草稿单独保留",
     );
   };
   await openHistory();

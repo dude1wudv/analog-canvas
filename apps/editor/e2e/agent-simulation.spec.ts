@@ -95,7 +95,7 @@ test("HTTP Kit alone authors native objects and hands off a Project-folder run",
     });
   });
   await page.goto("/editor");
-  await page.getByRole("button", { name: "Agent", exact: true }).click();
+  await page.getByTestId("open-agent").click();
   const panel = page.getByTestId("connect-agent-panel");
   await expect(panel.getByTestId("agent-copy-text")).toBeVisible({
     timeout: 30000,
@@ -686,7 +686,7 @@ for (const sourceKind of ["workspace", "project-folder"] as const)
         buffer: Buffer.from(JSON.stringify(project)),
       });
     }
-    await page.getByRole("button", { name: "Agent", exact: true }).click();
+    await page.getByTestId("open-agent").click();
     await expect.poll(() => !!socket).toBe(true);
     await expect.poll(() => !!contextRevision).toBe(true);
     const send = async (

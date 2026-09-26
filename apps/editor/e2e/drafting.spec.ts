@@ -1734,10 +1734,10 @@ test("O toggles Display settings and never activates Circle", async ({
   await awaitEditorReady(page);
 
   await page.keyboard.press("o");
-  await expect(page.getByLabel("Document settings")).toBeVisible();
+  await expect(page.getByLabel("文档设置")).toBeVisible();
   await expect(page.getByTestId("active-tool")).toHaveText("pointer");
   await page.keyboard.press("o");
-  await expect(page.getByLabel("Document settings")).toHaveCount(0);
+  await expect(page.getByLabel("文档设置")).toHaveCount(0);
 });
 
 test("the Library Circle creates a selectable shape with one radial handle and no rotation", async ({

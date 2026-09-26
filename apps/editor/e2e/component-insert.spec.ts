@@ -1527,9 +1527,7 @@ test("carries a default and manual Value through placement and Q property editin
   // there is no second, plain-text Label field or heavyweight Identity card.
   await expect(page.getByText("Identity", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("元件控件")).toHaveCount(0);
-  const componentCode = page.locator(
-    '[aria-label="Component properties"] > :last-child',
-  );
+  const componentCode = page.locator('[aria-label="器件属性"] > :last-child');
   await expect(componentCode).toHaveAttribute("aria-label", "画布属性代码");
   await expectComponentCodeField(page, "name", "R1");
   await expectComponentCodeField(page, "netlistName", "R1");
@@ -2622,7 +2620,7 @@ test("places every Library annotation from the compact Annotation menu", async (
       .evaluateAll((buttons) =>
         buttons.map((button) => button.getAttribute("aria-label")),
       ),
-  ).toEqual(libraryEntries);
+  ).toEqual(libraryEntries.map((label) => label!.replace(/^Place /u, "放置")));
   await page.keyboard.press("Escape");
   const drawingTools = [
     ["arrow", "arrow"],

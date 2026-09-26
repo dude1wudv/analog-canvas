@@ -4815,7 +4815,7 @@ test("keeps panel tooltips visible and exposes panel keyboard shortcuts", async 
   await expect(gallery).toHaveAttribute("aria-keyshortcuts", "G");
   await gallery.hover();
   const tooltip = page.getByRole("tooltip");
-  await expect(tooltip).toContainText("circuit gallery");
+  await expect(tooltip).toContainText("电路画廊");
   await expect(tooltip).toContainText("(G)");
   const tooltipBounds = await tooltip.boundingBox();
   expect(tooltipBounds).not.toBeNull();
@@ -4961,7 +4961,7 @@ test("discard recovery clears the recovery slot", async ({ page }) => {
   await clickCommand(page, "File", "Recover Unsaved Work…");
   await page
     .getByRole("dialog", { name: "恢复最近工作" })
-    .getByRole("button", { name: "Delete recovery copy of New Circuit" })
+    .getByRole("button", { name: "删除 New Circuit 的恢复副本" })
     .click();
   await expect
     .poll(async () => (await readRecoveryRecords(page)).length)
@@ -4979,8 +4979,8 @@ test("keeps the production command surface compact and publishes PWA metadata", 
   await expect(
     toolbar.locator("summary").filter({ hasText: /^Run$/u }),
   ).toHaveCount(0);
-  const netlistSummary = toolbar.locator('summary[aria-label="Netlist"]');
-  await expect(netlistSummary).toContainText("Netlist");
+  const netlistSummary = toolbar.locator('summary[aria-label="网表"]');
+  await expect(netlistSummary).toContainText("网表");
   await expect(toolbar.getByTestId("copy-netlist")).toBeHidden();
   await expect(toolbar.getByTestId("open-analog-simulation")).toBeVisible();
   await expect(page.getByTestId("check-and-save")).toBeHidden();
@@ -5675,13 +5675,13 @@ test("docked Properties JSON is the only global configuration surface", async ({
   // Properties is the visible, non-modal home for current-Cell Port tools and
   // the single copyable Properties JSON surface.
   const propertiesButton = page.getByTestId("draw-tool-document-style");
-  await expect(propertiesButton).toHaveText("Properties");
+  await expect(propertiesButton).toHaveText("属性");
   await expect(propertiesButton).toHaveAttribute(
     "title",
-    "Properties: Ports, canvas, and selected objects",
+    "属性：端口、画布与所选对象",
   );
   await clickDrawTool(page, "document-style");
-  const settings = page.getByLabel("Document settings");
+  const settings = page.getByLabel("文档设置");
   await expect(settings).toBeVisible();
   await expect(
     settings.getByRole("button", {
@@ -5692,7 +5692,7 @@ test("docked Properties JSON is the only global configuration surface", async ({
     page.getByRole("region", { name: "Port label formatting" }),
   ).toHaveCount(0);
   await expect(page.getByTestId("hit-R1")).toBeVisible();
-  await expect(settings.getByLabel("Editable Properties code")).toBeVisible();
+  await expect(settings.getByLabel("可编辑的属性代码")).toBeVisible();
   await expect(settings.locator("select.cm-netlist-target-select")).toHaveCount(
     0,
   );
@@ -5772,12 +5772,12 @@ test("docked Properties JSON is the only global configuration surface", async ({
     drawAngle: "free",
     scrollBehavior: "auto",
   });
-  await settings
-    .getByLabel("Editable Properties code", { exact: true })
-    .press("Enter");
+  await settings.getByLabel("可编辑的属性代码", { exact: true }).press("Enter");
   expect(await readDocumentStyleCode(page)).toBe(styleSource);
 
-  await settings.getByRole("button", { name: "Defaults", exact: true }).click();
+  await settings
+    .getByRole("button", { name: "恢复默认值", exact: true })
+    .click();
   await expect(label).toHaveAttribute("font-size", "15.116");
   expect(
     JSON.parse(await readDocumentStyleCode(page)).appearance.fontScale,

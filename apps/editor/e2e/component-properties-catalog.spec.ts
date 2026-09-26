@@ -69,7 +69,7 @@ for (const symbolId of componentSymbolIds) {
     await page.keyboard.press("q");
 
     const properties = page.getByRole("region", {
-      name: "Component properties",
+      name: "器件属性",
     });
     await expect(properties).toBeVisible();
     await expect(

@@ -93,6 +93,7 @@ export async function clickCommand(
       "Insert component… (I)": "插入器件… (I)",
       "Manage Cells…": "管理 Cell…",
       "Netlist Settings…": "网表设置…",
+      "Edit Device Data…": "编辑器件数据…",
       "New Project": "新建项目",
       "Place Cell from this Project…": "从此项目放置 Cell…",
       "Recover Local Work…": "恢复本地工作…",
@@ -238,18 +239,18 @@ export async function readDocumentStyleCode(page: Page): Promise<string> {
   const input = await documentStyleCodeEditor(page);
   await expect(input).toBeVisible();
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-  const settings = page.getByLabel("Document settings", { exact: true });
+  const settings = page.getByLabel("文档设置", { exact: true });
   await settings
-    .getByRole("button", { name: "Copy Properties JSON", exact: true })
+    .getByRole("button", { name: "复制属性 JSON", exact: true })
     .click();
   await expect(
-    settings.getByText("Properties JSON copied", { exact: true }),
+    settings.getByText("已复制属性 JSON", { exact: true }),
   ).toBeVisible();
   return page.evaluate(() => navigator.clipboard.readText());
 }
 
 async function documentStyleCodeEditor(page: Page): Promise<Locator> {
-  const input = page.getByLabel("Editable Properties code", {
+  const input = page.getByLabel("可编辑的属性代码", {
     exact: true,
   });
   if (!(await input.isVisible())) await clickDrawTool(page, "document-style");

@@ -64,7 +64,7 @@ test("keeps Gallery Library Netlist and Project Code together on the left at ful
 }) => {
   await page.goto("/editor");
   const toolbar = page.getByTestId("draw-toolbar");
-  const panels = toolbar.getByRole("group", { name: "Panels", exact: true });
+  const panels = toolbar.getByRole("group", { name: "面板", exact: true });
   await expect(panels).toBeVisible();
   expect(
     await panels
@@ -104,7 +104,7 @@ test("keeps Gallery Library Netlist and Project Code together on the left at ful
       annotationBox!.x - (textBox!.x + textBox!.width),
     ).toBeLessThanOrEqual(4);
     await summary.click();
-    const palette = page.getByRole("group", { name: "Annotation tools" });
+    const palette = page.getByRole("group", { name: "标注工具" });
     await expect(palette.getByRole("button")).toHaveCount(9);
     const paletteBox = await palette.boundingBox();
     expect(paletteBox!.x).toBeGreaterThanOrEqual(0);

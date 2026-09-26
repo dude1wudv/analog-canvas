@@ -615,7 +615,7 @@ test("visual clipboard preserves mixed selection and exports only its formal SVG
   await page.keyboard.press("Escape");
   const editMenu = await openMenu(page, "Edit");
   await editMenu
-    .getByRole("button", { name: "Copy selection as SVG", exact: true })
+    .getByRole("button", { name: "复制选区为 SVG", exact: true })
     .click();
   await expect(page.getByTestId("status")).toHaveText(
     "Copied selection as SVG",
@@ -673,7 +673,7 @@ test("visual clipboard rasterizes an independent Wire as transparent PNG without
   await page.keyboard.press("Escape");
   const editMenu = await openMenu(page, "Edit");
   await editMenu
-    .getByRole("button", { name: "Copy selection as PNG", exact: true })
+    .getByRole("button", { name: "复制选区为 PNG", exact: true })
     .click();
   await expect(page.getByTestId("status")).toHaveText(
     "Copied selection as PNG",
@@ -722,13 +722,13 @@ test("visual clipboard reports denied access and empty selection without downloa
   const emptyEditMenu = await openMenu(page, "Edit");
   await expect(
     emptyEditMenu.getByRole("button", {
-      name: "Copy selection as PNG",
+      name: "复制选区为 PNG",
       exact: true,
     }),
   ).toHaveCount(0);
   await expect(
     emptyEditMenu.getByRole("button", {
-      name: "Copy selection as SVG",
+      name: "复制选区为 SVG",
       exact: true,
     }),
   ).toHaveCount(0);
@@ -745,7 +745,7 @@ test("visual clipboard reports denied access and empty selection without downloa
   await page.keyboard.press("Escape");
   const selectedEditMenu = await openMenu(page, "Edit");
   await selectedEditMenu
-    .getByRole("button", { name: "Copy selection as PNG", exact: true })
+    .getByRole("button", { name: "复制选区为 PNG", exact: true })
     .click();
   await expect(page.getByTestId("status")).toContainText(
     "Clipboard access was denied",
