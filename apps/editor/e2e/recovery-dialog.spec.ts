@@ -218,7 +218,7 @@ test("a newer-schema copy is downloadable but not restorable", async ({
 
   const downloadPromise = page.waitForEvent("download");
   await card
-    .getByRole("button", { name: "Download backup of Future Project" })
+    .getByRole("button", { name: "下载 Future Project 的备份" })
     .click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toContain("-backup.icproj.json");
@@ -278,7 +278,7 @@ test("explicit discard removes outgoing recovery and hides a clean replacement",
 
   const fileMenu = await openMenu(page, "File");
   await expect(
-    fileMenu.getByRole("button", { name: "Recover Unsaved Work…" }),
+    fileMenu.getByRole("button", { name: "恢复未保存的内容…" }),
   ).toHaveCount(0);
 });
 
@@ -324,13 +324,13 @@ test("storage failure offers a backup without acknowledging Cloud Save", async (
   await expect(page.getByTestId("revision")).toHaveText("1");
   const warning = page.getByTestId("recovery-failure-banner");
   await expect(warning).toBeVisible();
-  await expect(warning).toContainText("unavailable");
+  await expect(warning).toContainText("浏览器存储不可用");
   await expect(page.getByTestId("recovery-state")).toHaveText(
-    "Recovery unavailable — download now",
+    "恢复存储不可用，请立即下载",
   );
 
   const downloadPromise = page.waitForEvent("download");
-  await warning.getByRole("button", { name: "Download Backup" }).click();
+  await warning.getByRole("button", { name: "下载备份" }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toContain(".icproj.json");
   // A portable backup mitigates data loss but is not the Cloud Save

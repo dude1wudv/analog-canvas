@@ -82,7 +82,7 @@ test("public MCP connects to the real local relay and executes native source", a
       });
     }
     await page.goto("/editor");
-    await page.getByRole("button", { name: "Agent", exact: true }).click();
+    await page.getByTestId("open-agent").click();
     const message = page.getByTestId("agent-copy-text");
     await expect(message).toHaveValue(/Claim: /, { timeout: 45000 });
     const claim = /^Claim: (.+)$/mu.exec(await message.inputValue());
@@ -289,7 +289,7 @@ test("large native results persist, download to MCP workspace and remain readabl
       return route.fulfill({ json: await executor.execute(input) });
     });
     await page.goto("/editor");
-    await page.getByRole("button", { name: "Agent", exact: true }).click();
+    await page.getByTestId("open-agent").click();
     const message = page.getByTestId("agent-copy-text");
     await expect(message).toHaveValue(/Claim: /, { timeout: 45000 });
     const claim = JSON.parse(

@@ -100,6 +100,7 @@ export async function clickCommand(
       "Recover Unsaved Work…": "恢复未保存的内容…",
       "Refresh app": "刷新应用",
       "Review Netlist Issues…": "查看网表问题…",
+      "User Components…": "用户器件…",
       Delete: "删除",
       Undo: "撤销",
     }[button] ?? button;

@@ -363,7 +363,7 @@ test("Cloud Save updates one binding while local export stays interchange", asyn
   await expect(page.getByTestId("project-unsaved-indicator")).toHaveCount(0);
   const reopenedMenu = await openMenu(page, "File");
   await expect(
-    reopenedMenu.getByText(`Cloud Projects (1/${CLOUD_PROJECT_LIMIT})`),
+    reopenedMenu.getByText(`云项目 (1/${CLOUD_PROJECT_LIMIT})`),
   ).toBeVisible();
   await expect(
     reopenedMenu.getByRole("button", { name: "保存", exact: true }),
@@ -886,9 +886,9 @@ test("discarding a dirty replacement does not leave a second project stack", asy
   await expect(
     fileMenu.getByRole("button", { name: "Previous Project" }),
   ).toHaveCount(0);
-  await expect(
-    fileMenu.getByRole("button", { name: "Download Backup" }),
-  ).toHaveCount(0);
+  await expect(fileMenu.getByRole("button", { name: "下载备份" })).toHaveCount(
+    0,
+  );
 });
 
 test("reverts to the last acknowledged Cloud revision", async ({ page }) => {

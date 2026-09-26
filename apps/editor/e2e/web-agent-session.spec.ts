@@ -69,7 +69,7 @@ test("connection controls recover across dialog and Properties while old request
   const relay = await controlledConnections(page);
   await page.goto("/editor");
   await awaitEditorReady(page);
-  await page.getByRole("button", { name: "Agent", exact: true }).click();
+  await page.getByTestId("open-agent").click();
   const panel = page.getByTestId("connect-agent-panel");
   await expect.poll(() => relay.creates.length).toBe(1);
   await relay.complete(0);
@@ -93,7 +93,7 @@ test("connection controls recover across dialog and Properties while old request
     () => undefined,
   );
   await relay.controls[1]!.fulfill({ json: { ok: true } });
-  await page.getByRole("button", { name: "Agent", exact: true }).click();
+  await page.getByTestId("open-agent").click();
   await expect(panel.getByTestId("agent-copy-text")).toHaveValue(
     /controlled-1\.claim/,
   );
@@ -128,7 +128,7 @@ test("new connection can be cancelled and retried after a hung create without re
   const relay = await controlledConnections(page);
   await page.goto("/editor");
   await awaitEditorReady(page);
-  await page.getByRole("button", { name: "Agent", exact: true }).click();
+  await page.getByTestId("open-agent").click();
   const panel = page.getByTestId("connect-agent-panel");
   await expect.poll(() => relay.creates.length).toBe(1);
   await panel.getByRole("button", { name: "Cancel connection" }).click();
@@ -157,7 +157,7 @@ test("real relay batches labels and moves bound text with shared undo", async ({
   test.setTimeout(90000);
   await page.goto("/editor");
   await awaitEditorReady(page);
-  await page.getByRole("button", { name: "Agent", exact: true }).click();
+  await page.getByTestId("open-agent").click();
   const message = page.getByTestId("agent-copy-text");
   await expect(message).toHaveValue(/Claim: /, { timeout: 45000 });
   const { claimCode } = JSON.parse(
@@ -247,7 +247,7 @@ test("staged Cell body workflow retains identity and shared undo with independen
   const started = performance.now();
   await page.goto("/editor");
   await awaitEditorReady(page);
-  await page.getByRole("button", { name: "Agent", exact: true }).click();
+  await page.getByTestId("open-agent").click();
   const message = page.getByTestId("agent-copy-text");
   await expect(message).toHaveValue(/Claim: /, { timeout: 45000 });
   const { claimCode } = JSON.parse(
@@ -404,7 +404,7 @@ test("retries a failed Agent connection without a permission picker", async ({
 
   await page.goto("/editor");
   expect(creates).toBe(0);
-  await page.getByRole("button", { name: "Agent", exact: true }).click();
+  await page.getByTestId("open-agent").click();
   const panel = page.getByTestId("connect-agent-panel");
   await expect(panel).toBeVisible();
   await expect(panel.getByTestId("agent-status")).toHaveText("正在创建连接…");
@@ -449,7 +449,7 @@ test("retries a failed Agent connection without a permission picker", async ({
     }),
   ).toBe(true);
   await panel.getByRole("button", { name: "Close Agent dialog" }).click();
-  await page.getByRole("button", { name: "Agent", exact: true }).click();
+  await page.getByTestId("open-agent").click();
   await expect
     .poll(() => panel.getByTestId("agent-copy-text").inputValue())
     .toContain(JSON.stringify({ claimCode: "retry-session.claim" }));
@@ -546,7 +546,7 @@ test("grants a browser Agent, edits through the live host, and shares undo", asy
   });
 
   await page.goto("/editor");
-  await page.getByRole("button", { name: "Agent", exact: true }).click();
+  await page.getByTestId("open-agent").click();
   await expect(page.locator('[data-testid^="agent-preset-"]')).toHaveCount(0);
   await expect
     .poll(() => page.getByTestId("agent-copy-text").inputValue())
@@ -932,7 +932,7 @@ test("grants a browser Agent, edits through the live host, and shares undo", asy
     )
     .toBe(true);
 
-  await page.getByRole("button", { name: "Agent", exact: true }).click();
+  await page.getByTestId("open-agent").click();
   const panel = page.getByTestId("connect-agent-panel");
   await expect(panel).toBeVisible();
   await expect(panel.getByTestId("agent-status")).toContainText("已连接");
@@ -958,7 +958,7 @@ test("grants a browser Agent, edits through the live host, and shares undo", asy
   await panel.getByTestId("agent-revoke").click();
   await expect(panel.getByTestId("agent-status")).toContainText("已断开");
   await panel.getByRole("button", { name: "Close Agent dialog" }).click();
-  await page.getByRole("button", { name: "Agent", exact: true }).click();
+  await page.getByTestId("open-agent").click();
   await expect(panel.getByTestId("agent-status")).toContainText(
     "正在等待 Agent",
   );
@@ -1749,24 +1749,24 @@ test("keeps one Project session through Cell switches and preserves an acknowled
   await panel.getByRole("button", { name: "Close Agent dialog" }).click();
 
   await page.getByTestId("hierarchy-entry").click();
-  let manager = page.getByRole("dialog", { name: "Cell Manager" });
-  await manager.getByRole("button", { name: "New Cell" }).click();
-  const cellEditor = page.getByRole("dialog", { name: "New Cell" });
-  await cellEditor.getByLabel("Cell name").fill("AgentLifecycleCell");
-  await cellEditor.getByRole("button", { name: "Create" }).click();
+  let manager = page.getByRole("dialog", { name: "Cell 管理器" });
+  await manager.getByRole("button", { name: "新建 Cell" }).click();
+  const cellEditor = page.getByRole("dialog", { name: "新建 Cell" });
+  await cellEditor.getByLabel("Cell 名称").fill("AgentLifecycleCell");
+  await cellEditor.getByRole("button", { name: "创建" }).click();
   const childDocumentId = await page
     .getByTestId("active-document-id")
     .innerText();
   expect(childDocumentId).not.toBe(topDocumentId);
 
   await page.getByTestId("hierarchy-entry").click();
-  manager = page.getByRole("dialog", { name: "Cell Manager" });
+  manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await manager
     .locator(".cell-manager-list-item")
-    .filter({ hasText: /Top/u })
+    .filter({ hasText: /顶层/u })
     .dblclick();
   await page.getByTestId("hierarchy-entry").click();
-  manager = page.getByRole("dialog", { name: "Cell Manager" });
+  manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await manager
     .locator(".cell-manager-list-item")
     .filter({ hasText: "AgentLifecycleCell" })
@@ -1790,10 +1790,10 @@ test("keeps one Project session through Cell switches and preserves an acknowled
   ).toMatchObject({ ok: true, revision: 0 });
 
   await page.getByTestId("hierarchy-entry").click();
-  manager = page.getByRole("dialog", { name: "Cell Manager" });
+  manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await manager
     .locator(".cell-manager-list-item")
-    .filter({ hasText: /Top/u })
+    .filter({ hasText: /顶层/u })
     .dblclick();
   expect(
     await client.circuit(session.sessionId, session.agentToken, {
@@ -1857,7 +1857,7 @@ test("copies a working handoff through the normal local dev relay", async ({
   });
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto("/editor");
-  await page.getByRole("button", { name: "Agent", exact: true }).click();
+  await page.getByTestId("open-agent").click();
   const panel = page.getByTestId("connect-agent-panel");
   await expect(panel).toBeVisible();
   await expect(panel.getByTestId("agent-copy-instructions")).toBeVisible({

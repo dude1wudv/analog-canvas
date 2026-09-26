@@ -175,9 +175,9 @@ test("simulation examples confirm whole-Project replacement and protect existing
   });
   await page.getByTestId("project-menu-toggle").click();
   await page
-    .getByRole("textbox", { name: "Project name" })
+    .getByRole("textbox", { name: "项目名称" })
     .fill("My unsaved circuit");
-  await page.getByRole("textbox", { name: "Project name" }).press("Enter");
+  await page.getByRole("textbox", { name: "项目名称" }).press("Enter");
   await page.getByTestId("open-analog-simulation").click();
   const panel = page.getByRole("region", { name: "模拟仿真" });
   const cards = panel.getByRole("group", { name: "Simulation examples" });
@@ -627,7 +627,7 @@ test("new experiments explicitly bind the selected Cell without requiring a Test
 
   // The next default follows Canvas, not the existing experiment's root.
   await page.getByTestId("hierarchy-entry").click();
-  let manager = page.getByRole("dialog", { name: "Cell Manager" });
+  let manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await manager
     .locator(".cell-manager-list-item")
     .filter({ hasText: dut.name })
@@ -639,10 +639,10 @@ test("new experiments explicitly bind the selected Cell without requiring a Test
   await cell.press("Escape");
   await expect(name).toHaveCount(0);
   await page.getByTestId("hierarchy-entry").click();
-  manager = page.getByRole("dialog", { name: "Cell Manager" });
+  manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await manager
     .locator(".cell-manager-list-item")
-    .filter({ hasText: /Top/u })
+    .filter({ hasText: /顶层/u })
     .dblclick();
   await page
     .getByRole("button", { name: "+ New experiment", exact: true })
@@ -1730,18 +1730,16 @@ test("Simulation defaults a new experiment to an ordinary authored Cell", async 
 }) => {
   await page.goto("/editor");
   await page.getByTestId("hierarchy-entry").click();
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
-  await manager.getByRole("button", { name: "New Cell" }).click();
-  const newCell = page.getByRole("dialog", { name: "New Cell" });
-  await newCell.getByLabel("Cell name").fill("Testbench");
-  await newCell.getByRole("button", { name: "Create" }).click();
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
+  await manager.getByRole("button", { name: "新建 Cell" }).click();
+  const newCell = page.getByRole("dialog", { name: "新建 Cell" });
+  await newCell.getByLabel("Cell 名称").fill("Testbench");
+  await newCell.getByRole("button", { name: "创建" }).click();
   await page
     .locator(".command-menu > summary")
     .filter({ hasText: "编辑" })
     .click();
-  await page
-    .getByRole("button", { name: "Place Cell from this Project…" })
-    .click();
+  await page.getByRole("button", { name: "从此项目放置 Cell…" }).click();
   await page
     .getByRole("dialog", { name: "放置层次化 Cell" })
     .getByRole("option", { name: /dut/u })

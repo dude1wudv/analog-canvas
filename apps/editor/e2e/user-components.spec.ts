@@ -225,7 +225,7 @@ test("E edits one instance, publicly saves its definition, and leaves Q and peer
     await page.getByTestId("hit-R1").click({ button: "right" });
     await page
       .getByRole("menuitem", {
-        name: "Edit Component Definition (E)",
+        name: "编辑元件定义（E）",
         exact: true,
       })
       .click();

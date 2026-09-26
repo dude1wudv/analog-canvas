@@ -127,7 +127,7 @@ test("a failed dialog chunk degrades to a scoped notice, not the crash screen", 
 
   const fallback = page.getByTestId("dialog-chunk-load-fallback");
   await expect(fallback).toBeVisible();
-  await expect(fallback).toContainText("This dialog could not be loaded");
+  await expect(fallback).toContainText("无法加载此对话框");
   await expect(page.getByTestId("editor-crash-screen")).toHaveCount(0);
 
   // Closing the notice hands the intact editor back.
