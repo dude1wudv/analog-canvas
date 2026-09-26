@@ -255,9 +255,10 @@ test("Explorer opens sideways, configuration is advanced, and results maximize/r
     .getByRole("treeitem", { name: "experiment.json", exact: true })
     .first()
     .click();
-  await expect(
-    page.getByRole("tab", { name: "配置" }),
-  ).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "配置" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await expect(editor).toContainText('"version"');
   await page.getByRole("tab", { name: "Specs", exact: true }).click();
   await page.getByRole("button", { name: "Maximize results" }).click();
