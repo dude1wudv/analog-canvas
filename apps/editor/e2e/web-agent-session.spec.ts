@@ -2241,6 +2241,6 @@ test("keeps browser recovery on the renewed idle deadline and expires after inac
   expired = true;
   await page.clock.setFixedTime(deadline);
   await page.clock.runFor(15_100);
-  await expect(page.getByTestId("agent-status")).toHaveText("Session expired");
+  await expect(page.getByTestId("agent-status")).toHaveText("会话已过期");
   expect(await recovery()).toBeNull();
 });

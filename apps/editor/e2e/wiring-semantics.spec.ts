@@ -438,9 +438,7 @@ test("dragging a wire's end onto another wire joins them into one net", async ({
   await expect(page.locator('[data-canvas-hit-kind="route"]')).toHaveCount(2);
   await expect(page.getByTestId("statusbar-issues")).toHaveText("尚未检查");
   await clickNetlistWorkflowCommand(page, "check-and-save");
-  await expect(page.getByTestId("statusbar-issues")).toHaveText(
-    "No issues found",
-  );
+  await expect(page.getByTestId("statusbar-issues")).toHaveText("未发现问题");
   // Return to the drawing surface before measuring this pixel-exact drag.
   await page.getByTestId("selection-shelf").click();
   await expect(page.getByTestId("selection-shelf")).toHaveAttribute(
@@ -497,9 +495,7 @@ test("dragging a wire's end onto another wire joins them into one net", async ({
     "Check out of date",
   );
   await clickNetlistWorkflowCommand(page, "check-and-save");
-  await expect(page.getByTestId("statusbar-issues")).toHaveText(
-    "No issues found",
-  );
+  await expect(page.getByTestId("statusbar-issues")).toHaveText("未发现问题");
 });
 
 test("dragging a wire segment onto a capacitor pin connects and dots it", async ({
