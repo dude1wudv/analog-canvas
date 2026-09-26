@@ -81,7 +81,7 @@ test("connection controls recover across dialog and Properties while old request
   await expect.poll(() => relay.controls.length).toBe(1);
   await expect(panel.getByRole("status")).toHaveText("Pausing…");
   await panel.getByTestId("agent-revoke").click();
-  await expect(panel.getByTestId("agent-status")).toHaveText("Disconnected");
+  await expect(panel.getByTestId("agent-status")).toHaveText("已断开");
   await expect.poll(() => relay.controls.length).toBe(2);
   await panel.getByRole("button", { name: "Close Agent dialog" }).click();
   await revealPropertiesShelf(page);
@@ -134,7 +134,7 @@ test("new connection can be cancelled and retried after a hung create without re
   const panel = page.getByTestId("connect-agent-panel");
   await expect.poll(() => relay.creates.length).toBe(1);
   await panel.getByRole("button", { name: "Cancel connection" }).click();
-  await expect(panel.getByTestId("agent-status")).toHaveText("Disconnected");
+  await expect(panel.getByTestId("agent-status")).toHaveText("已断开");
   await panel.getByTestId("agent-new-connection").click();
   await expect.poll(() => relay.creates.length).toBe(2);
   await page.clock.fastForward(15_100);
@@ -1832,7 +1832,7 @@ test("keeps one Project session through Cell switches and preserves an acknowled
   await page.keyboard.press("i");
   const crashScreen = page.getByTestId("editor-crash-screen");
   await expect(crashScreen).toBeVisible();
-  await crashScreen.getByRole("button", { name: "Reload editor" }).click();
+  await crashScreen.getByRole("button", { name: "重新加载编辑器" }).click();
 
   await expect(page.getByTestId("active-instance-count")).toHaveText("1");
   await expect

@@ -206,7 +206,7 @@ test("the qualified OTA folder opens unchanged and preserves all root and hierar
   await expect(panel.getByLabel("Prepare temporary files")).toHaveCount(0);
   const preview = panel.getByRole("region", { name: "文件预览" });
   const download = page.waitForEvent("download");
-  await preview.getByRole("button", { name: "Download", exact: true }).click();
+  await preview.getByRole("button", { name: "下载", exact: true }).click();
   const stream = await (await download).createReadStream();
   let deck = "";
   for await (const chunk of stream!) deck += chunk.toString();
@@ -404,7 +404,7 @@ test("one Testbench persists several independently named folders", async ({
   await folders
     .getByRole("treeitem", { name: "文件夹 Bias sweep", exact: true })
     .click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Rename…" }).click();
+  await page.getByRole("menuitem", { name: "重命名…" }).click();
   await folders
     .getByLabel("Folder name", { exact: true })
     .fill("OTA OP, DC, AC, and TRAN");
@@ -440,7 +440,7 @@ test("one Testbench persists several independently named folders", async ({
   await folders
     .getByRole("treeitem", { name: "文件夹 Bias sweep", exact: true })
     .click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Delete…" }).click();
+  await page.getByRole("menuitem", { name: "删除…" }).click();
   await page
     .getByRole("dialog", { name: "Delete folder Bias sweep?" })
     .getByRole("button", { name: "Cancel" })
@@ -451,7 +451,7 @@ test("one Testbench persists several independently named folders", async ({
   await folders
     .getByRole("treeitem", { name: "文件夹 Bias sweep", exact: true })
     .click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Delete…" }).click();
+  await page.getByRole("menuitem", { name: "删除…" }).click();
   await page
     .getByRole("dialog", { name: "Delete folder Bias sweep?" })
     .getByRole("button", { name: "Delete", exact: true })

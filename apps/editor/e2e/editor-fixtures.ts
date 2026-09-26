@@ -87,7 +87,6 @@ export async function clickCommand(
   const details = await openMenu(page, menu);
   const commandLabel =
     {
-      Delete: "删除",
       "Export PNG": "导出 PNG",
       "Export PDF": "导出 PDF",
       "Export Project File…": "导出项目文件…",

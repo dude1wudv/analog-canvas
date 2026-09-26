@@ -277,7 +277,7 @@ test("native metadata is hidden per folder while damaged configuration stays rep
     .getByRole("treeitem", { name: "文件夹 Repair", exact: true })
     .click();
   await panel
-    .getByRole("button", { name: "Toggle Repair", exact: true })
+    .getByRole("button", { name: "展开或折叠 Repair", exact: true })
     .click();
   await panel
     .getByRole("treeitem", { name: "experiment.json", exact: true })
@@ -732,9 +732,7 @@ test("tab context menus replace workspace more actions without discarding source
     panel.getByRole("tablist", { name: "已打开的仿真文件" }).getByRole("tab"),
   ).toHaveCount(0);
   await expect(
-    panel.getByText(
-      "Select a file to edit. Closing tabs does not delete files.",
-    ),
+    panel.getByText("请选择要编辑的文件。关闭标签页不会删除文件。"),
   ).toBeVisible();
   await panel.getByRole("treeitem", { name: "run.cir", exact: true }).click();
   await expect(editor).toHaveText(draft);
@@ -899,7 +897,7 @@ test("Helper keeps signal selection continuous and shares the file row without s
   await expect(editor).toContainText("save v(vinp) v(vout)");
   await expect(canvas).toHaveClass(/simulation-net-pick-active/);
   await expect(editor).not.toBeFocused();
-  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("button", { name: "完成", exact: true }).click();
   await expect(canvas).not.toHaveClass(/simulation-net-pick-active/);
   // An incomplete source must remain repairable, not falsely acknowledge an
   // acquisition that the editor refused to insert.
@@ -1191,7 +1189,7 @@ test("incomplete circuit opens Code and saves invalid parameter drafts across re
   await panel
     .getByRole("treeitem", { name: "文件夹 Draft", exact: true })
     .click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Duplicate…" }).click();
+  await page.getByRole("menuitem", { name: "创建副本…" }).click();
   await panel.getByLabel("New simulation folder name").fill("Draft copy");
   await panel.getByLabel("New simulation folder name").press("Enter");
   await expect(
@@ -1399,9 +1397,7 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
   const panel = page.getByRole("region", { name: "模拟仿真" });
   await panel.getByRole("button", { name: "Run", exact: true }).click();
   await panel.getByRole("tab", { name: "Console", exact: true }).click();
-  await expect(panel.getByLabel("Simulation results")).toContainText(
-    /PROBE|probe/,
-  );
+  await expect(panel.getByLabel("仿真结果")).toContainText(/PROBE|probe/);
   expect(executions).toBe(0);
   config.outputs[0] = {
     id: "out",
@@ -1459,15 +1455,15 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
   await panel.getByLabel("New simulation folder name").press("Enter");
   await expect(panel.getByRole("status")).not.toHaveText("completed");
   await expect(
-    panel.getByRole("button", { name: "Toggle E2E folder" }),
+    panel.getByRole("button", { name: "展开或折叠 E2E folder" }),
   ).toHaveAttribute("aria-expanded", "true");
   await expect(
-    panel.getByRole("button", { name: "Toggle Second folder" }),
+    panel.getByRole("button", { name: "展开或折叠 Second folder" }),
   ).toHaveAttribute("aria-expanded", "true");
   await panel
     .getByRole("treeitem", { name: "文件夹 Second folder", exact: true })
     .click({ button: "right" });
-  await page.getByRole("menuitem", { name: "New file…", exact: true }).click();
+  await page.getByRole("menuitem", { name: "新建文件…", exact: true }).click();
   await panel
     .getByRole("textbox", { name: "Relative file path" })
     .fill("bias.spice");
@@ -1526,16 +1522,16 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
   await expect(
     panel.getByRole("tab", { name: /^(Plot|Operating Point|Compare)$/ }),
   ).toHaveCount(0);
-  await panel.getByRole("button", { name: "Maximize results" }).click();
+  await panel.getByRole("button", { name: "最大化结果区" }).click();
   await expect(specs).toBeVisible();
-  await panel.getByRole("button", { name: "Restore results" }).click();
+  await panel.getByRole("button", { name: "还原结果区" }).click();
   const runFiles = panel.getByLabel("Run temporary files");
   await expect(panel.getByLabel("Prepare temporary files")).toHaveCount(0);
   await runFiles
-    .getByRole("button", { name: "Toggle Run", exact: true })
+    .getByRole("button", { name: "展开或折叠 Run", exact: true })
     .click();
   await runFiles
-    .getByRole("button", { name: "Toggle Results", exact: true })
+    .getByRole("button", { name: "展开或折叠 Results", exact: true })
     .click();
   await expect(
     runFiles.getByRole("treeitem", { name: "Logs", exact: true }),
@@ -1553,7 +1549,7 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
   await csvFile.click();
   await panel
     .getByLabel("文件预览")
-    .getByRole("button", { name: "Download", exact: true })
+    .getByRole("button", { name: "下载", exact: true })
     .click();
   expect((await download).suggestedFilename()).toMatch(/[.]csv$/);
   const rawFile = runFiles.getByRole("treeitem", {
@@ -1570,7 +1566,7 @@ test("human simulation uses saved folder, survives minimizing, recovers a bad in
     for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
     return unzipSync(Buffer.concat(chunks));
   };
-  const selectedEntries = await menuZip("Download selected (2)…");
+  const selectedEntries = await menuZip("下载所选项（2）…");
   expect(Object.keys(selectedEntries)).toHaveLength(2);
   await runFiles
     .getByRole("treeitem", { name: "Run", exact: true })
@@ -1743,13 +1739,13 @@ test("Simulation defaults a new experiment to an ordinary authored Cell", async 
   await newCell.getByRole("button", { name: "Create" }).click();
   await page
     .locator(".command-menu > summary")
-    .filter({ hasText: "Edit" })
+    .filter({ hasText: "编辑" })
     .click();
   await page
     .getByRole("button", { name: "Place Cell from this Project…" })
     .click();
   await page
-    .getByRole("dialog", { name: "Place Hierarchical Cell" })
+    .getByRole("dialog", { name: "放置层次化 Cell" })
     .getByRole("option", { name: /dut/u })
     .click();
   await page
@@ -2055,7 +2051,7 @@ test("folder activation exposes the run target independently of expansion and se
   await expect(beta).toHaveAttribute("aria-current", "page");
   await expect(beta).toHaveAttribute("aria-expanded", expanded!);
   await workspace
-    .getByRole("button", { name: "Toggle Alpha", exact: true })
+    .getByRole("button", { name: "展开或折叠 Alpha", exact: true })
     .click();
   await expect(run).toHaveText("Beta");
   await alpha.click({ button: "right" });
@@ -2075,7 +2071,7 @@ test("folder activation exposes the run target independently of expansion and se
   await beta.press("F2");
   const longName = "Beta with a deliberately long simulation folder name";
   const naming = workspace.getByRole("textbox", {
-    name: "文件夹 name",
+    name: "Folder name",
     exact: true,
   });
   await naming.fill(longName);
@@ -2112,7 +2108,7 @@ test("workspace menus, selection, empty editors and resizing share non-destructi
     .first()
     .click({ button: "right" });
   await expect(
-    page.getByRole("menu", { name: "Actions for circuit.spice" }),
+    page.getByRole("menu", { name: "circuit.spice 的操作" }),
   ).toBeVisible();
   await expect(
     workspace.getByRole("tab", { name: "run.cir", exact: true }),
@@ -2126,7 +2122,7 @@ test("workspace menus, selection, empty editors and resizing share non-destructi
     page.getByRole("button", { name: "Run", exact: true }),
   ).toHaveAttribute("title", "Run Beta / run.cir");
   await files
-    .getByRole("button", { name: "Toggle Alpha", exact: true })
+    .getByRole("button", { name: "展开或折叠 Alpha", exact: true })
     .click();
   await expect(alpha).toBeVisible();
   await expect(
@@ -2252,7 +2248,7 @@ test("Explorer context downloads preserve multi-selection and directory contents
   ).toHaveAttribute("aria-selected", "true");
   await beta.click({ button: "right" });
   await expect(
-    page.getByRole("menuitem", { name: "Download…", exact: true }),
+    page.getByRole("menuitem", { name: "下载…", exact: true }),
   ).toBeVisible();
   await expect(run).toHaveAttribute("aria-selected", "false");
   await page.keyboard.press("Escape");
@@ -2265,7 +2261,7 @@ test("Explorer context downloads preserve multi-selection and directory contents
   expect(editingBounds!.width).toBe(bounds!.width);
   await name.press("Escape");
   await alpha.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "New file…", exact: true }).click();
+  await page.getByRole("menuitem", { name: "新建文件…", exact: true }).click();
   await name.fill("models/bias/local.cir");
   await name.press("Enter");
   const models = alphaFiles.getByRole("treeitem", {
@@ -2282,7 +2278,7 @@ test("Explorer context downloads preserve multi-selection and directory contents
   ).toHaveCount(0);
   await models.click({ button: "right" });
   const nestedDownload = page.waitForEvent("download");
-  await page.getByRole("menuitem", { name: "Download…", exact: true }).click();
+  await page.getByRole("menuitem", { name: "下载…", exact: true }).click();
   expect((await nestedDownload).suggestedFilename()).toMatch(/\.zip$/);
   // Selecting the parent and one descendant must not duplicate ZIP entries.
   await alpha.click({ modifiers: ["ControlOrMeta"] });
@@ -2369,7 +2365,7 @@ test("inline naming commits once on blur, cancels on Escape, and deletion uses a
   await gamma.focus();
   await gamma.press("F2");
   await workspace
-    .getByRole("textbox", { name: "文件夹 name", exact: true })
+    .getByRole("textbox", { name: "Folder name", exact: true })
     .fill("Renamed");
   // Renaming existing folders still commits on blur.
   await workspace
@@ -2380,7 +2376,7 @@ test("inline naming commits once on blur, cancels on Escape, and deletion uses a
     exact: true,
   });
   await renamed.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "New file…", exact: true }).click();
+  await page.getByRole("menuitem", { name: "新建文件…", exact: true }).click();
   const fileName = workspace.getByRole("textbox", {
     name: "Relative file path",
   });

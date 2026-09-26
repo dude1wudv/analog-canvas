@@ -605,10 +605,10 @@ test("authors one validated formula through the canonical text editor", async ({
     );
   expect(keyRowCount).toBe(2);
   await expect(
-    formulaKeyboard.getByRole("button", { name: "Insert Product" }),
+    formulaKeyboard.getByRole("button", { name: "Insert 乘积" }),
   ).toBeVisible();
   await expect(
-    formulaKeyboard.getByRole("button", { name: "Insert Derivative" }),
+    formulaKeyboard.getByRole("button", { name: "Insert 导数" }),
   ).toBeVisible();
   await expect(
     formulaKeyboard.getByRole("button", { name: "Insert Plus" }),
@@ -624,10 +624,8 @@ test("authors one validated formula through the canonical text editor", async ({
   await source.fill(directLatex);
   await expect(source).toHaveValue(directLatex);
   await page.locator('math-field[aria-label="Formula editor"]').click();
-  await formulaKeyboard.getByRole("button", { name: "Insert Product" }).click();
-  await formulaKeyboard
-    .getByRole("button", { name: "Insert Derivative" })
-    .click();
+  await formulaKeyboard.getByRole("button", { name: "Insert 乘积" }).click();
+  await formulaKeyboard.getByRole("button", { name: "Insert 导数" }).click();
   await expect(source).toHaveValue(/\\prod/u);
   await expect(source).toHaveValue(/\\mathrm\{d\}/u);
 
@@ -658,7 +656,7 @@ test("authors one validated formula through the canonical text editor", async ({
   ).toHaveValue(/\\Omega/u);
   await moreSymbols.click();
 
-  await page.getByRole("button", { name: "Insert Square root" }).click();
+  await page.getByRole("button", { name: "Insert 平方根" }).click();
   await expect(source).toHaveValue(/\\sqrt/u);
 
   const normalizedDifferential = String.raw`\int_0^1\frac{1}{\sqrt{1+\cos^2x}}\differentialD x`;
@@ -673,10 +671,10 @@ test("authors one validated formula through the canonical text editor", async ({
   );
   await source.fill(normalizedDifferential);
   await expect(source).toHaveValue(normalizedDifferential);
-  await page.getByRole("button", { name: "Display" }).click();
+  await page.getByRole("button", { name: "显示" }).click();
   await page
     .getByRole("dialog", { name: "公式" })
-    .getByRole("button", { name: "Insert", exact: true })
+    .getByRole("button", { name: "插入", exact: true })
     .click();
   await expect(
     page.getByTestId("canvas-text-editor").locator("[data-rich-text-math]"),
@@ -773,7 +771,7 @@ for (const zoomedOut of [false, true]) {
       expect(bounds.width).toBeCloseTo(344, 0);
     };
     const apply = async (expectedLatex: string) => {
-      await dialog.getByRole("button", { name: "Insert", exact: true }).click();
+      await dialog.getByRole("button", { name: "插入", exact: true }).click();
       await expect(frame.locator("[data-rich-text-math]")).toHaveAttribute(
         "data-latex",
         expectedLatex,
@@ -789,7 +787,7 @@ for (const zoomedOut of [false, true]) {
     await openFormula();
     await source.fill(latex);
     const display = dialog.getByRole("button", {
-      name: "Display",
+      name: "显示",
       exact: true,
     });
     await display.click();
@@ -836,7 +834,7 @@ test("edits an unrestricted device formula in the same visual annotation", async
   await page.getByRole("textbox", { name: "Formula LaTeX source" }).fill(latex);
   await page
     .getByRole("dialog", { name: "公式" })
-    .getByRole("button", { name: "Insert", exact: true })
+    .getByRole("button", { name: "插入", exact: true })
     .click();
   await expect(page.getByRole("dialog", { name: "公式" })).toHaveCount(0);
   await expect(page.getByTestId("formula-conversion-confirmation")).toHaveCount(
@@ -879,7 +877,7 @@ test("keeps unsafe formula source out of the Project", async ({ page }) => {
     .fill(String.raw`\href{https://example.com}{V}`);
   await page
     .getByRole("dialog", { name: "公式" })
-    .getByRole("button", { name: "Insert", exact: true })
+    .getByRole("button", { name: "插入", exact: true })
     .click();
 
   await expect(page.getByRole("alert")).toContainText(
@@ -2866,10 +2864,14 @@ for (const kind of ["rectangle", "circle"] as const) {
     bad.appearance.fillColor = [999, 0, 0];
     bad.geometry[kind === "rectangle" ? "width" : "radius"] = 200;
     await editor.fill(JSON.stringify(bad));
-    await expect(page.getByRole("button", { name: "丢弃草稿" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /^(?:丢弃草稿|Discard draft)$/u }),
+    ).toBeVisible();
     await expect(shape).toHaveAttribute("fill", "#e1eeff");
     const lastRevision = await page.getByTestId("revision").textContent();
-    await page.getByRole("button", { name: "丢弃草稿" }).click();
+    await page
+      .getByRole("button", { name: /^(?:丢弃草稿|Discard draft)$/u })
+      .click();
     expect(JSON.parse(await readComponentPropertyCode(page))).toEqual(
       JSON.parse(valid),
     );
@@ -2966,7 +2968,9 @@ test("text and voltage/polarity annotations expose their own live code without l
         "#dc2626",
       );
     await editor.fill('{ "placement":');
-    await expect(page.getByRole("button", { name: "丢弃草稿" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /^(?:丢弃草稿|Discard draft)$/u }),
+    ).toBeVisible();
   }
 });
 
@@ -3044,7 +3048,9 @@ test("annotation dropdowns use typed values and disable locked or incompatible c
   await weight.selectOption("bold");
   const revision = await page.getByTestId("revision").textContent();
   await page.getByLabel("Editable Canvas property code").fill('{"placement":');
-  await page.getByRole("button", { name: "丢弃草稿", exact: true }).click();
+  await page
+    .getByRole("button", { name: /^(?:丢弃草稿|Discard draft)$/u, exact: true })
+    .click();
   await expect(page.getByTestId("revision")).toHaveText(revision!);
   await expect(weight).toHaveValue("bold");
 

@@ -118,7 +118,7 @@ test("a saved-folder batch prepares first and exposes each ordinary run", async 
     });
     if ((await folder.getAttribute("aria-expanded")) !== "true")
       await panel
-        .getByRole("button", { name: `Toggle ${name}`, exact: true })
+        .getByRole("button", { name: `展开或折叠 ${name}`, exact: true })
         .click();
     await panel
       .locator(
@@ -151,7 +151,7 @@ test("a saved-folder batch prepares first and exposes each ordinary run", async 
   await page
     .getByRole("menuitem", { name: "Run selected folders (2)" })
     .click();
-  await panel.getByTitle("Batch queue", { exact: true }).click();
+  await panel.getByTitle("批量队列", { exact: true }).click();
   const batch = panel.locator(".simulation-batch-menu-popover");
   await expect(batch).toContainText("Batch · finished");
   await expect(
@@ -300,7 +300,7 @@ test("a saved Run Plan prepares without executing and Run starts its ordinary ba
     .getByRole("treeitem", { name: "Run", exact: true })
     .click({ button: "right" });
   await page.getByRole("menuitem", { name: "Preview input netlist…" }).click();
-  await panel.getByTitle("Batch queue", { exact: true }).click();
+  await panel.getByTitle("批量队列", { exact: true }).click();
   await expect(panel.locator(".simulation-batch-menu-popover")).toContainText(
     "Batch · prepared",
   );

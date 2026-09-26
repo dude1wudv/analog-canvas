@@ -157,7 +157,7 @@ for (const { width, height } of [
     );
     await exportTrigger.click();
     const exportOption = fileMenu.getByRole("button", {
-      name: "Export Project File…",
+      name: "导出项目文件…",
     });
     await expect(exportOption).toBeInViewport();
     const exportBounds = await exportOption.boundingBox();
@@ -208,7 +208,7 @@ test("File menu falls back to one scroll area in a short viewport", async ({
   expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(360);
   await fileMenu.getByRole("button", { name: "Export", exact: true }).click();
   const exportOption = fileMenu.getByRole("button", {
-    name: "Export Project File…",
+    name: "导出项目文件…",
   });
   await expect(exportOption).toBeInViewport();
 });

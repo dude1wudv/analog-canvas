@@ -355,8 +355,7 @@ export function ImageSpiceDialog({
           )}
           <p className="image-spice-note">
             检查仅确认结构能被导入，不能证明 AI
-            与原图一致。第一版保留电气连接，器件进入 Placement
-            Tray，不还原图中位置；模型占位不代表可仿真。
+            与原图一致。导入保留电气连接，并自动放置器件，不还原图中位置；模型占位不代表可仿真。
           </p>
           <label className="image-spice-confirm">
             <input

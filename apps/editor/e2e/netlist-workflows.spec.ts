@@ -82,7 +82,7 @@ test("opens netlist preflight and navigates its canonical finding", async ({
   await page.goto("/editor");
   await placeComponent(page, "resistor", { x: 360, y: 240 });
   await clickCommand(page, "Netlist", "Review Netlist Issues…");
-  const dialog = page.getByRole("dialog", { name: "Check Report" });
+  const dialog = page.getByRole("dialog", { name: "检查报告" });
   await expect(dialog).toContainText("blocking issue");
   await dialog
     .getByRole("button", { name: /MISSING_PIN_NET/u })
@@ -116,7 +116,7 @@ test("previews a validated structural netlist in both export dialects", async ({
     exact: true,
   });
   await clickCommand(page, "Netlist", "Review Netlist Issues…");
-  const dialog = page.getByRole("dialog", { name: "Check Report" });
+  const dialog = page.getByRole("dialog", { name: "检查报告" });
   const preview = dialog.getByTestId("netlist-preview");
   await expect(preview).toContainText(".subckt dut");
   await dialog.getByTestId("check-report-close").click();
@@ -184,9 +184,7 @@ X2 OUT IN EXT_MASTER l=1u nf=4
     "Imported 2 Documents",
   );
   const spice = await copyNetlistText(page);
-  await expect(page.getByRole("dialog", { name: "Check Report" })).toHaveCount(
-    0,
-  );
+  await expect(page.getByRole("dialog", { name: "检查报告" })).toHaveCount(0);
   expect(spice).toContain(".subckt leaf A B params: scale=1");
   expect(spice).toContain("X1 IN OUT leaf scale=2");
   expect(spice).toContain("X2 OUT IN EXT_MASTER l=1u nf=4");
@@ -332,11 +330,9 @@ test("copies generated NoConnect nodes immediately and retains the optional Chec
     buffer: Buffer.from(serializeProject(project)),
   });
   expect(await copyNetlistText(page)).toContain("R1 IN NC0001 10k");
-  await expect(page.getByRole("dialog", { name: "Check Report" })).toHaveCount(
-    0,
-  );
+  await expect(page.getByRole("dialog", { name: "检查报告" })).toHaveCount(0);
   await clickCommand(page, "Netlist", "Review Netlist Issues…");
-  const dialog = page.getByRole("dialog", { name: "Check Report" });
+  const dialog = page.getByRole("dialog", { name: "检查报告" });
   await expect(dialog).toContainText("GENERATED_NO_CONNECT_NODE");
   await expect(dialog.getByTestId("netlist-preview")).toContainText(
     "R1 IN NC0001 10k",
@@ -465,9 +461,7 @@ test("copies structural SPICE and Spectre netlists while exposing instance autho
       ),
     )
     .toBe(spectre);
-  await expect(page.getByRole("dialog", { name: "Check Report" })).toHaveCount(
-    0,
-  );
+  await expect(page.getByRole("dialog", { name: "检查报告" })).toHaveCount(0);
 
   await placeComponent(page, "nmos", { x: 360, y: 220 });
   await page.getByTestId("netlist-panel-toggle").click();
@@ -996,7 +990,7 @@ test("blocks netlist output when the configured default is missing", async ({
     page.getByRole("region", { name: "Live netlist" }).getByRole("alert"),
   ).toContainText("requires parameter value");
   await clickCommand(page, "Netlist", "Review Netlist Issues…");
-  const report = page.getByRole("dialog", { name: "Check Report" });
+  const report = page.getByRole("dialog", { name: "检查报告" });
   await expect(report).toContainText("1 blocking issue");
   await expect(report).toContainText("MISSING_REQUIRED_PARAMETER");
   await expect(report.getByTestId("netlist-preview")).toHaveCount(0);

@@ -261,10 +261,10 @@ test("Explorer opens sideways, configuration is advanced, and results maximize/r
   );
   await expect(editor).toContainText('"version"');
   await page.getByRole("tab", { name: "Specs", exact: true }).click();
-  await page.getByRole("button", { name: "Maximize results" }).click();
+  await page.getByRole("button", { name: "最大化结果区" }).click();
   await expect(editor).not.toBeVisible();
   await expect(page.locator(".simulation-spec-results")).toBeVisible();
-  await page.getByRole("button", { name: "Restore results" }).click();
+  await page.getByRole("button", { name: "还原结果区" }).click();
   await expect(editor).toBeVisible();
   await expect(
     page.getByRole("complementary", { name: "仿真文件" }),

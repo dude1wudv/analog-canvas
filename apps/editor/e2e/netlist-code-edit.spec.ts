@@ -551,7 +551,7 @@ test("bound labels retain typography on rename and support manual scripts withou
   const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   const alias = page.getByRole("checkbox", { name: "Use display alias" });
   await expect(alias).not.toBeChecked();
-  for (const name of ["Bold", "Italic", "Subscript", "Superscript"])
+  for (const name of ["粗体", "斜体", "下标", "上标"])
     await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
   await expect(editor).toHaveAttribute("contenteditable", "true");
   await editor.fill("R7");

@@ -281,7 +281,7 @@ test("traces a parent Net through the second Cell occurrence and returns to its 
   const shelf = page.getByTestId("selection-shelf");
   if ((await shelf.getAttribute("aria-expanded")) === "false")
     await shelf.click();
-  await page.getByRole("button", { name: /Enter: X2\.IN/ }).click();
+  await page.getByRole("button", { name: /进入: X2\.IN/ }).click();
   await expect(page.getByTestId("active-document-id")).toHaveText(child.id);
   await expect(page.getByTestId("net-highlight-overlay")).toHaveAttribute(
     "data-net-id",
@@ -942,7 +942,7 @@ test("keeps a Port Name when its subscript is removed, and projects that look", 
   await openTopCell(page);
   await runCellCommand(page, "Place Cell");
   await page
-    .getByRole("dialog", { name: "Place Hierarchical Cell" })
+    .getByRole("dialog", { name: "放置层次化 Cell" })
     .getByRole("option", { name: /FormattedStage/ })
     .click();
   await page
@@ -1006,7 +1006,7 @@ test("places an unreferenced top Cell in an ordinary new Cell", async ({
   await createCell(page, "Testbench");
   await runCellCommand(page, "Place Cell");
   await page
-    .getByRole("dialog", { name: "Place Hierarchical Cell" })
+    .getByRole("dialog", { name: "放置层次化 Cell" })
     .getByRole("option", { name: /dut/u })
     .click();
   await page
@@ -1039,7 +1039,7 @@ test("keeps Hierarchy discoverable and restores the operation row on demand", as
   await page.goto("/editor");
 
   const entry = page.getByTestId("hierarchy-entry");
-  const toolbar = page.locator('.toolbar-row[aria-label="Document hierarchy"]');
+  const toolbar = page.locator('.toolbar-row[aria-label="文档层次结构"]');
   await expect(entry).toBeVisible({ timeout: 15_000 });
   await expect(entry).toHaveText("Hierarchy");
   await expect(toolbar).toHaveCount(0);
@@ -1056,7 +1056,7 @@ test("keeps Hierarchy discoverable and restores the operation row on demand", as
   await expect(entry).toBeVisible();
   await toolbar.getByRole("button", { name: "Place Cell" }).click();
   await expect(
-    page.getByRole("dialog", { name: "Place Hierarchical Cell" }),
+    page.getByRole("dialog", { name: "放置层次化 Cell" }),
   ).toBeVisible();
 });
 
@@ -1121,7 +1121,7 @@ test("manages Cell rename and lists callers", async ({ page }) => {
   await createCell(page, "ReusableStage");
   await openTopCell(page);
   await runCellCommand(page, "Place Cell");
-  const insert = page.getByRole("dialog", { name: "Place Hierarchical Cell" });
+  const insert = page.getByRole("dialog", { name: "放置层次化 Cell" });
   await insert.getByRole("option", { name: /ReusableStage/u }).click();
   await page
     .getByTestId("schematic-canvas")
@@ -1204,7 +1204,7 @@ test("declares and places a Cell Pin on a new local Net", async ({ page }) => {
   await openTopCell(page);
   await runCellCommand(page, "Place Cell");
   const insertDialog = page.getByRole("dialog", {
-    name: "Place Hierarchical Cell",
+    name: "放置层次化 Cell",
   });
   await insertDialog.getByRole("option", { name: /ReusableStage/u }).click();
   await canvas.click({ position: { x: 420, y: 180 } });
@@ -1356,7 +1356,7 @@ test("declares a top Formal Cell Pin and exports the top interface", async ({
   await expect(page.getByLabel("Cell Pin properties")).toHaveCount(0);
 
   await clickCommand(page, "Netlist", "Review Netlist Issues…");
-  const preflight = page.getByRole("dialog", { name: "Check Report" });
+  const preflight = page.getByRole("dialog", { name: "检查报告" });
   await expect(preflight.getByTestId("netlist-preview")).toContainText(
     ".subckt dut VIN",
   );
@@ -1424,7 +1424,7 @@ test("copies and independently deletes Formal Cell Pins", async ({ page }) => {
   await clickCommand(page, "Netlist", "Review Netlist Issues…");
   await expect(
     page
-      .getByRole("dialog", { name: "Check Report" })
+      .getByRole("dialog", { name: "检查报告" })
       .getByTestId("netlist-preview"),
   ).toContainText(".subckt dut VIN");
 });
@@ -1482,7 +1482,7 @@ test("edits a Cell Pin name and RichText presentation in place", async ({
   ).toContainText("VINP");
 
   await clickCommand(page, "Netlist", "Review Netlist Issues…");
-  const preflight = page.getByRole("dialog", { name: "Check Report" });
+  const preflight = page.getByRole("dialog", { name: "检查报告" });
   await expect(preflight).not.toContainText("MISSING_DEVICE_DEFINITION");
   await expect(preflight.getByTestId("netlist-preview")).toContainText(
     ".subckt dut VINP",
@@ -1669,7 +1669,7 @@ test("places an existing Cell and blocks deleting its shared definition", async 
   await openTopCell(page);
 
   await runCellCommand(page, "Place Cell");
-  const dialog = page.getByRole("dialog", { name: "Place Hierarchical Cell" });
+  const dialog = page.getByRole("dialog", { name: "放置层次化 Cell" });
   await expect(
     dialog.getByRole("option", { name: /ReusableStage/u }),
   ).toBeVisible();
@@ -1682,7 +1682,7 @@ test("places an existing Cell and blocks deleting its shared definition", async 
   expect(cellBounds.height).toBeGreaterThan(400);
   await page.keyboard.press("Escape");
   await page.keyboard.press("i");
-  const fullInsert = page.getByRole("dialog", { name: "Insert Component" });
+  const fullInsert = page.getByRole("dialog", { name: "插入元件" });
   await expect(fullInsert.getByTestId("insert-component-nmos")).toBeVisible();
   const libraryBounds = (await fullInsert.boundingBox())!;
   const libraryArtwork = (await fullInsert
@@ -1696,7 +1696,7 @@ test("places an existing Cell and blocks deleting its shared definition", async 
 
   await runCellCommand(page, "Place Cell");
   const cellDialog = page.getByRole("dialog", {
-    name: "Place Hierarchical Cell",
+    name: "放置层次化 Cell",
   });
   await cellDialog.getByRole("option", { name: /ReusableStage/u }).click();
 
@@ -1863,7 +1863,7 @@ test("same-name Cell Pins stay independent while the final interface groups them
   await setCellTerminalDirection(page, "VIN", "input");
   await clickCommand(page, "Netlist", "Review Netlist Issues…");
   const preview = await page
-    .getByRole("dialog", { name: "Check Report" })
+    .getByRole("dialog", { name: "检查报告" })
     .getByTestId("netlist-preview")
     .innerText();
   expect(preview).toContain(".subckt dut VIN");

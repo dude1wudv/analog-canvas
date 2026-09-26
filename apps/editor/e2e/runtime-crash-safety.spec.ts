@@ -36,7 +36,7 @@ test("a render crash shows the recovery screen instead of a blank page", async (
   expect(bugReportBody).not.toContain("test hook");
 
   // Reloading brings the editor back without the transient crash flag.
-  await crashScreen.getByRole("button", { name: "Reload editor" }).click();
+  await crashScreen.getByRole("button", { name: "重新加载编辑器" }).click();
   await awaitEditorReady(page);
 });
 

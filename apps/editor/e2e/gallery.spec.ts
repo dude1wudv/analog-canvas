@@ -949,7 +949,7 @@ test("the site lands on the full-screen gallery feed", async ({ page }) => {
   const repositoryLink = page.getByTestId("gallery-repository-link");
   await expect(repositoryLink).toHaveAttribute(
     "href",
-    "https://github.com/cascode-ai/analog-canvas",
+    "https://github.com/dude1wudv/analog-canvas",
   );
   await expect(repositoryLink).toHaveAttribute("target", "_blank");
   await expect(repositoryLink.locator("svg")).toBeVisible();
@@ -3419,7 +3419,7 @@ test("a published tab counts as saved until its next edit", async ({
   await expect(page.getByRole("tab")).toHaveCount(2);
   const active = page.getByRole("tab", { selected: true });
   await place(340);
-  await expect(active.getByLabel("未保存")).toBeVisible();
+  await expect(active.getByLabel("Unsaved")).toBeVisible();
   await expect(page.getByTestId("project-unsaved-indicator")).toBeVisible();
 
   await page.getByTestId("publish-gallery-button").click();
@@ -3431,12 +3431,12 @@ test("a published tab counts as saved until its next edit", async ({
     'Published "Published tab" to the gallery',
   );
   // The Gallery holds exactly these bytes: nothing is unsaved.
-  await expect(active.getByLabel("未保存")).toHaveCount(0);
+  await expect(active.getByLabel("Unsaved")).toHaveCount(0);
   await expect(page.getByTestId("project-unsaved-indicator")).toHaveCount(0);
 
   // The next edit is unsaved again, until it is published too.
   await place(460);
-  await expect(active.getByLabel("未保存")).toBeVisible();
+  await expect(active.getByLabel("Unsaved")).toBeVisible();
   await page.getByTestId("publish-gallery-button").click();
   await page
     .getByTestId("publish-gallery-dialog")
@@ -3445,7 +3445,7 @@ test("a published tab counts as saved until its next edit", async ({
   await expect(page.getByTestId("status")).toHaveText(
     'Updated "Published tab" in the gallery',
   );
-  await expect(active.getByLabel("未保存")).toHaveCount(0);
+  await expect(active.getByLabel("Unsaved")).toHaveCount(0);
 
   // Closing it loses nothing, so it closes without asking.
   await active
@@ -3565,9 +3565,7 @@ test("Cloud Save updates one stable private Project", async ({ page }) => {
   await expect(page.getByTestId("status")).toContainText(
     "Saved New Circuit to Cloud",
   );
-  await expect(page.getByRole("dialog", { name: "Check Report" })).toHaveCount(
-    0,
-  );
+  await expect(page.getByRole("dialog", { name: "检查报告" })).toHaveCount(0);
   expect(storedProjectText).toContain("nmos");
 
   const reopenedMenu = await openMenu(page, "File");
@@ -3745,7 +3743,7 @@ test("an ordinary user sees blocking quality gates on an empty project", async (
   // hard gate: the checker has false positives and sketches are shareable.
   const gates = page.getByTestId("publish-gallery-gates");
   await expect(gates).toBeVisible();
-  await expect(gates).toContainText("publishing stays open");
+  await expect(gates).toContainText("仍可继续发布");
   await expect(gates).toContainText("Too little content");
   const tags = dialog.getByTestId("publish-tags");
   await expect(tags).toHaveCSS("display", "flex");

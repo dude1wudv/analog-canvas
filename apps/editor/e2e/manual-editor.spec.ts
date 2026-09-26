@@ -573,7 +573,7 @@ test("property code keeps a drawn wired instance visible and moves it with grid 
     .getByLabel("Editable Canvas property code")
     .fill(JSON.stringify(code));
   const discard = page.getByRole("button", {
-    name: "丢弃草稿",
+    name: /^(?:丢弃草稿|Discard draft)$/u,
     exact: true,
   });
   await expect(discard).toBeVisible();
@@ -701,7 +701,7 @@ test("shows faithful symbol previews for the reviewed Razavi palette", async ({
   await page.goto("/editor");
   await awaitEditorReady(page);
   await page.keyboard.press("i");
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
   const search = dialog.getByLabel("搜索元件");
   // Browser coverage owns tile-to-artwork wiring. Catalogue completeness and
   // every symbol's geometry are covered by the symbol contract and goldens.
@@ -1068,7 +1068,7 @@ test("command move owns rotate and commits pose plus translation atomically", as
   await page.mouse.click(before.x + 100, before.y + 80);
   await expect(page.getByTestId("revision")).toHaveText("2");
   await expect(page.getByTestId("status")).toContainText(
-    "Moved and transformed selection",
+    "已移动并变换所选对象",
   );
   await expect(
     page.locator('[data-object-id="R1"] > g').first(),
@@ -2397,7 +2397,7 @@ test("keeps Bulk status and its prominent draw action on one compact row", async
   const bulk = page.getByLabel("MOS 体端连接");
   const draw = bulk.getByRole("button", { name: "绘制体端连接" });
   await expect(draw).toBeVisible();
-  await expect(draw).toHaveText("Connect");
+  await expect(draw).toHaveText("连接");
   await expect(bulk.locator(".mos-bulk-status")).toHaveText("Unconnected");
   await expect(bulk).not.toContainText("unresolved");
   const layout = await bulk.evaluate((section) => {
@@ -2496,7 +2496,7 @@ test("initializes NMOS bulk from the first explicitly placed Ground", async ({
   await expect(bulk.locator(".mos-bulk-status")).toHaveText("0");
   await expect(bulk.locator(".mos-bulk-status")).toHaveAttribute(
     "title",
-    "M1.B → 0 · Cell default",
+    "M1.B → 0 · Cell 默认值",
   );
   await expect(bulk.getByRole("button", { name: "绘制体端连接" })).toHaveText(
     "Draw",
@@ -3055,7 +3055,7 @@ test("selects an attached label without selecting its host", async ({
   ).toHaveClass(/selected/u);
   await revealPropertiesShelf(page);
   await expect(page.getByTestId("selection-shelf")).toContainText(
-    "Annotation · instance-label",
+    "注释 · instance-label",
   );
 });
 
@@ -4005,9 +4005,7 @@ test("selects and moves multiple instances while viewport gestures stay transien
   await page.mouse.up();
   await openSelectionShelf(page);
   await revealPropertiesShelf(page);
-  await expect(page.getByTestId("selection-shelf")).toContainText(
-    "2 components",
-  );
+  await expect(page.getByTestId("selection-shelf")).toContainText("2 个元件");
 
   await page
     .getByTestId("hit-M1")
@@ -4876,11 +4874,9 @@ test("keeps component insertion and inspection from resizing the canvas", async 
   if (!beforePlaceCanvas) throw new Error("Canvas is not measurable");
 
   await page.keyboard.press("i");
-  await expect(
-    page.getByRole("dialog", { name: "Insert Component" }),
-  ).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "插入元件" })).toBeVisible();
   expect((await canvas.boundingBox())?.width).toBe(beforePlaceCanvas.width);
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
   await dialog.getByLabel("搜索元件").fill("pmos");
   await dialog.getByTestId("insert-component-pmos").click();
 
@@ -5126,7 +5122,7 @@ test("shows first-party visitor analytics without tracking the dashboard itself"
   });
 
   await page.goto("/analytics");
-  await expect(page.getByRole("heading", { name: "Analytics" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "统计" })).toBeVisible();
   await expect(page.getByText("Registered accounts")).toBeVisible();
   await expect(page.getByText("42", { exact: true })).toBeVisible();
   await expect(page).toHaveTitle("Analytics — Analog Canvas");
@@ -5225,7 +5221,7 @@ test("opens selectable-object choices with Ctrl+Shift+F and filters Select All",
   const filter = page.getByTestId("selection-filter-popover");
   await expect(filter).toBeVisible();
   await filter.getByRole("button", { name: "无" }).click();
-  await filter.getByLabel("Wires").check();
+  await filter.getByLabel("导线").check();
   await filter.getByRole("button", { name: "Close" }).click();
   await expect(page.getByTestId("selection-filter-status")).toContainText(
     "Filter: Wires",
@@ -5525,7 +5521,7 @@ test("marks and clears an unconnected endpoint as No Connect", async ({
   await expect(page.locator('[data-role="no-connect"]')).toHaveCount(1);
 
   await page.getByTestId("terminal-R1-1").click({ button: "right" });
-  await page.getByRole("button", { name: "Clear No Connect" }).click();
+  await page.getByRole("button", { name: "清除 No Connect" }).click();
   await expect(page.getByTestId("status")).toContainText(
     "Cleared No Connect on terminal-R1-1",
   );
@@ -5705,7 +5701,7 @@ test("docked Properties JSON is the only global configuration surface", async ({
     0,
   );
   await expect(
-    settings.getByRole("button", { name: "Show Font size previews" }),
+    settings.getByRole("button", { name: "Show 字号 previews" }),
   ).toBeVisible();
   await expect(
     settings.getByRole("button", {
@@ -5754,11 +5750,9 @@ test("docked Properties JSON is the only global configuration surface", async ({
   await expect(bulkPreview).toContainText("VSSNMOS→VSS");
   await page.keyboard.press("Escape");
   await expect(settings.locator(".cm-property-unit")).toHaveCount(0);
-  await settings
-    .getByRole("button", { name: "Show Font size previews" })
-    .click();
+  await settings.getByRole("button", { name: "Show 字号 previews" }).click();
   await page
-    .getByRole("listbox", { name: "Font size previews" })
+    .getByRole("listbox", { name: "字号 previews" })
     .getByRole("option", { name: /^1\.5×/u })
     .click();
   await expect(label).toHaveAttribute("font-size", "22.674");

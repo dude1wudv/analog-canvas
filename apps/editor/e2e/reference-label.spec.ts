@@ -155,7 +155,9 @@ test("Properties renames the electrical identity explicitly; restore is an in-pl
     code.netlistName = "gm";
   });
   await expect(properties).toContainText("Canvas property code was rejected");
-  await properties.getByRole("button", { name: "丢弃草稿" }).click();
+  await properties
+    .getByRole("button", { name: /^(?:丢弃草稿|Discard draft)$/u })
+    .click();
   await expectComponentCodeField(page, "netlistName", "R7");
   await editComponentPropertyCode(page, (value) => {
     value.display.visualAnnotation = false;

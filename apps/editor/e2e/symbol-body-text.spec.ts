@@ -127,7 +127,7 @@ test("formats a Symbol's body text like any label", async ({ page }) => {
   await page.getByTestId("hit-X1").dblclick();
   const editor = page.getByRole("textbox", { name: "画布文本编辑器" });
   await expect(editor).toHaveText("ADC");
-  for (const name of ["Bold", "Italic", "Subscript", "Insert formula"])
+  for (const name of ["粗体", "斜体", "下标", "插入公式"])
     await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
   await expect(page.getByLabel("Insert circuit symbol")).toBeVisible();
 

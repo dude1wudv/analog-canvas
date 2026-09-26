@@ -36,15 +36,11 @@ test("Check and Save surfaces findings in the existing workbench and canvas", as
   await expect(badge).toHaveAttribute("data-severity", "warning");
   await expect(badge).toContainText("warning");
   await expect(page.getByTestId("check-and-save")).toBeEnabled();
-  await expect(page.getByRole("dialog", { name: "Check Report" })).toHaveCount(
-    0,
-  );
+  await expect(page.getByRole("dialog", { name: "检查报告" })).toHaveCount(0);
 
   // The badge opens the dock with the issues section expanded.
   await badge.click();
-  const issuesSection = page.locator(
-    'section[aria-label="Project diagnostics"] details',
-  );
+  const issuesSection = page.locator('section[aria-label="项目诊断"] details');
   await expect(issuesSection).toHaveAttribute("open", "");
   const findings = page.getByTestId("project-diagnostics").locator("li button");
   await expect(findings.first()).toBeVisible();

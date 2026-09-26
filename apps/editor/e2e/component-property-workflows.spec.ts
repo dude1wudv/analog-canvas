@@ -252,7 +252,9 @@ test("live Defaults are undoable and invalid drafts never change the canvas", as
     page.getByRole("button", { name: "Mirror top to bottom" }),
   ).toBeDisabled();
   await expect(page.getByLabel("Target netlist options")).toBeDisabled();
-  await page.getByRole("button", { name: "丢弃草稿" }).click();
+  await page
+    .getByRole("button", { name: /^(?:丢弃草稿|Discard draft)$/u })
+    .click();
   await expectComponentCodeField(page, "parameters.w", "7u");
   await expect(page.locator(".cm-json-key").first()).toBeVisible();
   await expect(page.locator(".cm-json-string").first()).toBeVisible();
@@ -637,7 +639,7 @@ test("Q opens a text-first Properties editor with one-click exact draft copy", a
     ),
   ).toBe(raw);
   await expect(
-    page.getByText("JSON copied", {
+    page.getByText(/^(?:已复制 JSON|JSON copied)$/u, {
       exact: true,
     }),
   ).toBeVisible();
@@ -1075,7 +1077,7 @@ test("value display projects MOS W/L and passive values beside the reference", a
   await page.goto("/editor");
   await awaitEditorReady(page);
   await page.keyboard.press("i");
-  const dialog = page.getByRole("dialog", { name: "Insert Component" });
+  const dialog = page.getByRole("dialog", { name: "插入元件" });
   await dialog.getByLabel("搜索元件").fill("nmos");
   await dialog.getByTestId("insert-component-nmos").click();
   const canvas = page.getByTestId("schematic-canvas");
@@ -2020,10 +2022,15 @@ test("batch Code colors different component types while rejecting incompatible v
     }),
   );
   await expect(
-    page.getByRole("button", { name: "丢弃草稿", exact: true }),
+    page.getByRole("button", {
+      name: /^(?:丢弃草稿|Discard draft)$/u,
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(page.getByTestId("revision")).toHaveText(revision!);
-  await page.getByRole("button", { name: "丢弃草稿", exact: true }).click();
+  await page
+    .getByRole("button", { name: /^(?:丢弃草稿|Discard draft)$/u, exact: true })
+    .click();
   await page
     .getByRole("button", { name: "Edit line color", exact: true })
     .click();
@@ -2062,7 +2069,10 @@ test("batch Code drafts follow selection identity even when common values are id
     .fill('{ "appearance":');
   await page.getByTestId("hit-R3").click({ modifiers: ["Shift"] });
   await expect(
-    page.getByRole("button", { name: "丢弃草稿", exact: true }),
+    page.getByRole("button", {
+      name: /^(?:丢弃草稿|Discard draft)$/u,
+      exact: true,
+    }),
   ).toHaveCount(0);
   expect(
     JSON.parse(await readComponentPropertyCode(page)).parameters.value,

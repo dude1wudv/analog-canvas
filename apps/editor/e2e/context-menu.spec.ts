@@ -101,7 +101,7 @@ test("right-click on a multi-selection aligns bbox edges", async ({ page }) => {
 
   await instances.nth(1).click({ button: "right" });
   const menu = page.getByTestId("canvas-context-menu");
-  await expect(menu).toContainText("Align");
+  await expect(menu).toContainText("对齐");
   await page.getByTestId("context-align-left").click();
   await expect(page.getByTestId("status")).toContainText(
     "Aligned 2 selected objects",
@@ -225,9 +225,7 @@ for (const grid of [5, 10]) {
 
     // A second alignment is a true no-op; Undo still reverses the first one.
     await alignBottom();
-    await expect(page.getByTestId("status")).toContainText(
-      "Selection is already aligned",
-    );
+    await expect(page.getByTestId("status")).toContainText("所选对象已经对齐");
     await page.keyboard.press("ControlOrMeta+z");
     expect(await labelRects()).toEqual(before);
     await page.keyboard.press("ControlOrMeta+Shift+z");
@@ -281,7 +279,7 @@ test("drafting text shares device additive selection and context alignment", asy
   // opens the same command surface as a device, without device-only variants.
   await text.click({ button: "right" });
   const menu = page.getByTestId("canvas-context-menu");
-  await expect(menu).toContainText("Align");
+  await expect(menu).toContainText("对齐");
   await expect(menu).not.toContainText("Swap device");
   await page.getByTestId("context-align-left").click();
   await expect(page.getByTestId("status")).toContainText(
@@ -843,13 +841,13 @@ test("Netlist keeps format selection in the project panel while File keeps drawi
     .getByRole("button", { name: "Export", exact: true })
     .press("ArrowRight");
   await expect(
-    menu.getByRole("button", { name: "Export Project File…", exact: true }),
+    menu.getByRole("button", { name: "导出项目文件…", exact: true }),
   ).toBeFocused();
   expect(
     await page.getByTestId("schematic-canvas").getAttribute("viewBox"),
   ).toBe(viewBox);
   await menu
-    .getByRole("button", { name: "Export Project File…", exact: true })
+    .getByRole("button", { name: "导出项目文件…", exact: true })
     .press("ArrowLeft");
   await expect(
     menu.getByRole("button", { name: "Export", exact: true }),
