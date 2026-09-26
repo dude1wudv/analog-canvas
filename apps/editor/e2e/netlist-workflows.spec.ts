@@ -83,7 +83,7 @@ test("opens netlist preflight and navigates its canonical finding", async ({
   await placeComponent(page, "resistor", { x: 360, y: 240 });
   await clickCommand(page, "Netlist", "Review Netlist Issues…");
   const dialog = page.getByRole("dialog", { name: "检查报告" });
-  await expect(dialog).toContainText("blocking issue");
+  await expect(dialog).toContainText("项阻止导出的问题");
   await dialog
     .getByRole("button", { name: /MISSING_PIN_NET/u })
     .first()
@@ -361,7 +361,7 @@ test("copies generated NoConnect nodes immediately and retains the optional Chec
   );
 
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-  await dialog.getByRole("button", { name: "Copy SPICE netlist" }).click();
+  await dialog.getByRole("button", { name: "复制 SPICE 网表" }).click();
   await expect(page.getByTestId("status")).toContainText(
     "SPICE netlist copied",
   );
@@ -442,8 +442,8 @@ test("copies structural SPICE and Spectre netlists while exposing instance autho
   expect(spectre).toContain("simulator lang=spectre");
   await openMenu(page, "Netlist");
   const primary = page.getByTestId("copy-netlist");
-  await expect(primary).toHaveAccessibleName("Copy Netlist");
-  await expect(primary).toContainText("Copy Netlist");
+  await expect(primary).toHaveAccessibleName("复制网表");
+  await expect(primary).toContainText("复制网表");
   await expect(primary).toHaveAttribute("title", /Spectre \(\.scs\)/u);
   expect(await copyNetlistText(page)).toBe(spectre);
   // The panel's own copy button, beside the code, copies the same netlist.
@@ -989,7 +989,7 @@ test("blocks netlist output when the configured default is missing", async ({
   ).toContainText("requires parameter value");
   await clickCommand(page, "Netlist", "Review Netlist Issues…");
   const report = page.getByRole("dialog", { name: "检查报告" });
-  await expect(report).toContainText("1 blocking issue");
+  await expect(report).toContainText("1 项阻止导出的问题");
   await expect(report).toContainText("MISSING_REQUIRED_PARAMETER");
   await expect(report.getByTestId("netlist-preview")).toHaveCount(0);
   await report.getByTestId("check-report-close").click();
@@ -997,7 +997,7 @@ test("blocks netlist output when the configured default is missing", async ({
     .getByRole("combobox", { name: "Netlist format" })
     .selectOption("spectre");
   await clickCommand(page, "Netlist", "Review Netlist Issues…");
-  await expect(report).toContainText("1 blocking issue");
+  await expect(report).toContainText("1 项阻止导出的问题");
   await expect(report.getByTestId("netlist-preview")).toHaveCount(0);
 });
 

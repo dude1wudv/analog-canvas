@@ -246,39 +246,35 @@ export function PublishGalleryDialog({
           // Nothing to fill in until there is an account to publish under:
           // the byline, the ownership, and the credential all come from it.
           <div className="publish-gallery-signin" data-testid="publish-signin">
-            <p>
-              Publishing needs an account, so the circuit carries your name and
-              stays yours to edit or withdraw.
-            </p>
+            <p>发布需要登录账户，以便电路署名，并保留编辑或撤回的权限。</p>
             <div className="publish-gallery-signin-actions">
               <a
                 href="/api/auth/github/start"
                 data-testid="publish-signin-github"
               >
-                Continue with GitHub
+                使用 GitHub 继续
               </a>
               <a
                 href="/api/auth/google/start"
                 data-testid="publish-signin-google"
               >
-                Continue with Google
+                使用 Google 继续
               </a>
             </div>
             <p className="publish-gallery-signin-note">
-              Prefer email? Sign in from the account menu on the gallery page —
-              a one-time link is all it takes.
+              更喜欢邮箱登录？请在画廊页面的账户菜单中获取一次性登录链接。
             </p>
           </div>
         ) : (
           <>
             {publicationLinkLoading ? (
-              <p role="status">Loading linked publication…</p>
+              <p role="status">正在加载关联的作品…</p>
             ) : null}
             {publicationLinkError ? (
               <p role="alert">
                 {publicationLinkError}{" "}
                 <button type="button" onClick={onRetryPublicationLink}>
-                  Retry
+                  重试
                 </button>
               </p>
             ) : null}
@@ -287,14 +283,12 @@ export function PublishGalleryDialog({
             !publicationLinkLoading &&
             !publicationLinkError ? (
               <details className="publish-gallery-link-existing">
-                <summary>Use an existing Gallery publication…</summary>
+                <summary>使用已有的画廊作品…</summary>
                 <p>
-                  Paste its Gallery link to use this draft as the source.
-                  Updating keeps the public link, likes, author and history. The
-                  previous Shelf draft stays saved.
+                  粘贴已有作品的画廊链接，以此草稿作为更新来源。更新后将保留公开链接、点赞、作者和历史记录；之前的项目草稿仍会保存。
                 </p>
                 <input
-                  aria-label="Existing Gallery link"
+                  aria-label="已有作品的画廊链接"
                   autoComplete="off"
                   placeholder="/g/…"
                   value={linkInput}
@@ -315,13 +309,13 @@ export function PublishGalleryDialog({
                         setError(
                           cause instanceof Error
                             ? cause.message
-                            : "Could not link this publication.",
+                            : "无法关联此作品。",
                         ),
                       )
                       .finally(() => setLinkBusy(false));
                   }}
                 >
-                  {linkBusy ? "Loading…" : "Use this publication"}
+                  {linkBusy ? "正在加载…" : "使用此作品"}
                 </button>
               </details>
             ) : null}
@@ -338,7 +332,7 @@ export function PublishGalleryDialog({
                       setModeTouched(true);
                     }}
                   />
-                  Update “{updateTarget?.name}” (replaces that entry)
+                  更新“{updateTarget?.name}”（替换该作品）
                 </label>
                 <label>
                   <input
@@ -351,7 +345,7 @@ export function PublishGalleryDialog({
                       setModeTouched(true);
                     }}
                   />
-                  Publish as a new entry
+                  发布为新作品
                 </label>
                 {onShowHistory ? (
                   <button
@@ -360,7 +354,7 @@ export function PublishGalleryDialog({
                     data-testid="publish-history"
                     onClick={onShowHistory}
                   >
-                    Version history…
+                    版本历史…
                   </button>
                 ) : null}
               </div>
@@ -370,7 +364,7 @@ export function PublishGalleryDialog({
                 电路名称
                 <input
                   dir="auto"
-                  aria-label="Circuit name"
+                  aria-label="电路名称"
                   autoComplete="off"
                   value={name}
                   maxLength={120}
@@ -383,12 +377,11 @@ export function PublishGalleryDialog({
               </label>
               <label>
                 <span>
-                  Description{" "}
-                  <span className="publish-gallery-optional">可选</span>
+                  描述 <span className="publish-gallery-optional">可选</span>
                 </span>
                 <textarea
                   dir="auto"
-                  aria-label="Description"
+                  aria-label="描述"
                   aria-describedby="publish-gallery-description-count"
                   aria-invalid={descriptionTooLong}
                   value={description}
@@ -405,14 +398,14 @@ export function PublishGalleryDialog({
                   data-testid="publish-description-count"
                 >
                   {descriptionTooLong
-                    ? `${descriptionLength} / ${GALLERY_DESCRIPTION_LIMIT} characters · shorten to publish`
+                    ? `${descriptionLength} / ${GALLERY_DESCRIPTION_LIMIT} 字符 · 请缩短描述后发布`
                     : `${descriptionLength} / ${GALLERY_DESCRIPTION_LIMIT}`}
                 </span>
               </label>
               <div className="publish-gallery-tags" data-testid="publish-tags">
                 <span className="publish-gallery-tags-label">
-                  Tags{" "}
-                  <span className="publish-gallery-optional">up to 12</span>
+                  标签{" "}
+                  <span className="publish-gallery-optional">最多 12 个</span>
                 </span>
                 {tags.length > 0 ? (
                   <div className="publish-gallery-tag-chips">
@@ -422,7 +415,7 @@ export function PublishGalleryDialog({
                         type="button"
                         className="publish-gallery-tag"
                         data-testid={`publish-tag-${tag}`}
-                        title="Remove tag"
+                        title="移除标签"
                         onClick={() => {
                           setTagsEdited(true);
                           setTags((previous) =>
@@ -437,9 +430,9 @@ export function PublishGalleryDialog({
                 ) : null}
                 <input
                   dir="auto"
-                  aria-label="Add tag"
+                  aria-label="添加标签"
                   autoComplete="off"
-                  placeholder="Type a tag and press Enter"
+                  placeholder="输入标签并按 Enter"
                   value={tagDraft}
                   maxLength={32}
                   onChange={(event) => setTagDraft(event.currentTarget.value)}
@@ -492,8 +485,8 @@ export function PublishGalleryDialog({
             ) : null}
             <p className="publish-gallery-note">
               {updating
-                ? `Publishing as ${session?.displayName} — this updates the entry in place.`
-                : `Publishing as ${session?.displayName} — it goes up straight away.`}
+                ? `以 ${session?.displayName} 的身份发布——将更新已有作品。`
+                : `以 ${session?.displayName} 的身份发布——作品将立即公开。`}
             </p>
           </>
         )}
@@ -504,7 +497,7 @@ export function PublishGalleryDialog({
         ) : null}
         <div className="publish-gallery-actions">
           <button type="button" disabled={busy} onClick={onClose}>
-            {signedOut ? "Close" : "Cancel"}
+            {signedOut ? "关闭" : "取消"}
           </button>
           {!signedOut && topologyProject ? (
             <GalleryTopologyCheck project={topologyProject} />
@@ -523,7 +516,7 @@ export function PublishGalleryDialog({
               }
               onClick={() => void submit()}
             >
-              {busy ? "Publishing…" : updating ? "Update entry" : "Publish"}
+              {busy ? "正在发布…" : updating ? "更新作品" : "发布"}
             </button>
           )}
         </div>

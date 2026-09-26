@@ -674,7 +674,7 @@ test("Publish checks exact and nearest duplicates without adding a Gallery contr
   await page.getByTestId("publish-gallery-button").click();
   const dialog = page.getByTestId("publish-gallery-dialog");
   const check = dialog.getByTestId("gallery-find-similar");
-  const publish = dialog.getByRole("button", { name: "Publish", exact: true });
+  const publish = dialog.getByRole("button", { name: "发布", exact: true });
   await expect(check).toBeVisible();
   const buttonBox = await check.boundingBox();
   const publishBox = await publish.boundingBox();
@@ -3149,9 +3149,9 @@ test("a gallery tile opens its circuit in the editor", async ({ page }) => {
   await expect(page.getByTestId("project-name-input")).toHaveValue(ENTRY.name);
   const galleryInformation = page.getByTestId("gallery-entry-popover");
   await expect(galleryInformation).toBeVisible();
-  await expect(galleryInformation).toContainText("Contributor");
+  await expect(galleryInformation).toContainText("贡献者");
   await expect(galleryInformation).toContainText(ENTRY.author);
-  await expect(galleryInformation).toContainText("Notes");
+  await expect(galleryInformation).toContainText("备注");
   await expect(galleryInformation).toContainText(ENTRY.description);
 
   // The brand mark is the single way back; a second toolbar link said the
@@ -3262,7 +3262,7 @@ test("a signed-out visitor is asked to sign in, not for a passphrase", async ({
   );
   // The passphrase is gone: no field, and nothing to submit without a session.
   await expect(dialog.getByLabel("Owner passphrase")).toHaveCount(0);
-  await expect(dialog.getByRole("button", { name: "Publish" })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "发布" })).toHaveCount(0);
 });
 
 test("a signed-in member publishes directly, bylined by the account", async ({
@@ -3330,17 +3330,19 @@ test("a signed-in member publishes directly, bylined by the account", async ({
   await page.getByTestId("publish-gallery-button").click();
   const dialog = page.getByTestId("publish-gallery-dialog");
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByText("Publishing as Token Zhang")).toBeVisible();
+  await expect(
+    dialog.getByText("以 Token Zhang 的身份发布——作品将立即公开。"),
+  ).toBeVisible();
   await expect(dialog.getByLabel("Owner passphrase")).toHaveCount(0);
   // The byline comes from the account, so there is no field to fill in.
   await expect(dialog.getByLabel("Author")).toHaveCount(0);
 
-  await dialog.getByLabel("Circuit name").fill("Session Publish");
+  await dialog.getByLabel("电路名称").fill("Session Publish");
   await dialog.getByTestId("publish-preset-amplifier").click();
-  await dialog.getByLabel("Add tag").fill("Latch");
-  await dialog.getByLabel("Add tag").press("Enter");
+  await dialog.getByLabel("添加标签").fill("Latch");
+  await dialog.getByLabel("添加标签").press("Enter");
   await expect(dialog.getByTestId("publish-tag-latch")).toBeVisible();
-  await dialog.getByRole("button", { name: "Publish" }).click();
+  await dialog.getByRole("button", { name: "发布" }).click();
   await expect(page.getByTestId("status")).toHaveText(
     'Published "Session Publish" to the gallery',
   );
@@ -3368,7 +3370,7 @@ test("a signed-in member publishes directly, bylined by the account", async ({
   );
   await page
     .getByTestId("publish-gallery-dialog")
-    .getByRole("button", { name: "Update entry" })
+    .getByRole("button", { name: "更新作品" })
     .click();
   await expect(page.getByTestId("status")).toHaveText(
     'Updated "Session Publish" in the gallery',
@@ -3424,9 +3426,9 @@ test("a published tab counts as saved until its next edit", async ({
 
   await page.getByTestId("publish-gallery-button").click();
   const dialog = page.getByTestId("publish-gallery-dialog");
-  await dialog.getByLabel("Circuit name").fill("Published tab");
+  await dialog.getByLabel("电路名称").fill("Published tab");
   await dialog.getByTestId("publish-preset-amplifier").click();
-  await dialog.getByRole("button", { name: "Publish" }).click();
+  await dialog.getByRole("button", { name: "发布" }).click();
   await expect(page.getByTestId("status")).toHaveText(
     'Published "Published tab" to the gallery',
   );
@@ -3440,7 +3442,7 @@ test("a published tab counts as saved until its next edit", async ({
   await page.getByTestId("publish-gallery-button").click();
   await page
     .getByTestId("publish-gallery-dialog")
-    .getByRole("button", { name: "Update entry" })
+    .getByRole("button", { name: "更新作品" })
     .click();
   await expect(page.getByTestId("status")).toHaveText(
     'Updated "Published tab" in the gallery',
@@ -3478,12 +3480,12 @@ test("a mistaken click beside the publish form keeps what was written", async ({
   const dialog = page.getByTestId("publish-gallery-dialog");
   await expect(dialog).toBeVisible();
 
-  await dialog.getByLabel("Circuit name").fill("Folded Cascode");
+  await dialog.getByLabel("电路名称").fill("Folded Cascode");
   await dialog
-    .getByLabel("Description")
+    .getByLabel("描述")
     .fill("Gain boosted, 1.2 V supply, trimmed offset.");
-  await dialog.getByLabel("Add tag").fill("Cascode");
-  await dialog.getByLabel("Add tag").press("Enter");
+  await dialog.getByLabel("添加标签").fill("Cascode");
+  await dialog.getByLabel("添加标签").press("Enter");
   await expect(dialog.getByTestId("publish-tag-cascode")).toBeVisible();
 
   // A stray press on the backdrop beside a form being written in is a miss,
@@ -3491,7 +3493,7 @@ test("a mistaken click beside the publish form keeps what was written", async ({
   const viewport = page.viewportSize()!;
   await page.mouse.click(8, viewport.height - 8);
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByLabel("Circuit name")).toHaveValue("Folded Cascode");
+  await expect(dialog.getByLabel("电路名称")).toHaveValue("Folded Cascode");
 
   // Cancelling is a decision, and it still closes — but reopening comes back
   // to the draft rather than to an empty form.
@@ -3499,8 +3501,8 @@ test("a mistaken click beside the publish form keeps what was written", async ({
   await expect(dialog).toHaveCount(0);
   await page.getByTestId("publish-gallery-button").click();
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByLabel("Circuit name")).toHaveValue("Folded Cascode");
-  await expect(dialog.getByLabel("Description")).toHaveValue(
+  await expect(dialog.getByLabel("电路名称")).toHaveValue("Folded Cascode");
+  await expect(dialog.getByLabel("描述")).toHaveValue(
     "Gain boosted, 1.2 V supply, trimmed offset.",
   );
   await expect(dialog.getByTestId("publish-tag-cascode")).toBeVisible();
@@ -3559,7 +3561,7 @@ test("Cloud Save updates one stable private Project", async ({ page }) => {
     .click({ position: { x: 360, y: 280 } });
   await page.keyboard.press("Escape");
   const fileMenu = await openMenu(page, "File");
-  await fileMenu.getByRole("button", { name: "Save", exact: true }).click();
+  await fileMenu.getByRole("button", { name: "保存", exact: true }).click();
 
   // Private formal saving does not apply Gallery quality gates.
   await expect(page.getByTestId("status")).toContainText(
@@ -3749,7 +3751,7 @@ test("an ordinary user sees blocking quality gates on an empty project", async (
   await expect(tags).toHaveCSS("display", "flex");
   await expect(tags).toHaveCSS("flex-direction", "column");
   await expect(dialog.getByLabel("Owner passphrase")).toHaveCount(0);
-  await expect(dialog.getByRole("button", { name: "Publish" })).toBeEnabled();
+  await expect(dialog.getByRole("button", { name: "发布" })).toBeEnabled();
 });
 
 test("the publish dialog resolves internal Cell instances from the open Project", async ({
@@ -3781,7 +3783,7 @@ test("the publish dialog resolves internal Cell instances from the open Project"
   await expect(dialog).toBeVisible();
   await expect(dialog.getByTestId("publish-gallery-gates")).toHaveCount(0);
   await expect(dialog).not.toContainText("ERC_UNRESOLVED_SYMBOL");
-  await expect(dialog.getByRole("button", { name: "Publish" })).toBeEnabled();
+  await expect(dialog.getByRole("button", { name: "发布" })).toBeEnabled();
 });
 
 test("post-publication moderation contains collections without operational maintenance forms", async ({
@@ -4236,7 +4238,7 @@ test("an opened gallery entry offers updating in place", async ({ page }) => {
     .getByRole("radio", { name: /^Update /u })
     .locator("..");
   const newChoice = publishMode
-    .getByRole("radio", { name: "Publish as a new entry", exact: true })
+    .getByRole("radio", { name: "发布为新作品", exact: true })
     .locator("..");
   const [updateBox, newBox, historyBox] = await Promise.all([
     updateChoice.boundingBox(),
@@ -4252,7 +4254,7 @@ test("an opened gallery entry offers updating in place", async ({ page }) => {
   await expect(publishMode).toContainText(ENTRY.name);
   await expect(dialog.getByText("updates the entry in place")).toBeVisible();
 
-  await dialog.getByRole("button", { name: "Update entry" }).click();
+  await dialog.getByRole("button", { name: "更新作品" }).click();
   await expect(page.getByTestId("status")).toContainText(
     `Updated "${ENTRY.name}" in the gallery`,
   );
@@ -4380,7 +4382,7 @@ test("replacing the project retires the stale update offer", async ({
   await expect(page.getByTestId("publish-mode")).toBeVisible();
   await page
     .getByTestId("publish-gallery-dialog")
-    .getByRole("button", { name: "Cancel" })
+    .getByRole("button", { name: "取消" })
     .click();
 
   // Import a different Project over it: the gallery entry is no longer
@@ -4400,7 +4402,7 @@ test("replacing the project retires the stale update offer", async ({
   const dialog = page.getByTestId("publish-gallery-dialog");
   await expect(dialog).toBeVisible();
   await expect(page.getByTestId("publish-mode")).toHaveCount(0);
-  await expect(dialog.getByRole("button", { name: "Publish" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "发布" })).toBeVisible();
 });
 
 test("the Examples panel guards dirty work before opening an entry", async ({
@@ -4706,7 +4708,7 @@ for (const scenario of [
       await (
         await openMenu(page, "File")
       )
-        .getByRole("button", { name: "Save", exact: true })
+        .getByRole("button", { name: "保存", exact: true })
         .click();
       await expect(page.getByTestId("status")).toContainText("Saved");
     };
@@ -4722,10 +4724,8 @@ for (const scenario of [
       await page.goto("/editor?new=1");
       await awaitEditorReady(page);
       dialog = await publishDialog();
-      await dialog.getByLabel("Circuit name").fill("Publish before Save");
-      await dialog
-        .getByRole("button", { name: "Publish", exact: true })
-        .click();
+      await dialog.getByLabel("电路名称").fill("Publish before Save");
+      await dialog.getByRole("button", { name: "发布", exact: true }).click();
       await expect(dialog).toHaveCount(0);
       await save();
       expect(drafts.get("draft-1")!.galleryEntryId).toBe("published-1");
@@ -4733,9 +4733,9 @@ for (const scenario of [
       await awaitEditorReady(page);
       dialog = await publishDialog();
       await expect(
-        dialog.getByRole("button", { name: "Update entry" }),
+        dialog.getByRole("button", { name: "更新作品" }),
       ).toBeEnabled();
-      await expect(dialog.getByLabel("Circuit name")).toHaveValue(
+      await expect(dialog.getByLabel("电路名称")).toHaveValue(
         "Publish before Save",
       );
       await page.screenshot({ path: "plan/shelf-publication-local.png" });
@@ -4752,15 +4752,13 @@ for (const scenario of [
       await save();
       const originalPrivateText = drafts.get("draft-1")!.projectText;
       let dialog = await publishDialog();
-      await dialog.getByLabel("Circuit name").fill("Public title");
+      await dialog.getByLabel("电路名称").fill("Public title");
       await dialog
-        .getByLabel("Description", { exact: true })
+        .getByLabel("描述", { exact: true })
         .fill("Original description");
-      await dialog.getByLabel("Add tag").fill("resistor");
-      await dialog.getByLabel("Add tag").press("Enter");
-      await dialog
-        .getByRole("button", { name: "Publish", exact: true })
-        .click();
+      await dialog.getByLabel("添加标签").fill("resistor");
+      await dialog.getByLabel("添加标签").press("Enter");
+      await dialog.getByRole("button", { name: "发布", exact: true }).click();
       await expect(dialog).toHaveCount(0);
       expect(drafts.get("draft-1")!.galleryEntryId).toBe("published-1");
       expect(drafts.get("draft-1")!.projectText).toBe(originalPrivateText);
@@ -4776,9 +4774,9 @@ for (const scenario of [
       await page.keyboard.press("Escape");
       dialog = await publishDialog();
       await expect(
-        dialog.getByRole("button", { name: "Update entry" }),
+        dialog.getByRole("button", { name: "更新作品" }),
       ).toBeEnabled();
-      await dialog.getByRole("button", { name: "Update entry" }).click();
+      await dialog.getByRole("button", { name: "更新作品" }).click();
       await expect(dialog).toHaveCount(0);
       expect(requests).toHaveLength(2);
       expect(requests[1]!.method).toBe("PUT");
@@ -4794,16 +4792,16 @@ for (const scenario of [
       dialog = await publishDialog();
       await expect(dialog.getByRole("alert")).toContainText("Retry");
       await expect(
-        dialog.getByRole("button", { name: "Publish", exact: true }),
+        dialog.getByRole("button", { name: "发布", exact: true }),
       ).toBeDisabled();
       failDetail = false;
       await dialog.getByRole("button", { name: "Retry", exact: true }).click();
       await expect(
-        dialog.getByRole("button", { name: "Update entry" }),
+        dialog.getByRole("button", { name: "更新作品" }),
       ).toBeEnabled();
       // Target changes follow that publication's metadata, even after reopening
       // the dialog, while deliberate edits (including empty fields) remain intact.
-      await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+      await dialog.getByRole("button", { name: "取消", exact: true }).click();
       dialog = await publishDialog();
       publications.set("published-999", {
         name: "Another publication",
@@ -4811,40 +4809,34 @@ for (const scenario of [
         description: "Another description",
         tags: ["capacitor"],
       });
-      await dialog
-        .getByText("Use an existing Gallery publication…", { exact: true })
-        .click();
+      await dialog.getByText("使用已有的画廊作品…", { exact: true }).click();
       const choosePublication = async (id: string) => {
-        await dialog.getByLabel("Existing Gallery link").fill(id);
+        await dialog.getByLabel("已有作品的画廊链接").fill(id);
         await dialog
-          .getByRole("button", { name: "Use this publication", exact: true })
+          .getByRole("button", { name: "使用此作品", exact: true })
           .click();
         await expect(
-          dialog.getByRole("radio", { name: /^Update /u }),
+          dialog.getByRole("radio", { name: /^更新/u }),
         ).toBeChecked();
       };
       await choosePublication("published-999");
-      await expect(dialog.getByLabel("Circuit name")).toHaveValue(
+      await expect(dialog.getByLabel("电路名称")).toHaveValue(
         "Another publication",
       );
-      await expect(
-        dialog.getByLabel("Description", { exact: true }),
-      ).toHaveValue("Another description");
+      await expect(dialog.getByLabel("描述", { exact: true })).toHaveValue(
+        "Another description",
+      );
       await expect(dialog.getByTestId("publish-tag-capacitor")).toBeVisible();
       await expect(dialog.getByTestId("publish-tag-resistor")).toHaveCount(0);
-      await dialog.getByLabel("Description", { exact: true }).fill("");
+      await dialog.getByLabel("描述", { exact: true }).fill("");
       await dialog.getByTestId("publish-tag-capacitor").click();
       await choosePublication("published-1");
-      await expect(dialog.getByLabel("Circuit name")).toHaveValue(
-        "Public title",
-      );
-      await expect(
-        dialog.getByLabel("Description", { exact: true }),
-      ).toHaveValue("");
+      await expect(dialog.getByLabel("电路名称")).toHaveValue("Public title");
+      await expect(dialog.getByLabel("描述", { exact: true })).toHaveValue("");
       await expect(dialog.locator(".publish-gallery-tag-chips")).toHaveCount(0);
       expect(drafts.get("draft-1")!.galleryEntryId).toBe("published-1");
       publications.delete("published-999");
-      await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+      await dialog.getByRole("button", { name: "取消", exact: true }).click();
       return;
     }
     const original = createEmptyProject("original", "Original draft");
@@ -4887,20 +4879,16 @@ for (const scenario of [
     await page.goto("/editor?project=draft-2");
     await awaitEditorReady(page);
     dialog = await publishDialog();
+    await dialog.getByText("使用已有的画廊作品…", { exact: true }).click();
     await dialog
-      .getByText("Use an existing Gallery publication…", { exact: true })
-      .click();
-    await dialog
-      .getByLabel("Existing Gallery link")
+      .getByLabel("已有作品的画廊链接")
       .fill("https://analog-canvas.tokenzhang.com/g/published-1");
     await page.screenshot({ path: "plan/shelf-change-source-local.png" });
     await dialog
-      .getByRole("button", { name: "Use this publication", exact: true })
+      .getByRole("button", { name: "使用此作品", exact: true })
       .click();
-    await expect(
-      dialog.getByRole("radio", { name: /^Update /u }),
-    ).toBeChecked();
-    await dialog.getByRole("button", { name: "Update entry" }).click();
+    await expect(dialog.getByRole("radio", { name: /^更新/u })).toBeChecked();
+    await dialog.getByRole("button", { name: "更新作品" }).click();
     await expect(dialog).toHaveCount(0);
     expect(drafts.get("draft-1")!.projectText).toBe(oldDraft);
     expect(drafts.get("draft-1")!.galleryEntryId).toBeNull();
@@ -4910,12 +4898,12 @@ for (const scenario of [
     await awaitEditorReady(page);
     dialog = await publishDialog();
     await expect(
-      dialog.getByRole("button", { name: "Update entry" }),
+      dialog.getByRole("button", { name: "更新作品" }),
     ).toBeEnabled();
     await dialog
-      .getByRole("radio", { name: "Publish as a new entry", exact: true })
+      .getByRole("radio", { name: "发布为新作品", exact: true })
       .check();
-    await dialog.getByRole("button", { name: "Publish", exact: true }).click();
+    await dialog.getByRole("button", { name: "发布", exact: true }).click();
     await expect(dialog).toHaveCount(0);
     expect(publications.size).toBe(2);
     expect(drafts.get("draft-2")!.galleryEntryId).toBe("published-2");
@@ -4947,12 +4935,12 @@ test("publish tag suggestions remain clickable after filtering and save pending 
   await awaitEditorReady(page);
   await page.getByTestId("publish-gallery-button").click();
   const dialog = page.getByTestId("publish-gallery-dialog");
-  await dialog.getByLabel("Add tag").fill("amp");
+  await dialog.getByLabel("添加标签").fill("amp");
   await dialog.getByTestId("publish-preset-amplifier").click();
   await expect(dialog.getByTestId("publish-tag-amplifier")).toBeVisible();
   await expect(dialog.getByTestId("publish-tag-amp")).toHaveCount(0);
-  await dialog.getByLabel("Add tag").fill("custom label");
-  await dialog.getByRole("button", { name: "Publish", exact: true }).click();
+  await dialog.getByLabel("添加标签").fill("custom label");
+  await dialog.getByRole("button", { name: "发布", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(submitted?.tags).toEqual(["amplifier", "custom label"]);
 });
@@ -5097,10 +5085,10 @@ test("Shelf cards duplicate, rename, export and keep account favorites without e
     "off",
   );
   await expect(
-    page.getByRole("textbox", { name: "Project name", exact: true }),
+    page.getByRole("textbox", { name: "项目名称", exact: true }),
   ).toHaveAttribute("autocomplete", "off");
   await page
-    .getByRole("textbox", { name: "Project name", exact: true })
+    .getByRole("textbox", { name: "项目名称", exact: true })
     .fill("Experiment B");
   await page.getByRole("button", { name: "Save name", exact: true }).click();
   await expect(page.getByTestId("shelf-tile-copy")).toContainText(
@@ -5118,7 +5106,7 @@ test("Shelf cards duplicate, rename, export and keep account favorites without e
   await page.getByTestId("shelf-actions-copy").click();
   await page.screenshot({ path: "plan/shelf-card-actions.png" });
   const downloadPromise = page.waitForEvent("download");
-  await page.getByRole("menuitem", { name: "Export", exact: true }).click();
+  await page.getByRole("menuitem", { name: "导出", exact: true }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("Experiment B.icproj.json");
   expect(readFileSync((await download.path())!, "utf8")).toBe(
@@ -5139,7 +5127,7 @@ test("Shelf cards duplicate, rename, export and keep account favorites without e
   await page.getByTestId("shelf-actions-copy").click();
   await page.getByRole("menuitem", { name: "Rename", exact: true }).click();
   await page
-    .getByRole("textbox", { name: "Project name", exact: true })
+    .getByRole("textbox", { name: "项目名称", exact: true })
     .fill("VeryLongCircuitName".repeat(6));
   expect(
     await page
@@ -5329,11 +5317,11 @@ test("Gallery history compares components and branches without changing the sour
   await page.getByTestId("publish-gallery-button").click();
   await expect(page.getByTestId("publish-history")).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Update entry", exact: true }),
+    page.getByRole("button", { name: "更新作品", exact: true }),
   ).toHaveCount(0);
   await page
     .getByRole("dialog")
-    .getByRole("button", { name: "Cancel", exact: true })
+    .getByRole("button", { name: "取消", exact: true })
     .click();
   await page.keyboard.press("ControlOrMeta+s");
   await expect.poll(() => cloudWrites.length).toBe(1);

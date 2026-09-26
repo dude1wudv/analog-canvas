@@ -141,7 +141,7 @@ test("a failed dialog chunk degrades to a scoped notice, not the crash screen", 
   await page.unroute("**/cell-manager-dialog*");
   await page
     .getByTestId("dialog-chunk-load-fallback")
-    .getByRole("button", { name: "Refresh app" })
+    .getByRole("button", { name: "刷新应用" })
     .click();
   await navigated;
   await expect(page.getByTestId("hit-R1")).toBeVisible();
@@ -151,9 +151,7 @@ test("a failed dialog chunk degrades to a scoped notice, not the crash screen", 
   await expect(page.getByTestId("revision")).toHaveText("1");
   await page.getByTestId("hierarchy-entry").click();
   await expect(page.getByTestId("dialog-chunk-load-fallback")).toHaveCount(0);
-  await expect(
-    page.getByRole("dialog", { name: "Cell Manager" }),
-  ).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Cell 管理器" })).toBeVisible();
 });
 
 test("a scene build failure degrades to the last good view and recovers", async ({

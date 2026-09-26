@@ -153,65 +153,55 @@ export function DrawingToolbar({
       aria-label="绘图工具"
       data-testid="draw-toolbar"
     >
-      <div className="draw-toolbar-panels" role="group" aria-label="Panels">
+      <div className="draw-toolbar-panels" role="group" aria-label="面板">
         <ImmediatePanelButton
           testId="examples-toggle"
-          label="Circuit gallery"
+          label="电路画廊"
           shortcut="G"
-          tooltip={
-            examplesOpen
-              ? "Hide the circuit gallery"
-              : "Show the circuit gallery"
-          }
+          tooltip={examplesOpen ? "隐藏电路画廊" : "显示电路画廊"}
           pressed={examplesOpen}
           controls="examples-panel"
           disabled={leftPanelsDisabled}
           onClick={onToggleExamples}
         >
           <ToolIcon name="examples" />
-          <span>Gallery</span>
+          <span>画廊</span>
         </ImmediatePanelButton>
         <ImmediatePanelButton
           testId="library-toggle"
-          label="Component library"
+          label="元件库"
           shortcut="B"
-          tooltip={
-            libraryPanelOpen
-              ? "Hide component library"
-              : "Show component library"
-          }
+          tooltip={libraryPanelOpen ? "隐藏元件库" : "显示元件库"}
           pressed={libraryOpen}
           controls="shapes-library-panel"
           disabled={leftPanelsDisabled}
           onClick={onToggleLibrary}
         >
           <ToolIcon name="library" />
-          <span>Library</span>
+          <span>元件库</span>
         </ImmediatePanelButton>
         <ImmediatePanelButton
           testId="netlist-panel-toggle"
-          label="Netlist"
+          label="网表"
           shortcut="N"
-          tooltip={projectPanel === "netlist" ? "Hide Netlist" : "Show Netlist"}
+          tooltip={projectPanel === "netlist" ? "隐藏网表" : "显示网表"}
           pressed={projectPanel === "netlist"}
           onClick={onToggleNetlist}
         >
           <ToolIcon name="netlist" />
-          <span>Netlist</span>
+          <span>网表</span>
         </ImmediatePanelButton>
         <ImmediatePanelButton
           testId="project-code-toggle"
-          label="Project Code"
+          label="项目代码"
           tooltip={
-            projectPanel === "project-code"
-              ? "Hide Project Code"
-              : "Show Project Code"
+            projectPanel === "project-code" ? "隐藏项目代码" : "显示项目代码"
           }
           pressed={projectPanel === "project-code"}
           onClick={onToggleProjectCode}
         >
           <ToolIcon name="project-code" />
-          <span>Project Code</span>
+          <span>项目代码</span>
         </ImmediatePanelButton>
       </div>
       <span className="draw-toolbar-divider" aria-hidden="true" />
@@ -270,11 +260,11 @@ export function DrawingToolbar({
         className="draw-tool"
         data-testid="draw-tool-document-style"
         aria-pressed={documentSettingsOpen}
-        title="Properties: Ports, canvas, and selected objects"
+        title="属性：端口、画布与所选对象"
         onClick={onOpenDocumentSettings}
       >
         <ToolIcon name="style" />
-        <span>Properties</span>
+        <span>属性</span>
       </button>
     </div>
   );

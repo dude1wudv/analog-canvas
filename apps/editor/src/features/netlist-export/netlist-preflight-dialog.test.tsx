@@ -40,9 +40,9 @@ describe("NetlistPreflightDialog", () => {
       />,
     );
 
-    expect(markup).toContain("Electrical readiness (1)");
+    expect(markup).toContain("电气检查（1）");
     expect(markup).toContain("ERC_UNCONNECTED_PIN");
-    expect(markup).toContain("same current-revision connectivity assessment");
+    expect(markup).toContain("相同的当前版本连通性评估");
     expect(markup).toContain('aria-label="就绪状态"');
     expect(markup).toContain('aria-label="网表诊断"');
     expect(markup).toContain('data-has-preview="false"');
@@ -82,9 +82,9 @@ describe("NetlistPreflightDialog", () => {
       />,
     );
 
-    expect(markup).toContain("2 blocking issues");
+    expect(markup).toContain("2 项阻止导出的问题");
     expect(markup).toContain("is a dead end: only R1.1 reaches it");
-    expect(markup).toContain("Resolve the structural findings");
+    expect(markup).toContain("复制网表前请先解决结构问题。");
     expect(markup).not.toContain("Copy SPICE netlist");
     expect(markup).toContain('data-has-preview="false"');
   });
@@ -108,6 +108,6 @@ describe("NetlistPreflightDialog", () => {
     expect(markup).not.toContain('aria-label="Netlist export format"');
     expect(markup).toContain('value="cadence-bang"');
     expect(markup).toContain("Cadence `!` 全局网络");
-    expect(markup).toContain("Copy Spectre netlist");
+    expect(markup).toContain("复制 Spectre 网表");
   });
 });

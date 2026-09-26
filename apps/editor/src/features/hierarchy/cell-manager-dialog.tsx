@@ -231,40 +231,36 @@ export function CellManagerDialog({
       >
         <header className="cell-manager-header">
           <div>
-            <h2 id="cell-manager-title">Cell Manager</h2>
+            <h2 id="cell-manager-title">Cell 管理器</h2>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close Cell Manager"
-          >
-            Close
+          <button type="button" onClick={onClose} aria-label="关闭 Cell 管理器">
+            关闭
           </button>
         </header>
 
         <div
           className="cell-manager-resource-tabs"
           role="group"
-          aria-label="Definition type"
+          aria-label="定义类型"
         >
           <button
             type="button"
             aria-pressed={resourceKind === "local"}
             onClick={() => setResourceKind("local")}
           >
-            Cells
+            Cell
           </button>
           <button
             type="button"
             aria-pressed={resourceKind === "external"}
             onClick={() => setResourceKind("external")}
           >
-            External Circuit Defs
+            外部电路定义
           </button>
         </div>
         <div className="cell-manager-body">
           {resourceKind === "local" ? (
-            <aside className="cell-manager-list" aria-label="Cells">
+            <aside className="cell-manager-list" aria-label="Cell 列表">
               <div className="cell-manager-list-scroll">
                 <CellHierarchyTree
                   project={project}
@@ -293,7 +289,7 @@ export function CellManagerDialog({
                   >
                     {dropId === cell.id ? (
                       <small className="cell-drop-hint">
-                        {cell.isTop ? "Set as Top" : `Move before ${cell.name}`}
+                        {cell.isTop ? "设为顶层" : `移至 ${cell.name} 之前`}
                       </small>
                     ) : null}
                     <button
@@ -345,17 +341,18 @@ export function CellManagerDialog({
                     >
                       <span>
                         <strong>{cell.name}</strong>
-                        {cell.isTop ? <em>Top</em> : null}
+                        {cell.isTop ? <em>顶层</em> : null}
                       </span>
                       <small>
-                        {cell.portCount} ports · {cell.callers.length} callers
+                        {cell.portCount} 个端口 · {cell.callers.length}{" "}
+                        个调用位置
                       </small>
                     </button>
                   </div>
                 ))}
                 <div
                   className="cell-manager-drop-end"
-                  aria-label="Move Cell to end"
+                  aria-label="将 Cell 移至末尾"
                   onDragOver={(event) => {
                     if (draggedId) {
                       event.preventDefault();
@@ -367,7 +364,7 @@ export function CellManagerDialog({
                     if (draggedId) moveCell(draggedId, "", false);
                   }}
                 >
-                  {draggedId ? "Move to end" : null}
+                  {draggedId ? "移至末尾" : null}
                 </div>
               </div>
               <button
@@ -379,7 +376,7 @@ export function CellManagerDialog({
                   setCreating(true);
                 }}
               >
-                New Cell
+                新建 Cell
               </button>
               <button
                 type="button"
@@ -395,14 +392,11 @@ export function CellManagerDialog({
                   setImportMessage("");
                 }}
               >
-                Import Cell
+                导入 Cell
               </button>
             </aside>
           ) : (
-            <aside
-              className="cell-manager-list"
-              aria-label="External Circuit Defs"
-            >
+            <aside className="cell-manager-list" aria-label="外部电路定义">
               <div className="cell-manager-list-scroll">
                 {externalDefinitions.map((definition) => (
                   <button
@@ -414,9 +408,9 @@ export function CellManagerDialog({
                   >
                     <span>
                       <strong>{definition.name}</strong>
-                      <em>External</em>
+                      <em>外部</em>
                     </span>
-                    <small>{definition.terminals.length} ports</small>
+                    <small>{definition.terminals.length} 个端口</small>
                   </button>
                 ))}
               </div>
@@ -428,7 +422,7 @@ export function CellManagerDialog({
                   setExternalDraft((value) => value + 1);
                 }}
               >
-                New External Circuit Def
+                新建外部电路定义
               </button>
             </aside>
           )}
@@ -438,17 +432,15 @@ export function CellManagerDialog({
               <>
                 <header className="cell-manager-detail-header">
                   <div className="cell-manager-title-row">
-                    <h3>
-                      {selectedExternal?.name ?? "New External Circuit Def"}
-                    </h3>
-                    <span>External</span>
+                    <h3>{selectedExternal?.name ?? "新建外部电路定义"}</h3>
+                    <span>外部</span>
                   </div>
                   {selectedExternal ? (
                     <button
                       type="button"
                       onClick={() => onPlaceExternal(selectedExternal.id)}
                     >
-                      Place
+                      放置
                     </button>
                   ) : null}
                 </header>
@@ -491,7 +483,7 @@ export function CellManagerDialog({
                           )
                         }
                       >
-                        Set as Top
+                        设为顶层
                       </button>
                     ) : null}
                     <button
@@ -501,7 +493,7 @@ export function CellManagerDialog({
                       }
                       onClick={() => setDeleteId(selectedEntry.id)}
                     >
-                      Delete
+                      删除
                     </button>
                   </div>
                 </header>
@@ -522,11 +514,11 @@ export function CellManagerDialog({
                 />
               </>
             ) : (
-              <p className="cell-interface-empty">No Cell selected.</p>
+              <p className="cell-interface-empty">未选择 Cell。</p>
             )}
             {callers.length > 0 ? (
               <details className="cell-manager-callers">
-                <summary>Callers ({callers.length})</summary>
+                <summary>调用位置（{callers.length}）</summary>
                 <ul>
                   {callers.map((caller) => (
                     <li key={`${caller.documentId}:${caller.instanceId}`}>
@@ -539,7 +531,7 @@ export function CellManagerDialog({
                           onJumpToCaller(caller.documentId, caller.instanceId)
                         }
                       >
-                        Jump to caller
+                        跳转到调用位置
                       </button>
                     </li>
                   ))}
@@ -564,11 +556,11 @@ export function CellManagerDialog({
                 aria-labelledby="import-cell-dialog-title"
               >
                 <header className="editor-action-dialog-header">
-                  <h2 id="import-cell-dialog-title">Import Cloud Cell</h2>
+                  <h2 id="import-cell-dialog-title">导入云项目 Cell</h2>
                 </header>
                 <div className="editor-action-dialog-body">
                   <label>
-                    Source Project
+                    来源项目
                     <select
                       value={importProjectId}
                       disabled={importBusy}
@@ -590,7 +582,7 @@ export function CellManagerDialog({
                         setImportCellId(loaded.project.topDocumentId);
                       }}
                     >
-                      <option value="">Choose a saved Project…</option>
+                      <option value="">选择已保存的项目…</option>
                       {cloudProjects
                         .filter((cloud) => cloud.id !== activeCloudProjectId)
                         .map((cloud) => (
@@ -616,13 +608,12 @@ export function CellManagerDialog({
                   </label>
                   {importMessage ? <p role="status">{importMessage}</p> : null}
                   <p>
-                    The Cell and its child Cells are copied into this Project.
-                    The source stays unchanged.
+                    此 Cell 及其子 Cell 将复制到当前项目，来源项目保持不变。
                   </p>
                 </div>
                 <footer className="editor-action-dialog-actions">
                   <button type="button" onClick={dismissActionDialog}>
-                    Cancel
+                    取消
                   </button>
                   <button
                     type="button"
@@ -643,7 +634,7 @@ export function CellManagerDialog({
                       if (outcome.documentId) onOpen(outcome.documentId);
                     }}
                   >
-                    {importBusy ? "Importing…" : "Import"}
+                    {importBusy ? "正在导入…" : "导入"}
                   </button>
                 </footer>
               </section>
@@ -652,25 +643,22 @@ export function CellManagerDialog({
                 className="editor-action-dialog"
                 role="dialog"
                 aria-modal="true"
-                aria-label="Delete Cell"
+                aria-label="删除 Cell"
                 onKeyDown={(event) => {
                   if (event.key === "Escape") dismissActionDialog();
                 }}
               >
                 <header className="editor-action-dialog-header">
                   <h2 id="delete-cell-dialog-title">
-                    Delete {deleteTarget.name}?
+                    删除 {deleteTarget.name}？
                   </h2>
                 </header>
                 <div className="editor-action-dialog-body">
-                  <p>
-                    Remove this unreferenced Cell definition. You can restore it
-                    with Undo.
-                  </p>
+                  <p>删除此未被引用的 Cell 定义。你可以通过撤销恢复。</p>
                 </div>
                 <footer className="editor-action-dialog-actions">
                   <button type="button" autoFocus onClick={dismissActionDialog}>
-                    Cancel
+                    取消
                   </button>
                   <button
                     type="button"
@@ -680,7 +668,7 @@ export function CellManagerDialog({
                       dismissActionDialog();
                     }}
                   >
-                    Delete Cell
+                    删除 Cell
                   </button>
                 </footer>
               </section>
@@ -700,11 +688,11 @@ export function CellManagerDialog({
                 }}
               >
                 <header className="editor-action-dialog-header">
-                  <h2 id="cell-name-dialog-title">New Cell</h2>
+                  <h2 id="cell-name-dialog-title">新建 Cell</h2>
                 </header>
                 <div className="editor-action-dialog-body">
                   <label className="editor-action-dialog-field">
-                    <span>Cell name</span>
+                    <span>Cell 名称</span>
                     <input
                       id="cell-name-input"
                       autoComplete="off"
@@ -718,14 +706,14 @@ export function CellManagerDialog({
                 </div>
                 <footer className="editor-action-dialog-actions">
                   <button type="button" onClick={dismissActionDialog}>
-                    Cancel
+                    取消
                   </button>
                   <button
                     type="submit"
                     className="primary"
                     disabled={draftName.trim().length === 0}
                   >
-                    Create
+                    创建
                   </button>
                 </footer>
               </form>

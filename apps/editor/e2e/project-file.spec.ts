@@ -139,17 +139,17 @@ for (const { width, height } of [
     expect(bounds).not.toBeNull();
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(height - 6);
     const importTrigger = fileMenu.getByRole("button", {
-      name: "Import",
+      name: "导入",
       exact: true,
     });
     const exportTrigger = fileMenu.getByRole("button", {
-      name: "Export",
+      name: "导出",
       exact: true,
     });
     await expect(importTrigger).toBeInViewport();
     await expect(exportTrigger).toBeInViewport();
     await importTrigger.click();
-    const importOption = fileMenu.getByText("SPICE / SCS…");
+    const importOption = fileMenu.getByText("SPICE / SCS 文件…");
     await expect(importOption).toBeInViewport();
     const importBounds = await importOption.boundingBox();
     expect(importBounds!.x + importBounds!.width).toBeLessThanOrEqual(
@@ -180,7 +180,7 @@ for (const { width, height } of [
     await lastProject.focus();
     await expect(lastProject).toBeInViewport();
     await fileMenu
-      .getByRole("button", { name: "Delete Cloud Project Circuit 20" })
+      .getByRole("button", { name: "删除云项目 Circuit 20" })
       .click();
     const keep = fileMenu.getByRole("button", { name: "Keep it" });
     await expect(keep).toBeInViewport();
@@ -206,7 +206,7 @@ test("File menu falls back to one scroll area in a short viewport", async ({
     .toBe(true);
   const bounds = await popover.boundingBox();
   expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(360);
-  await fileMenu.getByRole("button", { name: "Export", exact: true }).click();
+  await fileMenu.getByRole("button", { name: "导出", exact: true }).click();
   const exportOption = fileMenu.getByRole("button", {
     name: "导出项目文件…",
   });
@@ -344,7 +344,7 @@ test("Cloud Save updates one binding while local export stays interchange", asyn
   await expect(
     fileMenu.getByRole("button", { name: "Save as Cloud Copy…" }),
   ).toHaveCount(0);
-  await fileMenu.getByRole("button", { name: "Save", exact: true }).click();
+  await fileMenu.getByRole("button", { name: "保存", exact: true }).click();
   await expect(page.getByTestId("status")).toContainText(
     "Saved New Circuit to Cloud",
   );
@@ -366,7 +366,7 @@ test("Cloud Save updates one binding while local export stays interchange", asyn
     reopenedMenu.getByText(`Cloud Projects (1/${CLOUD_PROJECT_LIMIT})`),
   ).toBeVisible();
   await expect(
-    reopenedMenu.getByRole("button", { name: "Save", exact: true }),
+    reopenedMenu.getByRole("button", { name: "保存", exact: true }),
   ).toHaveCount(1);
   const cloudProjectButton = reopenedMenu.getByTestId("cloud-project-cloud-1");
   const cloudProjectTime = cloudProjectButton.locator("time");
@@ -574,7 +574,7 @@ test("File deletion stays inline, bounded and retryable without native dialogs",
   await page.goto("/editor?new=1");
   await openMenu(page, "File");
   const trigger = page.getByRole("button", {
-    name: `Delete Cloud Project ${name}`,
+    name: `删除云项目 ${name}`,
     exact: true,
   });
   await trigger.click();
@@ -900,7 +900,7 @@ test("reverts to the last acknowledged Cloud revision", async ({ page }) => {
     .click({ position: { x: 320, y: 230 } });
   await page.keyboard.press("Escape");
   let fileMenu = await openMenu(page, "File");
-  await fileMenu.getByRole("button", { name: "Save", exact: true }).click();
+  await fileMenu.getByRole("button", { name: "保存", exact: true }).click();
   await expect(page.getByTestId("project-unsaved-indicator")).toHaveCount(0);
 
   // Two more parts push the drawing over the guard's meaningful-content
@@ -913,7 +913,7 @@ test("reverts to the last acknowledged Cloud revision", async ({ page }) => {
     await page.keyboard.press("Escape");
   }
   fileMenu = await openMenu(page, "File");
-  await fileMenu.getByRole("button", { name: "Revert to Last Saved" }).click();
+  await fileMenu.getByRole("button", { name: "恢复到上次保存" }).click();
   await page
     .getByRole("dialog", { name: "有未保存的更改" })
     .getByRole("button", { name: "不保存并继续" })
@@ -934,7 +934,7 @@ test("the circuit name drives Cloud Save and portable export", async ({
   await name.fill("Bandgap Reference");
   await name.press("Enter");
   const fileMenu = await openMenu(page, "File");
-  await fileMenu.getByRole("button", { name: "Save", exact: true }).click();
+  await fileMenu.getByRole("button", { name: "保存", exact: true }).click();
   await expect.poll(() => cloud.stored()?.name).toBe("Bandgap Reference");
   const exported = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(

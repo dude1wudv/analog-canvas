@@ -813,7 +813,7 @@ test("Properties toggles reference label visibility for one or many components",
     ).toHaveCount(0);
   }
   const componentProperties = properties.getByRole("region", {
-    name: "Component properties",
+    name: "器件属性",
   });
   await expect(
     componentProperties.locator(":scope > .property-disclosure"),
@@ -1050,7 +1050,7 @@ test("keeps fixed and variable capacitor Properties on the shared code surface",
   await openSelectionShelf(page);
   const properties = page.getByRole("complementary", { name: "属性" });
   const componentProperties = properties.getByRole("region", {
-    name: "Component properties",
+    name: "器件属性",
   });
   await expect(
     componentProperties.getByLabel("Editable Canvas property code"),
@@ -1441,9 +1441,7 @@ test("edits the transconductance trapezoid from gm to -gmL", async ({
   await placeComponent(page, "transconductance", { x: 360, y: 240 });
   await openSelectionShelf(page);
   const properties = page.getByRole("complementary", { name: "属性" });
-  const componentProperties = properties.locator(
-    '[aria-label="Component properties"]',
-  );
+  const componentProperties = properties.locator('[aria-label="器件属性"]');
   const formalScene = page.locator('[data-layer="formal"]');
   const frame = formalScene.locator('[data-role="signal-flow-frame"]');
 

@@ -81,7 +81,7 @@ export function DocumentSettingsSection({
   );
   const status =
     message ??
-    (parsed.ok ? null : `${parsed.message} · Canvas keeps the last valid edit`);
+    (parsed.ok ? null : `${parsed.message} · 画布将保留上次有效的修改`);
 
   function change(source: string): void {
     setDraft(source);
@@ -107,20 +107,20 @@ export function DocumentSettingsSection({
   async function copy(): Promise<void> {
     try {
       await navigator.clipboard.writeText(draft);
-      setMessage("Properties JSON copied");
+      setMessage("已复制属性 JSON");
     } catch {
-      setMessage("Clipboard unavailable; select the code and copy it");
+      setMessage("剪贴板不可用；请选择代码并手动复制");
     }
   }
 
   return (
     <section
       className="component-property-code-editor document-settings-code-editor"
-      aria-label="Document settings"
+      aria-label="文档设置"
       data-testid="document-settings-code-editor"
     >
       <header>
-        <strong>Properties code</strong>
+        <strong>属性代码</strong>
         <div className="component-property-header-actions">
           <button
             type="button"
@@ -129,14 +129,14 @@ export function DocumentSettingsSection({
               change(defaultDocumentSettingsCode(document, canvas))
             }
           >
-            Defaults
+            恢复默认值
           </button>
           {(!parsed.ok || rejected) && (
             <button
               type="button"
               className="component-property-copy"
-              aria-label="Discard Properties draft"
-              title="Discard invalid Properties draft"
+              aria-label="放弃属性草稿"
+              title="放弃无效的属性草稿"
               onClick={() => {
                 setDraft(baseline);
                 setMessage(null);
@@ -149,8 +149,8 @@ export function DocumentSettingsSection({
           <button
             type="button"
             className="component-property-copy"
-            aria-label="Copy Properties JSON"
-            title="Copy Properties JSON"
+            aria-label="复制属性 JSON"
+            title="复制属性 JSON"
             onClick={() => void copy()}
           >
             <svg
@@ -169,7 +169,7 @@ export function DocumentSettingsSection({
       <Suspense
         fallback={
           <textarea
-            aria-label="Loading Properties code"
+            aria-label="正在加载属性代码"
             value={draft}
             readOnly
             rows={20}
@@ -181,7 +181,7 @@ export function DocumentSettingsSection({
           historyKey={historyKey}
           adapter={adapter}
           defaultForeground="#000000"
-          ariaLabel="Editable Properties code"
+          ariaLabel="可编辑的属性代码"
           onChange={change}
         />
       </Suspense>

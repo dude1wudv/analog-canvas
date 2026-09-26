@@ -40,11 +40,11 @@ function useRecoveryBannerPosition() {
 function failureMessage(state: RecoveryState): string {
   switch (state) {
     case "quota-exceeded":
-      return "Browser storage for this site is full — new recovery copies cannot be saved.";
+      return "此网站的浏览器存储空间已满，无法保存新的恢复副本。";
     case "unavailable":
-      return "Browser storage is unavailable — recovery copies cannot be saved.";
+      return "浏览器存储不可用，无法保存恢复副本。";
     default:
-      return "The latest recovery copy could not be saved.";
+      return "无法保存最新的恢复副本。";
   }
 }
 
@@ -66,15 +66,13 @@ export function RecoveryFailureBanner({
       role="alert"
       aria-label="恢复存储出现问题"
     >
-      <p>
-        {failureMessage(state)} Download the Project to keep your work safe.
-      </p>
+      <p>{failureMessage(state)}请下载项目以保护当前工作。</p>
       <div className="recovery-banner-actions">
         <button type="button" onClick={onDownload}>
-          Download Backup
+          下载备份
         </button>
         <button type="button" onClick={onDismiss} aria-label="关闭警告">
-          Dismiss
+          关闭
         </button>
       </div>
     </aside>
@@ -98,19 +96,19 @@ export function RecoveryAvailableBanner({
       aria-label="存在未保存的恢复数据"
     >
       <p>
-        Unsaved work for <strong>{projectName}</strong> was recovered from{" "}
+        <strong>{projectName}</strong> 的未保存内容已从{" "}
         <time dateTime={updatedAt}>{new Date(updatedAt).toLocaleString()}</time>
-        .
+        的副本中恢复。
       </p>
       <div className="recovery-banner-actions">
         <button type="button" onClick={onRestore}>
           恢复
         </button>
         <button type="button" onClick={onDownload}>
-          Download backup
+          下载备份
         </button>
         <button type="button" onClick={onDismiss}>
-          Ignore
+          忽略
         </button>
       </div>
     </aside>
@@ -125,10 +123,10 @@ export function recoveryStateLabel(state: RecoveryState): string | null {
     case "stored":
       return null;
     case "quota-exceeded":
-      return "Recovery full — download now";
+      return "恢复存储已满，请立即下载";
     case "unavailable":
-      return "Recovery unavailable — download now";
+      return "恢复存储不可用，请立即下载";
     case "failed":
-      return "Recovery failed — download now";
+      return "恢复失败，请立即下载";
   }
 }

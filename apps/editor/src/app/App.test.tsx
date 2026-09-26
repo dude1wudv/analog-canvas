@@ -109,20 +109,20 @@ describe("editor shell", () => {
     expect(markup).toContain('data-testid="hierarchy-entry"');
     expect(markup).not.toContain('data-testid="edit-manage-cells"');
     expect(markup).not.toContain('data-testid="cell-command-menu"');
-    expect(markup).toContain(">Hierarchy</button>");
-    expect(markup).toContain("Project name");
-    expect(markup).toContain("Current Cell");
-    expect(markup).toContain("Edit Device Data…");
-    const netlistStart = markup.indexOf('aria-label="Netlist"');
+    expect(markup).toContain(">层次结构</button>");
+    expect(markup).toContain("项目名称");
+    expect(markup).toContain("当前 Cell");
+    expect(markup).toContain("编辑器件数据…");
+    const netlistStart = markup.indexOf('aria-label="网表"');
     const netlistEnd = markup.indexOf("</details>", netlistStart);
     const netlistMenu = markup.slice(netlistStart, netlistEnd);
     expect(netlistStart).toBeGreaterThan(-1);
-    expect(netlistMenu).toContain("Copy Netlist");
+    expect(netlistMenu).toContain("复制网表");
     expect(netlistMenu).not.toContain("Copy SPICE netlist");
     expect(netlistMenu).not.toContain("Copy Spectre netlist");
     expect(markup).toContain('data-testid="netlist-panel-toggle"');
     expect(markup).toContain('data-testid="project-code-toggle"');
-    expect(markup).toContain("Review Netlist Issues…");
+    expect(markup).toContain("查看网表问题…");
     expect(netlistMenu).not.toContain('data-testid="open-analog-simulation"');
     expect(markup).toContain('data-testid="open-analog-simulation"');
     expect(netlistMenu).not.toContain('data-testid="check-and-save"');
@@ -177,7 +177,7 @@ describe("editor shell", () => {
     const markup = renderToStaticMarkup(<App project={project} />);
     expect(markup).toContain('data-testid="hierarchy-entry"');
     expect(markup).toContain('data-testid="cell-navigation"');
-    expect(markup).toContain("Enter Cell");
+    expect(markup).toContain("进入 Cell");
     expect(markup).toContain("管理 Cell…");
   });
 
@@ -191,7 +191,7 @@ describe("editor shell", () => {
     expect(markup).toContain('data-testid="editor-report-bug"');
     expect(markup).toContain("报告问题");
     expect(markup).toContain('data-testid="editor-repository-link"');
-    expect(markup).toContain('aria-label="GitHub repository"');
+    expect(markup).toContain('aria-label="GitHub 仓库"');
     expect(markup).toContain(
       'href="https://github.com/dude1wudv/analog-canvas"',
     );
@@ -216,8 +216,10 @@ describe("editor shell", () => {
     expect(markup).not.toContain('role="dialog"');
     // Agent connects directly from the command row; no one-item menu or
     // connection panel appears before the user clicks it.
-    expect(markup).toContain('data-testid="open-agent" title="Connect Agent"');
-    expect(markup).toContain(">Agent</button>");
+    expect(markup).toContain(
+      'data-testid="open-agent" title="连接 Agent 助手"',
+    );
+    expect(markup).toContain(">Agent 助手</button>");
     expect(markup).not.toContain("<summary>Agent</summary>");
     expect(markup).not.toContain('data-testid="connect-agent-panel"');
   });
@@ -305,19 +307,19 @@ describe("editor shell", () => {
     expect(markup).not.toContain("Common-Source Amplifier");
     expect(markup).not.toContain("Two-Stage Op Amp");
     expect(markup).toContain('data-open="true"');
-    expect(markup).toContain(">Library</span>");
+    expect(markup).toContain(">元件库</span>");
     expect(markup).toContain("所有器件");
     expect(markup).toContain('class="app-statusbar"');
-    expect(markup).toContain("Insert component… (I)");
+    expect(markup).toContain("插入器件… (I)");
     expect(markup).not.toContain('data-testid="draw-tool-insert"');
     expect(markup).not.toContain('data-testid="draw-tool-arrow"');
     expect(markup).not.toContain('data-testid="draw-tool-line"');
     expect(markup).not.toContain('data-testid="draw-tool-rectangle"');
     expect(markup).not.toContain('data-testid="draw-tool-circle"');
     expect(markup).toContain('data-testid="selection-filter-button"');
-    expect(markup).toContain("Choose Selectable Objects… (Ctrl+Shift+F)");
-    expect(markup).toContain("Find in Circuit… (Ctrl+F)");
-    expect(markup).toContain("User Components…");
+    expect(markup).toContain("选择可选对象… (Ctrl+Shift+F)");
+    expect(markup).toContain("在电路中查找… (Ctrl+F)");
+    expect(markup).toContain("用户器件…");
     expect(markup).not.toContain("&gt;Undo&lt;");
     expect(markup).not.toContain("&gt;Redo&lt;");
     expect(markup).not.toContain("Symbols &amp; Tools");

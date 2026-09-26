@@ -58,13 +58,13 @@ test("right-click on a device only offers direct selection actions", async ({
   const menu = page.getByTestId("canvas-context-menu");
   await expect(menu).toBeVisible();
   await expect(menu.getByRole("menuitem")).toHaveText([
-    "Edit Component Definition (E)",
-    "Properties (Q)",
-    "Copy (C)",
-    "Rotate 90° (R)",
+    "编辑元件定义（E）",
+    "属性（Q）",
+    "复制（C）",
+    "旋转 90°（R）",
     "左右镜像（Shift+R）",
-    "Mirror top/bottom (Ctrl+R)",
-    "Delete",
+    "上下镜像（Ctrl+R）",
+    "删除",
   ]);
   await expect(menu).not.toContainText("Swap device");
   await expect(menu).not.toContainText("New Testbench Cell");
@@ -72,13 +72,13 @@ test("right-click on a device only offers direct selection actions", async ({
   await expect(menu).not.toContainText("Copy as PNG");
   await expect(menu).not.toContainText("Copy as SVG");
 
-  await menu.getByRole("menuitem", { name: "Rotate 90° (R)" }).click();
+  await menu.getByRole("menuitem", { name: "旋转 90°（R）" }).click();
   await expect(
     page.locator('[data-layer="symbols"] [data-object-id] > g').first(),
   ).toHaveAttribute("transform", /rotate\(90\)/u);
 
   await instance.click({ button: "right" });
-  await menu.getByRole("menuitem", { name: "Copy (C)" }).click();
+  await menu.getByRole("menuitem", { name: "复制（C）" }).click();
   await expect(menu).toHaveCount(0);
   await page.keyboard.press("v");
   await page
@@ -551,7 +551,7 @@ test("drafting shapes join device selection from either order", async ({
   const menu = page.getByTestId("canvas-context-menu");
   await expect(menu).toBeVisible();
   await expect(menu).not.toContainText("Swap device");
-  await expect(menu.getByRole("menuitem", { name: "Delete" })).toBeEnabled();
+  await expect(menu.getByRole("menuitem", { name: "删除" })).toBeEnabled();
   await expect(rectangle).toHaveClass(/selected/);
   await expect(instance).toHaveClass(/selected/);
   await page.keyboard.press("Escape");
@@ -589,7 +589,7 @@ test("device annotation shares device additive selection and context menu", asyn
   const menu = page.getByTestId("canvas-context-menu");
   await expect(menu).toBeVisible();
   await expect(menu).not.toContainText("Swap device");
-  await expect(menu.getByRole("menuitem", { name: "Delete" })).toBeEnabled();
+  await expect(menu.getByRole("menuitem", { name: "删除" })).toBeEnabled();
 });
 
 test("visual clipboard preserves mixed selection and exports only its formal SVG", async ({
@@ -764,39 +764,27 @@ test("Netlist keeps format selection in the project panel while File keeps drawi
   await expect(
     menu.getByRole("button", { name: "导出 SVG", exact: true }),
   ).toBeHidden();
-  const importMenu = menu.getByRole("button", { name: "Import", exact: true });
+  const importMenu = menu.getByRole("button", { name: "导入", exact: true });
   await expect(importMenu).toHaveAttribute("aria-expanded", "false");
   await importMenu.click();
   await expect(
-    menu.locator("label.file-import", { hasText: "Project File…" }),
+    menu.locator("label.file-import", { hasText: "项目文件…" }),
   ).toBeVisible();
   await expect(
-    menu.locator("label.file-import", { hasText: "SPICE / SCS…" }),
+    menu.locator("label.file-import", { hasText: "SPICE / SCS 文件…" }),
   ).toBeVisible();
   await expect(
     menu.locator("label.file-import", {
-      hasText: "Cadence SPICE (`!` globals)…",
+      hasText: "Cadence SPICE（`!` 全局节点）…",
     }),
   ).toBeVisible();
   await expect(
-    menu.getByRole("button", { name: "Copy SPICE netlist", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    menu.getByRole("button", { name: "Copy Spectre netlist", exact: true }),
+    menu.getByRole("button", { name: "复制网表", exact: true }),
   ).toHaveCount(0);
   const netlistMenu = await openMenu(page, "Netlist");
   await expect(
-    netlistMenu.getByRole("button", {
-      name: "Copy SPICE netlist",
-      exact: true,
-    }),
-  ).toHaveCount(0);
-  await expect(
-    netlistMenu.getByRole("button", {
-      name: "Copy Spectre netlist",
-      exact: true,
-    }),
-  ).toHaveCount(0);
+    netlistMenu.getByRole("button", { name: "复制网表", exact: true }),
+  ).toHaveCount(1);
   if (
     (await page
       .getByTestId("netlist-panel-toggle")
@@ -830,7 +818,7 @@ test("Netlist keeps format selection in the project panel while File keeps drawi
       .getByRole("tab"),
   ).toHaveCount(0);
   await openMenu(page, "File");
-  await menu.getByRole("button", { name: "Export", exact: true }).click();
+  await menu.getByRole("button", { name: "导出", exact: true }).click();
   await expect(
     menu.getByRole("button", { name: "导出 SVG", exact: true }),
   ).toBeVisible();
@@ -838,7 +826,7 @@ test("Netlist keeps format selection in the project panel while File keeps drawi
     .getByTestId("schematic-canvas")
     .getAttribute("viewBox");
   await menu
-    .getByRole("button", { name: "Export", exact: true })
+    .getByRole("button", { name: "导出", exact: true })
     .press("ArrowRight");
   await expect(
     menu.getByRole("button", { name: "导出项目文件…", exact: true }),
@@ -850,7 +838,7 @@ test("Netlist keeps format selection in the project panel while File keeps drawi
     .getByRole("button", { name: "导出项目文件…", exact: true })
     .press("ArrowLeft");
   await expect(
-    menu.getByRole("button", { name: "Export", exact: true }),
+    menu.getByRole("button", { name: "导出", exact: true }),
   ).toBeFocused();
   await expect(
     menu.getByRole("button", { name: "导出 SVG", exact: true }),

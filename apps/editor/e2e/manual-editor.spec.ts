@@ -5055,7 +5055,7 @@ test("does not expose destructive Cell reset actions in Manager", async ({
   await page.goto("/editor");
   await placeComponent(page, "resistor", { x: 320, y: 240 });
   await page.getByTestId("hierarchy-entry").click();
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
   for (const name of [
     "Reset Cell",
     "Clear Drawing",
@@ -5064,7 +5064,7 @@ test("does not expose destructive Cell reset actions in Manager", async ({
   ]) {
     await expect(manager.getByText(name, { exact: true })).toHaveCount(0);
   }
-  await manager.getByLabel("Close Cell Manager").click();
+  await manager.getByLabel("关闭 Cell 管理器").click();
   await expect(page.getByTestId("hit-R1")).toHaveCount(1);
 });
 

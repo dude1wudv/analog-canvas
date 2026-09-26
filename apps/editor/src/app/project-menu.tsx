@@ -66,18 +66,14 @@ export function ProjectMenu({
         if (event.key === "Escape") close();
       }}
     >
-      <summary
-        aria-label="Project"
-        title={name}
-        data-testid="project-menu-toggle"
-      >
-        Project
+      <summary aria-label="项目" title={name} data-testid="project-menu-toggle">
+        项目
         {dirty ? (
           <span
             className="project-unsaved-indicator"
             data-testid="project-unsaved-indicator"
-            aria-label="Unsaved changes"
-            title="Unsaved changes"
+            aria-label="未保存的更改"
+            title="未保存的更改"
           >
             ●
           </span>
@@ -86,12 +82,12 @@ export function ProjectMenu({
       <div
         className="command-popover project-menu-popover"
         role="region"
-        aria-label="Project details"
+        aria-label="项目详情"
       >
         <label className="project-menu-name">
-          <span>Project name</span>
+          <span>项目名称</span>
           <input
-            aria-label="Project name"
+            aria-label="项目名称"
             autoComplete="off"
             data-testid="project-name-input"
             value={nameDraft ?? name}
@@ -117,16 +113,16 @@ export function ProjectMenu({
         </label>
         <dl className="project-menu-metadata">
           <div>
-            <dt>Current Cell</dt>
+            <dt>当前 Cell</dt>
             <dd data-testid="active-document-name">{documentName}</dd>
           </div>
         </dl>
         {projects ? (
           <div className="project-menu-projects">
-            <span className="project-menu-heading">Open projects</span>
+            <span className="project-menu-heading">已打开的项目</span>
             <div
               role="menu"
-              aria-label="Choose open project"
+              aria-label="选择已打开的项目"
               onKeyDown={navigateProjects}
             >
               {projects.tabs.map((tab) => (
@@ -148,7 +144,7 @@ export function ProjectMenu({
                   {tab.dirty ? (
                     <span
                       className="project-menu-dirty"
-                      aria-label="Unsaved changes"
+                      aria-label="未保存的更改"
                     >
                       ●
                     </span>
@@ -162,15 +158,15 @@ export function ProjectMenu({
           <dl
             className="project-menu-metadata project-menu-publication"
             data-testid="gallery-entry-popover"
-            aria-label="Gallery entry information"
+            aria-label="画廊作品信息"
           >
             <div>
-              <dt>Contributor</dt>
-              <dd>{publication.author.trim() || "Unknown contributor"}</dd>
+              <dt>贡献者</dt>
+              <dd>{publication.author.trim() || "未知贡献者"}</dd>
             </div>
             {publication.description.trim() ? (
               <div>
-                <dt>Notes</dt>
+                <dt>备注</dt>
                 <dd>{publication.description.trim()}</dd>
               </div>
             ) : null}

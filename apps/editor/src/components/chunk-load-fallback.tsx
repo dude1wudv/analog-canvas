@@ -40,12 +40,10 @@ export function createChunkLoadFallback(
           data-testid="section-chunk-load-fallback"
         >
           <p>
-            This panel could not be loaded — the app has likely been updated
-            since this tab opened. Refresh to load the new version; your current
-            circuit is restored automatically.
+            无法加载此面板。应用可能在打开本页面后更新；请刷新以加载新版本，当前电路会自动恢复。
           </p>
           <button type="button" onClick={refreshWithRestore}>
-            Refresh app
+            刷新应用
           </button>
         </section>
       );
@@ -73,15 +71,11 @@ export function createChunkLoadFallback(
         >
           <header className="editor-action-dialog-header">
             <p>对话框不可用</p>
-            <h2 id="chunk-load-fallback-title">
-              This dialog could not be loaded
-            </h2>
+            <h2 id="chunk-load-fallback-title">无法加载此对话框</h2>
           </header>
           <div className="editor-action-dialog-body">
             <p>
-              The app has likely been updated since this tab opened, or the
-              browser is offline. Your circuit is unaffected. Refresh to load
-              the new version — your current work is restored automatically.
+              应用可能在打开本页面后更新，或浏览器已离线。当前电路不受影响。刷新以加载新版本，当前工作会自动恢复。
             </p>
             <p>
               <code>{detail}</code>
@@ -98,7 +92,7 @@ export function createChunkLoadFallback(
               className="primary"
               onClick={refreshWithRestore}
             >
-              Refresh app
+              刷新应用
             </button>
           </footer>
         </section>
@@ -127,16 +121,15 @@ export function ChunkLoadBanner({
       aria-label="功能加载失败"
     >
       <p>
-        {feature} could not load — the app has been updated since this tab
-        opened. Refresh to load the new version; your current circuit is
-        restored automatically.
+        {feature}{" "}
+        无法加载。应用已在打开本页面后更新。请刷新以加载新版本，当前电路会自动恢复。
       </p>
       <div>
         <button type="button" onClick={refreshWithRestore}>
-          Refresh app
+          刷新应用
         </button>
         <button type="button" onClick={onDismiss}>
-          Not now
+          暂不
         </button>
       </div>
     </aside>

@@ -244,19 +244,19 @@ export function FileCommandMenu({
             data-testid="save-cloud-project"
             onClick={onSave}
           >
-            Save
+            保存
           </button>
           <button
             type="button"
             data-testid="check-and-save"
             disabled={!checkAndSave.enabled}
             onClick={checkAndSave.execute}
-            title="Check ERC and visual issues, and save this Cloud Project"
+            title="检查 ERC 和视觉问题，并保存此云项目"
           >
-            Check and Save
+            检查并保存
           </button>
           <span className="command-group-label" id="file-cloud-projects-label">
-            Cloud Projects ({cloudProjects.length}/{CLOUD_PROJECT_LIMIT})
+            云项目 ({cloudProjects.length}/{CLOUD_PROJECT_LIMIT})
           </span>
           <div
             ref={cloudProjectList}
@@ -272,7 +272,7 @@ export function FileCommandMenu({
                   type="button"
                   className="cloud-project-open"
                   data-testid={`cloud-project-${project.id}`}
-                  title={`Open revision ${project.revision}`}
+                  title={`打开修订版 ${project.revision}`}
                   disabled={project.id === activeCloudProjectId}
                   onClick={() => onOpenCloudProject(project)}
                 >
@@ -289,8 +289,8 @@ export function FileCommandMenu({
                 </button>
                 <Suspense fallback={<button disabled>删除</button>}>
                   <InlineConfirm
-                    aria-label={`Delete Cloud Project ${project.name}`}
-                    title="Delete this Cloud Project"
+                    aria-label={`删除云项目 ${project.name}`}
+                    title="删除此云项目"
                     disabled={project.id === activeCloudProjectId}
                     open={deletingId === project.id}
                     onOpenChange={(open) => {
@@ -314,7 +314,7 @@ export function FileCommandMenu({
           <div>
             <CommandSubmenu
               id="file-import-options"
-              title="Import"
+              title="导入"
               open={openSubmenu === "import"}
               onToggle={() => {
                 setDeletingId(null);
@@ -329,7 +329,7 @@ export function FileCommandMenu({
                 tabIndex={0}
                 onKeyDown={activateFileLabel}
               >
-                Project File…
+                项目文件…
                 <input
                   ref={projectInputRef}
                   data-testid="project-file"
@@ -345,7 +345,7 @@ export function FileCommandMenu({
                 tabIndex={0}
                 onKeyDown={activateFileLabel}
               >
-                SPICE / SCS…
+                SPICE / SCS 文件…
                 <input
                   data-testid="spice-files"
                   type="file"
@@ -359,7 +359,7 @@ export function FileCommandMenu({
                 tabIndex={0}
                 onKeyDown={activateFileLabel}
               >
-                Cadence SPICE (`!` globals)…
+                Cadence SPICE（`!` 全局节点）…
                 <input
                   data-testid="cadence-spice-files"
                   type="file"
@@ -375,7 +375,7 @@ export function FileCommandMenu({
           <div>
             <CommandSubmenu
               id="file-export-options"
-              title="Export"
+              title="导出"
               open={openSubmenu === "export"}
               onToggle={() => {
                 setDeletingId(null);
@@ -390,35 +390,35 @@ export function FileCommandMenu({
                 aria-label="导出项目文件…"
                 onClick={onExportProject}
               >
-                Project File…
+                项目文件…
               </button>
               <button type="button" aria-label="导出 SVG" onClick={onExportSvg}>
-                Drawing as SVG
+                图纸为 SVG
               </button>
               <button
                 type="button"
                 aria-label="导出 PNG"
                 onClick={() => onExportRaster("png")}
               >
-                Drawing as PNG
+                图纸为 PNG
               </button>
               <button
                 type="button"
                 aria-label="导出 PDF"
                 onClick={() => onExportRaster("pdf")}
               >
-                Drawing as PDF
+                图纸为 PDF
               </button>
             </CommandSubmenu>
           </div>
           {canRevert ? (
             <button type="button" onClick={onRevert}>
-              Revert to Last Saved
+              恢复到上次保存
             </button>
           ) : null}
           {hasRecoverySessions ? (
             <button type="button" onClick={onOpenRecovery}>
-              Recover Unsaved Work…
+              恢复未保存的内容…
             </button>
           ) : null}
         </div>

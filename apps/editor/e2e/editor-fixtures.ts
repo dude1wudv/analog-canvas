@@ -67,13 +67,11 @@ export async function openMenu(page: Page, name: string): Promise<Locator> {
     {
       Edit: "编辑",
       File: "文件",
+      Netlist: "网表",
     }[name] ?? name;
-  const summary =
-    name === "Netlist"
-      ? page.locator('summary[aria-label="Netlist"]')
-      : page.locator("summary", { hasText: menuLabel }).filter({
-          hasText: new RegExp(`^${menuLabel}$`, "u"),
-        });
+  const summary = page.locator("summary", { hasText: menuLabel }).filter({
+    hasText: new RegExp(`^${menuLabel}$`, "u"),
+  });
   const details = summary.locator("..");
   if ((await details.getAttribute("open")) === null) await summary.click();
   return details;
@@ -87,15 +85,21 @@ export async function clickCommand(
   const details = await openMenu(page, menu);
   const commandLabel =
     {
-      "Export PNG": "导出 PNG",
+      "Copy Netlist": "复制网表",
       "Export PDF": "导出 PDF",
+      "Export PNG": "导出 PNG",
       "Export Project File…": "导出项目文件…",
       "Export SVG": "导出 SVG",
+      "Insert component… (I)": "插入器件… (I)",
       "Manage Cells…": "管理 Cell…",
+      "Netlist Settings…": "网表设置…",
       "New Project": "新建项目",
-      Redo: "重做",
+      "Place Cell from this Project…": "从此项目放置 Cell…",
       "Recover Local Work…": "恢复本地工作…",
+      "Recover Unsaved Work…": "恢复未保存的内容…",
       "Refresh app": "刷新应用",
+      "Review Netlist Issues…": "查看网表问题…",
+      Delete: "删除",
       Undo: "撤销",
     }[button] ?? button;
   if (
@@ -103,7 +107,7 @@ export async function clickCommand(
     /^Export (?:Project File…|SVG|PNG|PDF)$/u.test(button)
   ) {
     const group = details.getByRole("button", {
-      name: "Export",
+      name: "导出",
       exact: true,
     });
     if ((await group.getAttribute("aria-expanded")) !== "true")

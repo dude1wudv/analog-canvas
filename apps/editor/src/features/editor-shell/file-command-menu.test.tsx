@@ -39,20 +39,20 @@ describe("FileCommandMenu", () => {
     );
 
     expect(markup).not.toContain("Save as Cloud Copy");
-    expect(markup).toContain(`Cloud Projects (1/${CLOUD_PROJECT_LIMIT})`);
+    expect(markup).toContain(`云项目 (1/${CLOUD_PROJECT_LIMIT})`);
     expect(markup).toContain('data-testid="file-cloud-project-list"');
     expect(markup).toContain('aria-labelledby="file-cloud-projects-label"');
     expect(markup).toContain("Saved Circuit");
     expect(markup).toContain('class="cloud-project-time"');
     expect(markup).toContain("cloud-project-cloud-1");
-    expect(markup).toContain(">Import<");
-    expect(markup).toContain("Project File…");
-    expect(markup).toContain("SPICE / SCS…");
-    expect(markup).toContain("Cadence SPICE (`!` globals)…");
+    expect(markup).toContain(">导入<");
+    expect(markup).toContain("项目文件…");
+    expect(markup).toContain("SPICE / SCS 文件…");
+    expect(markup).toContain("Cadence SPICE（`!` 全局节点）…");
     expect(markup).toContain('data-testid="cadence-spice-files"');
-    expect(markup).toContain(">Export<");
-    expect(markup).toContain("Drawing as SVG");
-    expect(markup).toContain("Recover Unsaved Work…");
+    expect(markup).toContain(">导出<");
+    expect(markup).toContain("图纸为 SVG");
+    expect(markup).toContain("恢复未保存的内容…");
     expect(markup).not.toContain("Refresh app");
     expect(markup).not.toContain("Copy SPICE netlist");
     expect(markup).not.toContain("Copy Spectre netlist");

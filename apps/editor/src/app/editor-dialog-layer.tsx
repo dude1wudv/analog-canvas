@@ -98,9 +98,8 @@ export function EditorDialogLayer({
               <h2>批准 Agent 文件导入</h2>
             </div>
             <p>
-              The Agent staged a {agentFileApproval.candidate.kind} candidate.
-              It has not changed this Project. Replacing it will end the current
-              Agent session.
+              Agent 已准备好一个 {agentFileApproval.candidate.kind}{" "}
+              候选文件，尚未修改此项目。替换项目将结束当前 Agent 会话。
             </p>
             <dl className="agent-file-candidate-summary">
               <div>
@@ -134,14 +133,14 @@ export function EditorDialogLayer({
                 data-testid="agent-file-reject"
                 onClick={agentFileApproval.onReject}
               >
-                Reject
+                拒绝
               </button>
               <button
                 type="button"
                 data-testid="agent-file-approve"
                 onClick={agentFileApproval.onApprove}
               >
-                Replace Project
+                替换项目
               </button>
             </div>
           </section>

@@ -179,7 +179,7 @@ export function EditorAppChrome({
             aria-expanded={cellManagerOpen}
             onClick={onManageCells}
           >
-            Hierarchy
+            层次结构
           </button>
         </div>
         <nav
@@ -201,7 +201,7 @@ export function EditorAppChrome({
               <summary>编辑</summary>
               <div className="command-popover">
                 <button type="button" onClick={onInsertComponent}>
-                  Insert component… (I)
+                  插入器件… (I)
                 </button>
                 <button
                   type="button"
@@ -209,11 +209,11 @@ export function EditorAppChrome({
                   aria-expanded={userComponentsOpen}
                   onClick={onOpenUserComponents}
                 >
-                  User Components…
+                  用户器件…
                 </button>
                 {placeProjectCell.enabled ? (
                   <button type="button" onClick={placeProjectCell.execute}>
-                    Place Cell from this Project…
+                    从此项目放置 Cell…
                   </button>
                 ) : null}
                 <button
@@ -223,14 +223,14 @@ export function EditorAppChrome({
                   aria-expanded={searchOpen}
                   onClick={onOpenSearch}
                 >
-                  Find in Circuit… (Ctrl+F)
+                  在电路中查找… (Ctrl+F)
                 </button>
                 {hasSelectionActions ? (
                   <>
-                    <span className="command-group-label">Selection</span>
+                    <span className="command-group-label">选区</span>
                     {deleteSelection.enabled ? (
                       <button type="button" onClick={deleteSelection.execute}>
-                        Delete
+                        删除
                       </button>
                     ) : null}
                     {copySelectionImages.map((action) =>
@@ -247,17 +247,17 @@ export function EditorAppChrome({
                     {rotate.enabled ? (
                       <button type="button" onClick={rotate.execute}>
                         <ToolIcon name="rotate" />
-                        Rotate
+                        旋转
                       </button>
                     ) : null}
                     {mirrorLeftRight.enabled ? (
                       <button type="button" onClick={mirrorLeftRight.execute}>
-                        Mirror left/right (Shift+R)
+                        左右镜像 (Shift+R)
                       </button>
                     ) : null}
                     {mirrorTopBottom.enabled ? (
                       <button type="button" onClick={mirrorTopBottom.execute}>
-                        Mirror top/bottom (Ctrl+R)
+                        上下镜像 (Ctrl+R)
                       </button>
                     ) : null}
                     {alignmentActions.map((action) => (
@@ -272,7 +272,7 @@ export function EditorAppChrome({
                     ))}
                   </>
                 ) : null}
-                <span className="command-group-label">Advanced</span>
+                <span className="command-group-label">高级</span>
                 <button
                   type="button"
                   data-testid="selection-filter-button"
@@ -280,32 +280,32 @@ export function EditorAppChrome({
                   aria-expanded={selectionFilterOpen}
                   onClick={onOpenSelectionFilter}
                 >
-                  Choose Selectable Objects… (Ctrl+Shift+F)
+                  选择可选对象… (Ctrl+Shift+F)
                 </button>
               </div>
             </details>
             <details className="command-menu" name="editor-command-menu">
-              <summary aria-label="Netlist" title="Netlist commands">
-                <span>Netlist</span>
+              <summary aria-label="网表" title="网表命令">
+                <span>网表</span>
               </summary>
               <div className="command-popover">
                 <button
                   type="button"
                   data-testid="copy-netlist"
-                  title={`Copy as-authored ${netlistFormat === "spice" ? "SPICE (.spi)" : "Spectre (.scs)"} netlist`}
+                  title={`复制原始 ${netlistFormat === "spice" ? "SPICE (.spi)" : "Spectre (.scs)"} 网表`}
                   onClick={() => copyNetlist(netlistFormat)}
                 >
-                  Copy Netlist
+                  复制网表
                 </button>
                 <button type="button" onClick={onOpenNetlistConfiguration}>
-                  Netlist Settings…
+                  网表设置…
                 </button>
                 <button
                   type="button"
                   aria-expanded={instanceCodeOpen}
                   onClick={onOpenInstanceCode}
                 >
-                  Edit Device Data…
+                  编辑器件数据…
                 </button>
                 <button
                   type="button"
@@ -313,7 +313,7 @@ export function EditorAppChrome({
                   aria-expanded={netlistPreflightOpen}
                   onClick={() => onOpenNetlistPreflight()}
                 >
-                  Review Netlist Issues…
+                  查看网表问题…
                 </button>
               </div>
             </details>
@@ -340,7 +340,7 @@ export function EditorAppChrome({
                   agentAction.execute();
                 }}
               >
-                Agent
+                Agent 助手
               </button>
             ) : null}
             {/* Publishing is the primary narrow-window action. Keeping it
@@ -372,8 +372,8 @@ export function EditorAppChrome({
             href={SITE_REPOSITORY_URL}
             target="_blank"
             rel="noreferrer"
-            aria-label="GitHub repository"
-            title="GitHub repository"
+            aria-label="GitHub 仓库"
+            title="GitHub 仓库"
           >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path

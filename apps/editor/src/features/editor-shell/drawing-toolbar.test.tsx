@@ -40,11 +40,11 @@ describe("DrawingToolbar", () => {
     expect(markup).not.toContain('data-testid="draw-tool-line"');
     expect(markup).not.toContain('data-testid="draw-tool-rectangle"');
     expect(markup).not.toContain('data-testid="draw-tool-circle"');
-    expect(markup).toContain("Properties: Ports, canvas, and selected objects");
-    expect(markup).toContain("Properties</span>");
+    expect(markup).toContain("属性：端口、画布与所选对象");
+    expect(markup).toContain("属性</span>");
     expect(markup).not.toContain('data-testid="digital-simulation-toggle"');
     expect(markup).not.toContain("Digital Simulation");
-    expect(markup).toContain('aria-label="Panels"');
-    expect(markup).toContain('aria-label="Annotation tools"');
+    expect(markup).toContain('aria-label="面板"');
+    expect(markup).toContain('aria-label="标注工具"');
   });
 });

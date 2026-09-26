@@ -201,14 +201,13 @@ export function VersionHistoryDialog({
       >
         <header className="version-history-header">
           <p>
-            Latest 3 historical versions ·{" "}
-            {source ? "current draft" : "current publication"} kept separately
+            最近 3 个历史版本 · {source ? "当前草稿" : "当前发布作品"}单独保留
           </p>
-          <h2 id="version-history-title">Version history — {entryName}</h2>
+          <h2 id="version-history-title">版本历史 — {entryName}</h2>
           <button
             type="button"
             className="version-history-dismiss"
-            aria-label="Close version history"
+            aria-label="关闭版本历史"
             disabled={busy}
             onClick={onClose}
           >
@@ -216,10 +215,10 @@ export function VersionHistoryDialog({
           </button>
         </header>
         {versions === null && !error ? (
-          <p className="version-history-note">Loading history…</p>
+          <p className="version-history-note">正在加载历史记录…</p>
         ) : versions?.length === 0 ? (
           <p className="version-history-note" data-testid="version-empty">
-            No earlier versions yet — history starts with the first update.
+            暂无较早的版本——首次更新后才会产生历史记录。
           </p>
         ) : (
           <div className="version-list">
@@ -235,7 +234,7 @@ export function VersionHistoryDialog({
                       ? source.previewUrl(version.versionId)
                       : `/api/gallery/${entryId}/versions/${version.versionId}/preview.svg`
                   }
-                  alt={`Version ${version.versionNo} preview`}
+                  alt={`版本 ${version.versionNo} 预览`}
                   loading="lazy"
                 />
                 <div className="version-copy">
@@ -257,7 +256,7 @@ export function VersionHistoryDialog({
                     data-testid={`version-compare-${version.versionNo}`}
                     onClick={() => void run(() => compare(version))}
                   >
-                    Compare
+                    比较
                   </button>
                   {onBranch || source ? (
                     <button
@@ -266,7 +265,7 @@ export function VersionHistoryDialog({
                       data-testid={`version-branch-${version.versionNo}`}
                       onClick={() => void run(() => branch(version))}
                     >
-                      Branch
+                      创建分支
                     </button>
                   ) : (
                     <a
@@ -279,7 +278,7 @@ export function VersionHistoryDialog({
                       target="_blank"
                       rel="noreferrer"
                     >
-                      Branch ↗
+                      创建分支 ↗
                     </a>
                   )}
                   <button
@@ -289,7 +288,7 @@ export function VersionHistoryDialog({
                     disabled={busy}
                     onClick={() => void run(() => restore(version.versionId))}
                   >
-                    Restore
+                    恢复
                   </button>
                 </div>
               </article>
@@ -297,10 +296,9 @@ export function VersionHistoryDialog({
           </div>
         )}
         {comparison ? (
-          <section aria-label={`Compare version ${comparison.versionNo}`}>
+          <section aria-label={`比较版本 ${comparison.versionNo}`}>
             <h3>
-              v{comparison.versionNo} →{" "}
-              {source?.currentLabel ?? "Current publication"}
+              v{comparison.versionNo} → {source?.currentLabel ?? "当前发布作品"}
             </h3>
             <VersionHistoryComparison
               key={comparison.versionNo}
@@ -317,7 +315,7 @@ export function VersionHistoryDialog({
                 type="button"
                 onClick={() => setRetry((value) => value + 1)}
               >
-                Retry
+                重试
               </button>
             ) : null}
           </p>

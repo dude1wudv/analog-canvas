@@ -41,13 +41,13 @@ describe("PublishGalleryDialog", () => {
     expect(markup).toContain('value="Ring Oscillator"');
     expect(markup).toContain('class="publish-gallery-fields"');
     expect(markup).toContain('class="publish-gallery-primary"');
-    expect(markup).toContain("Publishing as Visitor");
-    expect(markup).toContain("goes up straight away");
+    expect(markup).toContain("以 Visitor 的身份发布");
+    expect(markup).toContain("作品将立即公开");
     expect(markup).toContain('data-testid="gallery-topology-check"');
     expect(markup).toContain(">Check Duplicate</button>");
     expect(markup).not.toContain("Check current topology");
     expect(markup.indexOf("Check Duplicate")).toBeLessThan(
-      markup.indexOf(">Publish</button>"),
+      markup.indexOf(">发布</button>"),
     );
     // No queue to wait in, and no passphrase to guess.
     expect(markup).not.toContain("review");
@@ -100,7 +100,7 @@ describe("PublishGalleryDialog", () => {
     expect(fits).toMatch(/class="publish-gallery-primary"(?![^>]*disabled)/u);
     const over = render("x".repeat(1200));
     expect(over).toContain("x".repeat(1200));
-    expect(over).toContain("1200 / 1000 characters · shorten to publish");
+    expect(over).toContain("1200 / 1000 字符 · 请缩短描述后发布");
     expect(over).toContain('data-over="true"');
     expect(over).toMatch(
       /<button[^>]*disabled=""[^>]*class="publish-gallery-primary"|class="publish-gallery-primary"[^>]*disabled=""/u,
@@ -119,7 +119,7 @@ describe("PublishGalleryDialog", () => {
     );
     expect(markup).not.toContain('aria-label="Author"');
     expect(markup).not.toContain("Shown on your tile");
-    expect(markup).toContain("Publishing as Token Zhang");
+    expect(markup).toContain("以 Token Zhang 的身份发布");
   });
 
   it("keeps Publish open for an ordinary member and lists gate findings", () => {

@@ -141,22 +141,22 @@ export function EditorPropertiesDock({
         <div className="selection-panel" hidden={!open}>
           <>
             {documentSettings ? (
-              <Suspense fallback={<p role="status">Loading properties…</p>}>
+              <Suspense fallback={<p role="status">正在加载属性…</p>}>
                 <DocumentSettingsSection {...documentSettings} />
               </Suspense>
             ) : null}
             <MosBulkConnectionSection {...mosBulk} />
             <RoutingGuidanceSection {...routingGuidance} />
             {!hasInspectableSelection ? (
-              <p className="inspect-empty">Select an object to inspect.</p>
+              <p className="inspect-empty">请选择要查看的对象。</p>
             ) : null}
             <GroupPropertiesSection {...groupProperties} />
             {component ? (
               <section
                 className="property-section component-properties"
-                aria-label="Component properties"
+                aria-label="器件属性"
               >
-                <Suspense fallback={<p role="status">Loading properties…</p>}>
+                <Suspense fallback={<p role="status">正在加载属性…</p>}>
                   <ComponentPropertyCodeEditor
                     key={component.code.instance.id}
                     {...component.code}
@@ -181,7 +181,7 @@ export function EditorPropertiesDock({
               </section>
             ) : null}
             {!groupProperties.active && annotationText ? (
-              <Suspense fallback={<p role="status">Loading properties…</p>}>
+              <Suspense fallback={<p role="status">正在加载属性…</p>}>
                 <AnnotationColorProperties
                   key={annotationText.annotation.id}
                   {...annotationText}
@@ -192,7 +192,7 @@ export function EditorPropertiesDock({
               <NetNameProperties {...netName} />
             ) : null}
             {!groupProperties.active && drafting ? (
-              <Suspense fallback={<p role="status">Loading properties…</p>}>
+              <Suspense fallback={<p role="status">正在加载属性…</p>}>
                 <DraftingPropertiesPanel
                   key={drafting.object.id}
                   {...drafting}
@@ -210,8 +210,8 @@ export function EditorPropertiesDock({
             <ProjectDiagnosticsSection {...diagnostics} />
             {netTrace ? <NetTraceSection {...netTrace} /> : null}
             {importReview ? (
-              <section className="import-review" aria-label="Import Review">
-                <h2>Import Review</h2>
+              <section className="import-review" aria-label="导入检查">
+                <h2>导入检查</h2>
                 <SelectionInspectorDetails {...importReview} />
               </section>
             ) : null}

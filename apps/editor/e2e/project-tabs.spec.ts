@@ -608,7 +608,7 @@ test("Project menu keeps long names out of the header and switches checked proje
   await insert(page, "resistor", 260, 220);
   const toggle = page.getByTestId("project-menu-toggle");
   const menu = page.getByRole("region", {
-    name: "Project details",
+    name: "项目详情",
     exact: true,
   });
   const longName =

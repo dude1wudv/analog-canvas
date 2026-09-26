@@ -5605,7 +5605,7 @@ function WorkspaceEditor({
           execute: () => editorCommands.execute({ id: "selection.delete" }),
         }}
         copySelectionImages={(["png", "svg"] as const).map((format) => ({
-          label: `Copy selection as ${format.toUpperCase()}`,
+          label: `复制选区为 ${format.toUpperCase()}`,
           enabled: editorCommands.state({
             id: "selection.copy-image",
             format,
@@ -5675,8 +5675,8 @@ function WorkspaceEditor({
             ? {
                 label:
                   agentSession.status === "idle"
-                    ? "Connect Agent"
-                    : "Manage Agent",
+                    ? "连接 Agent 助手"
+                    : "管理 Agent 助手",
                 execute: openAgentConnection,
               }
             : null
@@ -7977,7 +7977,7 @@ function WorkspaceEditor({
             }
             actions={[
               {
-                label: "Edit Component Definition (E)",
+                label: "编辑元件定义（E）",
                 enabled: Boolean(
                   selectedInstance &&
                   !resolver.resolve(selectedInstance.symbolId)?.definition
@@ -7988,28 +7988,28 @@ function WorkspaceEditor({
               ...(hasHierarchyEnterSelection
                 ? [
                     {
-                      label: "Enter Cell (E)",
+                      label: "进入 Cell（E）",
                       enabled: true,
                       execute: enterSelectedHierarchy,
                     },
                   ]
                 : []),
               {
-                label: "Properties (Q)",
+                label: "属性（Q）",
                 enabled: editorCommands.state({ id: "properties.open" })
                   .enabled,
                 execute: () =>
                   editorCommands.execute({ id: "properties.open" }),
               },
               {
-                label: "Copy (C)",
+                label: "复制（C）",
                 enabled:
                   hasVisualSelection(visualSelection) &&
                   editorCommands.state({ id: "selection.copy" }).enabled,
                 execute: () => editorCommands.execute({ id: "selection.copy" }),
               },
               {
-                label: "Rotate 90° (R)",
+                label: "旋转 90°（R）",
                 enabled: editorCommands.state({ id: "transform.rotate" })
                   .enabled,
                 execute: () =>
@@ -8028,7 +8028,7 @@ function WorkspaceEditor({
                   }),
               },
               {
-                label: "Mirror top/bottom (Ctrl+R)",
+                label: "上下镜像（Ctrl+R）",
                 enabled: editorCommands.state({
                   id: "transform.mirror",
                   direction: "top-bottom",
@@ -8040,7 +8040,7 @@ function WorkspaceEditor({
                   }),
               },
               {
-                label: "Delete",
+                label: "删除",
                 enabled: hasVisualSelection(visualSelection),
                 execute: () =>
                   editorCommands.execute({ id: "selection.delete" }),

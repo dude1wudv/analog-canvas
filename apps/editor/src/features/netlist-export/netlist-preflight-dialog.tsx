@@ -82,10 +82,10 @@ export function NetlistPreflightDialog({
   const exportable = result.status === "ready" && unfinished.length === 0;
   const blocking = unfinished.length > 0 ? unfinished.length : errors.length;
   const readiness = !exportable
-    ? `${blocking} blocking issue${blocking === 1 ? "" : "s"}`
+    ? `${blocking} 项阻止导出的问题`
     : electricalDiagnostics.length > 0
-      ? "Structure ready; review electrical findings"
-      : "Ready to export";
+      ? "结构已就绪；请检查电气问题"
+      : "可以导出";
   const hasDiagnostics =
     result.diagnostics.length > 0 || electricalDiagnostics.length > 0;
   return (
@@ -111,13 +111,11 @@ export function NetlistPreflightDialog({
           <h3>{readiness}</h3>
           {exportable && result.status === "ready" ? (
             <p>
-              {result.cellCount} internal Cell
-              {result.cellCount === 1 ? "" : "s"}; {result.externalMasterCount}{" "}
-              external interface
-              {result.externalMasterCount === 1 ? "" : "s"}.
+              内部 Cell：{result.cellCount}；外部接口：
+              {result.externalMasterCount}。
             </p>
           ) : (
-            <p>Resolve the structural findings before copying a netlist.</p>
+            <p>复制网表前请先解决结构问题。</p>
           )}
         </section>
         <div
@@ -132,7 +130,7 @@ export function NetlistPreflightDialog({
             >
               <div className="netlist-preflight-export-controls">
                 <label>
-                  Naming profile
+                  命名方案
                   <select
                     aria-label="网表命名方案"
                     value={namingProfile}
@@ -147,7 +145,7 @@ export function NetlistPreflightDialog({
                   </select>
                 </label>
                 <button type="button" onClick={() => onExport(namingProfile)}>
-                  Copy {format === "spice" ? "SPICE" : "Spectre"} netlist
+                  复制 {format === "spice" ? "SPICE" : "Spectre"} 网表
                 </button>
               </div>
               <pre
@@ -188,11 +186,10 @@ export function NetlistPreflightDialog({
               ) : null}
               {electricalDiagnostics.length > 0 ? (
                 <section aria-label="电气检查结果">
-                  <h3>Electrical readiness ({electricalDiagnostics.length})</h3>
+                  <h3>电气检查（{electricalDiagnostics.length}）</h3>
                   <p>
-                    These findings use the same current-revision connectivity
-                    assessment as ERC and the Gallery gate. Saving remains a
-                    separate action and is allowed for unfinished work.
+                    这些问题与 ERC
+                    和画廊检查使用相同的当前版本连通性评估。保存是独立操作，尚未完成的工作也可以保存。
                   </p>
                   <ul className="preflight-findings">
                     {electricalDiagnostics.map((diagnostic) => (

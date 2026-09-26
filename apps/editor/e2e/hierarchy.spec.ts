@@ -37,16 +37,16 @@ async function createCell(
   name: string,
 ): Promise<void> {
   await runCellCommand(page, "Hierarchy");
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
-  await manager.getByRole("button", { name: "New Cell" }).click();
-  const editor = page.getByRole("dialog", { name: "New Cell" });
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
+  await manager.getByRole("button", { name: "新建 Cell" }).click();
+  const editor = page.getByRole("dialog", { name: "新建 Cell" });
   await expect(editor).toHaveAttribute("autocomplete", "off");
-  await expect(editor.getByLabel("Cell name")).toHaveAttribute(
+  await expect(editor.getByLabel("Cell 名称")).toHaveAttribute(
     "autocomplete",
     "off",
   );
-  await editor.getByLabel("Cell name").fill(name);
-  await editor.getByRole("button", { name: "Create" }).click();
+  await editor.getByLabel("Cell 名称").fill(name);
+  await editor.getByRole("button", { name: "创建" }).click();
 }
 
 async function openCellDefinition(
@@ -54,7 +54,7 @@ async function openCellDefinition(
   name: string | RegExp,
 ): Promise<void> {
   await runCellCommand(page, "Hierarchy");
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await manager
     .locator(".cell-manager-list-item")
     .filter({ hasText: name })
@@ -65,7 +65,7 @@ async function openCellDefinition(
 async function openTopCell(
   page: import("@playwright/test").Page,
 ): Promise<void> {
-  await openCellDefinition(page, /Top/u);
+  await openCellDefinition(page, /顶层/u);
 }
 
 async function placeCellPin(
@@ -92,14 +92,14 @@ async function placeCellPin(
   await page.getByRole("button", { name: "应用文本更改" }).click();
   if (options.direction) {
     await runCellCommand(page, "Hierarchy");
-    const manager = page.getByRole("dialog", { name: "Cell Manager" });
+    const manager = page.getByRole("dialog", { name: "Cell 管理器" });
     await manager
       .getByRole("table", { name: "Formal port order" })
       .getByRole("row")
       .last()
       .getByRole("combobox")
       .selectOption(options.direction);
-    await manager.getByLabel("Close Cell Manager").click();
+    await manager.getByLabel("关闭 Cell 管理器").click();
   }
 }
 
@@ -121,11 +121,11 @@ async function setCellTerminalDirection(
   direction: "input" | "output" | "inout" | "passive",
 ): Promise<void> {
   await runCellCommand(page, "Hierarchy");
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await manager
     .getByLabel(`Formal port ${name} direction`)
     .selectOption(direction);
-  await manager.getByLabel("Close Cell Manager").click();
+  await manager.getByLabel("关闭 Cell 管理器").click();
 }
 
 test("edits Cell parameter references as plain device JSON with Undo", async ({
@@ -181,14 +181,14 @@ test("edits Cell parameter references as plain device JSON with Undo", async ({
     "{Rbase}",
   );
   await runCellCommand(page, "Hierarchy");
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await expect(
     manager.getByRole("button", { name: "Remove parameter Rbase" }),
   ).toBeDisabled();
   await manager.getByLabel("Parameter Rbase name").fill("Resistance");
   await manager.getByLabel("Parameter Rbase name").press("Enter");
   await expect(manager.getByLabel("Parameter Resistance name")).toBeVisible();
-  await manager.getByLabel("Close Cell Manager").click();
+  await manager.getByLabel("关闭 Cell 管理器").click();
   expect(child(await save()).instances[0].netlist.parameters.value).toBe(
     "{Resistance}",
   );
@@ -203,7 +203,7 @@ test("edits Cell parameter references as plain device JSON with Undo", async ({
   await expect(page.getByTestId("status")).toContainText(
     "Updated Cell parameter",
   );
-  await manager.getByLabel("Close Cell Manager").click();
+  await manager.getByLabel("关闭 Cell 管理器").click();
   expect(child(await save()).netlist.formalParameters[0].defaultValue).toBe(
     "3k",
   );
@@ -339,14 +339,16 @@ test("edits independent parent parameter overrides and follows definition rename
   await setComponentParameter(page, "Rbase", "4k");
   await expectComponentCodeField(page, "parameters.Rbase", "4k");
   await runCellCommand(page, "Hierarchy");
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
-  await manager.getByRole("button", { name: /Resistors.*2 callers/u }).click();
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
+  await manager
+    .getByRole("button", { name: /Resistors.*2 个调用位置/u })
+    .click();
   await manager.getByLabel("Parameter Rbase name").fill("Resistance");
   await manager.getByLabel("Parameter Rbase name").press("Enter");
   await expect(manager.getByLabel("Parameter Resistance name")).toBeVisible();
   await manager.getByLabel("Parameter Resistance default").fill("3k");
   await manager.getByLabel("Parameter Resistance default").press("Enter");
-  await manager.getByLabel("Close Cell Manager").click();
+  await manager.getByLabel("关闭 Cell 管理器").click();
   await page.getByTestId("hit-X1").click();
   await expectComponentCodeField(page, "parameters.Resistance", "2k");
   await page.getByTestId("hit-X2").click();
@@ -426,16 +428,16 @@ test("keeps a chosen simulation Cell independent of later default Top changes", 
     expect.objectContaining({ documentId: "resistors" }),
   );
   await runCellCommand(page, "Hierarchy");
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await manager
-    .getByRole("complementary", { name: "Cells", exact: true })
+    .getByRole("complementary", { name: "Cell 列表", exact: true })
     .getByRole("button", { name: /Other/ })
     .click();
   await manager
     .locator(".cell-manager-list-item")
     .filter({ hasText: "Other" })
     .dragTo(manager.locator(".cell-manager-list-item").first());
-  await manager.getByLabel("Close Cell Manager").click();
+  await manager.getByLabel("关闭 Cell 管理器").click();
   const after = await snapshot();
   expect(after.topDocumentId).toBe("other");
   expect(after.simulationFolders).toEqual(before.simulationFolders);
@@ -449,20 +451,18 @@ test("sets a Cell as default Top without changing its circuit and supports Undo"
   await createCell(page, "NewTop");
   const childId = await page.getByTestId("active-document-id").innerText();
   await runCellCommand(page, "Hierarchy");
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await expect(manager.locator(".cell-manager-list-heading")).toHaveCount(0);
   expect(
     (await manager
-      .getByRole("button", { name: "New Cell", exact: true })
+      .getByRole("button", { name: "新建 Cell", exact: true })
       .boundingBox())!.height,
   ).toBeLessThan(40);
-  await manager
-    .getByRole("button", { name: "Set as Top", exact: true })
-    .click();
-  await expect(manager.getByRole("button", { name: "Set as Top" })).toHaveCount(
-    0,
-  );
-  await manager.getByRole("button", { name: "Close Cell Manager" }).click();
+  await manager.getByRole("button", { name: "设为顶层", exact: true }).click();
+  await expect(
+    manager.getByRole("button", { name: "设为顶层", exact: true }),
+  ).toHaveCount(0);
+  await manager.getByRole("button", { name: "关闭 Cell 管理器" }).click();
   const save = async () =>
     parseSavedProject(
       (await downloadBytes(page, "File", "Export Project File…")).toString(
@@ -498,7 +498,7 @@ test("saves ordinary Cell order without changing Top and restores it with Undo",
     );
   const normalized = await snapshot();
   await runCellCommand(page, "Hierarchy");
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await manager
     .locator(".cell-manager-list-item")
     .filter({ hasText: "Extra" })
@@ -513,7 +513,7 @@ test("saves ordinary Cell order without changing Top and restores it with Undo",
     "Resistors",
   ]);
   await page.screenshot({ path: test.info().outputPath("cell-manager.png") });
-  await manager.getByLabel("Close Cell Manager").click();
+  await manager.getByLabel("关闭 Cell 管理器").click();
   const reordered = await snapshot();
   expect(reordered.topDocumentId).toBe(project.topDocumentId);
   expect(reordered.documents.map((cell: { id: string }) => cell.id)).toEqual([
@@ -548,10 +548,10 @@ test("opens distinct structural occurrences while keeping one stable definition 
   });
   for (const instance of ["X1", "X2"]) {
     await runCellCommand(page, "Hierarchy");
-    const manager = page.getByRole("dialog", { name: "Cell Manager" });
+    const manager = page.getByRole("dialog", { name: "Cell 管理器" });
     await expect(
       manager
-        .getByRole("complementary", { name: "Cells", exact: true })
+        .getByRole("complementary", { name: "Cell 列表", exact: true })
         .getByRole("button", { name: /Unused/ }),
     ).toBeVisible();
     await manager.getByText("Hierarchy", { exact: true }).click();
@@ -581,10 +581,10 @@ test("protects reviewed External interfaces and navigates their callers", async 
   const reviewed = reviewedExternalBindingForMaster("sky130_fd_pr__nfet_01v8")!;
   await page.goto("/editor");
   await runCellCommand(page, "Hierarchy");
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await manager
-    .getByRole("group", { name: "Definition type" })
-    .getByRole("button", { name: "External Circuit Defs", exact: true })
+    .getByRole("group", { name: "定义类型" })
+    .getByRole("button", { name: "外部电路定义", exact: true })
     .click();
   await manager
     .getByLabel("External subcircuit target")
@@ -593,7 +593,7 @@ test("protects reviewed External interfaces and navigates their callers", async 
     .getByLabel("External subcircuit terminals")
     .fill(reviewed.terminals.map((item) => item.targetName).join(", "));
   await manager
-    .getByRole("button", { name: "Create External Circuit Def", exact: true })
+    .getByRole("button", { name: "新建外部电路定义", exact: true })
     .click();
   await expect(
     manager.getByLabel("External subcircuit target"),
@@ -605,22 +605,22 @@ test("protects reviewed External interfaces and navigates their callers", async 
     manager.getByRole("button", { name: "Save definition" }),
   ).toBeDisabled();
   await expect(manager.getByText(/fixed PDK interface/)).toBeVisible();
-  await manager.getByRole("button", { name: "Place", exact: true }).click();
+  await manager.getByRole("button", { name: "放置", exact: true }).click();
   await page
     .getByTestId("schematic-canvas")
     .click({ position: { x: 260, y: 200 } });
   await page.keyboard.press("Escape");
   await runCellCommand(page, "Hierarchy");
   await manager
-    .getByRole("group", { name: "Definition type" })
-    .getByRole("button", { name: "External Circuit Defs", exact: true })
+    .getByRole("group", { name: "定义类型" })
+    .getByRole("button", { name: "外部电路定义", exact: true })
     .click();
   await manager
-    .getByRole("complementary", { name: "External Circuit Defs" })
+    .getByRole("complementary", { name: "外部电路定义" })
     .getByRole("button", { name: new RegExp(reviewed.masterName) })
     .click();
-  await manager.getByText("Callers (1)", { exact: true }).click();
-  await manager.getByRole("button", { name: "Jump to caller" }).click();
+  await manager.getByText("调用位置（1）", { exact: true }).click();
+  await manager.getByRole("button", { name: "跳转到调用位置" }).click();
   await expect(manager).toHaveCount(0);
   await expect(page.getByTestId("status")).toContainText("Opened caller");
 });
@@ -630,14 +630,14 @@ test("manages external declarations independently of local Cell interfaces", asy
 }) => {
   await page.goto("/editor");
   await runCellCommand(page, "Hierarchy");
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
-  const types = manager.getByRole("group", { name: "Definition type" });
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
+  const types = manager.getByRole("group", { name: "定义类型" });
   await expect(
     manager.getByLabel("Cell interface", { exact: true }),
   ).toBeVisible();
   await expect(manager.getByLabel("External subcircuit target")).toHaveCount(0);
   await types
-    .getByRole("button", { name: "External Circuit Defs", exact: true })
+    .getByRole("button", { name: "外部电路定义", exact: true })
     .click();
   await expect(
     manager.getByLabel("Cell interface", { exact: true }),
@@ -657,7 +657,7 @@ test("manages external declarations independently of local Cell interfaces", asy
     .getByRole("button", { name: "Create External Circuit Def", exact: true })
     .click();
   const externalList = manager.getByRole("complementary", {
-    name: "External Circuit Defs",
+    name: "外部电路定义",
   });
   await expect(externalList.locator(".cell-manager-list-heading")).toHaveCount(
     0,
@@ -665,7 +665,7 @@ test("manages external declarations independently of local Cell interfaces", asy
   await externalList.getByRole("button", { name: /amplifier/ }).click();
   expect(
     (await externalList
-      .getByRole("button", { name: "New External Circuit Def", exact: true })
+      .getByRole("button", { name: "新建外部电路定义", exact: true })
       .boundingBox())!.height,
   ).toBeLessThan(40);
   await expect(manager.getByLabel("External subcircuit terminals")).toHaveValue(
@@ -675,22 +675,22 @@ test("manages external declarations independently of local Cell interfaces", asy
     .getByLabel("External subcircuit formal parameters")
     .fill("gain=20");
   await manager.getByRole("button", { name: "Save definition" }).click();
-  await types.getByRole("button", { name: "Cells", exact: true }).click();
+  await types.getByRole("button", { name: "Cell", exact: true }).click();
   await expect(
     manager.getByLabel("Cell interface", { exact: true }),
   ).toBeVisible();
   await expect(manager.getByLabel("External subcircuit target")).toHaveCount(0);
   await types
-    .getByRole("button", { name: "External Circuit Defs", exact: true })
+    .getByRole("button", { name: "外部电路定义", exact: true })
     .click();
   await expect(
     manager.getByLabel("External subcircuit formal parameters"),
   ).toHaveValue("gain=20");
-  await manager.getByLabel("Close Cell Manager").click();
+  await manager.getByLabel("关闭 Cell 管理器").click();
   await page.keyboard.press("Control+z");
   await runCellCommand(page, "Hierarchy");
   await types
-    .getByRole("button", { name: "External Circuit Defs", exact: true })
+    .getByRole("button", { name: "外部电路定义", exact: true })
     .click();
   await externalList.getByRole("button", { name: /amplifier/ }).click();
   await expect(
@@ -712,21 +712,21 @@ test("manages external declarations independently of local Cell interfaces", asy
   await expect(
     externalList.getByRole("button", { name: /amplifier/ }),
   ).toHaveCount(0);
-  await manager.getByLabel("Close Cell Manager").click();
+  await manager.getByLabel("关闭 Cell 管理器").click();
   await page.keyboard.press("Control+z");
   await runCellCommand(page, "Hierarchy");
   await types
-    .getByRole("button", { name: "External Circuit Defs", exact: true })
+    .getByRole("button", { name: "外部电路定义", exact: true })
     .click();
   await externalList.getByRole("button", { name: /amplifier/ }).click();
   await expect(
     manager.getByLabel("External subcircuit formal parameters"),
   ).toHaveValue("gain=10");
-  await manager.getByLabel("Close Cell Manager").click();
+  await manager.getByLabel("关闭 Cell 管理器").click();
   await page.keyboard.press("Control+Shift+z");
   await runCellCommand(page, "Hierarchy");
   await types
-    .getByRole("button", { name: "External Circuit Defs", exact: true })
+    .getByRole("button", { name: "外部电路定义", exact: true })
     .click();
   await expect(
     externalList.getByRole("button", { name: /amplifier/ }),
@@ -738,10 +738,10 @@ test("creates and places an external interface with connected netlist semantics"
 }) => {
   await page.goto("/editor");
   await runCellCommand(page, "Hierarchy");
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await manager
-    .getByRole("group", { name: "Definition type" })
-    .getByRole("button", { name: "External Circuit Defs" })
+    .getByRole("group", { name: "定义类型" })
+    .getByRole("button", { name: "外部电路定义" })
     .click();
   const create = manager.getByRole("button", {
     name: "Create External Circuit Def",
@@ -759,7 +759,7 @@ test("creates and places an external interface with connected netlist semantics"
     manager.getByRole("button", { name: "Save definition" }),
   ).toBeVisible();
   await manager
-    .getByRole("button", { name: "New External Circuit Def", exact: true })
+    .getByRole("button", { name: "新建外部电路定义", exact: true })
     .click();
   await expect(manager.getByLabel("External subcircuit target")).toHaveValue(
     "",
@@ -768,10 +768,10 @@ test("creates and places an external interface with connected netlist semantics"
   await create.click();
   await expect(manager.getByRole("alert")).toContainText(/duplicate/i);
   await manager
-    .getByRole("complementary", { name: "External Circuit Defs" })
+    .getByRole("complementary", { name: "外部电路定义" })
     .getByRole("button", { name: /external_load/ })
     .click();
-  await manager.getByRole("button", { name: "Place", exact: true }).click();
+  await manager.getByRole("button", { name: "放置", exact: true }).click();
   await expect(manager).toHaveCount(0);
   await page
     .getByTestId("schematic-canvas")
@@ -1072,14 +1072,14 @@ test("creates and deletes an unreferenced reusable Cell", async ({ page }) => {
   );
 
   await runCellCommand(page, "Hierarchy");
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await expect(manager.locator(".cell-row-menu")).toHaveCount(0);
   await manager
-    .getByRole("button", { name: "Delete", exact: true })
+    .getByRole("button", { name: "删除", exact: true })
     .last()
     .click();
-  const confirm = page.getByRole("dialog", { name: "Delete Cell" });
-  await confirm.getByRole("button", { name: "Delete Cell" }).click();
+  const confirm = page.getByRole("dialog", { name: "删除 Cell" });
+  await confirm.getByRole("button", { name: "删除 Cell" }).click();
   await expect(page.getByTestId("document-count")).toHaveText("1");
   await expect(page.getByTestId("active-document-id")).toHaveText(
     "document-main",
@@ -1102,7 +1102,7 @@ test("keeps Manager free of reset actions and opens definitions by double click"
   await placeComponent(page, "resistor", { x: 320, y: 200 });
   await openTopCell(page);
   await runCellCommand(page, "Hierarchy");
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await expect(manager).not.toContainText("Reset Cell");
   await expect(manager).not.toContainText("Project hierarchy");
   await expect(manager).not.toContainText("Outside Top");
@@ -1128,11 +1128,11 @@ test("manages Cell rename and lists callers", async ({ page }) => {
   await page.keyboard.press("Escape");
 
   await runCellCommand(page, "Hierarchy");
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await manager
-    .getByRole("button", { name: /ReusableStage.*1 callers/u })
+    .getByRole("button", { name: /ReusableStage.*1 个调用位置/u })
     .click();
-  await expect(manager).toContainText("1 callers");
+  await expect(manager).toContainText("1 个调用位置");
   await expect(
     manager.getByLabel("Cell name", { exact: true }),
   ).toHaveAttribute("autocomplete", "off");
@@ -1145,7 +1145,7 @@ test("manages Cell rename and lists callers", async ({ page }) => {
   await manager.getByLabel("Cell name", { exact: true }).press("Enter");
   await expect(manager).toContainText("Stage");
   await manager.locator(".cell-manager-callers summary").click();
-  await manager.getByRole("button", { name: "Jump to caller" }).click();
+  await manager.getByRole("button", { name: "跳转到调用位置" }).click();
   await expect(page.getByTestId("active-document-id")).toHaveText(
     "document-main",
   );
@@ -1528,7 +1528,7 @@ test("hides empty parameters and does not expose a second declaration workflow",
   });
 
   await runCellCommand(page, "Hierarchy");
-  const dialog = page.getByRole("dialog", { name: "Cell Manager" });
+  const dialog = page.getByRole("dialog", { name: "Cell 管理器" });
   await expect(dialog.getByLabel("Formal port Vout direction")).toHaveValue(
     "passive",
   );
@@ -1541,7 +1541,7 @@ test("hides empty parameters and does not expose a second declaration workflow",
   await expect(
     dialog.getByRole("button", { name: "Apply parameters" }),
   ).toHaveCount(0);
-  await dialog.getByRole("button", { name: "Close Cell Manager" }).click();
+  await dialog.getByRole("button", { name: "关闭 Cell 管理器" }).click();
 });
 
 test("confirms connected last-Port deletion and restores caller wires with Undo and Redo", async ({
@@ -1719,9 +1719,9 @@ test("places an existing Cell and blocks deleting its shared definition", async 
   await page.keyboard.press("Escape");
 
   await runCellCommand(page, "Hierarchy");
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await expect(
-    manager.getByRole("button", { name: "Delete", exact: true }),
+    manager.getByRole("button", { name: "删除", exact: true }),
   ).toBeDisabled();
   await expect(page.getByTestId("document-count")).toHaveText("2");
 });
@@ -1819,13 +1819,13 @@ test("same-name Cell Pins stay independent while the final interface groups them
       .locator('[data-text-run="subscript"]'),
   ).toHaveCount(0);
   await runCellCommand(page, "Hierarchy");
-  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  const manager = page.getByRole("dialog", { name: "Cell 管理器" });
   await expect(
     manager.getByRole("table", { name: "Formal port order" }).getByRole("row"),
   ).toHaveCount(1);
   await expect(manager).toContainText("2 markers");
   await expect(manager).toContainText("Direction conflict");
-  await manager.getByRole("button", { name: "Close Cell Manager" }).click();
+  await manager.getByRole("button", { name: "关闭 Cell 管理器" }).click();
   const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",

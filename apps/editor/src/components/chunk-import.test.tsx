@@ -49,10 +49,10 @@ describe("ChunkLoadBanner", () => {
     const markup = renderToStaticMarkup(
       <ChunkLoadBanner feature="PDF export" onDismiss={() => {}} />,
     );
-    expect(markup).toContain("PDF export could not load");
-    expect(markup).toContain("restored automatically");
-    expect(markup).toContain("Refresh app");
-    expect(markup).toContain("Not now");
+    expect(markup).toContain("PDF export 无法加载");
+    expect(markup).toContain("当前电路会自动恢复");
+    expect(markup).toContain("刷新应用");
+    expect(markup).toContain("暂不");
     expect(markup).not.toContain("Failed to fetch");
   });
 });

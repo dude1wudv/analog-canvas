@@ -11,7 +11,7 @@ describe("recovery banners", () => {
     expect(recoveryStateLabel("idle")).toBeNull();
     expect(recoveryStateLabel("pending")).toBeNull();
     expect(recoveryStateLabel("stored")).toBeNull();
-    expect(recoveryStateLabel("failed")).toContain("failed");
+    expect(recoveryStateLabel("failed")).toContain("恢复失败");
   });
 
   it("offers non-modal restore, backup, and ignore actions", () => {
@@ -27,8 +27,8 @@ describe("recovery banners", () => {
     expect(html).toContain("startup-recovery-banner");
     expect(html).toContain("OTA");
     expect(html).toContain("恢复");
-    expect(html).toContain("Download backup");
-    expect(html).toContain("Ignore");
+    expect(html).toContain("下载备份");
+    expect(html).toContain("忽略");
     expect(html).not.toContain('role="dialog"');
   });
 });

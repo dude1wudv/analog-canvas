@@ -115,7 +115,7 @@ export default function AccountMenuView({
 
   return (
     <details className="account-signin" data-testid="account-signin">
-      <summary>Sign in</summary>
+      <summary>登录</summary>
       <div className="account-signin-panel">
         {providers.local && onLocalAuthenticate && (
           <LocalAccountForm authenticate={onLocalAuthenticate} />

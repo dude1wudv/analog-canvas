@@ -442,7 +442,7 @@ test("opens the text editor beside a docked panel instead of under it", async ({
   await page.goto("/editor");
   await awaitEditorReady(page);
   const netlist = page.getByRole("button", {
-    name: "Netlist",
+    name: "网表",
     exact: true,
     pressed: true,
   });
@@ -2797,7 +2797,7 @@ for (const kind of ["rectangle", "circle"] as const) {
     });
     if (kind === "circle")
       await page
-        .getByRole("menuitem", { name: "Properties (Q)", exact: true })
+        .getByRole("menuitem", { name: "属性（Q）", exact: true })
         .click();
     else await page.keyboard.press("q");
     const editor = page.getByLabel("Editable Canvas property code");
@@ -2893,7 +2893,7 @@ for (const kind of ["rectangle", "circle"] as const) {
     const reopenedEdge = await edgePoint();
     await page.mouse.click(reopenedEdge.x, reopenedEdge.y, { button: "right" });
     await page
-      .getByRole("menuitem", { name: "Properties (Q)", exact: true })
+      .getByRole("menuitem", { name: "属性（Q）", exact: true })
       .click();
     expect(JSON.parse(await readComponentPropertyCode(page))).toEqual(
       JSON.parse(valid),
